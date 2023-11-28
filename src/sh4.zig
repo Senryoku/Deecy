@@ -675,16 +675,14 @@ fn movb_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
+// The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(0).* = cpu.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1));
 }
 
-fn mov_at_dispRm_R0_l(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
+    cpu.R(0).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
@@ -792,10 +790,12 @@ fn movt_Rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// Swaps the upper and lower parts of the contents of general register Rm and stores the result in Rn.
+// The 8 bits from bit 15 to bit 8 of Rm are swapped with the 8 bits from bit 7 to bit 0.
+// The upper 16 bits of Rm are transferred directly to the upper 16 bits of Rn.
 fn swapb(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const val = cpu.R(opcode.nmd.m).*;
+    cpu.R(opcode.nmd.n).* = (val & 0xFFFF0000) | (val & 0x0000FF00) >> 8 | (val & 0x000000FF) << 8;
 }
 fn swapw(cpu: *SH4, opcode: Instr) void {
     const val = cpu.R(opcode.nmd.m).*;
