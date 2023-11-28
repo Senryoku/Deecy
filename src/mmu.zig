@@ -1,13 +1,13 @@
 const std = @import("std");
 const common = @import("common.zig");
 
-const PTEH = packed struct {
+pub const PTEH = packed struct {
     asid: u8 = undefined,
     _: u2 = undefined,
     vpn: u22 = undefined,
 };
 
-const PTEL = packed struct {
+pub const PTEL = packed struct {
     wt: u1 = undefined, // Write-through bit
     sh: u1 = undefined, // Share status bit
     d: u1 = undefined, // Sirty bit
@@ -24,7 +24,7 @@ const PTEL = packed struct {
     _r1: u3 = undefined,
 };
 
-const MMUCR = packed struct {
+pub const MMUCR = packed struct {
     at: u1 = 0, // Address translation bit
 
     _r0: u1 = undefined,

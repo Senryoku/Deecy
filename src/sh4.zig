@@ -58,6 +58,72 @@ const FPSCR = packed struct {
     _: u10 = undefined, // Reserved
 };
 
+const MemoryRegister = enum(u32) {
+    PTEH = 0xFF000000,
+    PTEL = 0xFF000004,
+    TTB = 0xFF000008,
+    TEA = 0xFF00000C,
+    MMUCR = 0xFF000010,
+    BASRA = 0xFF000014,
+    BASRB = 0xFF000018,
+
+    CCR = 0xFF00001C,
+    TRA = 0xFF000020,
+    EXPEVT = 0xFF000024,
+    INTEVT = 0xFF000028,
+    QACR0 = 0xFF000038,
+    QACR1 = 0xFF00003C,
+
+    BARA = 0xFF200000,
+    BAMRA = 0xFF200004,
+
+    STBCR = 0xFFC00004,
+    FRQCR = 0xFFC00000,
+    WTCNT = 0xFFC00008,
+    WTCSR = 0xFFC0000C,
+    RCR1 = 0xFFC80038,
+    RCR2 = 0xFFC8003C,
+    TOCR = 0xFFD8000,
+    TSTR = 0xFFD80004,
+    TCOR0 = 0xFFD80008,
+    TCNT0 = 0xFFD8000C,
+    TCR0 = 0xFFD80010,
+    TCOR1 = 0xFFD80014,
+    TCNT1 = 0xFFD80018,
+    TCR1 = 0xFFD8001C,
+    TCOR2 = 0xFFD80020,
+    TCNT2 = 0xFFD80024,
+    TCR2 = 0xFFD80028,
+    TCPR2 = 0xFFD8002C,
+
+    BCR1 = 0xFF800000,
+    BCR2 = 0xFF800004,
+    WCR1 = 0xFF800008,
+    WCR2 = 0xFF80000C,
+    WCR3 = 0xFF800010,
+    PCR = 0xFF800018,
+
+    MCR = 0xFF800014,
+    SDMR = 0xFF940190,
+    RTCSR = 0xFF80001C,
+    RTCNT = 0xFF800020,
+    RTCOR = 0xFF800024,
+    RFCR = 0xFF800028,
+
+    SAR0 = 0xFFA00000,
+    DAR0 = 0xFFA00004,
+    DMATCR0 = 0xFFA00008,
+    CHCR0 = 0xFFA0000C,
+    SAR1 = 0xFFA00010,
+    DAR1 = 0xFFA00014,
+    DMATCR1 = 0xFFA00018,
+
+    ICR = 0xFFD00000,
+    IPRA = 0xFFD00004,
+    IPRB = 0xFFD00008,
+    IPRC = 0xFFD0000C,
+};
+
 const VirtualAddr = packed union {
     region: u3,
     addr: u29,
@@ -123,24 +189,14 @@ pub const SH4 = struct {
         qf: [4]f128,
     } = undefined,
 
-    mmu: mmu.MMU = .{},
-
-    ccr: u32 = 0, // Cache control register - 0xFF00 001C, 0x1F00 001C
-    qacr0: u32 = 0, // Queue address control register 0 - 0xFF00 0038, 0x1F00 0038
-    qacr1: u32 = 0, // Queue address control register 1 - 0xFF00 003C, 0x1F00 003C
-    // ccn register, should I move them?
-    expevt: u32 = 0, // 0x0000 0000 on power-on, 0x0000 0020 on software reset.
-    intevt: u32 = 0,
-
-    bcr1: u32 = 0, // Bus Control Register 1
-    bcr2: u16 = 0x3FFC, // Bus Control Register 2
-
     boot: []u8 = undefined,
     flash: []u8 = undefined,
     ram: []u8 = undefined,
+    area7: []u8 = undefined,
 
     pub fn init(self: *@This()) !void {
-        self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1028);
+        self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
+        self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1024);
 
         // Load ROM
         self.boot = try common.GeneralAllocator.alloc(u8, 0x200000);
@@ -165,6 +221,8 @@ pub const SH4 = struct {
                 }
             }
         }
+
+        self.reset();
     }
 
     pub fn deinit(self: *@This()) void {
@@ -192,24 +250,38 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.mmu.pteh = .{};
-        self.mmu.ptel = .{};
-        self.mmu.ttb = 0;
-        self.mmu.tea = 0;
-        self.mmu.mmucr = 0;
-        // TODO: BASRA Undefined
-        // TODO: BASRB Undefined
-        self.ccr = 0;
-        // TODO: TRA = 0
-        self.expevt = 0;
-        self.intevt = 0;
-        self.qacr0 = undefined;
-        self.qacr1 = undefined;
-        // TODO: BARA Undefined
-        // TODO: BAMRA Undefined
+        self.io_register(mmu.PTEH, MemoryRegister.PTEH).* = .{};
+        self.io_register(mmu.PTEL, MemoryRegister.PTEL).* = .{};
+        self.io_register(u32, MemoryRegister.TTB).* = 0;
+        self.io_register(u32, MemoryRegister.TEA).* = 0;
+        self.io_register(u32, MemoryRegister.MMUCR).* = 0;
 
-        self.bcr1 = 0;
-        self.bcr2 = 0x3FFC;
+        self.io_register(u8, MemoryRegister.BASRA).* = undefined;
+        self.io_register(u8, MemoryRegister.BASRB).* = undefined;
+        self.io_register(u32, MemoryRegister.CCR).* = 0;
+
+        self.io_register(u32, MemoryRegister.TRA).* = 0;
+        self.io_register(u32, MemoryRegister.EXPEVT).* = 0;
+        self.io_register(u32, MemoryRegister.INTEVT).* = 0;
+
+        self.io_register(u32, MemoryRegister.QACR0).* = undefined;
+        self.io_register(u32, MemoryRegister.QACR1).* = undefined;
+        self.io_register(u32, MemoryRegister.BARA).* = undefined;
+        self.io_register(u32, MemoryRegister.BAMRA).* = undefined;
+
+        self.io_register(u32, MemoryRegister.MCR).* = 0xC0091224;
+        self.io_register(u16, MemoryRegister.SDMR).* = 0x00FF;
+        self.io_register(u16, MemoryRegister.RTCSR).* = 0xA510;
+        self.io_register(u16, MemoryRegister.RTCNT).* = 0xA500;
+        self.io_register(u16, MemoryRegister.RTCOR).* = 0xA55E;
+        self.io_register(u16, MemoryRegister.RFCR).* = undefined;
+
+        self.io_register(u32, MemoryRegister.BCR1).* = 0;
+        self.io_register(u32, MemoryRegister.BCR2).* = 0x3FFC;
+    }
+
+    pub fn io_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
+        return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000])));
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -233,19 +305,19 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.mmu.pteh = .{};
-        self.mmu.ptel = .{};
-        self.mmu.ttb = 0;
-        self.mmu.tea = 0;
-        self.mmu.mmucr = 0;
+        self.io_register(mmu.PTEH, MemoryRegister.PTEH).* = .{};
+        self.io_register(mmu.PTEL, MemoryRegister.PTEL).* = .{};
+        self.io_register(u32, MemoryRegister.TTB).* = 0;
+        self.io_register(u32, MemoryRegister.TEA).* = 0;
+        self.io_register(u32, MemoryRegister.MMUCR).* = 0;
         // BASRA Held
         // BASRB Held
-        self.ccr = 0;
-        // TODO: TRA = 0
-        self.expevt = 0x00000020;
+        self.io_register(u32, MemoryRegister.CCR).* = 0;
+        self.io_register(u32, MemoryRegister.TRA).* = 0;
+        self.io_register(u32, MemoryRegister.EXPEVT).* = 0x00000020;
         // INTEVT Held
-        self.qacr0 = undefined;
-        self.qacr1 = undefined;
+        self.io_register(u32, MemoryRegister.QACR0).* = undefined;
+        self.io_register(u32, MemoryRegister.QACR1).* = undefined;
         // BARA Held
         // BAMRA Held
 
@@ -338,7 +410,8 @@ pub const SH4 = struct {
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
-                unreachable;
+                std.debug.assert(self.sr.md);
+                return &self.area7[virtual_addr - 0x1C000000];
             }
         } else if (is_p1(virtual_addr)) {
             std.debug.assert(self.sr.md);
@@ -351,18 +424,7 @@ pub const SH4 = struct {
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else if (is_p4(virtual_addr)) {
             std.debug.assert(self.sr.md);
-            if (virtual_addr & 0xFFFF0000 == 0xFF000000) {
-                if (virtual_addr & 0xFFFF < 0x0014) {
-                    // MMU
-                    return @as(*u8, @ptrFromInt(@intFromPtr(&self.mmu) + (virtual_addr & 0xFFFF)));
-                }
-                // CCN: Cache control
-                if (virtual_addr == 0xFF000024) {
-                    return @ptrCast(&self.expevt);
-                }
-            }
-            std.debug.print("_read, P4: {X:0>8}\n", .{virtual_addr});
-            unreachable;
+            return self._read(virtual_addr & 0x01FFFFFFF);
         } else {
             unreachable;
         }
@@ -392,7 +454,8 @@ pub const SH4 = struct {
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
-                unreachable;
+                std.debug.assert(self.sr.md);
+                return &self.area7[virtual_addr - 0x1C000000];
             }
         } else if (is_p1(virtual_addr)) {
             std.debug.assert(self.sr.md);
@@ -405,25 +468,7 @@ pub const SH4 = struct {
             return self._write(virtual_addr & 0x01FFFFFFF);
         } else if (is_p4(virtual_addr)) {
             std.debug.assert(self.sr.md);
-            if (virtual_addr & 0xFF000000 == 0xFF000000) {
-                if (virtual_addr & 0xFFFF < 0x0014) {
-                    // MMU
-                    return @as(*u8, @ptrFromInt(@intFromPtr(&self.mmu) + (virtual_addr & 0xFFFF)));
-                }
-                // CCN: Cache control
-                if (virtual_addr == 0xFF000024) {
-                    return @ptrCast(&self.expevt);
-                }
-                if (virtual_addr == 0xFF00001C) {
-                    return @ptrCast(&self.ccr);
-                }
-                if (virtual_addr == 0xFF800004) { // Bus Control Register 2 (BCR2)
-                    // FIXME: There are read only bits in there.
-                    return @ptrCast(&self.bcr2);
-                }
-            }
-            std.debug.print("_write, P4: {X:0>8}\n", .{virtual_addr});
-            unreachable;
+            return self._write(virtual_addr & 0x01FFFFFFF);
         } else {
             unreachable;
         }
@@ -484,6 +529,12 @@ pub const SH4 = struct {
             self._write(virtual_addr),
         ))).* = value;
     }
+
+    pub fn prefetch_operand_cache_block(self: *@This(), virtual_addr: addr_t) void {
+        _ = self;
+        // TODO: (Rn) → operand cache
+        std.debug.print("prefetch_operand_cache_block: {X:0>8}\n", .{virtual_addr});
+    }
 };
 
 fn sign_extension_u8(d: u8) i32 {
@@ -521,9 +572,7 @@ fn unimplemented(_: *SH4, _: Instr) void {
 }
 
 fn mov_rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).*;
 }
 
 fn mov_imm_rn(cpu: *SH4, opcode: Instr) void {
@@ -914,9 +963,7 @@ fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).* != 0;
 }
 fn tst_imm_r0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) != 0;
 }
 
 fn xorRmRn(cpu: *SH4, opcode: Instr) void {
@@ -936,10 +983,13 @@ fn rotcr_Rn(cpu: *SH4, opcode: Instr) void {
     _ = cpu;
     @panic("Unimplemented");
 }
+fn rotl_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
+    cpu.R(opcode.nmd.n).* = std.math.rotl(u32, cpu.R(opcode.nmd.n).*, 1);
+}
 fn rotr_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 1) == 1);
+    cpu.R(opcode.nmd.n).* = std.math.rotr(u32, cpu.R(opcode.nmd.n).*, 1);
 }
 
 fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -973,9 +1023,8 @@ fn shld_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 fn shll(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
+    cpu.R(opcode.nmd.n).* <<= 1;
 }
 fn shll2(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* << 2;
@@ -987,9 +1036,8 @@ fn shll16(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* << 16;
 }
 fn shlr(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 1) == 1);
+    cpu.R(opcode.nmd.n).* >>= 1;
 }
 fn shlr2(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 2;
@@ -1013,6 +1061,9 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
     bf_label(cpu, opcode);
     // cpu.pc += 2; // Execute does it already.
     cpu._execute(delay_slot);
+
+    // TODO: Possible Exceptions
+    // Slot illegal instruction exception
 }
 fn bt_label(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1040,9 +1091,14 @@ fn bsrf_Rm(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const delay_slot = cpu.pc + 2;
+    //             Yes, it's n.
+    cpu.pc = cpu.R(opcode.nmd.n).*;
+    // cpu.pc += 2; // Execute does it already.
+    cpu._execute(delay_slot);
+
+    // TODO: Possible Exceptions
+    // Slot illegal instruction exception
 }
 fn jsr_Rm(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1092,10 +1148,11 @@ fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.
+// The lower 5 bits of the address specified by Rn are masked to zero.
+// This instruction is also used to trigger a Store Queue write-back operation if the specified address points to the Store Queue area.
 fn pref_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.prefetch_operand_cache_block(cpu.R(opcode.nmd.n).*);
 }
 
 fn rte(cpu: *SH4, opcode: Instr) void {
@@ -1283,7 +1340,7 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false },
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = rotcl_Rn, .name = "rotcl Rn", .privileged = false },
     .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = rotcr_Rn, .name = "rotcr Rn", .privileged = false },
-    .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "rotl Rn", .privileged = false },
+    .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = rotl_Rn, .name = "rotl Rn", .privileged = false },
     .{ .code = 0b0100000000000101, .mask = 0b0000111100000000, .fn_ = rotr_Rn, .name = "rotr Rn", .privileged = false },
     .{ .code = 0b0100000000001100, .mask = 0b0000111111110000, .fn_ = shad_Rm_Rn, .name = "shad Rm,Rn", .privileged = false },
     .{ .code = 0b0100000000100000, .mask = 0b0000111100000000, .fn_ = shal_Rn, .name = "shal Rn", .privileged = false },
