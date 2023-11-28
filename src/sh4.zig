@@ -124,11 +124,17 @@ pub const SH4 = struct {
     } = undefined,
 
     mmu: mmu.MMU = .{},
+
+    // ccn register, should I move them?
+    expevt: u32 = 0, // 0x0000 0000 on power-on, 0x0000 0020 on manual reset.
+    intevt: u32 = 0,
+
     boot: []u8 = undefined,
     flash: []u8 = undefined,
+    ram: []u8 = undefined,
 
     pub fn init(self: *@This()) !void {
-        try self.mmu.init();
+        self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1028);
 
         // Load ROM
         self.boot = try common.GeneralAllocator.alloc(u8, 0x200000);
@@ -158,7 +164,7 @@ pub const SH4 = struct {
     pub fn deinit(self: *@This()) void {
         common.GeneralAllocator.free(self.flash);
         common.GeneralAllocator.free(self.boot);
-        self.mmu.deinit();
+        common.GeneralAllocator.free(self.ram);
     }
 
     pub fn R(self: *@This(), r: u5) *u32 {
@@ -215,7 +221,7 @@ pub const SH4 = struct {
         } else {}
     }
 
-    pub fn _read(self: @This(), virtual_addr: addr_t) *u8 {
+    pub fn _read(self: *@This(), virtual_addr: addr_t) *u8 {
         if (is_p0(virtual_addr)) {
             if (virtual_addr < 0x04000000) {
                 // Area 0 - Boot ROM, Flash ROM, Hardware Registers
@@ -233,7 +239,7 @@ pub const SH4 = struct {
                 unreachable;
             } else if (virtual_addr < 0x10000000) {
                 // Area 3 - System RAM (16MB)
-                return &self.mmu.ram[(virtual_addr - 0x0C000000) % self.mmu.ram.len];
+                return &self.ram[(virtual_addr - 0x0C000000) % self.ram.len];
             } else if (virtual_addr < 0x14000000) {
                 // Area 4 - Tile accelerator command input
                 unreachable;
@@ -258,31 +264,41 @@ pub const SH4 = struct {
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else if (is_p4(virtual_addr)) {
             std.debug.assert(self.sr.md);
+            if (virtual_addr & 0xFFFF0000 == 0xFF000000) {
+                if (virtual_addr & 0xFFFF < 0x0014) {
+                    // MMU
+                    return @as(*u8, @ptrFromInt(@intFromPtr(&self.mmu) + (virtual_addr & 0xFFFF)));
+                }
+                // CCN: Cache control
+                if (virtual_addr == 0xFF000024) {
+                    return @ptrCast(&self.expevt);
+                }
+            }
             unreachable;
         } else {
             unreachable;
         }
     }
 
-    pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+    pub fn read8(self: *@This(), virtual_addr: addr_t) u8 {
         return @as(*u8, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).*;
     }
 
-    pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+    pub fn read16(self: *@This(), virtual_addr: addr_t) u16 {
         return @as(*u16, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).*;
     }
 
-    pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+    pub fn read32(self: *@This(), virtual_addr: addr_t) u32 {
         return @as(*u32, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).*;
     }
 
-    pub fn write32(self: @This(), virtual_addr: addr_t, value: u32) void {
+    pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
         @as(*u32, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).* = value;
@@ -326,7 +342,7 @@ fn mov_rm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn mov_imm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(opcode.nmd.d));
+    cpu.R(opcode.nd8.n).* = @bitCast(sign_extension_u8(opcode.nd8.d));
 }
 
 fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
@@ -440,7 +456,8 @@ fn mov_at_dispRm_R0_l(cpu: *SH4, opcode: Instr) void {
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_atdispRm_Rn(cpu: *SH4, opcode: Instr) void {
     // FIXME: Something's going horribly wrong here!
-    std.debug.print("  mov.l @(disp,Rm),Rn at 0x{X:0>8} = 0x{X:0>8}\n", .{ cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2), cpu.read32(cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2)) });
+    std.debug.print("  mov.l @(disp,Rm),Rn - @0x{X:0>8}\n", .{cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2)});
+    std.debug.print("                            = 0x{X:0>8}\n", .{cpu.read32(cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2))});
     std.debug.print("    d = 0x{X:0>8}, d << 2 = 0x{X:0>8}\n", .{ opcode.nmd.d, (@as(u32, @intCast(opcode.nmd.d)) << 2) });
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2));
 }

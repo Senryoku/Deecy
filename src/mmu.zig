@@ -46,20 +46,10 @@ const MMUCR = packed struct {
     lrui: u6 = 0,
 };
 
-pub const MMU = struct {
+pub const MMU = packed struct {
     pteh: PTEH = .{}, // Page table entry high register - 0xFF00 0000 ; 0x1F00 0000
     ptel: PTEL = .{}, // Page table entry low register
     ttb: u32 = undefined, // Translation table base register
     tea: u32 = undefined, // Translation table address register
     mmucr: u32 = 0x00000000, // MMU control register
-
-    ram: []u8 = undefined,
-
-    pub fn init(self: *@This()) !void {
-        self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1028);
-    }
-
-    pub fn deinit(self: *@This()) void {
-        common.GeneralAllocator.free(self.ram);
-    }
 };
