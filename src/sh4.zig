@@ -286,6 +286,10 @@ pub const SH4 = struct {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000])));
     }
 
+    pub fn io_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+        return @as(*T, @alignCast(@ptrCast(&self.area7[(addr & 0x1FFFFFFF) - 0x1C000000])));
+    }
+
     pub fn software_reset(self: *@This()) void {
         std.debug.print("  SOFTWARE RESET!\n", .{});
 
@@ -491,6 +495,20 @@ pub const SH4 = struct {
     }
 
     pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+        switch (virtual_addr) {
+            @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                return @as(*const u16, @alignCast(@ptrCast(
+                    self._read(virtual_addr),
+                ))).* & 0xF;
+            },
+            @intFromEnum(MemoryRegister.RFCR) => {
+                return @as(*const u16, @alignCast(@ptrCast(
+                    self._read(virtual_addr),
+                ))).* & 0b00000011_11111111;
+            },
+            else => {},
+        }
+
         return @as(*const u16, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).*;
@@ -510,6 +528,23 @@ pub const SH4 = struct {
     }
 
     pub fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        // TODO: Check region/permissions?
+        switch (virtual_addr) {
+            @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
+                @as(*u16, @alignCast(@ptrCast(
+                    self._write(virtual_addr),
+                ))).* = 0b10100101_00000000 | (value & 0xFF);
+            },
+            @intFromEnum(MemoryRegister.RFCR) => {
+                std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
+                @as(*u16, @alignCast(@ptrCast(
+                    self._write(virtual_addr),
+                ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
+            },
+            else => {},
+        }
+
         @as(*u16, @alignCast(@ptrCast(
             self._write(virtual_addr),
         ))).* = value;
@@ -1082,7 +1117,7 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
 
 fn bf_label(cpu: *SH4, opcode: Instr) void {
     if (!cpu.sr.t) {
-        var displacement = sign_extension_u16(opcode.nd8.d);
+        var displacement = sign_extension_u8(opcode.nd8.d);
         var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
         // -2 to account for the generic, inavoidable pc advancement of the current implementation.
         pc += 4 + (displacement << 1) - 2;
@@ -1142,7 +1177,7 @@ fn bsrf_Rm(cpu: *SH4, opcode: Instr) void {
 fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     //             Yes, it's n.
-    cpu.pc = cpu.R(opcode.nmd.n).* - 2;
+    cpu.pc = cpu.R(opcode.nmd.n).* - 4; // -4 To account for both the standard +2, and the delayed slot +2
     cpu._execute(delay_slot);
 
     // TODO: Possible Exceptions
@@ -1652,4 +1687,65 @@ test "boot" {
     cpu.execute(); // rotr R5
     try std.testing.expect(cpu.R(5).* == 0x80000000);
     try std.testing.expect(cpu.sr.t);
+    cpu.execute(); // add 0x60, R5
+    try std.testing.expect(cpu.R(5).* == 0x80000060);
+    cpu.execute(); // mov R5, R6
+    try std.testing.expect(cpu.R(5).* == cpu.R(6).*);
+    cpu.execute(); // add 0x20, R6
+    try std.testing.expect(cpu.R(6).* == 0x80000080);
+    cpu.execute(); // tst 0x00, R0 - Always tue, right?
+    try std.testing.expect(cpu.sr.t);
+    cpu.execute(); // pref @R5
+    // TODO
+    cpu.execute(); // jmp @R6
+    std.debug.print("{x:0>8}, {x:0>8}\n", .{ cpu.pc, cpu.R(6).* });
+    try std.testing.expect(cpu.pc == cpu.R(6).*);
+
+    cpu.execute(); // mov.l @(0x2,R5),R0 - Read 0x80000068 (0xA3020008) to R0
+    try std.testing.expect(0xA3020008 == cpu.R(0).*);
+    try std.testing.expect(cpu.read32(cpu.R(5).* + (0x2 << 2)) == cpu.R(0).*);
+
+    cpu.execute(); // mov.l R0, @(0, R3) - Write 0xA3020008 to BRC1 @ 0xFF800000
+    try std.testing.expect(cpu.read32(0xFF800000) == 0xA3020008);
+    cpu.execute(); // mov.l @(4,R5),R0
+    try std.testing.expect(cpu.read32(cpu.R(5).* + (0x4 << 2)) == cpu.R(0).*);
+    cpu.execute(); // mov.l R0, @(2, R3) - Write 0x01110111 to WCR1 @ 0xFF800008
+    try std.testing.expect(cpu.read32(0xFF800008) == 0x01110111);
+    cpu.execute(); // add 0x10, R3
+    try std.testing.expect(cpu.R(3).* == 0xFF800010);
+    cpu.execute(); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
+    try std.testing.expect(cpu.R(0).* == 0x800A0E24);
+    cpu.execute(); // mov.l R0, @(1, R3) - Write 0x800A0E24 to MCR
+    try std.testing.expect(cpu.io_register(u32, MemoryRegister.MCR).* == 0x800A0E24);
+
+    cpu.execute(); // mov.l @(7, R5), R2
+    try std.testing.expect(cpu.R(2).* == 0xff940190);
+    cpu.execute(); // mov.b R2, @R2
+    try std.testing.expect(cpu.io_register(u8, MemoryRegister.SDMR).* == 0x90);
+
+    cpu.execute(); // mov 0xFFFFFFA4, R0
+    cpu.execute(); // shll8 R0
+    cpu.execute(); // mov.w R0, @(12, R3)
+    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RFCR).* == 0xA400);
+
+    cpu.execute(); // mov.w @(0, R5), R0
+    cpu.execute(); // mov.w R0, @(10, R3)
+    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCOR).* == 0xA504);
+
+    cpu.execute(); // add H'0c, R0
+    cpu.execute(); // mov.w R0, @(6, R3)
+    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCSR).* == 0xA510);
+
+    // while((volatile uint16_t)reg[RFCR] <= 0x0010); (?)
+
+    cpu.execute(); // mov 0x10, R6
+    cpu.execute(); // mov.w @(12, R3), R0 - Load RFCR (Refresh Count Register) to R0
+    try std.testing.expect(cpu.R(0).* == 0);
+    cpu.execute(); // cmp/hi R6, R0
+
+    // FIXME: Timer counter not implemented, this check probably only passes by chance.
+
+    cpu.execute(); // bf 0x8C0100A2
+
+    cpu.execute();
 }
