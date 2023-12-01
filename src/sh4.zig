@@ -150,6 +150,7 @@ const Instr = packed union {
     // Reminder: We're in little endian.
     nmd: packed struct { d: u4, m: u4, n: u4, _: u4 },
     nd8: packed struct { d: u8, n: u4, _: u4 },
+    d12: packed struct { d: u12, _: u4 },
 };
 
 comptime {
@@ -193,6 +194,7 @@ pub const SH4 = struct {
     flash: []u8 = undefined,
     ram: []u8 = undefined,
     area7: []u8 = undefined,
+    hardware_registers: [0x10000]u8 = undefined, // FIXME
 
     pub fn init(self: *@This()) !void {
         self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
@@ -388,25 +390,30 @@ pub const SH4 = struct {
                 } else if (virtual_addr < 0x200000 + 0x20000) {
                     return &self.flash[virtual_addr - 0x200000];
                 }
-                std.debug.print("_read, Area 0: {X:0>8}\n", .{virtual_addr});
+                std.debug.print("Invalid _read, Area 0: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else if (virtual_addr < 0x08000000) {
                 // Area 1 - Video RAM
+                std.debug.print("Invalid _read, Area 1: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else if (virtual_addr < 0x0C000000) {
                 // Area 2 - Nothing
+                std.debug.print("Invalid _read, Area 2: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else if (virtual_addr < 0x10000000) {
                 // Area 3 - System RAM (16MB)
                 return &self.ram[(virtual_addr - 0x0C000000) % self.ram.len];
             } else if (virtual_addr < 0x14000000) {
                 // Area 4 - Tile accelerator command input
+                std.debug.print("Unimplemented _read, Area 4: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else if (virtual_addr < 0x18000000) {
                 // Area 5 - Expansion (modem) port
+                std.debug.print("Invalid _read, Area 5: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else if (virtual_addr < 0x1C000000) {
                 // Area 6 - Nothing
+                std.debug.print("Invalid _read, Area 6: {X:0>8}\n", .{virtual_addr});
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
@@ -433,7 +440,10 @@ pub const SH4 = struct {
     pub fn _write(self: *@This(), virtual_addr: addr_t) *u8 {
         if (is_p0(virtual_addr)) {
             if (virtual_addr < 0x04000000) {
-                unreachable;
+                if (virtual_addr < 0x005F6800)
+                    unreachable;
+                // FIXME: Unimplemented
+                return &self.hardware_registers[virtual_addr - 0x005F6800];
             } else if (virtual_addr < 0x08000000) {
                 // Area 1 - Video RAM
                 unreachable;
@@ -545,6 +555,14 @@ fn sign_extension_u8(d: u8) i32 {
     }
 }
 
+fn sign_extension_u12(d: u12) i32 {
+    if ((d & 0x800) == 0) {
+        return @bitCast(0x00000FFF & @as(u32, @intCast(d)));
+    } else {
+        return @bitCast(0xFFFFF000 | @as(u32, @intCast(d)));
+    }
+}
+
 fn sign_extension_u16(d: u16) i32 {
     if ((d & 0x8000) == 0) {
         return @bitCast(0x0000FFFF & @as(u32, @intCast(d)));
@@ -579,10 +597,12 @@ fn mov_imm_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nd8.n).* = @bitCast(sign_extension_u8(opcode.nd8.d));
 }
 
+// Stores the effective address of the source operand into general register R0.
+// The 8-bit displacement is zero-extended and quadrupled. Consequently, the relative interval from the operand is PC + 1020 bytes.
+// The PC is the address four bytes after this instruction, but the lowest two bits of the PC are fixed at 00.
+// If this instruction is executed in a delay slot, a slot illegal instruction exception will be generated.
 fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(0).* = (cpu.pc & 0xFFFFFFFC) + 4 + (zero_extend(opcode.nd8.d) << 2);
 }
 
 // Stores immediate data, sign-extended to longword, in general register Rn.
@@ -639,10 +659,12 @@ fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
+    if (opcode.nmd.n != opcode.nmd.m) {
+        cpu.R(opcode.nmd.m).* += 2;
+    }
 }
 
 fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
@@ -658,12 +680,17 @@ fn movb_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* -= 2;
+    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    // TODO: Possible Exceptions
+    // Data TLB multiple-hit exception
+    // Data TLB miss exception
+    // Data TLB protection violation exception
+    // Data address error
+    // Initial page write exception
 }
 
-fn movl_rm_at_rn_decl(cpu: *SH4, opcode: Instr) void {
+fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     std.debug.print("  mov.l Rm,@-Rn - R{d}: 0x{x}, R{d}: 0x{x}\n", .{ opcode.nmd.n, cpu.R(opcode.nmd.n).*, opcode.nmd.m, cpu.R(opcode.nmd.m).* });
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
@@ -887,10 +914,11 @@ fn div1(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// Decrements the contents of general register Rn by 1 and compares the result with zero.
+// If the result is zero, the T bit is set to 1. If the result is nonzero, the T bit is cleared to 0.
 fn dt_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* -% 1;
+    cpu.sr.t = (cpu.R(opcode.nmd.n).* == 0);
 }
 
 fn extsb_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -924,8 +952,11 @@ fn mulsw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     _ = cpu;
     @panic("Unimplemented");
 }
+
+// Performs 16-bit multiplication of the contents of general registers Rn and Rm, and stores the 32-bit result in the MACL register.
+// The multiplication is performed as an unsigned arithmetic operation. The contents of MACH are not changed
 fn muluwRmRn(cpu: *SH4, opcode: Instr) void {
-    cpu.macl = cpu.R(opcode.nmd.n).* * cpu.R(opcode.nmd.m).*;
+    cpu.macl = @as(u32, @intCast(@as(u16, @truncate(cpu.R(opcode.nmd.n).*)))) * @as(u32, @intCast(@as(u16, @truncate(cpu.R(opcode.nmd.m).*))));
 }
 
 fn neg_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -960,10 +991,10 @@ fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
 }
 
 fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).* != 0;
+    cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
 }
 fn tst_imm_r0(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) != 0;
+    cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) == 0;
 }
 
 fn xorRmRn(cpu: *SH4, opcode: Instr) void {
@@ -1050,15 +1081,25 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
 }
 
 fn bf_label(cpu: *SH4, opcode: Instr) void {
-    var displacement = sign_extension_u16(opcode.nd8.d);
-    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    // -2 to account for the generic, inavoidable pc advancement of the current implementation.
-    pc += 4 + (displacement << 1) - 2;
-    if (!cpu.sr.t) cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    if (!cpu.sr.t) {
+        var displacement = sign_extension_u16(opcode.nd8.d);
+        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+        // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+        pc += 4 + (displacement << 1) - 2;
+        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    }
 }
 fn bfs_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    bf_label(cpu, opcode);
+    if (!cpu.sr.t) {
+        var displacement = sign_extension_u8(opcode.nd8.d);
+        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+        // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+        pc += 4 + (displacement << 1) - 2;
+        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    } else {
+        cpu.pc += 2;
+    }
     // cpu.pc += 2; // Execute does it already.
     cpu._execute(delay_slot);
 
@@ -1066,9 +1107,14 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
     // Slot illegal instruction exception
 }
 fn bt_label(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    if (cpu.sr.t) {
+        var displacement = sign_extension_u8(opcode.nd8.d);
+        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+        pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
+        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    }
+    // TODO: Possible Exceptions
+    // Slot illegal instruction exception
 }
 fn bts_label(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1076,9 +1122,12 @@ fn bts_label(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 fn bra_label(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const delay_slot = cpu.pc + 2;
+    var displacement = sign_extension_u12(opcode.d12.d);
+    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+    pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
+    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    cpu._execute(delay_slot);
 }
 fn bsr_label(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1093,8 +1142,7 @@ fn bsrf_Rm(cpu: *SH4, opcode: Instr) void {
 fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     //             Yes, it's n.
-    cpu.pc = cpu.R(opcode.nmd.n).*;
-    // cpu.pc += 2; // Execute does it already.
+    cpu.pc = cpu.R(opcode.nmd.n).* - 2;
     cpu._execute(delay_slot);
 
     // TODO: Possible Exceptions
@@ -1268,7 +1316,7 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false },
     .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false },
     .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false },
-    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn_decl, .name = "mov.l Rm,@-Rn", .privileged = false },
+    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false },
     .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = movb_at_dispRm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false },
     .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = movw_at_dispRm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false },
     .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispRm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false },
@@ -1487,3 +1535,121 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "frchg", .privileged = false },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "fschg", .privileged = false },
 };
+
+test "mov #imm,Rn" {
+    var cpu: SH4 = .{};
+    try cpu.init();
+    defer cpu.deinit();
+
+    cpu.pc = 0x0C000000;
+
+    cpu.write16(0x0C000000, 0b1110_0000_00000000);
+    cpu.write16(0x0C000002, 0b1110_0000_11111111);
+    cpu.write16(0x0C000004, 0b1110_0001_00000001);
+    cpu.write16(0x0C000006, 0b1110_0010_00000010);
+    cpu.write16(0x0C000008, 0b1110_0011_00000011);
+
+    cpu.execute();
+    try std.testing.expect(cpu.R(0).* == 0);
+    cpu.execute();
+    try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
+    cpu.execute();
+    try std.testing.expect(cpu.R(1).* == 1);
+    cpu.execute();
+    try std.testing.expect(cpu.R(2).* == 2);
+    cpu.execute();
+    try std.testing.expect(cpu.R(3).* == 3);
+}
+
+test "mov Rm,Rn" {
+    var cpu: SH4 = .{};
+    try cpu.init();
+    defer cpu.deinit();
+
+    cpu.pc = 0x0C000000;
+
+    cpu.write16(0x0C000000, 0b1110_0000_00000000); // mov #0,R0
+    cpu.write16(0x0C000002, 0b1110_0001_00000001); // mov #1,R1
+    cpu.write16(0x0C000004, 0b0110_0000_0001_0011); // mov R1,R0
+
+    cpu.execute();
+    try std.testing.expect(cpu.R(0).* == 0);
+    cpu.execute();
+    try std.testing.expect(cpu.R(1).* == 1);
+    cpu.execute();
+    try std.testing.expect(cpu.R(0).* == 1);
+}
+
+test "boot" {
+    var cpu: SH4 = .{};
+    try cpu.init();
+    defer cpu.deinit();
+
+    cpu.execute(); // mov 0x0F,R3
+    try std.testing.expect(cpu.R(3).* == 0xFFFFFFFF);
+    cpu.execute(); // shll16 R3
+    try std.testing.expect(cpu.R(3).* == 0xFFFF0000);
+    cpu.execute(); // swap.w R4,R3
+    try std.testing.expect(cpu.R(4).* == 0x0000FFFF);
+    cpu.execute(); // shll8 R3
+    try std.testing.expect(cpu.R(3).* == 0xFF000000);
+    cpu.execute(); // shlr2 R4
+    try std.testing.expect(cpu.R(4).* == 0x00003FFF);
+    cpu.execute(); // shlr2 R4
+    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
+    // Reads EXPEVT (0xFF000024), 0x00000000 on power up, 0x00000020 on reset.
+    cpu.execute(); // mov.l @(9, R3),R0
+    try std.testing.expect(cpu.read32(cpu.R(3).* + (9 << 2)) == cpu.R(0).*);
+    cpu.execute(); // xor R4,R0
+    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
+    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
+    {
+        const prev_mach = cpu.mach;
+        cpu.execute(); // mulu.w R4,R0
+        try std.testing.expect(cpu.mach == prev_mach);
+        try std.testing.expect(cpu.macl == 0);
+    }
+    cpu.execute(); // sts R0,MACL
+    try std.testing.expect(cpu.R(0).* == 0);
+    cpu.execute(); // tst R0,R0
+    try std.testing.expect(cpu.sr.t);
+    cpu.execute(); // bf 0x8C010108
+    try std.testing.expect(cpu.pc == 0xA0000018);
+    cpu.execute(); // mov.l R0,@(4,R3) - Write 0x0 to MMUCR @ 0xFF000010
+    try std.testing.expect(cpu.R(0).* == cpu.read32(0xFF000000 + (4 << 2)));
+    cpu.execute(); // mov 0x9,R1
+    try std.testing.expect(cpu.R(1).* == 0x9);
+    cpu.execute(); // shll8 R1
+    try std.testing.expect(cpu.R(1).* == 0x9 << 8);
+    cpu.execute(); // add 0x29,R1
+    try std.testing.expect(cpu.R(1).* == (0x9 << 8) + 0x29);
+    cpu.execute(); // mov.l R1, @(7, R3) - Write 0x929 to CCR @ 0xFF00001C
+    try std.testing.expect(cpu.R(1).* == cpu.read32(0xFF000000 + (0x7 << 2)));
+    cpu.execute(); // shar R3
+    try std.testing.expect(cpu.R(3).* == 0xFF800000);
+    try std.testing.expect(!cpu.sr.t);
+    cpu.execute(); // mov 0x01, R0
+    try std.testing.expect(cpu.R(0).* == 0x01);
+    cpu.execute(); // mov.w R0, @(2, R3) - Write 0x01 to BCR2 @ 0xFF800004
+    try std.testing.expect(cpu.R(0).* == cpu.read16(0xFF800000 + (0x2 << 1)));
+    cpu.execute(); // mov 0xFFFFFFC3, R0
+    try std.testing.expect(cpu.R(0).* == 0xFFFFFFC3);
+    cpu.execute(); // shll16 R0
+    try std.testing.expect(cpu.R(0).* == 0xFFC30000);
+    cpu.execute(); // or 0xCD, R0
+    try std.testing.expect(cpu.R(0).* == 0xFFC300CD);
+    cpu.execute(); // shll8 R0
+    try std.testing.expect(cpu.R(0).* == 0xC300CD00);
+    cpu.execute(); // or 0xB0, R0
+    try std.testing.expect(cpu.R(0).* == 0xC300CDB0);
+    cpu.execute(); // shlr R0
+    try std.testing.expect(cpu.R(0).* == 0xC300CDB0 >> 1);
+    try std.testing.expect(!cpu.sr.t);
+    cpu.execute(); // mov.l R0, @(3, R3) - Write 0x01 to WCR2 @ 0xFF80000C
+    try std.testing.expect(cpu.R(0).* == cpu.read32(0xFF800000 + (0x3 << 2)));
+    cpu.execute(); // mov 0x01, R5
+    try std.testing.expect(cpu.R(5).* == 0x01);
+    cpu.execute(); // rotr R5
+    try std.testing.expect(cpu.R(5).* == 0x80000000);
+    try std.testing.expect(cpu.sr.t);
+}
