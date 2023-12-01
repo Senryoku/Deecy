@@ -9,7 +9,7 @@ pub fn main() !void {
     try cpu.init();
     defer cpu.deinit();
 
-    for (0..100) |_| {
+    for (0..120) |_| {
         cpu.execute();
     }
 }

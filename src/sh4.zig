@@ -394,8 +394,7 @@ pub const SH4 = struct {
                 } else if (virtual_addr < 0x200000 + 0x20000) {
                     return &self.flash[virtual_addr - 0x200000];
                 }
-                std.debug.print("Invalid _read, Area 0: {X:0>8}\n", .{virtual_addr});
-                unreachable;
+                return &self.hardware_registers[virtual_addr - 0x005F6800];
             } else if (virtual_addr < 0x08000000) {
                 // Area 1 - Video RAM
                 std.debug.print("Invalid _read, Area 1: {X:0>8}\n", .{virtual_addr});
@@ -502,9 +501,13 @@ pub const SH4 = struct {
                 ))).* & 0xF;
             },
             @intFromEnum(MemoryRegister.RFCR) => {
-                return @as(*const u16, @alignCast(@ptrCast(
-                    self._read(virtual_addr),
-                ))).* & 0b00000011_11111111;
+                // Hack: This is the Refresh Count Register, related to DRAM control.
+                //       If don't think its proper emulation is needed, but it's accessed by the bios,
+                //       probably for synchronization purposes. I assume returning a contant value to pass this check
+                //       is enough for now, as games shouldn't access that themselves.
+                std.debug.print("[Note] Access to Refresh Count Register.\n", .{});
+                return 0x0011;
+                // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
             },
             else => {},
         }
@@ -1129,8 +1132,8 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
     if (!cpu.sr.t) {
         var displacement = sign_extension_u8(opcode.nd8.d);
         var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-        // -2 to account for the generic, inavoidable pc advancement of the current implementation.
-        pc += 4 + (displacement << 1) - 2;
+        // -2 to account for the generic, inavoidable pc advancement of the current implementation, -2 for the delayed slot execute.
+        pc += 4 + (displacement << 1) - 2 - 2;
         cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
     } else {
         cpu.pc += 2;
@@ -1736,16 +1739,43 @@ test "boot" {
     cpu.execute(); // mov.w R0, @(6, R3)
     try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCSR).* == 0xA510);
 
-    // while((volatile uint16_t)reg[RFCR] <= 0x0010); (?)
+    // while((volatile uint16_t)reg[RFCR] <= 0x0010);
 
     cpu.execute(); // mov 0x10, R6
     cpu.execute(); // mov.w @(12, R3), R0 - Load RFCR (Refresh Count Register) to R0
-    try std.testing.expect(cpu.R(0).* == 0);
+    try std.testing.expect(cpu.R(0).* == 0x11); // Note: Refresh Count Register not implemented, this check passes because we always return 0x11.
     cpu.execute(); // cmp/hi R6, R0
-
-    // FIXME: Timer counter not implemented, this check probably only passes by chance.
-
     cpu.execute(); // bf 0x8C0100A2
 
-    cpu.execute();
+    cpu.execute(); // mov.w @(1, R5), R0
+    cpu.execute(); // mov.w R0, @(10, R3)
+    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCOR).* == 0xa55e);
+
+    cpu.execute(); // mov.l @(6, R5), R0
+    cpu.execute(); // mov.l R0, @(1, R3)
+    try std.testing.expect(cpu.io_register(u32, MemoryRegister.MCR).* == 0xc00a0e24);
+
+    cpu.execute(); // mov.b R2, @R2
+    cpu.execute(); // mov.l @(1, R5), R1
+    try std.testing.expect(cpu.io_register(u8, MemoryRegister.SDMR).* == 0x90);
+
+    cpu.execute(); // mov 0x04, R0
+    try std.testing.expect(cpu.R(0).* == 0x04);
+    cpu.execute(); // swap.b R0, R0
+    try std.testing.expect(cpu.R(0).* == 0x0400);
+    cpu.execute(); // mov.w R0, @R1
+    try std.testing.expect(cpu.read32(0xA05F7480) == 0x400); // SB_G1RRC
+
+    cpu.execute(); // mov.l @(3, R5), R3
+    cpu.execute(); // mova 0x8C0100E0, R0
+
+    for (0..16) |_| {
+        cpu.execute(); // dt R6
+        cpu.execute(); // mov.w @R0+, R1
+        cpu.execute(); // mov.w R1, @-R3
+        cpu.execute(); // bf 0x8C0100BE
+    }
+
+    cpu.execute(); // mov.l @R3, R1
+    cpu.execute(); // jmp @R3
 }
