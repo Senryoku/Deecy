@@ -9,7 +9,9 @@ pub fn main() !void {
     try cpu.init();
     defer cpu.deinit();
 
-    for (0..120) |_| {
+    for (0..8000000) |_| {
+        if (cpu.pc == 0x8C0000E8) cpu.debug_trace = false;
+        if (cpu.pc > 0x8C0000F0) cpu.debug_trace = true;
         cpu.execute();
     }
 }

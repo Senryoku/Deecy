@@ -26,8 +26,8 @@ const SR = packed struct {
     _r2: u12 = undefined,
 
     bl: bool = true, // Exception/interrupt block bit (set to 1 by a reset, exception, or interrupt).
-    rb: bool = true, // General register bank specifier in privileged mode (set to 1 by a reset, exception or interrupt).
-    md: bool = true, // Processor mode. MD = 0: User mode (Some instructions cannot be executed, and some resources cannot be accessed). MD = 1: Privileged mode.
+    rb: u1 = 1, // General register bank specifier in privileged mode (set to 1 by a reset, exception or interrupt).
+    md: u1 = 1, // Processor mode. MD = 0: User mode (Some instructions cannot be executed, and some resources cannot be accessed). MD = 1: Privileged mode.
 
     _r3: u1 = undefined,
 };
@@ -190,11 +190,15 @@ pub const SH4 = struct {
         qf: [4]f128,
     } = undefined,
 
+    utlb_entries: [64]mmu.UTLBEntry = undefined,
+
     boot: []u8 = undefined,
     flash: []u8 = undefined,
     ram: []u8 = undefined,
     area7: []u8 = undefined,
     hardware_registers: [0x10000]u8 = undefined, // FIXME
+
+    debug_trace: bool = false,
 
     pub fn init(self: *@This()) !void {
         self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
@@ -282,6 +286,10 @@ pub const SH4 = struct {
         self.io_register(u32, MemoryRegister.BCR2).* = 0x3FFC;
     }
 
+    pub fn read_io_register(self: @This(), comptime T: type, r: MemoryRegister) T {
+        return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000]))).*;
+    }
+
     pub fn io_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000])));
     }
@@ -333,7 +341,7 @@ pub const SH4 = struct {
 
     pub fn R(self: *@This(), r: u5) *u32 {
         if (r > 7) return &self.r_8_15[r - 8];
-        if (self.sr.md and self.sr.rb) return &self.r_bank1[r];
+        if (self.sr.md == 1 and self.sr.rb == 1) return &self.r_bank1[r];
         return &self.r_bank0[r];
     }
 
@@ -344,27 +352,57 @@ pub const SH4 = struct {
     pub fn _execute(self: *@This(), addr: addr_t) void {
         const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
-        std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>8}\n", .{ addr, opcode, Opcodes[JumpTable[opcode]].name, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d });
+        if (self.debug_trace)
+            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>8}\n", .{ addr, opcode, Opcodes[JumpTable[opcode]].name, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d });
         Opcodes[JumpTable[opcode]].fn_(self, instr);
-        std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
+        if (self.debug_trace)
+            std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
         self.pc += 2;
     }
 
-    pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !u32 {
-        std.debug.assert(is_p0(virtual_addr) or is_p3(virtual_addr));
-        std.debug.assert(self.mmu.mmucr.at);
+    pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
+        const asid = self.read_io_register(mmu.PTEH, MemoryRegister.PTEH).asid;
+        const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        if (self.mmu.ptel.sh == 0 and (self.mmu.mmucr.sv == 0 or !self.sr.md)) {
-            // TODO: VPNs match and ASIDs match and V = 1?
-            //       else: Data TLB miss expection
-        } else {
-            // TODO: VPNs match and V = 0?
-            //       else: Data TLB miss expection
+        const shared_access = self.read_io_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
+        var found: ?mmu.UTLBEntry = null;
+        for (self.utlb_entries) |entry| {
+            if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
+                (entry.asid == asid)))
+            {
+                if (found != null)
+                    return error.DataTLBMutipleHitExpection;
+                found = entry;
+            }
         }
+        if (found == null)
+            return error.DataTLBMissExpection;
+        return found.?;
+    }
 
-        // TODO: Only one entry match?
-        //       else: Data TLB multiple hit expection
-        unreachable;
+    pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
+        std.debug.assert(is_p0(virtual_addr) or is_p3(virtual_addr));
+        if (self.read_io_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
+
+        const entry = try mmu_utlb_match(self, virtual_addr);
+
+        //try self.check_memory_protection(entry, write);
+
+        const ppn = @as(u32, @intCast(entry.ppn));
+        switch (entry.sz) {
+            0b00 => { // 1-Kbyte page
+                return ppn << 10 | (virtual_addr & 0b11_1111_1111);
+            },
+            0b01 => { // 4-Kbyte page
+                return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
+            },
+            0b10 => { //64-Kbyte page
+                return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
+            },
+            0b11 => { // 1-Mbyte page
+                return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
+            },
+        }
     }
 
     pub fn mmu_translate_itbl(self: @This(), virtual_addr: addr_t) !u32 {
@@ -373,67 +411,78 @@ pub const SH4 = struct {
         unreachable;
     }
 
-    pub fn check_memory_protection(self: @This(), virtual_addr: addr_t, write: bool) !void {
-        _ = virtual_addr;
-        if (self.sr.md) {
-            switch (self.mmu.ptel.pr) {
-                0b00 or 0b01 => return error.DataTLBProtectionViolationExpection,
-                0b10 and write => return error.DataTLBProtectionViolationExpection,
-                0b11 and write and self.mmu.ptel.d == 0 => return error.InitalPageWriteException,
+    pub fn check_memory_protection(self: @This(), entry: mmu.UTLBEntry, write: bool) !void {
+        if (self.sr.md == 0) {
+            switch (entry.pr) {
+                0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
+                0b10 => if (write and entry.w) return error.DataTLBProtectionViolationExpection,
+                0b11 => if (write and entry.w and entry.d == 0) return error.InitalPageWriteException,
                 else => {},
             }
-        } else {}
+        } else {
+            // switch (entry.pr) {
+            //    0b01, 0b11 => if(write and entry.d) return error.InitalPageWriteException,
+            //    0b00, 0b01 => if(write) return error.DataTLBProtectionViolationExpection,
+            // }
+        }
     }
 
     pub fn _read(self: @This(), virtual_addr: addr_t) *const u8 {
         if (is_p0(virtual_addr)) {
-            if (virtual_addr < 0x04000000) {
+            const physical_addr = self.mmu_translate_utbl(virtual_addr) catch |e| {
+                // FIXME: Handle exceptions
+                std.debug.print("Error in utlb _read: {any} at {X:0>8}\n", .{ e, virtual_addr });
+                unreachable;
+            };
+            if (physical_addr < 0x04000000) {
                 // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-                if (virtual_addr < 0x200000) {
-                    return &self.boot[virtual_addr];
-                } else if (virtual_addr < 0x200000 + 0x20000) {
-                    return &self.flash[virtual_addr - 0x200000];
+                if (physical_addr < 0x200000) {
+                    return &self.boot[physical_addr];
+                } else if (physical_addr < 0x200000 + 0x20000) {
+                    return &self.flash[physical_addr - 0x200000];
                 }
-                return &self.hardware_registers[virtual_addr - 0x005F6800];
-            } else if (virtual_addr < 0x08000000) {
+                return &self.hardware_registers[physical_addr - 0x005F6800];
+            } else if (physical_addr < 0x08000000) {
                 // Area 1 - Video RAM
-                std.debug.print("Invalid _read, Area 1: {X:0>8}\n", .{virtual_addr});
+                std.debug.print("Invalid _read, Area 1: {X:0>8}\n", .{physical_addr});
                 unreachable;
-            } else if (virtual_addr < 0x0C000000) {
+            } else if (physical_addr < 0x0C000000) {
                 // Area 2 - Nothing
-                std.debug.print("Invalid _read, Area 2: {X:0>8}\n", .{virtual_addr});
+                std.debug.print("Invalid _read, Area 2: {X:0>8}\n", .{physical_addr});
                 unreachable;
-            } else if (virtual_addr < 0x10000000) {
+            } else if (physical_addr < 0x10000000) {
                 // Area 3 - System RAM (16MB)
-                return &self.ram[(virtual_addr - 0x0C000000) % self.ram.len];
-            } else if (virtual_addr < 0x14000000) {
+                return &self.ram[(physical_addr - 0x0C000000) % self.ram.len];
+            } else if (physical_addr < 0x14000000) {
                 // Area 4 - Tile accelerator command input
-                std.debug.print("Unimplemented _read, Area 4: {X:0>8}\n", .{virtual_addr});
+                std.debug.print("Unimplemented _read, Area 4: {X:0>8}\n", .{physical_addr});
                 unreachable;
-            } else if (virtual_addr < 0x18000000) {
+            } else if (physical_addr < 0x18000000) {
                 // Area 5 - Expansion (modem) port
                 std.debug.print("Invalid _read, Area 5: {X:0>8}\n", .{virtual_addr});
                 unreachable;
-            } else if (virtual_addr < 0x1C000000) {
+            } else if (physical_addr < 0x1C000000) {
                 // Area 6 - Nothing
-                std.debug.print("Invalid _read, Area 6: {X:0>8}\n", .{virtual_addr});
+                std.debug.print("Invalid _read, Area 6: {X:0>8}\n", .{physical_addr});
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
-                std.debug.assert(self.sr.md);
-                return &self.area7[virtual_addr - 0x1C000000];
+                std.debug.assert(self.sr.md == 1);
+                return &self.area7[physical_addr - 0x1C000000];
             }
         } else if (is_p1(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            // TODO: Cache control, although it's probably not needed.
+            // !CCR.OCE? => P2
+            // !CCR.CB? => Cache access in write-through mode
+            //     else => Cache access in copy-back mode
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else if (is_p2(virtual_addr)) {
-            std.debug.assert(self.sr.md);
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else if (is_p3(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else if (is_p4(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._read(virtual_addr & 0x01FFFFFFF);
         } else {
             unreachable;
@@ -467,20 +516,20 @@ pub const SH4 = struct {
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
-                std.debug.assert(self.sr.md);
+                std.debug.assert(self.sr.md == 1);
                 return &self.area7[virtual_addr - 0x1C000000];
             }
         } else if (is_p1(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._write(virtual_addr & 0x01FFFFFFF);
         } else if (is_p2(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._write(virtual_addr & 0x01FFFFFFF);
         } else if (is_p3(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._write(virtual_addr & 0x01FFFFFFF);
         } else if (is_p4(virtual_addr)) {
-            std.debug.assert(self.sr.md);
+            std.debug.assert(self.sr.md == 1);
             return self._write(virtual_addr & 0x01FFFFFFF);
         } else {
             unreachable;
@@ -518,7 +567,6 @@ pub const SH4 = struct {
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
-        std.debug.print("read32: {X:0>8}\n", .{virtual_addr});
         return @as(*const u32, @alignCast(@ptrCast(
             self._read(virtual_addr),
         ))).*;
@@ -662,21 +710,15 @@ fn movl_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movb_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movw_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movl_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_rm_at_rn(cpu: *SH4, opcode: Instr) void {
@@ -706,15 +748,15 @@ fn movw_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
+    if (opcode.nmd.n != opcode.nmd.m) {
+        cpu.R(opcode.nmd.m).* += 4;
+    }
 }
 
 fn movb_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* -= 1;
+    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
@@ -1186,31 +1228,36 @@ fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
     // TODO: Possible Exceptions
     // Slot illegal instruction exception
 }
-fn jsr_Rm(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+// Makes a delayed branch to the subroutine procedure at the specified address after execution of the following instruction.
+// Return address (PC + 4) is saved in PR, and a branch is made to the address indicated by general register Rm. JSR is used in combination with RTS for subroutine procedure calls.
+// Note: As this is a delayed branch instruction, the instruction following this instruction is executed before the branch destination instruction.
+// Interrupts are not accepted between this instruction and the following instruction.
+// If the following instruction is a branch instruction, it is identified as a slot illegal instruction.
+fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
+    const delay_slot = cpu.pc + 2;
+    cpu.pr = cpu.pc + 4;
+    cpu.pc = cpu.R(opcode.nmd.n).* - 2 - 2; // -2 To account for both the standard +2, and the delayed slot +2
+    cpu._execute(delay_slot);
 }
 fn rts(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const delay_slot = cpu.pc + 2;
+    cpu.pc = cpu.pr - 2; // _execute will add 2
+    cpu._execute(delay_slot);
 }
 
-fn ldc_Rm_SR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.sr.md == 1); // This instruction is only usable in privileged mode.
+    // TODO: Issuing this instruction in user mode will cause an illegal instruction exception.
+    cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F);
 }
 fn ldc_Rm_VBR(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
     @panic("Unimplemented");
 }
-fn ldc_Rm_DBR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
+    cpu.dbr = cpu.R(opcode.nmd.n).*;
 }
 fn lds_Rm_PR(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1449,12 +1496,12 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = bsr_label, .name = "bsr label", .privileged = false },
     .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rm, .name = "bsrf Rm", .privileged = false },
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRm, .name = "jmp @Rm", .privileged = false },
-    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rm, .name = "jsr @Rm", .privileged = false },
+    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rn, .name = "jsr @Rn", .privileged = false },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = rts, .name = "rts", .privileged = false },
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrmac", .privileged = false },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrs", .privileged = false },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrt", .privileged = false },
-    .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rm_SR, .name = "ldc Rm,SR", .privileged = true },
+    .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true },
     .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SR", .privileged = true },
     .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false },
     .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,GBR", .privileged = false },
@@ -1464,7 +1511,7 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0100000000110111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SSR", .privileged = true },
     .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SPC", .privileged = true },
     .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SPC", .privileged = true },
-    .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rm_DBR, .name = "ldc Rm,DBR", .privileged = true },
+    .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true },
     .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,DBR", .privileged = true },
     .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc Rm,Rn_BANK", .privileged = true },
     .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc.l @Rm+,Rn_BANK", .privileged = true },
@@ -1770,6 +1817,7 @@ test "boot" {
     cpu.execute(); // mova 0x8C0100E0, R0
 
     for (0..16) |_| {
+        try std.testing.expect(cpu.pc == 0x800000BE);
         cpu.execute(); // dt R6
         cpu.execute(); // mov.w @R0+, R1
         cpu.execute(); // mov.w R1, @-R3
@@ -1778,4 +1826,9 @@ test "boot" {
 
     cpu.execute(); // mov.l @R3, R1
     cpu.execute(); // jmp @R3
+    try std.testing.expect(cpu.pc == 0x8C0000E0);
+
+    cpu.execute(); //
+
+    cpu.execute(); //
 }
