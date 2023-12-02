@@ -363,6 +363,7 @@ pub const SH4 = struct {
 
     pub fn execute(self: *@This()) void {
         self._execute(self.pc);
+        self.pc += 2;
     }
 
     pub fn _execute(self: *@This(), addr: addr_t) void {
@@ -373,7 +374,6 @@ pub const SH4 = struct {
         Opcodes[JumpTable[opcode]].fn_(self, instr);
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
-        self.pc += 2;
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -652,6 +652,12 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
+    pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+        @as(*u64, @alignCast(@ptrCast(
+            self._write(virtual_addr),
+        ))).* = value;
+    }
+
     pub fn prefetch_operand_cache_block(self: *@This(), virtual_addr: addr_t) void {
         _ = self;
         // TODO: (Rn) → operand cache
@@ -851,21 +857,15 @@ fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + cpu.R(0).*)));
 }
 
-fn movw_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + cpu.R(0).*)));
 }
 
 fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + cpu.R(0).*);
 }
 
 fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
@@ -884,36 +884,24 @@ fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
-fn movb_atdispoGBR_R0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + opcode.nd8.d)));
 }
-fn movw_atdispoGBR_R0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movw_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (opcode.nd8.d << 1))));
 }
-fn movl_atdispoGBR_R0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movl_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+    cpu.R(0).* = cpu.read32(cpu.gbr + (opcode.nd8.d << 2));
 }
 
-fn movb_R0_atdispoGBR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movb_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
-fn movw_R0_atdispoGBR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movw_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
 }
-fn movl_R0_atdispoGBR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
 }
 
 fn movt_Rn(cpu: *SH4, opcode: Instr) void {
@@ -941,9 +929,7 @@ fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* += cpu.R(opcode.nmd.m).*;
 }
 
 fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
@@ -957,12 +943,11 @@ fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+// Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.
+// If they are not equal the T bit is cleared. The contents of R0 are not changed.
 fn cmpeq_imm_r0(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.t = (cpu.R(0).* == sign_extension_u8(opcode.nd8.d));
 }
-
 fn cmpeq_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* == cpu.R(opcode.nmd.m).*);
 }
@@ -988,11 +973,11 @@ fn cmppl_Rn(cpu: *SH4, opcode: Instr) void {
 fn cmppz_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (as_i32(cpu.R(opcode.nmd.n).*) >= 0);
 }
-
+// Compares general registers Rn and Rm, and sets the T bit if any of the 4 bytes in Rn are equal to the corresponding byte in Rm.
 fn cmpstr_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const l = cpu.R(opcode.nmd.n).*;
+    const r = cpu.R(opcode.nmd.m).*;
+    cpu.sr.t = (l & 0xFF000000 == r & 0xFF000000) or (l & 0x00FF0000 == r & 0x00FF0000) or (l & 0x0000FF00 == r & 0x0000FF00) or (l & 0x000000FF == r & 0x000000FF);
 }
 
 fn div0s_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1185,27 +1170,33 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 16;
 }
 
+fn d8_label(cpu: *SH4, opcode: Instr) void {
+    const displacement = sign_extension_u8(opcode.nd8.d);
+    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+    // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+    pc += 4 + (displacement << 1) - 2;
+    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+}
+
+fn d12_label(cpu: *SH4, opcode: Instr) void {
+    const displacement = sign_extension_u12(opcode.d12.d);
+    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+    pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
+    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+}
+
 fn bf_label(cpu: *SH4, opcode: Instr) void {
     if (!cpu.sr.t) {
-        const displacement = sign_extension_u8(opcode.nd8.d);
-        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-        // -2 to account for the generic, inavoidable pc advancement of the current implementation.
-        pc += 4 + (displacement << 1) - 2;
-        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+        d8_label(cpu, opcode);
     }
 }
 fn bfs_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     if (!cpu.sr.t) {
-        const displacement = sign_extension_u8(opcode.nd8.d);
-        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-        // -2 to account for the generic, inavoidable pc advancement of the current implementation, -2 for the delayed slot execute.
-        pc += 4 + (displacement << 1) - 2 - 2;
-        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+        d8_label(cpu, opcode);
     } else {
-        cpu.pc += 2;
+        cpu.pc += 2; // Skip delay slot
     }
-    // cpu.pc += 2; // Execute does it already.
     cpu._execute(delay_slot);
 
     // TODO: Possible Exceptions
@@ -1213,10 +1204,7 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
 }
 fn bt_label(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.t) {
-        const displacement = sign_extension_u8(opcode.nd8.d);
-        var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-        pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
-        cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+        d8_label(cpu, opcode);
     }
     // TODO: Possible Exceptions
     // Slot illegal instruction exception
@@ -1228,26 +1216,24 @@ fn bts_label(cpu: *SH4, opcode: Instr) void {
 }
 fn bra_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    const displacement = sign_extension_u12(opcode.d12.d);
-    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
-    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    d12_label(cpu, opcode);
     cpu._execute(delay_slot);
 }
 fn bsr_label(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
-}
-fn bsrf_Rm(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
-}
-fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    //             Yes, it's n.
-    cpu.pc = cpu.R(opcode.nmd.n).* - 4; // -4 To account for both the standard +2, and the delayed slot +2
+    cpu.pr = cpu.pc + 4;
+    d12_label(cpu, opcode);
+    cpu._execute(delay_slot);
+}
+fn bsrf_Rn(cpu: *SH4, opcode: Instr) void {
+    const delay_slot = cpu.pc + 2;
+    cpu.pr = cpu.pc + 4;
+    cpu.pc += 4 + cpu.R(opcode.nmd.n).* - 2; // execute will allready add +2
+    cpu._execute(delay_slot);
+}
+fn jmp_atRn(cpu: *SH4, opcode: Instr) void {
+    const delay_slot = cpu.pc + 2;
+    cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
     cpu._execute(delay_slot);
 
     // TODO: Possible Exceptions
@@ -1261,20 +1247,19 @@ fn jmp_atRm(cpu: *SH4, opcode: Instr) void {
 fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
-    cpu.pc = cpu.R(opcode.nmd.n).* - 2 - 2; // -2 To account for both the standard +2, and the delayed slot +2
+    cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
     cpu._execute(delay_slot);
 }
 fn rts(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     const delay_slot = cpu.pc + 2;
-    cpu.pc = cpu.pr - 2; // _execute will add 2
+    cpu.pc = cpu.pr - 2; // execute will add +2
     cpu._execute(delay_slot);
 }
 
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
     // TODO: Issuing this instruction in user mode will cause an illegal instruction exception.
     std.debug.assert(cpu.sr.md == 1); // This instruction is only usable in privileged mode.
-    std.debug.print("  SR Overwrite: ({x:0>8}) {any}\n", .{ @as(u32, @bitCast(cpu.sr)), cpu.sr });
     cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
 fn ldcl_at_Rn_inc_sr(cpu: *SH4, opcode: Instr) void {
@@ -1330,12 +1315,10 @@ fn lds_Rn_fpscr(cpu: *SH4, opcode: Instr) void {
 }
 fn ldsl_at_Rn_inc_fpscr(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
-    std.debug.print("  FPSCR: {x:0>8}, {any}\n", .{ @as(u32, @bitCast(cpu.fpscr)), cpu.fpscr });
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
-    std.debug.print("  FPUL: {x:0>8}, {any}\n", .{ @as(u32, @bitCast(cpu.fpul)), cpu.fpul });
     cpu.R(opcode.nmd.n).* += 4;
 }
 
@@ -1363,10 +1346,8 @@ fn rte(cpu: *SH4, opcode: Instr) void {
     _ = cpu;
     @panic("Unimplemented");
 }
-fn sets(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn sets(cpu: *SH4, _: Instr) void {
+    cpu.sr.s = true;
 }
 fn sett(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1375,14 +1356,28 @@ fn sett(cpu: *SH4, opcode: Instr) void {
 }
 
 fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = @bitCast(cpu.sr);
+}
+fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.tbr;
+}
+fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.gbr;
 }
 fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.vbr;
+}
+fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.sgr;
+}
+fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.ssr;
+}
+fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.spc;
+}
+fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.dbr;
 }
 
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1402,23 +1397,23 @@ fn sts_l_MACL_atRn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = cpu.pr;
 }
-fn sts_l_PR_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn sts_l_PR_atRn8dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
 
 fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = cpu.FR(opcode.nmd.m).*;
+    } else {
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+    }
 }
 fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
-    std.debug.print(" ({d}) F{d}: {x:0>8}, {any}\n", .{ cpu.fpscr.sz, opcode.nmd.n, @as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)), cpu.FR(opcode.nmd.n).* });
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
@@ -1427,6 +1422,16 @@ fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         cpu.R(opcode.nmd.m).* += 8;
+    }
+}
+fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
+    // Single-precision
+    if (cpu.fpscr.sz == 0) {
+        cpu.R(opcode.nmd.n).* -= 4;
+        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+    } else { // Double-precision
+        cpu.R(opcode.nmd.n).* -= 8;
+        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m).*));
     }
 }
 fn fmov_DRm_DRn(cpu: *SH4, opcode: Instr) void {
@@ -1491,17 +1496,17 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1000000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_at_dispRn, .name = "mov.w R0,@(disp,Rn)", .privileged = false },
     .{ .code = 0b0001000000000000, .mask = 0b0000111111111111, .fn_ = movl_Rm_atdispRn, .name = "mov.l Rm,@(disp,Rn)", .privileged = false },
     .{ .code = 0b0000000000001100, .mask = 0b0000111111110000, .fn_ = movb_atR0Rm_rn, .name = "mov.b @(R0,Rm),Rn", .privileged = false },
-    .{ .code = 0b0000000000001101, .mask = 0b0000111111110000, .fn_ = movw_atR0Rm_rn, .name = "mov.w @(R0,Rm),Rn", .privileged = false },
+    .{ .code = 0b0000000000001101, .mask = 0b0000111111110000, .fn_ = movw_atR0Rm_Rn, .name = "mov.w @(R0,Rm),Rn", .privileged = false },
     .{ .code = 0b0000000000001110, .mask = 0b0000111111110000, .fn_ = movl_atR0Rm_rn, .name = "mov.l @(R0,Rm),Rn", .privileged = false },
     .{ .code = 0b0000000000000100, .mask = 0b0000111111110000, .fn_ = movb_Rm_atR0Rn, .name = "mov.b Rm,@(R0,Rn)", .privileged = false },
     .{ .code = 0b0000000000000101, .mask = 0b0000111111110000, .fn_ = movw_Rm_atR0Rn, .name = "mov.w Rm,@(R0,Rn)", .privileged = false },
     .{ .code = 0b0000000000000110, .mask = 0b0000111111110000, .fn_ = movl_Rm_atR0Rn, .name = "mov.l Rm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdispoGBR_R0, .name = "mov.b @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdispoGBR_R0, .name = "mov.w @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdispoGBR_R0, .name = "mov.l @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdispoGBR, .name = "mov.b R0,@(disp,GBR)", .privileged = false },
-    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdispoGBR, .name = "mov.w R0,@(disp,GBR)", .privileged = false },
-    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdispoGBR, .name = "mov.l R0,@(disp,GBR)", .privileged = false },
+    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdisp_GBR_R0, .name = "mov.b @(disp,GBR),R0", .privileged = false },
+    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdisp_GBR_R0, .name = "mov.w @(disp,GBR),R0", .privileged = false },
+    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdisp_GBR_R0, .name = "mov.l @(disp,GBR),R0", .privileged = false },
+    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdisp_GBR, .name = "mov.b R0,@(disp,GBR)", .privileged = false },
+    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdisp_GBR, .name = "mov.w R0,@(disp,GBR)", .privileged = false },
+    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdisp_GBR, .name = "mov.l R0,@(disp,GBR)", .privileged = false },
     .{ .code = 0b0000000000101001, .mask = 0b0000111100000000, .fn_ = movt_Rn, .name = "movt Rn", .privileged = false },
     .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = swapb, .name = "swap.b Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = swapw, .name = "swap.w Rm,Rn", .privileged = false },
@@ -1576,8 +1581,8 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = bra_label, .name = "bra label", .privileged = false },
     .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "braf Rm", .privileged = false },
     .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = bsr_label, .name = "bsr label", .privileged = false },
-    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rm, .name = "bsrf Rm", .privileged = false },
-    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRm, .name = "jmp @Rm", .privileged = false },
+    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rn, .name = "bsrf Rn", .privileged = false },
+    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRn, .name = "jmp @Rn", .privileged = false },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rn, .name = "jsr @Rn", .privileged = false },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = rts, .name = "rts", .privileged = false },
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrmac", .privileged = false },
@@ -1626,7 +1631,7 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SSR,@-Rn", .privileged = true },
     .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SPC,Rn", .privileged = true },
     .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SPC,@-Rn", .privileged = true },
-    .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc DBR,Rn", .privileged = true },
+    .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true },
     .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l DBR,@-Rn", .privileged = true },
     .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true },
     .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true },
@@ -1635,13 +1640,13 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false },
     .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = sts_l_MACL_atRn, .name = "sts.l MACL,@-Rn", .privileged = false },
     .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false },
-    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn, .name = "sts.l PR,@-Rn", .privileged = false },
+    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn8dec, .name = "sts.l PR,@-Rn", .privileged = false },
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false },
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false },
     .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @Rm,FRn", .privileged = false },
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@Rn", .privileged = false },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false },
-    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@-Rn", .privileged = false },
+    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
     .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @(R0,Rm),FRn", .privileged = false },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
     .{ .code = 0b1111000000001100, .mask = 0b0000111011100000, .fn_ = fmov_DRm_DRn, .name = "fmov DRm,DRn", .privileged = false },
@@ -1754,12 +1759,14 @@ test "ldc Rn,SR" {
     write_and_execute(&cpu, 0b1110_0000_00000011); // mov #3,R0
     try std.testing.expect(cpu.R(0).* == 0b000000011);
     write_and_execute(&cpu, 0b0100_0000_00001110); // ldc R0,SR
-    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b000000011 & 0x700083F3);
+    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 
-    write_and_execute(&cpu, 0b1110_1111_00000000); // mov #3,R15
-    try std.testing.expect(cpu.R(15).* == 0b000000011);
+    cpu.sr = .{}; // Reset SR
+
+    write_and_execute(&cpu, 0b1110_1111_00000011); // mov #3,R15
+    try std.testing.expect(cpu.R(15).* == 0b00000011);
     write_and_execute(&cpu, 0b0100_1111_00001110); // ldc R15,SR
-    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b000000011 & 0x700083F3);
+    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 }
 
 test "boot" {

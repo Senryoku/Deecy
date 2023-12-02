@@ -11,7 +11,7 @@ pub fn main() !void {
 
     for (0..8000000) |_| {
         if (cpu.pc == 0x8C0000E8) cpu.debug_trace = false;
-        if (cpu.pc > 0x8C0000F0) cpu.debug_trace = true;
+        if (cpu.pc > 0x8C00B6BC) cpu.debug_trace = true;
         cpu.execute();
     }
 }
