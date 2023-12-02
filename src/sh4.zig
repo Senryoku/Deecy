@@ -51,9 +51,9 @@ const FPSCR = packed struct {
     cause_invalid_operation: bool = false,
     cause_fpu_error: bool = false,
     dn: bool = false, // Denormalization mode
-    pr: bool = true, // Precision mode
-    sz: bool = false, // Transfer size mode
-    fr: bool = false, // Floating-point register bank
+    pr: u1 = 1, // Precision mode
+    sz: u1 = 0, // Transfer size mode
+    fr: u1 = 0, // Floating-point register bank
 
     _: u10 = undefined, // Reserved
 };
@@ -184,9 +184,9 @@ pub const SH4 = struct {
     fpscr: FPSCR = .{}, // Floating-point status/control register
     fpul: u32 = undefined, // Floating-point communication register
 
-    fp_banks: [2]union {
+    fp_banks: [2]extern union {
         fr: [16]f32,
-        xf: [8]f64,
+        dr: [8]f64,
         qf: [4]f128,
     } = undefined,
 
@@ -339,10 +339,26 @@ pub const SH4 = struct {
         // BCR2 Held
     }
 
-    pub fn R(self: *@This(), r: u5) *u32 {
-        if (r > 7) return &self.r_8_15[r - 8];
+    pub fn R(self: *@This(), r: u4) *u32 {
+        if (r >= 8) return &self.r_8_15[r - 8];
+        // Note: Rather than checking all the time, we could swap only once
+        //       when SR is updated.
         if (self.sr.md == 1 and self.sr.rb == 1) return &self.r_bank1[r];
         return &self.r_bank0[r];
+    }
+
+    pub fn FR(self: *@This(), r: u4) *f32 {
+        return &self.fp_banks[self.fpscr.fr].fr[r];
+    }
+
+    pub fn DR(self: *@This(), r: u4) *f64 {
+        std.debug.assert(r < 8);
+        return &self.fp_banks[self.fpscr.fr].dr[r];
+    }
+
+    pub fn QR(self: *@This(), r: u4) *f32 {
+        std.debug.assert(r < 4);
+        return &self.fp_banks[self.fpscr.fr].qr[r];
     }
 
     pub fn execute(self: *@This()) void {
@@ -434,6 +450,10 @@ pub const SH4 = struct {
                 std.debug.print("Error in utlb _read: {any} at {X:0>8}\n", .{ e, virtual_addr });
                 unreachable;
             };
+
+            if (physical_addr != virtual_addr)
+                std.debug.print("  UTLB Hit: {x:0>8} => {x:0>8}\n", .{ virtual_addr, physical_addr });
+
             if (physical_addr < 0x04000000) {
                 // Area 0 - Boot ROM, Flash ROM, Hardware Registers
                 if (physical_addr < 0x200000) {
@@ -572,6 +592,12 @@ pub const SH4 = struct {
         ))).*;
     }
 
+    pub fn read64(self: @This(), virtual_addr: addr_t) u64 {
+        return @as(*const u64, @alignCast(@ptrCast(
+            self._read(virtual_addr),
+        ))).*;
+    }
+
     pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
         @as(*u8, @alignCast(@ptrCast(
             self._write(virtual_addr),
@@ -686,7 +712,7 @@ fn mov_imm_rn(cpu: *SH4, opcode: Instr) void {
 // Stores the effective address of the source operand into general register R0.
 // The 8-bit displacement is zero-extended and quadrupled. Consequently, the relative interval from the operand is PC + 1020 bytes.
 // The PC is the address four bytes after this instruction, but the lowest two bits of the PC are fixed at 00.
-// If this instruction is executed in a delay slot, a slot illegal instruction exception will be generated.
+// TODO: If this instruction is executed in a delay slot, a slot illegal instruction exception will be generated.
 fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = (cpu.pc & 0xFFFFFFFC) + 4 + (zero_extend(opcode.nd8.d) << 2);
 }
@@ -771,7 +797,6 @@ fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
-    std.debug.print("  mov.l Rm,@-Rn - R{d}: 0x{x}, R{d}: 0x{x}\n", .{ opcode.nmd.n, cpu.R(opcode.nmd.n).*, opcode.nmd.m, cpu.R(opcode.nmd.m).* });
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
@@ -1162,7 +1187,7 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
 
 fn bf_label(cpu: *SH4, opcode: Instr) void {
     if (!cpu.sr.t) {
-        var displacement = sign_extension_u8(opcode.nd8.d);
+        const displacement = sign_extension_u8(opcode.nd8.d);
         var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
         // -2 to account for the generic, inavoidable pc advancement of the current implementation.
         pc += 4 + (displacement << 1) - 2;
@@ -1172,7 +1197,7 @@ fn bf_label(cpu: *SH4, opcode: Instr) void {
 fn bfs_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     if (!cpu.sr.t) {
-        var displacement = sign_extension_u8(opcode.nd8.d);
+        const displacement = sign_extension_u8(opcode.nd8.d);
         var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
         // -2 to account for the generic, inavoidable pc advancement of the current implementation, -2 for the delayed slot execute.
         pc += 4 + (displacement << 1) - 2 - 2;
@@ -1188,7 +1213,7 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
 }
 fn bt_label(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.t) {
-        var displacement = sign_extension_u8(opcode.nd8.d);
+        const displacement = sign_extension_u8(opcode.nd8.d);
         var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
         pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
         cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
@@ -1203,7 +1228,7 @@ fn bts_label(cpu: *SH4, opcode: Instr) void {
 }
 fn bra_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    var displacement = sign_extension_u12(opcode.d12.d);
+    const displacement = sign_extension_u12(opcode.d12.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
     pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
@@ -1247,32 +1272,77 @@ fn rts(cpu: *SH4, opcode: Instr) void {
 }
 
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
-    std.debug.assert(cpu.sr.md == 1); // This instruction is only usable in privileged mode.
     // TODO: Issuing this instruction in user mode will cause an illegal instruction exception.
-    cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F);
+    std.debug.assert(cpu.sr.md == 1); // This instruction is only usable in privileged mode.
+    std.debug.print("  SR Overwrite: ({x:0>8}) {any}\n", .{ @as(u32, @bitCast(cpu.sr)), cpu.sr });
+    cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
-fn ldc_Rm_VBR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn ldcl_at_Rn_inc_sr(cpu: *SH4, opcode: Instr) void {
+    cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
+    std.debug.print("  SR Overwrite: ({x:0>8}) {any}\n", .{ @as(u32, @bitCast(cpu.sr)), cpu.sr });
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldcl_at_Rn_inc_gbr(cpu: *SH4, opcode: Instr) void {
+    cpu.gbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) void {
+    cpu.vbr = cpu.R(opcode.nmd.n).*;
+}
+fn ldcl_at_Rn_inc_vbr(cpu: *SH4, opcode: Instr) void {
+    cpu.vbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldcl_at_Rn_inc_ssr(cpu: *SH4, opcode: Instr) void {
+    cpu.ssr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldcl_at_Rn_inc_spc(cpu: *SH4, opcode: Instr) void {
+    cpu.spc = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
+}
+fn ldcl_at_Rn_inc_dbr(cpu: *SH4, opcode: Instr) void {
+    cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldsl_at_Rn_inc_mach(cpu: *SH4, opcode: Instr) void {
+    cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*) | 0xFFFFFC00;
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldsl_at_Rn_inc_macl(cpu: *SH4, opcode: Instr) void {
+    cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rm_PR(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
     @panic("Unimplemented");
 }
-fn ldsl_atRminc_PR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
+    cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.R(opcode.nmd.n).* += 4;
 }
-fn lds_Rm_FPSCR(cpu: *SH4, opcode: Instr) void {
+fn lds_Rn_fpscr(cpu: *SH4, opcode: Instr) void {
+    cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
+}
+fn ldsl_at_Rn_inc_fpscr(cpu: *SH4, opcode: Instr) void {
+    cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
+    std.debug.print("  FPSCR: {x:0>8}, {any}\n", .{ @as(u32, @bitCast(cpu.fpscr)), cpu.fpscr });
+    cpu.R(opcode.nmd.n).* += 4;
+}
+fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
+    cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
+    std.debug.print("  FPUL: {x:0>8}, {any}\n", .{ @as(u32, @bitCast(cpu.fpul)), cpu.fpul });
+    cpu.R(opcode.nmd.n).* += 4;
+}
+
+// Inverts the FR bit in floating-point register FPSCR.
+fn frchg(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.fpscr.fr +%= 1;
 }
 
 fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1346,6 +1416,18 @@ fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
     @panic("Unimplemented");
+}
+fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
+    std.debug.print(" ({d}) F{d}: {x:0>8}, {any}\n", .{ cpu.fpscr.sz, opcode.nmd.n, @as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)), cpu.FR(opcode.nmd.n).* });
+    // Single-precision
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+        cpu.R(opcode.nmd.m).* += 4;
+    } else { // Double-precision
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        cpu.R(opcode.nmd.m).* += 8;
+    }
 }
 fn fmov_DRm_DRn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1502,25 +1584,25 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrs", .privileged = false },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrt", .privileged = false },
     .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true },
-    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SR", .privileged = true },
+    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true },
     .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false },
-    .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,GBR", .privileged = false },
-    .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rm_VBR, .name = "ldc Rm,VBR", .privileged = true },
-    .{ .code = 0b0100000000100111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,VBR", .privileged = true },
+    .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_gbr, .name = "ldc.l @Rn+,GBR", .privileged = false },
+    .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_VBR, .name = "ldc Rn,VBR", .privileged = true },
+    .{ .code = 0b0100000000100111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_vbr, .name = "ldc.l @Rn+,VBR", .privileged = true },
     .{ .code = 0b0100000000111110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SSR", .privileged = true },
-    .{ .code = 0b0100000000110111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SSR", .privileged = true },
+    .{ .code = 0b0100000000110111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_ssr, .name = "ldc.l @Rn+,SSR", .privileged = true },
     .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SPC", .privileged = true },
-    .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,SPC", .privileged = true },
+    .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_spc, .name = "ldc.l @Rn+,SPC", .privileged = true },
     .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true },
-    .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc.l @Rm+,DBR", .privileged = true },
+    .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_dbr, .name = "ldc.l @Rn+,DBR", .privileged = true },
     .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc Rm,Rn_BANK", .privileged = true },
     .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc.l @Rm+,Rn_BANK", .privileged = true },
     .{ .code = 0b0100000000001010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACH", .privileged = false },
-    .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds.l @Rm+,MACH", .privileged = false },
+    .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_mach, .name = "lds.l @Rn+,MACH", .privileged = false },
     .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACL", .privileged = false },
-    .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds.l @Rm+,MACL", .privileged = false },
+    .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_macl, .name = "lds.l @Rn+,MACL", .privileged = false },
     .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rm_PR, .name = "lds Rm,PR", .privileged = false },
-    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRminc_PR, .name = "lds.l @Rm+,PR", .privileged = false },
+    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
     .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false },
     .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false },
@@ -1558,7 +1640,7 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false },
     .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @Rm,FRn", .privileged = false },
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@Rn", .privileged = false },
-    .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @Rm+,FRn", .privileged = false },
+    .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@-Rn", .privileged = false },
     .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @(R0,Rm),FRn", .privileged = false },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
@@ -1609,60 +1691,75 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1111000000111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "ftrc DRm,FPUL", .privileged = false },
     .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvds DRm,FPUL", .privileged = false },
     .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvsd FPUL,DRn", .privileged = false },
-    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rm_FPSCR, .name = "lds Rm,FPSCR", .privileged = false },
+    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_fpscr, .name = "lds Rn,FPSCR", .privileged = false },
     .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPSCR,Rn", .privileged = false },
-    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds.l @Rm+,FPSCR", .privileged = false },
+    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpscr, .name = "lds.l @Rn+,FPSCR", .privileged = false },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPSCR,@-Rn", .privileged = false },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,FPUL", .privileged = false },
     .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPUL,Rn", .privileged = false },
-    .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds.l @Rm+,FPUL", .privileged = false },
+    .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpul, .name = "lds.l @Rn+,FPUL", .privileged = false },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPUL,@-Rn", .privileged = false },
-    .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "frchg", .privileged = false },
+    .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "fschg", .privileged = false },
 };
+
+fn write_and_execute(cpu: *SH4, code: u16) void {
+    cpu.write16(cpu.pc, code);
+    cpu.execute();
+}
 
 test "mov #imm,Rn" {
     var cpu: SH4 = .{};
     try cpu.init();
     defer cpu.deinit();
-
     cpu.pc = 0x0C000000;
 
-    cpu.write16(0x0C000000, 0b1110_0000_00000000);
-    cpu.write16(0x0C000002, 0b1110_0000_11111111);
-    cpu.write16(0x0C000004, 0b1110_0001_00000001);
-    cpu.write16(0x0C000006, 0b1110_0010_00000010);
-    cpu.write16(0x0C000008, 0b1110_0011_00000011);
-
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0000_00000000);
     try std.testing.expect(cpu.R(0).* == 0);
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0000_11111111);
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0001_00000001);
     try std.testing.expect(cpu.R(1).* == 1);
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0010_00000010);
     try std.testing.expect(cpu.R(2).* == 2);
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0011_00000011);
     try std.testing.expect(cpu.R(3).* == 3);
+
+    write_and_execute(&cpu, 0b1110_1111_00000000); // mov #0,R15
+    try std.testing.expect(cpu.R(15).* == 0);
+    write_and_execute(&cpu, 0b1110_1111_00000001); // mov #1,R15
+    try std.testing.expect(cpu.R(15).* == 1);
 }
 
 test "mov Rm,Rn" {
     var cpu: SH4 = .{};
     try cpu.init();
     defer cpu.deinit();
-
     cpu.pc = 0x0C000000;
 
-    cpu.write16(0x0C000000, 0b1110_0000_00000000); // mov #0,R0
-    cpu.write16(0x0C000002, 0b1110_0001_00000001); // mov #1,R1
-    cpu.write16(0x0C000004, 0b0110_0000_0001_0011); // mov R1,R0
-
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0000_00000000); // mov #0,R0
     try std.testing.expect(cpu.R(0).* == 0);
-    cpu.execute();
+    write_and_execute(&cpu, 0b1110_0001_00000001); // mov #1,R1
     try std.testing.expect(cpu.R(1).* == 1);
-    cpu.execute();
+    write_and_execute(&cpu, 0b0110_0000_0001_0011); // mov R1,R0
     try std.testing.expect(cpu.R(0).* == 1);
+}
+
+test "ldc Rn,SR" {
+    var cpu: SH4 = .{};
+    try cpu.init();
+    defer cpu.deinit();
+    cpu.pc = 0x0C000000;
+
+    write_and_execute(&cpu, 0b1110_0000_00000011); // mov #3,R0
+    try std.testing.expect(cpu.R(0).* == 0b000000011);
+    write_and_execute(&cpu, 0b0100_0000_00001110); // ldc R0,SR
+    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b000000011 & 0x700083F3);
+
+    write_and_execute(&cpu, 0b1110_1111_00000000); // mov #3,R15
+    try std.testing.expect(cpu.R(15).* == 0b000000011);
+    write_and_execute(&cpu, 0b0100_1111_00001110); // ldc R15,SR
+    try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b000000011 & 0x700083F3);
 }
 
 test "boot" {
