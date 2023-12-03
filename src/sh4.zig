@@ -122,6 +122,166 @@ const MemoryRegister = enum(u32) {
     IPRA = 0xFFD00004,
     IPRB = 0xFFD00008,
     IPRC = 0xFFD0000C,
+
+    // Dreamcast specific
+
+    SB_C2DSTAT = 0x005F6800,
+    SB_C2DLEN = 0x005F6804,
+    SB_C2DST = 0x005F6808,
+    SB_SDSTAW = 0x005F6810,
+    SB_SDBAAW = 0x005F6814,
+    SB_SDWLT = 0x005F6818,
+    SB_SDLAS = 0x005F681C,
+    SB_SDST = 0x005F6820,
+    SB_DBREQM = 0x005F6840,
+    SB_BAVLWC = 0x005F6844,
+    SB_C2DPRYC = 0x005F6848,
+    SB_C2DMAXL = 0x005F684C,
+    SB_TFREM = 0x005F6880,
+    SB_LMMODE0 = 0x005F6884,
+    SB_LMMODE1 = 0x005F6888,
+    SB_FFST = 0x005F688C,
+    SB_SFRES = 0x005F6890,
+    SB_SBREV = 0x005F689C,
+    SB_RBSPLT = 0x005F68A0,
+
+    // Interrupt Control Registers
+    SB_ISTNRM = 0x005F6900,
+    SB_ISTEXT = 0x005F6904,
+    SB_ISTERR = 0x005F6908,
+    SB_IML2NRM = 0x005F6910,
+    SB_IML4NRM = 0x005F6920,
+    SB_IML6NRM = 0x005F6930,
+    SB_IML2EXT = 0x005F6914,
+    SB_IML4EXT = 0x005F6924,
+    SB_IML6EXT = 0x005F6934,
+    SB_IML2ERR = 0x005F6918,
+    SB_IML4ERR = 0x005F6928,
+    SB_IML6ERR = 0x005F6938,
+
+    // DMA Hard Trigger Control Registers
+    SB_PDTNRM = 0x005F6940,
+    SB_PDTEXT = 0x005F6944,
+    SB_G2DTNRM = 0x005F6950,
+    SB_G2DTEXT = 0x005F6954,
+
+    // Maple-DMA Control Registers
+    SB_MDSTAR = 0x005F6C04,
+    SB_MDTSEL = 0x005F6C10,
+    SB_MDEN = 0x005F6C14,
+    SB_MDST = 0x005F6C18,
+
+    // Maple Interface Block Control Registers
+    SB_MSYS = 0x005F6C80,
+    SB_MST = 0x005F6C84,
+    SB_MSHTCL = 0x005F6C88,
+
+    // Maple-DMA Secret Register
+    SB_MDAPRO = 0x005F6C8C,
+    // Maple Interface Block Hardware Control Register
+    SB_MMSEL = 0x005F6CE8,
+    // Maple-DMA Debug Registers
+    SB_MTXDAD = 0x005F6CF4,
+    SB_MRXDAD = 0x005F6CF8,
+    SB_MRXDBD = 0x005F6CFC,
+
+    // GD-DMA Control Registers
+    SB_GDSTAR = 0x005F7404,
+    SB_GDLEN = 0x005F7408,
+    SB_GDDIR = 0x005F740C,
+    SB_GDEN = 0x005F7414,
+    SB_GDST = 0x005F7418,
+    SB_G1RWC = 0x005F7484,
+    SB_G1FRC = 0x005F7488,
+    SB_G1FWC = 0x005F748C,
+    SB_G1CRC = 0x005F7490,
+    SB_G1CWC = 0x005F7494,
+    SB_G1GDRC = 0x005F74A0,
+    SB_G1GDWC = 0x005F74A4,
+    SB_G1SYSM = 0x005F74B0,
+    SB_G1CRDYC = 0x005F74B4,
+    SB_GDAPRO = 0x005F74B8,
+
+    // GD-DMA Debug Registers
+    SB_GDSTARD = 0x005F74F4,
+    SB_GDLEND = 0x005F74F8,
+
+    // G2 DMA Control Registers
+    SB_ADSTAG = 0x005F7800,
+    SB_E1STAG = 0x005F7820,
+    SB_E2STAG = 0x005F7840,
+    SB_DDSTAG = 0x005F7860,
+
+    SB_ADSTAR = 0x005F7804,
+    SB_E1STAR = 0x005F7824,
+    SB_E2STAR = 0x005F7844,
+    SB_DDSTAR = 0x005F7864,
+
+    SB_ADLEN = 0x005F7808,
+    SB_E1LEN = 0x005F7828,
+    SB_E2LEN = 0x005F7848,
+    SB_DDLEN = 0x005F7868,
+
+    SB_ADDIR = 0x005F780C,
+    SB_E1DIR = 0x005F782C,
+    SB_E2DIR = 0x005F784C,
+    SB_DDDIR = 0x005F786C,
+
+    SB_ADTSEL = 0x005F7810,
+    SB_E1TSEL = 0x005F7830,
+    SB_E2TSEL = 0x005F7850,
+    SB_DDTSEL = 0x005F7870,
+
+    SB_ADEN = 0x005F7814,
+    SB_E1EN = 0x005F7834,
+    SB_E2EN = 0x005F7854,
+    SB_DDEN = 0x005F7874,
+
+    SB_ADST = 0x005F7818,
+    SB_E1ST = 0x005F7838,
+    SB_E2ST = 0x005F7858,
+    SB_DDST = 0x005F7878,
+
+    SB_ADSUSP = 0x005F781C,
+    SB_E1SUSP = 0x005F783C,
+    SB_E2SUSP = 0x005F785C,
+    SB_DDSUSP = 0x005F787C,
+
+    // G2 I/F Block Hardware Control Registers
+    SB_G2ID = 0x005F7880,
+
+    SB_G2DSTO = 0x005F7890,
+    SB_G2TRTO = 0x005F7894,
+    SB_G2MDMTO = 0x005F7898,
+    SB_G2MDMW = 0x005F789C,
+
+    // G2-DMA Secret Registers
+    SB_G2APRO = 0x005F78BC,
+
+    // G2-DMA Debug Registers
+    SB_ADSTAGD = 0x005F78C0,
+    SB_E1STAGD = 0x005F78D0,
+    SB_E2STAGD = 0x005F78E0,
+    SB_DDSTAGD = 0x005F78F0,
+    SB_ADSTARD = 0x005F78C4,
+    SB_E1STARD = 0x005F78D4,
+    SB_E2STARD = 0x005F78E4,
+    SB_DDSTARD = 0x005F78F4,
+    SB_ADLEND = 0x005F78C8,
+    SB_E1LEND = 0x005F78D8,
+    SB_E2LEND = 0x005F78E8,
+    SB_DDLEND = 0x005F78F8,
+
+    // PVR-DMA Control Registers
+    SB_PDSTAP = 0x005F7C00,
+    SB_PDSTAR = 0x005F7C04,
+    SB_PDLEN = 0x005F7C08,
+    SB_PDDIR = 0x005F7C0C,
+    SB_PDTSEL = 0x005F7C10,
+    SB_PDEN = 0x005F7C14,
+    SB_PDST = 0x005F7C18,
+    // PVR-DMA Secret Registers
+    SB_PDAPRO = 0x005F7C80,
 };
 
 const VirtualAddr = packed union {
@@ -374,6 +534,9 @@ pub const SH4 = struct {
         Opcodes[JumpTable[opcode]].fn_(self, instr);
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
+
+        // TODO: Proper timer.
+        self.io_register(u32, MemoryRegister.TCNT0).* -= Opcodes[JumpTable[opcode]].issue_cycles;
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -631,7 +794,7 @@ pub const SH4 = struct {
         // Addresses with side effects
         // TODO: Check region/permissions?
         const addr = virtual_addr & 0x01FFFFFFF;
-        if (addr >= 0x005F6800 and addr < 0x005F6A00) {
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
                 0x005F6890 => {
@@ -642,7 +805,7 @@ pub const SH4 = struct {
                     return;
                 },
                 else => {
-                    unreachable;
+                    std.debug.print("  Write to hardware register @{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
                 },
             }
         }
@@ -929,7 +1092,7 @@ fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* += cpu.R(opcode.nmd.m).*;
+    cpu.R(opcode.nmd.n).* +%= cpu.R(opcode.nmd.m).*;
 }
 
 fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
@@ -1170,7 +1333,7 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 16;
 }
 
-fn d8_label(cpu: *SH4, opcode: Instr) void {
+inline fn d8_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u8(opcode.nd8.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
     // -2 to account for the generic, inavoidable pc advancement of the current implementation.
@@ -1178,11 +1341,18 @@ fn d8_label(cpu: *SH4, opcode: Instr) void {
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
 }
 
-fn d12_label(cpu: *SH4, opcode: Instr) void {
+inline fn d12_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u12(opcode.d12.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
     pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+}
+
+inline fn execute_delay_slot(cpu: *SH4, addr: addr_t) void {
+    // TODO: If the instruction at addr is a branch instruction,
+    // raise a Slot illegal instruction exception
+
+    cpu._execute(addr);
 }
 
 fn bf_label(cpu: *SH4, opcode: Instr) void {
@@ -1195,49 +1365,45 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
     if (!cpu.sr.t) {
         d8_label(cpu, opcode);
     } else {
-        cpu.pc += 2; // Skip delay slot
+        cpu.pc += 2;
     }
-    cpu._execute(delay_slot);
-
-    // TODO: Possible Exceptions
-    // Slot illegal instruction exception
+    execute_delay_slot(cpu, delay_slot);
 }
 fn bt_label(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.t) {
         d8_label(cpu, opcode);
     }
-    // TODO: Possible Exceptions
-    // Slot illegal instruction exception
 }
 fn bts_label(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const delay_slot = cpu.pc + 2;
+    if (cpu.sr.t) {
+        d8_label(cpu, opcode);
+    } else {
+        cpu.pc += 2;
+    }
+    execute_delay_slot(cpu, delay_slot);
 }
 fn bra_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     d12_label(cpu, opcode);
-    cpu._execute(delay_slot);
+    execute_delay_slot(cpu, delay_slot);
 }
 fn bsr_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     d12_label(cpu, opcode);
-    cpu._execute(delay_slot);
+    execute_delay_slot(cpu, delay_slot);
 }
 fn bsrf_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     cpu.pc += 4 + cpu.R(opcode.nmd.n).* - 2; // execute will allready add +2
-    cpu._execute(delay_slot);
+    execute_delay_slot(cpu, delay_slot);
 }
 fn jmp_atRn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
-    cpu._execute(delay_slot);
-
-    // TODO: Possible Exceptions
-    // Slot illegal instruction exception
+    execute_delay_slot(cpu, delay_slot);
 }
 // Makes a delayed branch to the subroutine procedure at the specified address after execution of the following instruction.
 // Return address (PC + 4) is saved in PR, and a branch is made to the address indicated by general register Rm. JSR is used in combination with RTS for subroutine procedure calls.
@@ -1248,13 +1414,21 @@ fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
-    cpu._execute(delay_slot);
+    execute_delay_slot(cpu, delay_slot);
 }
 fn rts(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
+    std.debug.print("  rts to {x:0>8}\n", .{cpu.pr});
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.pr - 2; // execute will add +2
-    cpu._execute(delay_slot);
+    execute_delay_slot(cpu, delay_slot);
+
+    // Note: (I don't know if this is actually relevant)
+    // In an RTE delay slot, status register (SR) bits are referenced as follows. In instruction access, the
+    // MD bit is used before modification, and in data access, the MD bit is accessed after
+    // modification. The other bits—S, T, M, Q, FD, BL, and RB—after modification are used for
+    // delay slot instruction execution. The STC and STC.L SR instructions access all SR bits after
+    // modification.
 }
 
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
@@ -1349,10 +1523,8 @@ fn rte(cpu: *SH4, opcode: Instr) void {
 fn sets(cpu: *SH4, _: Instr) void {
     cpu.sr.s = true;
 }
-fn sett(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn sett(cpu: *SH4, _: Instr) void {
+    cpu.sr.t = true;
 }
 
 fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1399,7 +1571,7 @@ fn sts_l_MACL_atRn(cpu: *SH4, opcode: Instr) void {
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
-fn sts_l_PR_atRn8dec(cpu: *SH4, opcode: Instr) void {
+fn sts_l_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
@@ -1466,51 +1638,53 @@ const OpcodeDescription = struct {
     fn_: *const fn (*SH4, Instr) void,
     name: []const u8,
     privileged: bool = true,
+    issue_cycles: u5 = 1,
+    latency_cycles: u5 = 1,
 };
 
 pub const Opcodes: [236]OpcodeDescription = .{
-    .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false },
-    .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false },
+    .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
 
-    .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = mov_rm_rn, .name = "mov Rm,Rn", .privileged = false },
-    .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = mov_imm_rn, .name = "mov #imm,Rn", .privileged = false },
-    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = mova_atdispPC_R0, .name = "mova @(disp,PC),R0", .privileged = false },
-    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = movw_atdispPC_Rn, .name = "mov.w @(disp,PC),Rn", .privileged = false },
-    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispPC_Rn, .name = "mov.l @(disp,PC),Rn", .privileged = false },
-    .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false },
-    .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = movw_at_rm_rn, .name = "mov.w @Rm,Rn", .privileged = false },
-    .{ .code = 0b0110000000000010, .mask = 0b0000111111110000, .fn_ = movl_at_rm_rn, .name = "mov.l @Rm,Rn", .privileged = false },
-    .{ .code = 0b0010000000000000, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn, .name = "mov.b Rm,@Rn", .privileged = false },
-    .{ .code = 0b0010000000000001, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn, .name = "mov.w Rm,@Rn", .privileged = false },
-    .{ .code = 0b0010000000000010, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn, .name = "mov.l Rm,@Rn", .privileged = false },
-    .{ .code = 0b0110000000000100, .mask = 0b0000111111110000, .fn_ = movb_at_rm_inc_rn, .name = "mov.b @Rm+,Rn", .privileged = false },
-    .{ .code = 0b0110000000000101, .mask = 0b0000111111110000, .fn_ = movw_at_rm_inc_rn, .name = "mov.w @Rm+,Rn", .privileged = false },
-    .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false },
-    .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false },
-    .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false },
-    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false },
-    .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = movb_at_dispRm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false },
-    .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = movw_at_dispRm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false },
-    .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispRm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false },
-    .{ .code = 0b1000000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_at_dispRn, .name = "mov.b R0,@(disp,Rn)", .privileged = false },
-    .{ .code = 0b1000000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_at_dispRn, .name = "mov.w R0,@(disp,Rn)", .privileged = false },
-    .{ .code = 0b0001000000000000, .mask = 0b0000111111111111, .fn_ = movl_Rm_atdispRn, .name = "mov.l Rm,@(disp,Rn)", .privileged = false },
-    .{ .code = 0b0000000000001100, .mask = 0b0000111111110000, .fn_ = movb_atR0Rm_rn, .name = "mov.b @(R0,Rm),Rn", .privileged = false },
-    .{ .code = 0b0000000000001101, .mask = 0b0000111111110000, .fn_ = movw_atR0Rm_Rn, .name = "mov.w @(R0,Rm),Rn", .privileged = false },
-    .{ .code = 0b0000000000001110, .mask = 0b0000111111110000, .fn_ = movl_atR0Rm_rn, .name = "mov.l @(R0,Rm),Rn", .privileged = false },
-    .{ .code = 0b0000000000000100, .mask = 0b0000111111110000, .fn_ = movb_Rm_atR0Rn, .name = "mov.b Rm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b0000000000000101, .mask = 0b0000111111110000, .fn_ = movw_Rm_atR0Rn, .name = "mov.w Rm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b0000000000000110, .mask = 0b0000111111110000, .fn_ = movl_Rm_atR0Rn, .name = "mov.l Rm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdisp_GBR_R0, .name = "mov.b @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdisp_GBR_R0, .name = "mov.w @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdisp_GBR_R0, .name = "mov.l @(disp,GBR),R0", .privileged = false },
-    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdisp_GBR, .name = "mov.b R0,@(disp,GBR)", .privileged = false },
-    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdisp_GBR, .name = "mov.w R0,@(disp,GBR)", .privileged = false },
-    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdisp_GBR, .name = "mov.l R0,@(disp,GBR)", .privileged = false },
-    .{ .code = 0b0000000000101001, .mask = 0b0000111100000000, .fn_ = movt_Rn, .name = "movt Rn", .privileged = false },
-    .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = swapb, .name = "swap.b Rm,Rn", .privileged = false },
-    .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = swapw, .name = "swap.w Rm,Rn", .privileged = false },
-    .{ .code = 0b0010000000001101, .mask = 0b0000111111110000, .fn_ = xtrct_Rm_Rn, .name = "xtrct Rm,Rn", .privileged = false },
+    .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = mova_atdispPC_R0, .name = "mova @(disp,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = movw_atdispPC_Rn, .name = "mov.w @(disp,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispPC_Rn, .name = "mov.l @(disp,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = movw_at_rm_rn, .name = "mov.w @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0110000000000010, .mask = 0b0000111111110000, .fn_ = movl_at_rm_rn, .name = "mov.l @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0010000000000000, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn, .name = "mov.b Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000001, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn, .name = "mov.w Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000010, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn, .name = "mov.l Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0110000000000100, .mask = 0b0000111111110000, .fn_ = movb_at_rm_inc_rn, .name = "mov.b @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
+    .{ .code = 0b0110000000000101, .mask = 0b0000111111110000, .fn_ = movw_at_rm_inc_rn, .name = "mov.w @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
+    .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
+    .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = movb_at_dispRm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = movw_at_dispRm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispRm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1000000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_at_dispRn, .name = "mov.b R0,@(disp,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1000000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_at_dispRn, .name = "mov.w R0,@(disp,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0001000000000000, .mask = 0b0000111111111111, .fn_ = movl_Rm_atdispRn, .name = "mov.l Rm,@(disp,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0000000000001100, .mask = 0b0000111111110000, .fn_ = movb_atR0Rm_rn, .name = "mov.b @(R0,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0000000000001101, .mask = 0b0000111111110000, .fn_ = movw_atR0Rm_Rn, .name = "mov.w @(R0,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0000000000001110, .mask = 0b0000111111110000, .fn_ = movl_atR0Rm_rn, .name = "mov.l @(R0,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0000000000000100, .mask = 0b0000111111110000, .fn_ = movb_Rm_atR0Rn, .name = "mov.b Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0000000000000101, .mask = 0b0000111111110000, .fn_ = movw_Rm_atR0Rn, .name = "mov.w Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0000000000000110, .mask = 0b0000111111110000, .fn_ = movl_Rm_atR0Rn, .name = "mov.l Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdisp_GBR_R0, .name = "mov.b @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdisp_GBR_R0, .name = "mov.w @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdisp_GBR_R0, .name = "mov.l @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdisp_GBR, .name = "mov.b R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdisp_GBR, .name = "mov.w R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdisp_GBR, .name = "mov.l R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0000000000101001, .mask = 0b0000111100000000, .fn_ = movt_Rn, .name = "movt Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = swapb, .name = "swap.b Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = swapw, .name = "swap.w Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000001101, .mask = 0b0000111111110000, .fn_ = xtrct_Rm_Rn, .name = "xtrct Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0011000000001100, .mask = 0b0000111111110000, .fn_ = add_rm_rn, .name = "add Rm,Rn", .privileged = false },
     .{ .code = 0b0111000000000000, .mask = 0b0000111111111111, .fn_ = add_imm_rn, .name = "add #imm,Rn", .privileged = false },
     .{ .code = 0b0011000000001110, .mask = 0b0000111111110000, .fn_ = addc_Rm_Rn, .name = "addc Rm,Rn", .privileged = false },
@@ -1527,18 +1701,18 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0010000000000111, .mask = 0b0000111111110000, .fn_ = div0s_Rm_Rn, .name = "div0s Rm,Rn", .privileged = false },
     .{ .code = 0b0000000000011001, .mask = 0b0000000000000000, .fn_ = div0u, .name = "div0u", .privileged = false },
     .{ .code = 0b0011000000000100, .mask = 0b0000111111110000, .fn_ = div1, .name = "div1 Rm,Rn", .privileged = false },
-    .{ .code = 0b0011000000001101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmuls.l Rm,Rn", .privileged = false },
-    .{ .code = 0b0011000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmulu.l Rm,Rn", .privileged = false },
+    .{ .code = 0b0011000000001101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmuls.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0011000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmulu.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0100000000010000, .mask = 0b0000111100000000, .fn_ = dt_Rn, .name = "dt Rn", .privileged = false },
     .{ .code = 0b0110000000001110, .mask = 0b0000111111110000, .fn_ = extsb_Rm_Rn, .name = "exts.b Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001111, .mask = 0b0000111111110000, .fn_ = extsw_Rm_Rn, .name = "exts.w Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001100, .mask = 0b0000111111110000, .fn_ = extub_Rm_Rn, .name = "extu.b Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001101, .mask = 0b0000111111110000, .fn_ = extuw_Rm_Rn, .name = "extu.w Rm,Rn", .privileged = false },
-    .{ .code = 0b0000000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "mac.l @Rm+,@Rn+", .privileged = false },
-    .{ .code = 0b0100000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "mac.w @Rm+,@Rn+", .privileged = false },
-    .{ .code = 0b0000000000000111, .mask = 0b0000111111110000, .fn_ = mull_Rm_Rn, .name = "mul.l Rm,Rn", .privileged = false },
-    .{ .code = 0b0010000000001111, .mask = 0b0000111111110000, .fn_ = mulsw_Rm_Rn, .name = "muls.w Rm,Rn", .privileged = false },
-    .{ .code = 0b0010000000001110, .mask = 0b0000111111110000, .fn_ = muluwRmRn, .name = "mulu.w Rm,Rn", .privileged = false },
+    .{ .code = 0b0000000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "mac.l @Rm+,@Rn+", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "mac.w @Rm+,@Rn+", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0000000000000111, .mask = 0b0000111111110000, .fn_ = mull_Rm_Rn, .name = "mul.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0010000000001111, .mask = 0b0000111111110000, .fn_ = mulsw_Rm_Rn, .name = "muls.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0010000000001110, .mask = 0b0000111111110000, .fn_ = muluwRmRn, .name = "mulu.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0110000000001011, .mask = 0b0000111111110000, .fn_ = neg_Rm_Rn, .name = "neg Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "negc Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001000, .mask = 0b0000111111110000, .fn_ = sub_Rm_Rn, .name = "sub Rm,Rn", .privileged = false },
@@ -1546,18 +1720,18 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "subv Rm,Rn", .privileged = false },
     .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = and_Rm_Rn, .name = "and Rm,Rn", .privileged = false },
     .{ .code = 0b1100100100000000, .mask = 0b0000000011111111, .fn_ = and_imm_R0, .name = "and #imm,R0", .privileged = false },
-    .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "and.b #imm,@(R0,GBR)", .privileged = false },
+    .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "and.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "not Rm,Rn", .privileged = false },
     .{ .code = 0b0010000000001011, .mask = 0b0000111111110000, .fn_ = or_Rm_Rn, .name = "or Rm,Rn", .privileged = false },
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = or_imm_r0, .name = "or #imm,R0", .privileged = false },
-    .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "or.b #imm,@(R0,GBR)", .privileged = false },
-    .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "tas.b @Rn", .privileged = false },
+    .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "tas.b @Rn", .privileged = false, .issue_cycles = 5, .latency_cycles = 5 },
     .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = tst_Rm_Rn, .name = "tst Rm,Rn", .privileged = false },
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = tst_imm_r0, .name = "tst #imm,R0", .privileged = false },
-    .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "tst.b #imm,@(R0,GBR)", .privileged = false },
+    .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "tst.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0010000000001010, .mask = 0b0000111111110000, .fn_ = xorRmRn, .name = "xor Rm,Rn", .privileged = false },
     .{ .code = 0b1100101000000000, .mask = 0b0000000011111111, .fn_ = xorImmR0, .name = "xor #imm,R0", .privileged = false },
-    .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false },
+    .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = rotcl_Rn, .name = "rotcl Rn", .privileged = false },
     .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = rotcr_Rn, .name = "rotcr Rn", .privileged = false },
     .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = rotl_Rn, .name = "rotl Rn", .privileged = false },
@@ -1579,129 +1753,134 @@ pub const Opcodes: [236]OpcodeDescription = .{
     .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = bt_label, .name = "bt label", .privileged = false },
     .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = bts_label, .name = "bt/s label", .privileged = false },
     .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = bra_label, .name = "bra label", .privileged = false },
-    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "braf Rm", .privileged = false },
-    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = bsr_label, .name = "bsr label", .privileged = false },
-    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rn, .name = "bsrf Rn", .privileged = false },
-    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRn, .name = "jmp @Rn", .privileged = false },
-    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rn, .name = "jsr @Rn", .privileged = false },
-    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = rts, .name = "rts", .privileged = false },
-    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrmac", .privileged = false },
+    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "braf Rm", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = bsr_label, .name = "bsr label", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrs", .privileged = false },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrt", .privileged = false },
-    .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true },
-    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true },
-    .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false },
-    .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_gbr, .name = "ldc.l @Rn+,GBR", .privileged = false },
-    .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_VBR, .name = "ldc Rn,VBR", .privileged = true },
+    .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_gbr, .name = "ldc.l @Rn+,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_VBR, .name = "ldc Rn,VBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000100111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_vbr, .name = "ldc.l @Rn+,VBR", .privileged = true },
-    .{ .code = 0b0100000000111110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SSR", .privileged = true },
+    .{ .code = 0b0100000000111110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SSR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000110111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_ssr, .name = "ldc.l @Rn+,SSR", .privileged = true },
-    .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SPC", .privileged = true },
+    .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SPC", .privileged = true, .issue_cycles = 3, .latency_cycles = 1 },
     .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_spc, .name = "ldc.l @Rn+,SPC", .privileged = true },
-    .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true },
+    .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_dbr, .name = "ldc.l @Rn+,DBR", .privileged = true },
-    .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc Rm,Rn_BANK", .privileged = true },
+    .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc Rm,Rn_BANK", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc.l @Rm+,Rn_BANK", .privileged = true },
-    .{ .code = 0b0100000000001010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACH", .privileged = false },
+    .{ .code = 0b0100000000001010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACH", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_mach, .name = "lds.l @Rn+,MACH", .privileged = false },
-    .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACL", .privileged = false },
+    .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_macl, .name = "lds.l @Rn+,MACL", .privileged = false },
-    .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rm_PR, .name = "lds Rm,PR", .privileged = false },
-    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false },
+    .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rm_PR, .name = "lds Rm,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
-    .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false },
-    .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false },
+    .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ocbi @Rn", .privileged = false },
     .{ .code = 0b0000000010100011, .mask = 0b0000111100000000, .fn_ = ocbp_atRn, .name = "ocbp @Rn", .privileged = false },
     .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ocbwb @Rn", .privileged = false },
     .{ .code = 0b0000000010000011, .mask = 0b0000111100000000, .fn_ = pref_atRn, .name = "pref @Rn", .privileged = false },
-    .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = rte, .name = "rte", .privileged = true },
-    .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = sets, .name = "sets", .privileged = false },
+    .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = rte, .name = "rte", .privileged = true, .issue_cycles = 5, .latency_cycles = 5 },
+    .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = sets, .name = "sets", .privileged = false },
     .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = sett, .name = "sett", .privileged = false },
-    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "sleep", .privileged = true },
-    .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = stc_SR_Rn, .name = "stc SR,Rn", .privileged = true },
-    .{ .code = 0b0100000000000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SR,@-Rn", .privileged = true },
-    .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc GBR,Rn", .privileged = false },
-    .{ .code = 0b0100000000010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l GBR,@-Rn", .privileged = false },
-    .{ .code = 0b0000000000100010, .mask = 0b0000111100000000, .fn_ = stc_VBR_Rn, .name = "stc VBR,Rn", .privileged = true },
-    .{ .code = 0b0100000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l VBR,@-Rn", .privileged = true },
-    .{ .code = 0b0000000000111010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SGR,Rn", .privileged = true },
-    .{ .code = 0b0100000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SGR,@-Rn", .privileged = true },
-    .{ .code = 0b0000000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SSR,Rn", .privileged = true },
-    .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SSR,@-Rn", .privileged = true },
-    .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SPC,Rn", .privileged = true },
-    .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SPC,@-Rn", .privileged = true },
-    .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true },
-    .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l DBR,@-Rn", .privileged = true },
-    .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true },
-    .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true },
-    .{ .code = 0b0000000000001010, .mask = 0b0000111100000000, .fn_ = sts_MACH_Rn, .name = "sts MACH,Rn", .privileged = false },
+    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = stc_SR_Rn, .name = "stc SR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc GBR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l GBR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000100010, .mask = 0b0000111100000000, .fn_ = stc_VBR_Rn, .name = "stc VBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l VBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000111010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SGR,Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0100000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SGR,@-Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0000000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SSR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SSR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SPC,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SPC,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l DBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000001010, .mask = 0b0000111100000000, .fn_ = sts_MACH_Rn, .name = "sts MACH,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = sts_l_MACH_atRn, .name = "sts.l MACH,@-Rn", .privileged = false },
-    .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false },
+    .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = sts_l_MACL_atRn, .name = "sts.l MACL,@-Rn", .privileged = false },
-    .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false },
-    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn8dec, .name = "sts.l PR,@-Rn", .privileged = false },
-    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false },
-    .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @Rm,FRn", .privileged = false },
+    .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
+
+    .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@Rn", .privileged = false },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
-    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @(R0,Rm),FRn", .privileged = false },
+    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b1111000000001100, .mask = 0b0000111011100000, .fn_ = fmov_DRm_DRn, .name = "fmov DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000100001100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov DRm,XDn", .privileged = false },
-    .{ .code = 0b1111000000011100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov XDm,DRn", .privileged = false },
-    .{ .code = 0b1111000100011100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov XDm,XDn", .privileged = false },
-    .{ .code = 0b1111000000001000, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @Rm,DRn", .privileged = false },
-    .{ .code = 0b1111000100001000, .mask = 0b0000111011110000, .fn_ = fmovd_atRm_XDn, .name = "fmov.d @Rm,XDn", .privileged = false },
-    .{ .code = 0b1111000000001010, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@Rn", .privileged = false },
-    .{ .code = 0b1111000000011010, .mask = 0b0000111111100000, .fn_ = fmovd_XDm_atRn, .name = "fmov.d XDm,@Rn", .privileged = false },
+
+    .{ .code = 0b1111000000001100, .mask = 0b0000111011100000, .fn_ = fmov_DRm_DRn, .name = "fmov DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000100001100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov DRm,XDn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000011100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov XDm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000100011100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov XDm,XDn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000001000, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @Rm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000100001000, .mask = 0b0000111011110000, .fn_ = fmovd_atRm_XDn, .name = "fmov.d @Rm,XDn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000001010, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1111000000011010, .mask = 0b0000111111100000, .fn_ = fmovd_XDm_atRn, .name = "fmov.d XDm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1111000000001001, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @Rm+,DRn", .privileged = false },
     .{ .code = 0b1111000100001001, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @Rm+,XDn", .privileged = false },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@-Rn", .privileged = false },
     .{ .code = 0b1111000000011011, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d XDm,@-Rn", .privileged = false },
-    .{ .code = 0b1111000000000110, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @(R0,Rm),DRn", .privileged = false },
-    .{ .code = 0b1111000100000110, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @(R0,Rm),XDn", .privileged = false },
-    .{ .code = 0b1111000000000111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b1111000000010111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d XDm,@(R0,Rn)", .privileged = false },
-    .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi0 FRn", .privileged = false },
-    .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi1 FRn", .privileged = false },
-    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "flds FRm,FPUL", .privileged = false },
-    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsts FPUL,FRn", .privileged = false },
-    .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false },
-    .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fneg FRn", .privileged = false },
-    .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fadd FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmac FR0,FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false },
-    .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/eq FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/gt FRm,FRn", .privileged = false },
-    .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "float FPUL,FRn", .privileged = false },
-    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ftrc FRm,FPUL", .privileged = false },
-    .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false },
-    .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = unimplemented, .name = "ftrv XMTRX,FVn", .privileged = false },
+    .{ .code = 0b1111000000000110, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @(R0,Rm),DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000100000110, .mask = 0b0000111011110000, .fn_ = unimplemented, .name = "fmov.d @(R0,Rm),XDn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000000111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1111000000010111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d XDm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+
+    .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi0 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
+    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
+    .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ftrc FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = unimplemented, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
+
     .{ .code = 0b1111000001011101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fabs DRn", .privileged = false },
     .{ .code = 0b1111000001001101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fneg DRn", .privileged = false },
-    .{ .code = 0b1111000000000000, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fadd DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000000000001, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fsub DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000000000010, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmul DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000000000011, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fdiv DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000001101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fsqrt DRn", .privileged = false },
-    .{ .code = 0b1111000000000100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fcmp/eq DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000000000101, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fcmp/gt DRm,DRn", .privileged = false },
-    .{ .code = 0b1111000000101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "float FPUL,DRn", .privileged = false },
-    .{ .code = 0b1111000000111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "ftrc DRm,FPUL", .privileged = false },
-    .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvds DRm,FPUL", .privileged = false },
-    .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvsd FPUL,DRn", .privileged = false },
-    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_fpscr, .name = "lds Rn,FPSCR", .privileged = false },
-    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPSCR,Rn", .privileged = false },
-    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpscr, .name = "lds.l @Rn+,FPSCR", .privileged = false },
+    .{ .code = 0b1111000000000000, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fadd DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 7 },
+    .{ .code = 0b1111000000000001, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fsub DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 7 },
+    .{ .code = 0b1111000000000010, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmul DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 7 },
+    .{ .code = 0b1111000000000011, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fdiv DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 24 },
+    .{ .code = 0b1111000001101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fsqrt DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 23 },
+    .{ .code = 0b1111000000000100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fcmp/eq DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000101, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fcmp/gt DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "float FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "ftrc DRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvds DRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvsd FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+
+    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_fpscr, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpscr, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPSCR,@-Rn", .privileged = false },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,FPUL", .privileged = false },
-    .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPUL,Rn", .privileged = false },
+    .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpul, .name = "lds.l @Rn+,FPUL", .privileged = false },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPUL,@-Rn", .privileged = false },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },
