@@ -59,6 +59,7 @@ const FPSCR = packed struct {
 };
 
 const MemoryRegister = enum(u32) {
+    // CCN
     PTEH = 0xFF000000,
     PTEL = 0xFF000004,
     TTB = 0xFF000008,
@@ -66,23 +67,77 @@ const MemoryRegister = enum(u32) {
     MMUCR = 0xFF000010,
     BASRA = 0xFF000014,
     BASRB = 0xFF000018,
-
     CCR = 0xFF00001C,
     TRA = 0xFF000020,
     EXPEVT = 0xFF000024,
     INTEVT = 0xFF000028,
+    PTEA = 0xFF000034,
     QACR0 = 0xFF000038,
     QACR1 = 0xFF00003C,
 
+    // UBC
     BARA = 0xFF200000,
     BAMRA = 0xFF200004,
+    BBRA = 0xFF200008,
+    BARB = 0xFF20000C,
+    BAMRB = 0xFF200010,
+    BBRB = 0xFF200014,
+    BDRB = 0xFF200018,
+    BDMRB = 0xFF20001C,
+    BRCR = 0xFF200020,
 
-    STBCR = 0xFFC00004,
+    // BSC
+    BCR1 = 0xFF800000,
+    BCR2 = 0xFF800004,
+    WCR1 = 0xFF800008,
+    WCR2 = 0xFF80000C,
+    WCR3 = 0xFF800010,
+    MCR = 0xFF800014,
+    PCR = 0xFF800018,
+    RTCSR = 0xFF80001C,
+    RTCNT = 0xFF800020,
+    RTCOR = 0xFF800024,
+    RFCR = 0xFF800028,
+    PCTRA = 0xFF80002C,
+    PDTRA = 0xFF800030,
+    PCTRB = 0xFF800040,
+    PDTRB = 0xFF800044,
+    GPIOIC = 0xFF800048,
+    // SDMR2 = 0xFF90xxxx, // "Virtual" registers, idk.
+    // SDMR3 = 0xFF94xxxx, // "Virtual" registers
+
+    // CPG
     FRQCR = 0xFFC00000,
+    STBCR = 0xFFC00004,
     WTCNT = 0xFFC00008,
     WTCSR = 0xFFC0000C,
+    STBCR2 = 0xFFC00010,
+
+    // RTC
+    R64CNT = 0xFFC80000,
+    RSECCNT = 0xFFC80004,
+    RMINCNT = 0xFFC80008,
+    RHRCNT = 0xFFC8000C,
+    RWKCNT = 0xFFC80010,
+    RDAYCNT = 0xFFC80014,
+    RMONCNT = 0xFFC80018,
+    RYRCNT = 0xFFC8001C,
+    RSECAR = 0xFFC80020,
+    RMINAR = 0xFFC80024,
+    RHRAR = 0xFFC80028,
+    RWKAR = 0xFFC8002C,
+    RDAYAR = 0xFFC80030,
+    RMONAR = 0xFFC80034,
     RCR1 = 0xFFC80038,
     RCR2 = 0xFFC8003C,
+
+    // INTC
+    ICR = 0xFFD00000,
+    IPRA = 0xFFD00004,
+    IPRB = 0xFFD00008,
+    IPRC = 0xFFD0000C,
+
+    // TMU
     TOCR = 0xFFD8000,
     TSTR = 0xFFD80004,
     TCOR0 = 0xFFD80008,
@@ -96,19 +151,29 @@ const MemoryRegister = enum(u32) {
     TCR2 = 0xFFD80028,
     TCPR2 = 0xFFD8002C,
 
-    BCR1 = 0xFF800000,
-    BCR2 = 0xFF800004,
-    WCR1 = 0xFF800008,
-    WCR2 = 0xFF80000C,
-    WCR3 = 0xFF800010,
-    PCR = 0xFF800018,
+    // SCI
+    SCSMR1 = 0xFFE00000,
+    SCBRR1 = 0xFFE00004,
+    SCSCR1 = 0xFFE00008,
+    SCTDR1 = 0xFFE0000C,
+    SCSSR1 = 0xFFE00010,
+    SCRDR1 = 0xFFE00014,
+    SCSCMR1 = 0xFFE00018,
+    SCSPTR1 = 0xFFE0001C,
 
-    MCR = 0xFF800014,
+    // SCIF
+    SCSMR2 = 0xFFE80000,
+    SCBRR2 = 0xFFE80004,
+    SCSCR2 = 0xFFE80008,
+    SCFTDR2 = 0xFFE8000C,
+    SCFSR2 = 0xFFE80010,
+    SCFRDR2 = 0xFFE80014,
+    SCFCR2 = 0xFFE80018,
+    SCFDR2 = 0xFFE8001C,
+    SCSPTR2 = 0xFFE80020,
+    SCLSR2 = 0xFFE80024,
+
     SDMR = 0xFF940190,
-    RTCSR = 0xFF80001C,
-    RTCNT = 0xFF800020,
-    RTCOR = 0xFF800024,
-    RFCR = 0xFF800028,
 
     SAR0 = 0xFFA00000,
     DAR0 = 0xFFA00004,
@@ -117,11 +182,6 @@ const MemoryRegister = enum(u32) {
     SAR1 = 0xFFA00010,
     DAR1 = 0xFFA00014,
     DMATCR1 = 0xFFA00018,
-
-    ICR = 0xFFD00000,
-    IPRA = 0xFFD00004,
-    IPRB = 0xFFD00008,
-    IPRC = 0xFFD0000C,
 
     // Dreamcast specific
 
@@ -321,7 +381,17 @@ comptime {
 
 pub var JumpTable: [0x10000]u8 = .{1} ** 0x10000;
 
+const ExecutionState = enum {
+    Running,
+    Sleep, // CPG: Operating, CPU: Halted, On-chip Peripheral Modules: Operating, Exiting Method: Interrupt, Reset
+    DeepSleep, // CPG: Operating, CPU: Halted, On-chip Peripheral Modules: Operating, Exiting Method: Interrupt, Reset
+    Standby, // CPG: Halted, CPU: Halted, On-chip Peripheral Modules: Halted, Exiting Method: Interrupt, Reset
+    ModuleStandby, // Not implemented at all
+};
+
 pub const SH4 = struct {
+    execution_state: ExecutionState = .Running,
+
     // General Registers
     r_bank0: [8]u32 = undefined, // R0-R7_BANK0
     r_bank1: [8]u32 = undefined, // R0-R7_BANK1
@@ -352,11 +422,11 @@ pub const SH4 = struct {
 
     utlb_entries: [64]mmu.UTLBEntry = undefined,
 
-    boot: []u8 = undefined,
-    flash: []u8 = undefined,
-    ram: []u8 = undefined,
-    area7: []u8 = undefined,
-    hardware_registers: [0x10000]u8 = undefined, // FIXME
+    boot: []u8 align(4) = undefined,
+    flash: []u8 align(4) = undefined,
+    ram: []u8 align(4) = undefined,
+    area7: []u8 align(4) = undefined,
+    hardware_registers: [0x10000]u8 align(4) = undefined, // FIXME
 
     debug_trace: bool = false,
 
@@ -526,8 +596,14 @@ pub const SH4 = struct {
     }
 
     pub fn execute(self: *@This()) void {
-        self._execute(self.pc);
-        self.pc += 2;
+        // TODO: Check interrupts.
+
+        if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
+            self._execute(self.pc);
+            self.pc += 2;
+        } else {
+            @panic("TODOOOOOOO! We have to deal with interrupts, or this is just an infinite loop! :)");
+        }
     }
 
     pub fn _execute(self: *@This(), addr: addr_t) void {
@@ -1110,6 +1186,12 @@ fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    _ = opcode;
+    _ = cpu;
+    @panic("Unimplemented");
+}
+
 // Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.
 // If they are not equal the T bit is cleared. The contents of R0 are not changed.
 fn cmpeq_imm_r0(cpu: *SH4, opcode: Instr) void {
@@ -1479,10 +1561,8 @@ fn ldsl_at_Rn_inc_macl(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
-fn lds_Rm_PR(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn lds_Rn_PR(cpu: *SH4, opcode: Instr) void {
+    cpu.pr = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
@@ -1501,8 +1581,7 @@ fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
-fn frchg(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
+fn frchg(cpu: *SH4, _: Instr) void {
     cpu.fpscr.fr +%= 1;
 }
 
@@ -1529,6 +1608,19 @@ fn sets(cpu: *SH4, _: Instr) void {
 }
 fn sett(cpu: *SH4, _: Instr) void {
     cpu.sr.t = true;
+}
+fn sleep(cpu: *SH4, _: Instr) void {
+    const standby_control_register = cpu.read_io_register(u8, MemoryRegister.STBCR);
+    if ((standby_control_register & 0b1000_0000) == 0b1000_0000) {
+        const standby_control_register_2 = cpu.read_io_register(u8, MemoryRegister.STBCR2);
+        if ((standby_control_register_2 & 0b1000_0000) == 0b1000_0000) {
+            cpu.execution_state = .DeepSleep;
+        } else {
+            cpu.execution_state = .Standby;
+        }
+    } else {
+        cpu.execution_state = .Sleep;
+    }
 }
 
 fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1687,7 +1779,7 @@ pub const Opcodes: [209]OpcodeDescription = .{
     .{ .code = 0b0011000000001100, .mask = 0b0000111111110000, .fn_ = add_rm_rn, .name = "add Rm,Rn", .privileged = false },
     .{ .code = 0b0111000000000000, .mask = 0b0000111111111111, .fn_ = add_imm_rn, .name = "add #imm,Rn", .privileged = false },
     .{ .code = 0b0011000000001110, .mask = 0b0000111111110000, .fn_ = addc_Rm_Rn, .name = "addc Rm,Rn", .privileged = false },
-    .{ .code = 0b0011000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "addv Rm,Rn", .privileged = false },
+    .{ .code = 0b0011000000001111, .mask = 0b0000111111110000, .fn_ = addv_Rm_Rn, .name = "addv Rm,Rn", .privileged = false },
     .{ .code = 0b1000100000000000, .mask = 0b0000000011111111, .fn_ = cmpeq_imm_r0, .name = "cmp/eq #imm,R0", .privileged = false },
     .{ .code = 0b0011000000000000, .mask = 0b0000111111110000, .fn_ = cmpeq_Rm_Rn, .name = "cmp/eq Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000000010, .mask = 0b0000111111110000, .fn_ = cmphs_Rm_Rn, .name = "cmp/hs Rm,Rn", .privileged = false },
@@ -1779,7 +1871,7 @@ pub const Opcodes: [209]OpcodeDescription = .{
     .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_mach, .name = "lds.l @Rn+,MACH", .privileged = false },
     .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_macl, .name = "lds.l @Rn+,MACL", .privileged = false },
-    .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rm_PR, .name = "lds Rm,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_PR, .name = "lds Rn,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
     .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
@@ -1791,18 +1883,18 @@ pub const Opcodes: [209]OpcodeDescription = .{
     .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = rte, .name = "rte", .privileged = true, .issue_cycles = 5, .latency_cycles = 5 },
     .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = sets, .name = "sets", .privileged = false },
     .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = sett, .name = "sett", .privileged = false },
-    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = sleep, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = stc_SR_Rn, .name = "stc SR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc GBR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = stc_GBR_Rn, .name = "stc GBR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l GBR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000100010, .mask = 0b0000111100000000, .fn_ = stc_VBR_Rn, .name = "stc VBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l VBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0000000000111010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SGR,Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0000000000111010, .mask = 0b0000111100000000, .fn_ = stc_SGR_rn, .name = "stc SGR,Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0100000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SGR,@-Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
-    .{ .code = 0b0000000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SSR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000000110010, .mask = 0b0000111100000000, .fn_ = stc_SSR_rn, .name = "stc SSR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SSR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc SPC,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = stc_SPC_rn, .name = "stc SPC,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SPC,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l DBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
