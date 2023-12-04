@@ -3,6 +3,10 @@
 const std = @import("std");
 const common = @import("./common.zig");
 const mmu = @import("./mmu.zig");
+const MemoryRegisters = @import("MemoryRegisters.zig");
+const MemoryRegister = MemoryRegisters.MemoryRegister;
+const Interrupts = @import("Interrupts.zig");
+const Interrupt = Interrupts.Interrupt;
 
 const addr_t = u32;
 const byte_t = u8;
@@ -56,292 +60,6 @@ const FPSCR = packed struct {
     fr: u1 = 0, // Floating-point register bank
 
     _: u10 = undefined, // Reserved
-};
-
-const MemoryRegister = enum(u32) {
-    // CCN
-    PTEH = 0xFF000000,
-    PTEL = 0xFF000004,
-    TTB = 0xFF000008,
-    TEA = 0xFF00000C,
-    MMUCR = 0xFF000010,
-    BASRA = 0xFF000014,
-    BASRB = 0xFF000018,
-    CCR = 0xFF00001C,
-    TRA = 0xFF000020,
-    EXPEVT = 0xFF000024,
-    INTEVT = 0xFF000028,
-    PTEA = 0xFF000034,
-    QACR0 = 0xFF000038,
-    QACR1 = 0xFF00003C,
-
-    // UBC
-    BARA = 0xFF200000,
-    BAMRA = 0xFF200004,
-    BBRA = 0xFF200008,
-    BARB = 0xFF20000C,
-    BAMRB = 0xFF200010,
-    BBRB = 0xFF200014,
-    BDRB = 0xFF200018,
-    BDMRB = 0xFF20001C,
-    BRCR = 0xFF200020,
-
-    // BSC
-    BCR1 = 0xFF800000,
-    BCR2 = 0xFF800004,
-    WCR1 = 0xFF800008,
-    WCR2 = 0xFF80000C,
-    WCR3 = 0xFF800010,
-    MCR = 0xFF800014,
-    PCR = 0xFF800018,
-    RTCSR = 0xFF80001C,
-    RTCNT = 0xFF800020,
-    RTCOR = 0xFF800024,
-    RFCR = 0xFF800028,
-    PCTRA = 0xFF80002C,
-    PDTRA = 0xFF800030,
-    PCTRB = 0xFF800040,
-    PDTRB = 0xFF800044,
-    GPIOIC = 0xFF800048,
-    // SDMR2 = 0xFF90xxxx, // "Virtual" registers, idk.
-    // SDMR3 = 0xFF94xxxx, // "Virtual" registers
-
-    // CPG
-    FRQCR = 0xFFC00000,
-    STBCR = 0xFFC00004,
-    WTCNT = 0xFFC00008,
-    WTCSR = 0xFFC0000C,
-    STBCR2 = 0xFFC00010,
-
-    // RTC
-    R64CNT = 0xFFC80000,
-    RSECCNT = 0xFFC80004,
-    RMINCNT = 0xFFC80008,
-    RHRCNT = 0xFFC8000C,
-    RWKCNT = 0xFFC80010,
-    RDAYCNT = 0xFFC80014,
-    RMONCNT = 0xFFC80018,
-    RYRCNT = 0xFFC8001C,
-    RSECAR = 0xFFC80020,
-    RMINAR = 0xFFC80024,
-    RHRAR = 0xFFC80028,
-    RWKAR = 0xFFC8002C,
-    RDAYAR = 0xFFC80030,
-    RMONAR = 0xFFC80034,
-    RCR1 = 0xFFC80038,
-    RCR2 = 0xFFC8003C,
-
-    // INTC
-    ICR = 0xFFD00000,
-    IPRA = 0xFFD00004,
-    IPRB = 0xFFD00008,
-    IPRC = 0xFFD0000C,
-
-    // TMU
-    TOCR = 0xFFD8000,
-    TSTR = 0xFFD80004,
-    TCOR0 = 0xFFD80008,
-    TCNT0 = 0xFFD8000C,
-    TCR0 = 0xFFD80010,
-    TCOR1 = 0xFFD80014,
-    TCNT1 = 0xFFD80018,
-    TCR1 = 0xFFD8001C,
-    TCOR2 = 0xFFD80020,
-    TCNT2 = 0xFFD80024,
-    TCR2 = 0xFFD80028,
-    TCPR2 = 0xFFD8002C,
-
-    // SCI
-    SCSMR1 = 0xFFE00000,
-    SCBRR1 = 0xFFE00004,
-    SCSCR1 = 0xFFE00008,
-    SCTDR1 = 0xFFE0000C,
-    SCSSR1 = 0xFFE00010,
-    SCRDR1 = 0xFFE00014,
-    SCSCMR1 = 0xFFE00018,
-    SCSPTR1 = 0xFFE0001C,
-
-    // SCIF
-    SCSMR2 = 0xFFE80000,
-    SCBRR2 = 0xFFE80004,
-    SCSCR2 = 0xFFE80008,
-    SCFTDR2 = 0xFFE8000C,
-    SCFSR2 = 0xFFE80010,
-    SCFRDR2 = 0xFFE80014,
-    SCFCR2 = 0xFFE80018,
-    SCFDR2 = 0xFFE8001C,
-    SCSPTR2 = 0xFFE80020,
-    SCLSR2 = 0xFFE80024,
-
-    SDMR = 0xFF940190,
-
-    SAR0 = 0xFFA00000,
-    DAR0 = 0xFFA00004,
-    DMATCR0 = 0xFFA00008,
-    CHCR0 = 0xFFA0000C,
-    SAR1 = 0xFFA00010,
-    DAR1 = 0xFFA00014,
-    DMATCR1 = 0xFFA00018,
-
-    // Dreamcast specific
-
-    SB_C2DSTAT = 0x005F6800,
-    SB_C2DLEN = 0x005F6804,
-    SB_C2DST = 0x005F6808,
-    SB_SDSTAW = 0x005F6810,
-    SB_SDBAAW = 0x005F6814,
-    SB_SDWLT = 0x005F6818,
-    SB_SDLAS = 0x005F681C,
-    SB_SDST = 0x005F6820,
-    SB_DBREQM = 0x005F6840,
-    SB_BAVLWC = 0x005F6844,
-    SB_C2DPRYC = 0x005F6848,
-    SB_C2DMAXL = 0x005F684C,
-    SB_TFREM = 0x005F6880,
-    SB_LMMODE0 = 0x005F6884,
-    SB_LMMODE1 = 0x005F6888,
-    SB_FFST = 0x005F688C,
-    SB_SFRES = 0x005F6890,
-    SB_SBREV = 0x005F689C,
-    SB_RBSPLT = 0x005F68A0,
-
-    // Interrupt Control Registers
-    SB_ISTNRM = 0x005F6900,
-    SB_ISTEXT = 0x005F6904,
-    SB_ISTERR = 0x005F6908,
-    SB_IML2NRM = 0x005F6910,
-    SB_IML4NRM = 0x005F6920,
-    SB_IML6NRM = 0x005F6930,
-    SB_IML2EXT = 0x005F6914,
-    SB_IML4EXT = 0x005F6924,
-    SB_IML6EXT = 0x005F6934,
-    SB_IML2ERR = 0x005F6918,
-    SB_IML4ERR = 0x005F6928,
-    SB_IML6ERR = 0x005F6938,
-
-    // DMA Hard Trigger Control Registers
-    SB_PDTNRM = 0x005F6940,
-    SB_PDTEXT = 0x005F6944,
-    SB_G2DTNRM = 0x005F6950,
-    SB_G2DTEXT = 0x005F6954,
-
-    // Maple-DMA Control Registers
-    SB_MDSTAR = 0x005F6C04,
-    SB_MDTSEL = 0x005F6C10,
-    SB_MDEN = 0x005F6C14,
-    SB_MDST = 0x005F6C18,
-
-    // Maple Interface Block Control Registers
-    SB_MSYS = 0x005F6C80,
-    SB_MST = 0x005F6C84,
-    SB_MSHTCL = 0x005F6C88,
-
-    // Maple-DMA Secret Register
-    SB_MDAPRO = 0x005F6C8C,
-    // Maple Interface Block Hardware Control Register
-    SB_MMSEL = 0x005F6CE8,
-    // Maple-DMA Debug Registers
-    SB_MTXDAD = 0x005F6CF4,
-    SB_MRXDAD = 0x005F6CF8,
-    SB_MRXDBD = 0x005F6CFC,
-
-    // GD-DMA Control Registers
-    SB_GDSTAR = 0x005F7404,
-    SB_GDLEN = 0x005F7408,
-    SB_GDDIR = 0x005F740C,
-    SB_GDEN = 0x005F7414,
-    SB_GDST = 0x005F7418,
-    SB_G1RWC = 0x005F7484,
-    SB_G1FRC = 0x005F7488,
-    SB_G1FWC = 0x005F748C,
-    SB_G1CRC = 0x005F7490,
-    SB_G1CWC = 0x005F7494,
-    SB_G1GDRC = 0x005F74A0,
-    SB_G1GDWC = 0x005F74A4,
-    SB_G1SYSM = 0x005F74B0,
-    SB_G1CRDYC = 0x005F74B4,
-    SB_GDAPRO = 0x005F74B8,
-
-    // GD-DMA Debug Registers
-    SB_GDSTARD = 0x005F74F4,
-    SB_GDLEND = 0x005F74F8,
-
-    // G2 DMA Control Registers
-    SB_ADSTAG = 0x005F7800,
-    SB_E1STAG = 0x005F7820,
-    SB_E2STAG = 0x005F7840,
-    SB_DDSTAG = 0x005F7860,
-
-    SB_ADSTAR = 0x005F7804,
-    SB_E1STAR = 0x005F7824,
-    SB_E2STAR = 0x005F7844,
-    SB_DDSTAR = 0x005F7864,
-
-    SB_ADLEN = 0x005F7808,
-    SB_E1LEN = 0x005F7828,
-    SB_E2LEN = 0x005F7848,
-    SB_DDLEN = 0x005F7868,
-
-    SB_ADDIR = 0x005F780C,
-    SB_E1DIR = 0x005F782C,
-    SB_E2DIR = 0x005F784C,
-    SB_DDDIR = 0x005F786C,
-
-    SB_ADTSEL = 0x005F7810,
-    SB_E1TSEL = 0x005F7830,
-    SB_E2TSEL = 0x005F7850,
-    SB_DDTSEL = 0x005F7870,
-
-    SB_ADEN = 0x005F7814,
-    SB_E1EN = 0x005F7834,
-    SB_E2EN = 0x005F7854,
-    SB_DDEN = 0x005F7874,
-
-    SB_ADST = 0x005F7818,
-    SB_E1ST = 0x005F7838,
-    SB_E2ST = 0x005F7858,
-    SB_DDST = 0x005F7878,
-
-    SB_ADSUSP = 0x005F781C,
-    SB_E1SUSP = 0x005F783C,
-    SB_E2SUSP = 0x005F785C,
-    SB_DDSUSP = 0x005F787C,
-
-    // G2 I/F Block Hardware Control Registers
-    SB_G2ID = 0x005F7880,
-
-    SB_G2DSTO = 0x005F7890,
-    SB_G2TRTO = 0x005F7894,
-    SB_G2MDMTO = 0x005F7898,
-    SB_G2MDMW = 0x005F789C,
-
-    // G2-DMA Secret Registers
-    SB_G2APRO = 0x005F78BC,
-
-    // G2-DMA Debug Registers
-    SB_ADSTAGD = 0x005F78C0,
-    SB_E1STAGD = 0x005F78D0,
-    SB_E2STAGD = 0x005F78E0,
-    SB_DDSTAGD = 0x005F78F0,
-    SB_ADSTARD = 0x005F78C4,
-    SB_E1STARD = 0x005F78D4,
-    SB_E2STARD = 0x005F78E4,
-    SB_DDSTARD = 0x005F78F4,
-    SB_ADLEND = 0x005F78C8,
-    SB_E1LEND = 0x005F78D8,
-    SB_E2LEND = 0x005F78E8,
-    SB_DDLEND = 0x005F78F8,
-
-    // PVR-DMA Control Registers
-    SB_PDSTAP = 0x005F7C00,
-    SB_PDSTAR = 0x005F7C04,
-    SB_PDLEN = 0x005F7C08,
-    SB_PDDIR = 0x005F7C0C,
-    SB_PDTSEL = 0x005F7C10,
-    SB_PDEN = 0x005F7C14,
-    SB_PDST = 0x005F7C18,
-    // PVR-DMA Secret Registers
-    SB_PDAPRO = 0x005F7C80,
 };
 
 const VirtualAddr = packed union {
@@ -427,6 +145,8 @@ pub const SH4 = struct {
     ram: []u8 align(4) = undefined,
     area7: []u8 align(4) = undefined,
     hardware_registers: [0x10000]u8 align(4) = undefined, // FIXME
+
+    interrupt_requests: u64 = 0,
 
     debug_trace: bool = false,
 
@@ -598,11 +318,127 @@ pub const SH4 = struct {
     pub fn execute(self: *@This()) void {
         // TODO: Check interrupts.
 
+        // When the BL bit in SR is 0, exceptions and interrupts are accepted.
+
+        // See h14th002d2.pdf page 665 (or 651)
+        if (!self.sr.bl or self.execution_state != .Running) {
+            var interrupt_or_exception = false;
+
+            var offset: u32 = 0; // TODO: Get the offset corresponding to the code
+
+            if (self.interrupt_requests != 0) {
+                // TODO: Search the highest priority interrupt.
+                const first_set = @ctz(self.interrupt_requests);
+                self.interrupt_requests &= ~@as(u64, 1) << @truncate(first_set); // Clear the request
+                self.io_register(u32, MemoryRegister.INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
+                interrupt_or_exception = true;
+                offset = 0x600;
+
+                self.debug_trace = true;
+            } else if (false) {
+                // TODO: Check for exceptions
+
+                // self.io_register(u32, MemoryRegister.EXPEVT).* = code;
+            }
+
+            if (interrupt_or_exception) {
+                self.execution_state = .Running;
+                // 1. The PC and SR contents are saved in SPC and SSR.
+                // 2. The block bit (BL) in SR is set to 1.
+                // 3. The mode bit (MD) in SR is set to 1.
+                // 4. The register bank bit (RB) in SR is set to 1.
+                // 5. In a reset, the FPU disable bit (FD) in SR is cleared to 0.
+                // 6. The exception code is written to bits 11–0 of the exception event register (EXPEVT) or
+                // interrupt event register (INTEVT).
+                // 7. The CPU branches to the determined exception handling vector address, and the exception
+                // handling routine begins.
+                self.spc = self.pc;
+                self.ssr = @bitCast(self.sr);
+                self.sr.bl = true;
+                self.sr.md = 1;
+                self.sr.rb = 1;
+
+                // self.io_register(u32, MemoryRegister.EXPEVT).* = code;
+                // or
+                // self.io_register(u32, MemoryRegister.INTEVT).* = code;
+
+                const UserBreak = false; // TODO
+                if (self.read_io_register(MemoryRegisters.BRCR, MemoryRegister.BRCR).ubde == 1 and UserBreak) {
+                    self.pc = self.dbr;
+                } else {
+                    self.pc = self.vbr + offset;
+                }
+            }
+        } else {
+            // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
+            // internal registers are set to their post-reset state, the registers of the other modules retain their
+            // contents prior to the exception, and the CPU branches to the same address as in a reset (H'A000
+            // 0000). For the operation in the event of a user break, see section 20, User Break Controller. If an
+            // ordinary interrupt occurs, the interrupt request is held pending and is accepted after the BL bit
+            // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
+            // pending or accepted according to the setting made by software.
+
+            // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
+            // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
+            // status register (SR).
+        }
+
         if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
             self._execute(self.pc);
             self.pc += 2;
         } else {
-            @panic("TODOOOOOOO! We have to deal with interrupts, or this is just an infinite loop! :)");
+            // FIXME: Not sure if this is a thing.
+            self.advance_timers(1);
+
+            // FIXME: Just testing things.
+            self.request_interrupt(Interrupt.TUNI0);
+        }
+    }
+
+    fn request_interrupt(self: *@This(), int: Interrupt) void {
+        std.debug.print("Interrupt request! {any}\n", .{int});
+        self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
+    }
+
+    pub fn advance_timers(self: *@This(), cycles: u32) void {
+        // TODO: Proper timer.
+        const TSTR = self.read_io_register(MemoryRegisters.TSTR, MemoryRegister.TSTR);
+        // TODO: Scale depending on Timer Control Registers' TPSC values
+
+        // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
+        // (TCNT) for the corresponding channel starts counting. When TCNT underflows, the UNF flag is
+        // set in the corresponding timer control register (TCR). If the UNIE bit in TCR is set to 1 at this
+        // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
+        // into TCNT, and the count-down continues (auto-reload function).
+        if (TSTR.str0 == 1) {
+            const tcnt = self.io_register(u32, MemoryRegister.TCNT0);
+            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR0);
+            if (tcnt.* < cycles) {
+                tcr.*.unf = 1;
+                tcnt.* = self.io_register(u32, MemoryRegister.TCOR0).*;
+                if (tcr.*.unie == 1)
+                    self.request_interrupt(Interrupt.TUNI0);
+            } else tcnt.* -= cycles;
+        }
+        if (TSTR.str1 == 1) {
+            const tcnt = self.io_register(u32, MemoryRegister.TCNT1);
+            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR1);
+            if (tcnt.* < cycles) {
+                tcr.*.unf = 1;
+                tcnt.* = self.io_register(u32, MemoryRegister.TCOR1).*;
+                if (tcr.*.unie == 1)
+                    self.request_interrupt(Interrupt.TUNI1);
+            } else tcnt.* -= cycles;
+        }
+        if (TSTR.str2 == 1) {
+            const tcnt = self.io_register(u32, MemoryRegister.TCNT2);
+            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR2);
+            if (tcnt.* < cycles) {
+                tcr.*.unf = 1;
+                tcnt.* = self.io_register(u32, MemoryRegister.TCOR2).*;
+                if (tcr.*.unie == 1)
+                    self.request_interrupt(Interrupt.TUNI2);
+            } else tcnt.* -= cycles;
         }
     }
 
@@ -615,8 +451,7 @@ pub const SH4 = struct {
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
-        // TODO: Proper timer.
-        self.io_register(u32, MemoryRegister.TCNT0).* -= Opcodes[JumpTable[opcode]].issue_cycles;
+        self.advance_timers(Opcodes[JumpTable[opcode]].issue_cycles);
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -842,6 +677,17 @@ pub const SH4 = struct {
     }
 
     pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        const addr = virtual_addr & 0x01FFFFFFF;
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            // Hardware registers
+            switch (addr) {
+                else => {
+                    std.debug.print("  Write8 to hardware register @{X:0>8} = 0x{X:0>2}\n", .{ addr, value });
+                    std.debug.print("                             {s} = 0x{X:0>2}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                },
+            }
+        }
+
         @as(*u8, @alignCast(@ptrCast(
             self._write(virtual_addr),
         ))).* = value;
@@ -864,6 +710,16 @@ pub const SH4 = struct {
             },
             else => {},
         }
+        const addr = virtual_addr & 0x01FFFFFFF;
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            // Hardware registers
+            switch (addr) {
+                else => {
+                    std.debug.print("  Write16 to hardware register @{X:0>8} = 0x{X:0>4}\n", .{ addr, value });
+                    std.debug.print("                               {s} = 0x{X:0>4}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                },
+            }
+        }
 
         @as(*u16, @alignCast(@ptrCast(
             self._write(virtual_addr),
@@ -885,7 +741,8 @@ pub const SH4 = struct {
                     return;
                 },
                 else => {
-                    std.debug.print("  Write to hardware register @{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+                    std.debug.print("  Write32 to hardware register @{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+                    std.debug.print("                               {s} = 0x{X:0>8}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
                 },
             }
         }
@@ -1068,10 +925,6 @@ fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_atdispRm_Rn(cpu: *SH4, opcode: Instr) void {
-    // FIXME: Something's going horribly wrong here!
-    std.debug.print("  mov.l @(disp,Rm),Rn - @0x{X:0>8}\n", .{cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2)});
-    std.debug.print("                            = 0x{X:0>8}\n", .{cpu.read32(cpu.R(opcode.nmd.m).* + (@as(u32, @intCast(opcode.nmd.d)) << 2))});
-    std.debug.print("    d = 0x{X:0>8}, d << 2 = 0x{X:0>8}\n", .{ opcode.nmd.d, (@as(u32, @intCast(opcode.nmd.d)) << 2) });
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
@@ -1388,9 +1241,14 @@ fn shar_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn shld_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const sign = cpu.R(opcode.nmd.m).* & 0x80000000;
+    if (sign == 0) {
+        cpu.R(opcode.nmd.n).* <<= @intCast(cpu.R(opcode.nmd.m).* & 0x1F);
+    } else if ((cpu.R(opcode.nmd.m).* & 0x1F) == 0) {
+        cpu.R(opcode.nmd.n).* = 0;
+    } else {
+        cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> @intCast((~cpu.R(opcode.nmd.m).* & 0x1F) + 1);
+    }
 }
 fn shll(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
@@ -1502,9 +1360,7 @@ fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
     execute_delay_slot(cpu, delay_slot);
 }
-fn rts(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    std.debug.print("  rts to {x:0>8}\n", .{cpu.pr});
+fn rts(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.pr - 2; // execute will add +2
     execute_delay_slot(cpu, delay_slot);
@@ -1597,11 +1453,12 @@ fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
 fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     cpu.prefetch_operand_cache_block(cpu.R(opcode.nmd.n).*);
 }
-
-fn rte(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+// Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.
+fn rte(cpu: *SH4, _: Instr) void {
+    const delay_slot = cpu.pc + 2;
+    cpu.sr = @bitCast(cpu.ssr);
+    cpu.pc = @bitCast(cpu.spc);
+    execute_delay_slot(cpu, delay_slot);
 }
 fn sets(cpu: *SH4, _: Instr) void {
     cpu.sr.s = true;

@@ -1,0 +1,351 @@
+const std = @import("std");
+
+pub const MemoryRegister = enum(u32) {
+    // CCN
+    PTEH = 0xFF000000,
+    PTEL = 0xFF000004,
+    TTB = 0xFF000008,
+    TEA = 0xFF00000C,
+    MMUCR = 0xFF000010,
+    BASRA = 0xFF000014,
+    BASRB = 0xFF000018,
+    CCR = 0xFF00001C,
+    TRA = 0xFF000020,
+    EXPEVT = 0xFF000024,
+    INTEVT = 0xFF000028,
+    PTEA = 0xFF000034,
+    QACR0 = 0xFF000038,
+    QACR1 = 0xFF00003C,
+
+    // UBC
+    BARA = 0xFF200000,
+    BAMRA = 0xFF200004,
+    BBRA = 0xFF200008,
+    BARB = 0xFF20000C,
+    BAMRB = 0xFF200010,
+    BBRB = 0xFF200014,
+    BDRB = 0xFF200018,
+    BDMRB = 0xFF20001C,
+    BRCR = 0xFF200020,
+
+    // BSC
+    BCR1 = 0xFF800000,
+    BCR2 = 0xFF800004,
+    WCR1 = 0xFF800008,
+    WCR2 = 0xFF80000C,
+    WCR3 = 0xFF800010,
+    MCR = 0xFF800014,
+    PCR = 0xFF800018,
+    RTCSR = 0xFF80001C,
+    RTCNT = 0xFF800020,
+    RTCOR = 0xFF800024,
+    RFCR = 0xFF800028,
+    PCTRA = 0xFF80002C,
+    PDTRA = 0xFF800030,
+    PCTRB = 0xFF800040,
+    PDTRB = 0xFF800044,
+    GPIOIC = 0xFF800048,
+    // SDMR2 = 0xFF90xxxx, // "Virtual" registers, idk.
+    // SDMR3 = 0xFF94xxxx, // "Virtual" registers
+
+    // CPG
+    FRQCR = 0xFFC00000,
+    STBCR = 0xFFC00004,
+    WTCNT = 0xFFC00008,
+    WTCSR = 0xFFC0000C,
+    STBCR2 = 0xFFC00010,
+
+    // RTC
+    R64CNT = 0xFFC80000,
+    RSECCNT = 0xFFC80004,
+    RMINCNT = 0xFFC80008,
+    RHRCNT = 0xFFC8000C,
+    RWKCNT = 0xFFC80010,
+    RDAYCNT = 0xFFC80014,
+    RMONCNT = 0xFFC80018,
+    RYRCNT = 0xFFC8001C,
+    RSECAR = 0xFFC80020,
+    RMINAR = 0xFFC80024,
+    RHRAR = 0xFFC80028,
+    RWKAR = 0xFFC8002C,
+    RDAYAR = 0xFFC80030,
+    RMONAR = 0xFFC80034,
+    RCR1 = 0xFFC80038,
+    RCR2 = 0xFFC8003C,
+
+    // INTC
+    ICR = 0xFFD00000,
+    IPRA = 0xFFD00004,
+    IPRB = 0xFFD00008,
+    IPRC = 0xFFD0000C,
+
+    // TMU
+    TOCR = 0xFFD8000,
+    TSTR = 0xFFD80004,
+    TCOR0 = 0xFFD80008,
+    TCNT0 = 0xFFD8000C,
+    TCR0 = 0xFFD80010,
+    TCOR1 = 0xFFD80014,
+    TCNT1 = 0xFFD80018,
+    TCR1 = 0xFFD8001C,
+    TCOR2 = 0xFFD80020,
+    TCNT2 = 0xFFD80024,
+    TCR2 = 0xFFD80028,
+    TCPR2 = 0xFFD8002C,
+
+    // SCI
+    SCSMR1 = 0xFFE00000,
+    SCBRR1 = 0xFFE00004,
+    SCSCR1 = 0xFFE00008,
+    SCTDR1 = 0xFFE0000C,
+    SCSSR1 = 0xFFE00010,
+    SCRDR1 = 0xFFE00014,
+    SCSCMR1 = 0xFFE00018,
+    SCSPTR1 = 0xFFE0001C,
+
+    // SCIF
+    SCSMR2 = 0xFFE80000,
+    SCBRR2 = 0xFFE80004,
+    SCSCR2 = 0xFFE80008,
+    SCFTDR2 = 0xFFE8000C,
+    SCFSR2 = 0xFFE80010,
+    SCFRDR2 = 0xFFE80014,
+    SCFCR2 = 0xFFE80018,
+    SCFDR2 = 0xFFE8001C,
+    SCSPTR2 = 0xFFE80020,
+    SCLSR2 = 0xFFE80024,
+
+    SDMR = 0xFF940190,
+
+    SAR0 = 0xFFA00000,
+    DAR0 = 0xFFA00004,
+    DMATCR0 = 0xFFA00008,
+    CHCR0 = 0xFFA0000C,
+    SAR1 = 0xFFA00010,
+    DAR1 = 0xFFA00014,
+    DMATCR1 = 0xFFA00018,
+
+    // Dreamcast specific
+
+    ROMChecksum = 0x005F74E4,
+
+    SB_C2DSTAT = 0x005F6800,
+    SB_C2DLEN = 0x005F6804,
+    SB_C2DST = 0x005F6808,
+    SB_SDSTAW = 0x005F6810,
+    SB_SDBAAW = 0x005F6814,
+    SB_SDWLT = 0x005F6818,
+    SB_SDLAS = 0x005F681C,
+    SB_SDST = 0x005F6820,
+    SB_DBREQM = 0x005F6840,
+    SB_BAVLWC = 0x005F6844,
+    SB_C2DPRYC = 0x005F6848,
+    SB_C2DMAXL = 0x005F684C,
+    SB_TFREM = 0x005F6880,
+    SB_LMMODE0 = 0x005F6884,
+    SB_LMMODE1 = 0x005F6888,
+    SB_FFST = 0x005F688C,
+    SB_SFRES = 0x005F6890,
+    SB_SBREV = 0x005F689C,
+    SB_RBSPLT = 0x005F68A0,
+
+    // Interrupt Control Registers
+    SB_ISTNRM = 0x005F6900,
+    SB_ISTEXT = 0x005F6904,
+    SB_ISTERR = 0x005F6908,
+    SB_IML2NRM = 0x005F6910,
+    SB_IML4NRM = 0x005F6920,
+    SB_IML6NRM = 0x005F6930,
+    SB_IML2EXT = 0x005F6914,
+    SB_IML4EXT = 0x005F6924,
+    SB_IML6EXT = 0x005F6934,
+    SB_IML2ERR = 0x005F6918,
+    SB_IML4ERR = 0x005F6928,
+    SB_IML6ERR = 0x005F6938,
+
+    // DMA Hard Trigger Control Registers
+    SB_PDTNRM = 0x005F6940,
+    SB_PDTEXT = 0x005F6944,
+    SB_G2DTNRM = 0x005F6950,
+    SB_G2DTEXT = 0x005F6954,
+
+    // Maple-DMA Control Registers
+    SB_MDSTAR = 0x005F6C04,
+    SB_MDTSEL = 0x005F6C10,
+    SB_MDEN = 0x005F6C14,
+    SB_MDST = 0x005F6C18,
+
+    // Maple Interface Block Control Registers
+    SB_MSYS = 0x005F6C80,
+    SB_MST = 0x005F6C84,
+    SB_MSHTCL = 0x005F6C88,
+
+    // Maple-DMA Secret Register
+    SB_MDAPRO = 0x005F6C8C,
+    // Maple Interface Block Hardware Control Register
+    SB_MMSEL = 0x005F6CE8,
+    // Maple-DMA Debug Registers
+    SB_MTXDAD = 0x005F6CF4,
+    SB_MRXDAD = 0x005F6CF8,
+    SB_MRXDBD = 0x005F6CFC,
+
+    // GD-DMA Control Registers
+    SB_GDSTAR = 0x005F7404,
+    SB_GDLEN = 0x005F7408,
+    SB_GDDIR = 0x005F740C,
+    SB_GDEN = 0x005F7414,
+    SB_GDST = 0x005F7418,
+    SB_G1RRC = 0x005F7480,
+    SB_G1RWC = 0x005F7484,
+    SB_G1FRC = 0x005F7488,
+    SB_G1FWC = 0x005F748C,
+    SB_G1CRC = 0x005F7490,
+    SB_G1CWC = 0x005F7494,
+    SB_G1GDRC = 0x005F74A0,
+    SB_G1GDWC = 0x005F74A4,
+    SB_G1SYSM = 0x005F74B0,
+    SB_G1CRDYC = 0x005F74B4,
+    SB_GDAPRO = 0x005F74B8,
+
+    // GD-DMA Debug Registers
+    SB_GDSTARD = 0x005F74F4,
+    SB_GDLEND = 0x005F74F8,
+
+    // G2 DMA Control Registers
+    SB_ADSTAG = 0x005F7800,
+    SB_E1STAG = 0x005F7820,
+    SB_E2STAG = 0x005F7840,
+    SB_DDSTAG = 0x005F7860,
+
+    SB_ADSTAR = 0x005F7804,
+    SB_E1STAR = 0x005F7824,
+    SB_E2STAR = 0x005F7844,
+    SB_DDSTAR = 0x005F7864,
+
+    SB_ADLEN = 0x005F7808,
+    SB_E1LEN = 0x005F7828,
+    SB_E2LEN = 0x005F7848,
+    SB_DDLEN = 0x005F7868,
+
+    SB_ADDIR = 0x005F780C,
+    SB_E1DIR = 0x005F782C,
+    SB_E2DIR = 0x005F784C,
+    SB_DDDIR = 0x005F786C,
+
+    SB_ADTSEL = 0x005F7810,
+    SB_E1TSEL = 0x005F7830,
+    SB_E2TSEL = 0x005F7850,
+    SB_DDTSEL = 0x005F7870,
+
+    SB_ADEN = 0x005F7814,
+    SB_E1EN = 0x005F7834,
+    SB_E2EN = 0x005F7854,
+    SB_DDEN = 0x005F7874,
+
+    SB_ADST = 0x005F7818,
+    SB_E1ST = 0x005F7838,
+    SB_E2ST = 0x005F7858,
+    SB_DDST = 0x005F7878,
+
+    SB_ADSUSP = 0x005F781C,
+    SB_E1SUSP = 0x005F783C,
+    SB_E2SUSP = 0x005F785C,
+    SB_DDSUSP = 0x005F787C,
+
+    // G2 I/F Block Hardware Control Registers
+    SB_G2ID = 0x005F7880,
+
+    SB_G2DSTO = 0x005F7890,
+    SB_G2TRTO = 0x005F7894,
+    SB_G2MDMTO = 0x005F7898,
+    SB_G2MDMW = 0x005F789C,
+
+    // G2-DMA Secret Registers
+    SB_G2APRO = 0x005F78BC,
+
+    // G2-DMA Debug Registers
+    SB_ADSTAGD = 0x005F78C0,
+    SB_E1STAGD = 0x005F78D0,
+    SB_E2STAGD = 0x005F78E0,
+    SB_DDSTAGD = 0x005F78F0,
+    SB_ADSTARD = 0x005F78C4,
+    SB_E1STARD = 0x005F78D4,
+    SB_E2STARD = 0x005F78E4,
+    SB_DDSTARD = 0x005F78F4,
+    SB_ADLEND = 0x005F78C8,
+    SB_E1LEND = 0x005F78D8,
+    SB_E2LEND = 0x005F78E8,
+    SB_DDLEND = 0x005F78F8,
+
+    // PVR-DMA Control Registers
+    SB_PDSTAP = 0x005F7C00,
+    SB_PDSTAR = 0x005F7C04,
+    SB_PDLEN = 0x005F7C08,
+    SB_PDDIR = 0x005F7C0C,
+    SB_PDTSEL = 0x005F7C10,
+    SB_PDEN = 0x005F7C14,
+    SB_PDST = 0x005F7C18,
+    // PVR-DMA Secret Registers
+    SB_PDAPRO = 0x005F7C80,
+
+    // Other - Not sure what these are - Probably test registers - but they are accessed by the boot ROM.
+    RBERRC = 0x005F68A4, // "RootBus control register (secret register, for chip debugging)" ?
+    _5F68AC = 0x005F68AC,
+    _5F78A0 = 0x005F78A0,
+    _5F78A4 = 0x005F78A4,
+    _5F78A8 = 0x005F78A8,
+    _5F78AC = 0x005F78AC,
+
+    _5F78B0 = 0x005F78B0,
+    _5F78B4 = 0x005F78B4,
+    _5F78B8 = 0x005F78B8,
+};
+
+pub const BRCR = packed struct {
+    ubde: u1 = 0,
+
+    _r0: u2 = undefined,
+
+    seq: u1 = undefined,
+
+    _r1: u2 = undefined,
+
+    pcbb: u1 = undefined,
+    dbeb: u1 = undefined,
+
+    _r2: u2 = undefined,
+
+    pcba: u1 = undefined,
+
+    _r3: u3 = undefined,
+
+    cmfb: u1 = 0,
+    cmfa: u1 = 0,
+};
+
+pub const TSTR = packed struct {
+    str0: u1 = 0,
+    str1: u1 = 0,
+    str2: u1 = 0,
+    _: u5 = undefined,
+};
+
+pub const TCR = packed struct {
+    tpsc0: u1 = 0,
+    tpsc1: u1 = 0,
+    tpsc2: u1 = 0,
+    ckeg0: u1 = 0,
+    ckeg1: u1 = 0,
+    unie: u1 = 0,
+    icpe0: u1 = 0, // Only available on channel 2
+    icpe1: u1 = 0, // Only available on channel 2
+    unf: u1 = 0,
+    icpf: u1 = 0,
+    _: u6 = 0,
+};
+
+comptime {
+    std.debug.assert(@bitSizeOf(BRCR) == @bitSizeOf(u16));
+    std.debug.assert(@bitSizeOf(TSTR) == @bitSizeOf(u8));
+    std.debug.assert(@bitSizeOf(TCR) == @bitSizeOf(u16));
+}
