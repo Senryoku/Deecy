@@ -143,6 +143,7 @@ pub const SH4 = struct {
     boot: []u8 align(4) = undefined,
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
+    area4: []u8 align(4) = undefined, // Tile Accelerator, TODO: Move this?
     area7: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
@@ -151,6 +152,7 @@ pub const SH4 = struct {
     debug_trace: bool = false,
 
     pub fn init(self: *@This()) !void {
+        self.area4 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
         self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
         self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1024);
         self.hardware_registers = try common.GeneralAllocator.alloc(u8, 0x200000);
@@ -193,6 +195,8 @@ pub const SH4 = struct {
         common.GeneralAllocator.free(self.boot);
         common.GeneralAllocator.free(self.hardware_registers);
         common.GeneralAllocator.free(self.ram);
+        common.GeneralAllocator.free(self.area7);
+        common.GeneralAllocator.free(self.area4);
     }
 
     pub fn reset(self: *@This()) void {
@@ -600,8 +604,8 @@ pub const SH4 = struct {
                 return &self.ram[(physical_addr - 0x0C000000) % self.ram.len];
             } else if (physical_addr < 0x14000000) {
                 // Area 4 - Tile accelerator command input
-                std.debug.print("Unimplemented _read, Area 4: {X:0>8}\n", .{physical_addr});
-                unreachable;
+                std.debug.print("  Read into Area 4: {X:0>8}\n", .{physical_addr});
+                return &self.area4[physical_addr - 0x10000000];
             } else if (physical_addr < 0x18000000) {
                 // Area 5 - Expansion (modem) port
                 std.debug.print("Invalid _read, Area 5: {X:0>8}\n", .{virtual_addr});
@@ -665,9 +669,11 @@ pub const SH4 = struct {
                 return &self.ram[(external_memory_space_address - 0x0C000000) % self.ram.len];
             } else if (external_memory_space_address < 0x14000000) {
                 // Area 4 - Tile accelerator command input
-                unreachable;
+                std.debug.print("  Area 4 Write: {X:0>8}\n", .{external_memory_space_address});
+                return &self.area4[external_memory_space_address - 0x10000000];
             } else if (external_memory_space_address < 0x18000000) {
                 // Area 5 - Expansion (modem) port
+                std.debug.print("Unimplemented _write to Area 5: {X:0>8} - {X:0>8}\n", .{ virtual_addr, external_memory_space_address });
                 unreachable;
             } else if (external_memory_space_address < 0x1C000000) {
                 // Area 6 - Nothing
@@ -1054,9 +1060,7 @@ fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movt_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = if (cpu.sr.t) 1 else 0;
 }
 
 // Swaps the upper and lower parts of the contents of general register Rm and stores the result in Rn.
@@ -1087,9 +1091,12 @@ fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const prev_Rn = cpu.R(opcode.nmd.n).*;
+    const sum = prev_Rn +% cpu.R(opcode.nmd.m).*;
+    cpu.R(opcode.nmd.n).* = sum +% (if (cpu.sr.t) @as(u32, @intCast(1)) else 0);
+    cpu.sr.t = (prev_Rn > sum);
+    if (sum > cpu.R(opcode.nmd.n).*)
+        cpu.sr.t = true;
 }
 
 fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1134,11 +1141,12 @@ fn cmpstr_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const r = cpu.R(opcode.nmd.m).*;
     cpu.sr.t = (l & 0xFF000000 == r & 0xFF000000) or (l & 0x00FF0000 == r & 0x00FF0000) or (l & 0x0000FF00 == r & 0x0000FF00) or (l & 0x000000FF == r & 0x000000FF);
 }
-
+// Performs initial settings for signed division.
+// This instruction is followed by a DIV1 instruction that executes 1-digit division, for example, and repeated division steps are executed to find the quotient.
 fn div0s_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.sr.q = (0x80000000 & cpu.R(opcode.nmd.n).*) != 0;
+    cpu.sr.m = (0x80000000 & cpu.R(opcode.nmd.m).*) != 0;
+    cpu.sr.t = cpu.sr.q != cpu.sr.m;
 }
 
 fn div0u_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1148,7 +1156,7 @@ fn div0u_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 // Performs initial settings for unsigned division.
 // This instruction is followed by a DIV1 instruction that executes 1-digit division, for example,
-// and repeated division steps are executed to find the quotient. See the description of the DIV1 instruction for details.
+// and repeated division steps are executed to find the quotient.
 fn div0u(cpu: *SH4, _: Instr) void {
     cpu.sr.m = false;
     cpu.sr.q = false;
@@ -1268,18 +1276,19 @@ fn muluwRmRn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn neg_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = 0 -% cpu.R(opcode.nmd.m).*;
 }
 
 fn sub_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -%= cpu.R(opcode.nmd.m).*;
 }
 fn subc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const prev_Rn = cpu.R(opcode.nmd.n).*;
+    const diff = prev_Rn -% cpu.R(opcode.nmd.m).*;
+    cpu.R(opcode.nmd.n).* = diff -% (if (cpu.sr.t) @as(u32, @intCast(1)) else 0);
+    cpu.sr.t = (prev_Rn < diff);
+    if (diff < cpu.R(opcode.nmd.n).*)
+        cpu.sr.t = true;
 }
 
 fn and_Rm_Rn(cpu: *SH4, opcode: Instr) void {
