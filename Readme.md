@@ -10,4 +10,7 @@
  - http://www.shared-ptr.com/sh_insns.html
  - https://www.renesas.com/us/en/document/mas/sh-4-software-manual / h14th002d2.pdf
  - DreamcastDevBoxSystemArchitecture.pdf
- - https://mc.pp.se/dc/ip.bin.html
+ - https://mc.pp.se/dc/
+
+## Dependencies
+ - Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/

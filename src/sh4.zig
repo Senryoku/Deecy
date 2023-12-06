@@ -83,7 +83,7 @@ pub fn is_p4(addr: addr_t) bool {
     return (addr & 0b11100000000000000000000000000000) == 0b11100000000000000000000000000000;
 }
 
-const Instr = packed union {
+pub const Instr = packed union {
     value: u16,
     // Reminder: We're in little endian.
     nmd: packed struct { d: u4, m: u4, n: u4, _: u4 },
@@ -143,9 +143,13 @@ pub const SH4 = struct {
     boot: []u8 align(4) = undefined,
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
+    texture_memory: []u8 align(4) = undefined,
     area4: []u8 align(4) = undefined, // Tile Accelerator, TODO: Move this?
+    area5: []u8 align(4) = undefined,
     area7: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
+
+    _dummy: u32 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 
     interrupt_requests: u64 = 0,
 
@@ -153,8 +157,10 @@ pub const SH4 = struct {
 
     pub fn init(self: *@This()) !void {
         self.area4 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
+        self.area5 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
         self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
         self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1024);
+        self.texture_memory = try common.GeneralAllocator.alloc(u8, 8 * 1024 * 1024);
         self.hardware_registers = try common.GeneralAllocator.alloc(u8, 0x200000);
 
         // Load ROM
@@ -194,8 +200,10 @@ pub const SH4 = struct {
         common.GeneralAllocator.free(self.flash);
         common.GeneralAllocator.free(self.boot);
         common.GeneralAllocator.free(self.hardware_registers);
+        common.GeneralAllocator.free(self.texture_memory);
         common.GeneralAllocator.free(self.ram);
         common.GeneralAllocator.free(self.area7);
+        common.GeneralAllocator.free(self.area5);
         common.GeneralAllocator.free(self.area4);
     }
 
@@ -321,6 +329,27 @@ pub const SH4 = struct {
 
         self.sr = @bitCast(@as(u32, 0x400000f1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
+
+        // Patch some function adresses ("syscalls")
+
+        // System
+        self.write32(0x8C0000B0, 0x8C001000);
+        self.write16(0x8C001000, 0b0000000000010000);
+        // Font
+        self.write32(0x8C0000B4, 0x8C001002);
+        self.write16(0x8C001002, 0b0000000000100000);
+        // Flashrom
+        self.write32(0x8C0000B8, 0x8C001004);
+        self.write16(0x8C001004, 0b0000000000110000);
+        // GD
+        self.write32(0x8C0000BC, 0x8C001006);
+        self.write16(0x8C001006, 0b0000000001000000);
+        // GD2
+        self.write32(0x8C0000C0, 0x8C0010F0);
+        self.write16(0x8C0010F0, 0b0000000001010000);
+        // Misc
+        self.write32(0x8C0000E0, 0x8C001008);
+        self.write16(0x8C001008, 0b0000000001100000);
     }
 
     pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
@@ -592,9 +621,19 @@ pub const SH4 = struct {
 
                 return &self.hardware_registers[physical_addr - 0x005F6800];
             } else if (physical_addr < 0x08000000) {
-                // Area 1 - Video RAM
-                std.debug.print("Invalid _read, Area 1: {X:0>8}\n", .{physical_addr});
-                unreachable;
+                // VRAM - 8MB, Mirrored at 0x06000000
+                const local_addr = physical_addr - (if (physical_addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
+                if (local_addr < 0x0080_0000) { // 64-bit access area
+                    return &self.texture_memory[local_addr];
+                } else if (local_addr < 0x0100_0000) { // Unused
+                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{physical_addr});
+                    return @ptrCast(&self._dummy);
+                } else if (local_addr < 0x0180_0000) { // 32-bit access area
+                    return &self.texture_memory[local_addr - 0x0100_0000];
+                } else { // Unused
+                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{physical_addr});
+                    return @ptrCast(&self._dummy);
+                }
             } else if (physical_addr < 0x0C000000) {
                 // Area 2 - Nothing
                 std.debug.print("Invalid _read, Area 2: {X:0>8}\n", .{physical_addr});
@@ -608,8 +647,8 @@ pub const SH4 = struct {
                 return &self.area4[physical_addr - 0x10000000];
             } else if (physical_addr < 0x18000000) {
                 // Area 5 - Expansion (modem) port
-                std.debug.print("Invalid _read, Area 5: {X:0>8}\n", .{virtual_addr});
-                unreachable;
+                std.debug.print("  Read into Area 5: {X:0>8}\n", .{physical_addr});
+                return &self.area5[external_memory_space_address - 0x14000000];
             } else if (physical_addr < 0x1C000000) {
                 // Area 6 - Nothing
                 std.debug.print("Invalid _read, Area 6: {X:0>8}\n", .{physical_addr});
@@ -638,6 +677,22 @@ pub const SH4 = struct {
         }
     }
 
+    // Area 0:
+    // $00000000 - $001FFFFF Boot ROM
+    // $00200000 - $0021FFFF Flash Memory
+    // $005F6800 - $005F69FF System Control Reg.
+    // $005F6C00 - $005F6CFF Maple Control Reg.
+    // $005F7000 - $005F70FF GD-ROM
+    // $005F7400 - $005F74FF G1 Control Reg.
+    // $005F7800 - $005F78FF G2 Control Reg.
+    // $005F7C00 - $005F7CFF PVR Control Reg.
+    // $005F8000 - $005F9FFF TA/PVR Core Reg.
+    // $00600000 - $006007FF MODEM
+    // $00700000 - $00707FFF AICA sound Reg.
+    // $00710000 - $00710007 AICA RTC Reg.
+    // $00800000 - $009FFFFF AICA Memory
+    // $01000000 - $01FFFFFF G2 External area
+
     pub fn _write(self: *@This(), virtual_addr: addr_t) *u8 {
         if (is_p0(virtual_addr)) {
             const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
@@ -657,12 +712,28 @@ pub const SH4 = struct {
                 if (external_memory_space_address < 0x005F6800)
                     unreachable;
 
-                return &self.hardware_registers[external_memory_space_address - 0x005F6800];
-            } else if (external_memory_space_address < 0x08000000) {
-                // Area 1 - Video RAM
-                unreachable;
+                if (external_memory_space_address < 0x00600000)
+                    return &self.hardware_registers[external_memory_space_address - 0x005F6800];
+
+                std.debug.print("  Unimplemented write to Area 0: {X:0>8}\n", .{external_memory_space_address});
+                return @ptrCast(&self._dummy);
+            } else if (external_memory_space_address < 0x0800_0000) {
+                // VRAM - 8MB, Mirrored at 0x06000000
+                const local_addr = external_memory_space_address - (if (external_memory_space_address >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
+                if (local_addr < 0x0080_0000) { // 64-bit access area
+                    return &self.texture_memory[local_addr];
+                } else if (local_addr < 0x0100_0000) { // Unused
+                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{external_memory_space_address});
+                    return @ptrCast(&self._dummy);
+                } else if (local_addr < 0x0180_0000) { // 32-bit access area
+                    return &self.texture_memory[local_addr - 0x0100_0000];
+                } else { // Unused
+                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{external_memory_space_address});
+                    return @ptrCast(&self._dummy);
+                }
             } else if (external_memory_space_address < 0x0C000000) {
                 // Area 2 - Nothing
+                std.debug.print("Invalid _write to Area 2: {X:0>8}\n", .{external_memory_space_address});
                 unreachable;
             } else if (external_memory_space_address < 0x10000000) {
                 // Area 3 - System RAM (16MB)
@@ -674,9 +745,10 @@ pub const SH4 = struct {
             } else if (external_memory_space_address < 0x18000000) {
                 // Area 5 - Expansion (modem) port
                 std.debug.print("Unimplemented _write to Area 5: {X:0>8} - {X:0>8}\n", .{ virtual_addr, external_memory_space_address });
-                unreachable;
+                return &self.area5[external_memory_space_address - 0x14000000];
             } else if (external_memory_space_address < 0x1C000000) {
                 // Area 6 - Nothing
+                std.debug.print("Invalid _write to Area 6: {X:0>8}\n", .{external_memory_space_address});
                 unreachable;
             } else {
                 // Area 7 - Internal I/O registers (same as P4)
@@ -1721,6 +1793,33 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
+fn syscall(cpu: *SH4, opcode: Instr) void {
+    _ = opcode;
+    _ = cpu;
+    @panic("Unimplemented SYSCALL");
+}
+
+fn syscall_misc(cpu: *SH4, _: Instr) void {
+    // This comes pretty much directly from flycast, I don't think there's any official
+    // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
+    std.debug.print("syscall_misc: R4={d}\n", .{cpu.R(4).*});
+    switch (cpu.R(4).*) {
+        0 => {
+            // Normal Init
+            cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000); // + bootSectors * 2048;
+            cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
+            cpu.R(0).* = 0x00C0BEBC;
+            // TODO: VO_BORDER_COL.full = p_sh4rcb->cntx.r[0];
+        },
+        else => {
+            std.debug.print("  syscall_misc with unhandled R4: R4={d}\n", .{cpu.R(4).*});
+            @panic("syscall_misc with unhandled R4");
+        },
+    }
+    // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
+    cpu.pc = cpu.pr - 2;
+}
+
 const OpcodeDescription = struct {
     code: u16,
     mask: u16,
@@ -1731,9 +1830,16 @@ const OpcodeDescription = struct {
     latency_cycles: u5 = 1,
 };
 
-pub const Opcodes: [209]OpcodeDescription = .{
+pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    // Fake opcodes to catch emulated syscalls
+    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
