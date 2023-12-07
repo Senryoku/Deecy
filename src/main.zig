@@ -2,12 +2,67 @@ const std = @import("std");
 
 const common = @import("./common.zig");
 const sh4 = @import("./sh4.zig");
+const MemoryRegisters = @import("./MemoryRegisters.zig");
+const MemoryRegister = MemoryRegisters.MemoryRegister;
 
 const zgui = @import("zgui");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
 const assets_dir = "assets/";
+
+const Color = packed union {
+    value: u16,
+    arbg1555: packed struct(u16) {
+        b: u5,
+        g: u5,
+        r: u5,
+        a: u1,
+    },
+    rgb565: packed struct(u16) {
+        b: u5,
+        g: u6,
+        r: u5,
+    },
+    argb4444: packed struct(u16) {
+        b: u4,
+        g: u4,
+        r: u4,
+        a: u4,
+    },
+};
+
+const YUV422 = packed struct(u32) {
+    v: u8,
+    y1: u8,
+    u: u8,
+    y0: u8,
+};
+
+const RGBA = packed struct(u32) {
+    a: u8,
+    b: u8,
+    g: u8,
+    r: u8,
+};
+
+fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
+    const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
+    const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
+    const y0 = @as(f32, @floatFromInt(yuv.y0));
+    const y1 = @as(f32, @floatFromInt(yuv.y1));
+    return .{ .{
+        .r = @intFromFloat(std.math.clamp(y0 + (11 / 8) * v, 0, 255)),
+        .g = @intFromFloat(std.math.clamp(y0 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
+        .b = @intFromFloat(std.math.clamp(y0 + 1.25 * (11 / 8) * u, 0, 255)),
+        .a = 255,
+    }, .{
+        .r = @intFromFloat(std.math.clamp(y1 + (11 / 8) * v, 0, 255)),
+        .g = @intFromFloat(std.math.clamp(y1 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
+        .b = @intFromFloat(std.math.clamp(y1 + 1.25 * (11 / 8) * u, 0, 255)),
+        .a = 255,
+    } };
+}
 
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
@@ -23,16 +78,16 @@ pub fn main() !void {
     cpu.load_IP_bin(IPbin);
     cpu.init_boot();
 
-    while (true) {
-        if (cpu.pc == 0x8C001008)
-            cpu.debug_trace = true;
-        cpu.execute();
-    }
+    //while (true) {
+    //    if (cpu.pc == 0x8C001008)
+    //        cpu.debug_trace = true;
+    //    cpu.execute();
+    //}
 
     try zglfw.init();
     defer zglfw.terminate();
 
-    const window = zglfw.Window.create(800, 600, "Katana", null) catch {
+    const window = zglfw.Window.create(1024, 800, "Katana", null) catch {
         std.log.err("Failed to create window.", .{});
         return;
     };
@@ -66,6 +121,26 @@ pub fn main() !void {
     var running = false;
     var breakpoints = std.ArrayList(u32).init(common.GeneralAllocator);
     defer breakpoints.deinit();
+
+    const vram_width = 640;
+    const vram_height = 400;
+    const texture = gctx.createTexture(.{
+        .usage = .{ .texture_binding = true, .copy_dst = true },
+        .size = .{
+            .width = vram_width,
+            .height = vram_height,
+            .depth_or_array_layers = 1,
+        },
+        .format = zgpu.imageInfoToTextureFormat(
+            4,
+            1,
+            false,
+        ),
+        .mip_level_count = 1,
+    });
+    const texture_view = gctx.createTextureView(texture, .{});
+    const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
+    defer common.GeneralAllocator.free(pixels);
 
     while (!window.shouldClose()) {
         zglfw.pollEvents();
@@ -132,6 +207,96 @@ pub fn main() !void {
                 });
                 addr += 8;
             }
+        }
+        zgui.end();
+
+        if (zgui.begin("VRAM", .{})) {
+            const FB_W_CTRL: u32 = cpu.read32(0x005F8048);
+            const FB_W_SOF1: u32 = cpu.read32(0x005F8060);
+            const FB_W_SOF2: u32 = cpu.read32(0x005F8064);
+            zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
+            zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
+            zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
+            var start: u32 = 0x05200000;
+            const bytes_per_pixels: u32 = if (FB_W_CTRL & 0b111 == 0x6) 4 else 2;
+            const end = start + bytes_per_pixels * vram_width * vram_height;
+            var i: usize = 0;
+            while (start < end) {
+                switch (FB_W_CTRL & 0b111) {
+                    0x0, 0x3 => { // 0555 KRGB 16 bits
+                        const color: Color = .{
+                            .value = cpu.read16(@intCast(start)),
+                        };
+                        pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
+                        pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
+                        pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                        pixels[4 * i + 3] = 255; // FIXME: Not really.
+                    },
+                    //pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
+                    //pixels[4 * i + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
+                    //pixels[4 * i + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
+                    //pixels[4 * i + 3] = 255;
+                    // pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
+                    // pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
+                    // pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                    // pixels[4 * i + 3] = 255;
+                    // pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
+                    // pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
+                    // pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
+                    // pixels[4 * i + 3] = 255;
+                    //start += 2;
+                    //i += 1;
+
+                    //const yuv: YUV422 = @bitCast(cpu.read32(@intCast(start)));
+                    //const rgba = yuv_to_rgba(yuv);
+                    //pixels[4 * i + 0] = @as(u8, @intCast(rgba[0].r));
+                    //pixels[4 * i + 1] = @as(u8, @intCast(rgba[0].g));
+                    //pixels[4 * i + 2] = @as(u8, @intCast(rgba[0].b));
+                    //pixels[4 * i + 3] = 255;
+                    //pixels[4 * (i + 1) + 0] = @as(u8, @intCast(rgba[1].r));
+                    //pixels[4 * (i + 1) + 1] = @as(u8, @intCast(rgba[1].g));
+                    //pixels[4 * (i + 1) + 2] = @as(u8, @intCast(rgba[1].b));
+                    //pixels[4 * (i + 1) + 3] = 255;
+                    //start += 4;
+                    //i += 2;
+
+                    //const palette_data: u8 = @bitCast(cpu.read8(@intCast(start)));
+                    //pixels[4 * i + 0] = @as(u8, @intCast(palette_data));
+                    //pixels[4 * i + 1] = @as(u8, @intCast(palette_data));
+                    //pixels[4 * i + 2] = @as(u8, @intCast(palette_data));
+                    //pixels[4 * i + 3] = 255;
+                    //start += 1;
+                    //i += 1;
+
+                    // ARGB 32-Bits
+                    0x6 => {
+                        pixels[4 * i + 0] = cpu.read8(@intCast(start + 3));
+                        pixels[4 * i + 1] = cpu.read8(@intCast(start + 2));
+                        pixels[4 * i + 2] = cpu.read8(@intCast(start + 1));
+                        pixels[4 * i + 3] = cpu.read8(@intCast(start + 0));
+                        start += 4;
+                        i += 1;
+                    },
+                    else => {
+                        start = end;
+                    },
+                }
+            }
+
+            gctx.queue.writeTexture(
+                .{ .texture = gctx.lookupResource(texture).? },
+                .{
+                    .bytes_per_row = 4 * vram_width,
+                    .rows_per_image = vram_height,
+                },
+                .{ .width = vram_width, .height = vram_height },
+                u8,
+                pixels,
+            );
+            const tex_id = gctx.lookupResource(texture_view).?;
+
+            zgui.text("Framebuffer? :", .{});
+            zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
         }
         zgui.end();
 

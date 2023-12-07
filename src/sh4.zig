@@ -616,7 +616,7 @@ pub const SH4 = struct {
                     return &self.flash[physical_addr - 0x200000];
                 }
 
-                std.debug.print("  Read to hardware register @{X:0>8}\n", .{virtual_addr});
+                //std.debug.print("  Read to hardware register @{X:0>8}\n", .{virtual_addr});
                 //std.debug.print("                            {s}\n", .{@tagName(@as(MemoryRegister, @enumFromInt(virtual_addr)))});
 
                 return &self.hardware_registers[physical_addr - 0x005F6800];
