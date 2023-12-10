@@ -164,20 +164,31 @@ pub const GDI = struct {
         return &self.tracks.items[idx - 1];
     }
 
-    pub fn get_1st_read(self: *const @This()) ![]const u8 {
+    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !void {
         const root_directory_entry = self.get_primary_volume_descriptor().*.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
         const root_directory_lba = root_directory_entry.location;
         const root_track = try self.get_corresponding_track(root_directory_lba);
         const root_directory_offset: u32 = (root_directory_lba - root_track.offset) * root_track.format + 0x10; // Why +0x10? No idea.
         var curr_offset = root_directory_offset;
+        // TODO: Handle directories, and not just root files.
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
-            if (std.mem.eql(u8, dir_record.get_file_identifier(), "1ST_READ.BIN;1")) {
+            if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
                 const lba = dir_record.location;
                 const track = try self.get_corresponding_track(lba);
-                const offset = (lba - track.offset) * track.format + 0x10;
-                return track.data[offset .. offset + dir_record.data_length];
+                var offset = (lba - track.offset) * track.format + 0x10;
+                if (track.format == 2352) {
+                    var copied: u32 = 0;
+                    while (copied < dir_record.data_length) {
+                        @memcpy(dest[copied .. copied + 2048], track.data[offset .. offset + 2048]);
+                        copied += 2048;
+                        offset += 2352;
+                    }
+                } else {
+                    @panic("Unimplemented");
+                }
+                return;
             }
             curr_offset += dir_record.length;
         }
@@ -206,11 +217,4 @@ test "gdi" {
         std.debug.print("({X:0>8}) Name: {s: >32} - LBA: {d: >8}, Size: {d: >8}\n", .{ curr_offset, dir_record.get_file_identifier(), dir_record.location, dir_record.data_length });
         curr_offset += dir_record.length;
     }
-}
-
-test "gdi 1ST_READ" {
-    var gdi: GDI = .{};
-    try gdi.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", std.testing.allocator);
-    defer gdi.deinit();
-    _ = try gdi.get_1st_read();
 }

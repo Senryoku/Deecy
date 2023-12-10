@@ -335,7 +335,6 @@ pub const SH4 = struct {
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
         // Patch some function adresses ("syscalls")
-        // FIXME: These addresses (0x8C001000-0x8C001008) will be overwritten by the load of 1ST_READ
 
         // System
         self.write32(0x8C0000B0, 0x8C001000);

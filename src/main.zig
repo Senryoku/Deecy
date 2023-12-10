@@ -72,19 +72,19 @@ pub fn main() !void {
     try cpu.init(common.GeneralAllocator);
     defer cpu.deinit();
 
+    var gdi: GDI = .{};
+    try gdi.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    defer gdi.deinit();
+
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
     defer IPbin_file.close();
     const IPbin = try IPbin_file.readToEndAlloc(common.GeneralAllocator, 0x10000);
     defer common.GeneralAllocator.free(IPbin);
     cpu.load_IP_bin(IPbin);
+
+    try gdi.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]);
+
     cpu.init_boot();
-
-    var gdi: GDI = .{};
-    try gdi.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-    defer gdi.deinit();
-
-    const first_read = try gdi.get_1st_read();
-    cpu.load_at(0x8C010000, first_read);
 
     //while (true) {
     //    if (cpu.pc == 0x8C001008)
@@ -211,9 +211,12 @@ pub fn main() !void {
         if (zgui.begin("Memory", .{})) {
             const static = struct {
                 var start_addr: i32 = 0;
+                var edit_addr: i32 = 0;
             };
-            _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } });
-            var addr = @max(0, static.start_addr);
+            if (zgui.inputInt("Start", .{ .v = &static.edit_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } })) {
+                static.start_addr = static.edit_addr;
+            }
+            var addr = @max(0, @as(u32, @intCast(static.start_addr & 0x1FFFFFFF)));
             const end_addr = addr + 128;
             zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
             while (addr < end_addr) {
