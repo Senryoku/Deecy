@@ -176,7 +176,7 @@ pub const GDI = struct {
             if (std.mem.eql(u8, dir_record.get_file_identifier(), "1ST_READ.BIN;1")) {
                 const lba = dir_record.location;
                 const track = try self.get_corresponding_track(lba);
-                const offset = (lba - track.offset) * track.format;
+                const offset = (lba - track.offset) * track.format + 0x10;
                 return track.data[offset .. offset + dir_record.data_length];
             }
             curr_offset += dir_record.length;

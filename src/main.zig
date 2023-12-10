@@ -164,12 +164,25 @@ pub fn main() !void {
 
         if (zgui.begin("CPU State", .{})) {
             zgui.text("PC: 0x{X:0>8}", .{cpu.pc});
-            zgui.text("SR: {any}", .{cpu.sr});
+            zgui.text("SR: T={any}, S={any}", .{ cpu.sr.t, cpu.sr.s });
+            zgui.beginGroup();
+            for (0..8) |i| {
+                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, cpu.R(@truncate(i)).* });
+            }
+            zgui.endGroup();
+            zgui.sameLine(.{});
+            zgui.beginGroup();
+            for (8..16) |i| {
+                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, cpu.R(@truncate(i)).* });
+            }
+            zgui.endGroup();
 
             var addr = @max(0, cpu.pc - 8);
             const end_addr = @min(0xFFFFFFFFF, addr + 16);
             while (addr < end_addr) {
-                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
+                //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
+                const disassembly = try sh4.disassemble(.{ .value = cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
+                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", disassembly });
                 addr += 2;
             }
 
@@ -187,7 +200,7 @@ pub fn main() !void {
             const static = struct {
                 var bp_addr: i32 = 0;
             };
-            _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr });
+            _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
             zgui.sameLine(.{});
             if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
                 try breakpoints.append(@intCast(static.bp_addr));
@@ -199,11 +212,13 @@ pub fn main() !void {
             const static = struct {
                 var start_addr: i32 = 0;
             };
-            _ = zgui.inputInt("Start", .{ .v = &static.start_addr });
-            var addr = @max(0, @rem(static.start_addr, 8));
-            const end_addr = addr + 32;
+            _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } });
+            var addr = @max(0, static.start_addr);
+            const end_addr = addr + 128;
+            zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
             while (addr < end_addr) {
-                zgui.text("{X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
+                zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
+                    addr,
                     cpu.read8(@intCast(addr)),
                     cpu.read8(@intCast(addr + 1)),
                     cpu.read8(@intCast(addr + 2)),
@@ -312,10 +327,11 @@ pub fn main() !void {
             for (0..10000) |_| {
                 cpu.execute();
                 const breakpoint = for (breakpoints.items, 0..) |addr, index| {
-                    if (addr == cpu.pc) break index;
+                    if (addr & 0x1FFFFFFF == cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
                     running = false;
+                    break;
                 }
             }
         }

@@ -652,7 +652,7 @@ pub const SH4 = struct {
                 return &self.ram[(physical_addr - 0x0C000000) % self.ram.len];
             } else if (physical_addr < 0x14000000) {
                 // Area 4 - Tile accelerator command input
-                std.debug.print("  Read into Area 4: {X:0>8}\n", .{physical_addr});
+                //std.debug.print("  Read into Area 4: {X:0>8}\n", .{physical_addr});
                 return &self.area4[physical_addr - 0x10000000];
             } else if (physical_addr < 0x18000000) {
                 // Area 5 - Expansion (modem) port
@@ -858,7 +858,7 @@ pub const SH4 = struct {
             },
             else => {},
         }
-        const addr = virtual_addr & 0x01FFFFFFF;
+        const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
@@ -945,7 +945,9 @@ fn as_i32(val: u32) i32 {
     return @bitCast(val);
 }
 
-fn unknown(_: *SH4, _: Instr) void {
+fn unknown(cpu: *SH4, opcode: Instr) void {
+    std.debug.print("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
+    std.debug.print("CPU State: PC={X:0>8}\n", .{cpu.pc});
     @panic("Unknown opcode");
 }
 
@@ -1791,6 +1793,19 @@ fn fmovd_atRm_XDn(cpu: *SH4, opcode: Instr) void {
     _ = cpu;
     @panic("Unimplemented");
 }
+fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        const n = cpu.FR(opcode.nmd.n).*;
+        const m = cpu.FR(opcode.nmd.m).*;
+        // TODO: Handle exceptions
+        // if(!cpu.fpscr.dn and (n is denorm or m  is denorm)) ...
+        cpu.FR(opcode.nmd.n).* = n + m;
+    } else {
+        const n = cpu.DR(opcode.nmd.n).*;
+        const m = cpu.DR(opcode.nmd.m).*;
+        cpu.DR(opcode.nmd.n).* = n + m;
+    }
+}
 fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
@@ -2053,7 +2068,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = fadd_FRm_FRn, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
@@ -2091,6 +2106,37 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "fschg", .privileged = false },
 };
+
+var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
+
+pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
+    if (DisassemblyCache[opcode.value] != null) {
+        return DisassemblyCache[opcode.value].?;
+    }
+
+    const desc = Opcodes[JumpTable[opcode.value]];
+
+    const Rn = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.n});
+    const Rm = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.m});
+    const disp = try std.fmt.allocPrint(allocator, "{d}", .{opcode.nmd.d});
+    const imm = try std.fmt.allocPrint(allocator, "#{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
+    defer allocator.free(Rn);
+    defer allocator.free(Rm);
+    defer allocator.free(disp);
+    defer allocator.free(imm);
+
+    const n0 = try std.mem.replaceOwned(u8, allocator, desc.name, "Rn", Rn);
+    defer allocator.free(n0);
+    const n1 = try std.mem.replaceOwned(u8, allocator, n0, "Rm", Rm);
+    defer allocator.free(n1);
+    const n2 = try std.mem.replaceOwned(u8, allocator, n1, "disp", disp);
+    defer allocator.free(n2);
+    const final_buff = try std.mem.replaceOwned(u8, allocator, n2, "#imm", imm);
+
+    DisassemblyCache[opcode.value] = final_buff;
+
+    return final_buff;
+}
 
 fn write_and_execute(cpu: *SH4, code: u16) void {
     cpu.write16(cpu.pc, code);
