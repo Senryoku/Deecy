@@ -155,23 +155,27 @@ pub const SH4 = struct {
 
     debug_trace: bool = false,
 
-    pub fn init(self: *@This()) !void {
-        self.area4 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
-        self.area5 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
-        self.area7 = try common.GeneralAllocator.alloc(u8, 64 * 1024 * 1024);
-        self.ram = try common.GeneralAllocator.alloc(u8, 16 * 1024 * 1024);
-        self.texture_memory = try common.GeneralAllocator.alloc(u8, 8 * 1024 * 1024);
-        self.hardware_registers = try common.GeneralAllocator.alloc(u8, 0x200000);
+    _allocator: std.mem.Allocator = undefined,
+
+    pub fn init(self: *@This(), allocator: std.mem.Allocator) !void {
+        self._allocator = allocator;
+
+        self.area4 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
+        self.area5 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
+        self.area7 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
+        self.ram = try self._allocator.alloc(u8, 16 * 1024 * 1024);
+        self.texture_memory = try self._allocator.alloc(u8, 8 * 1024 * 1024);
+        self.hardware_registers = try self._allocator.alloc(u8, 0x200000);
 
         // Load ROM
-        self.boot = try common.GeneralAllocator.alloc(u8, 0x200000);
+        self.boot = try self._allocator.alloc(u8, 0x200000);
         var boot_file = try std.fs.cwd().openFile("./bin/dc_boot.bin", .{});
         defer boot_file.close();
         const bytes_read = try boot_file.readAll(self.boot);
         std.debug.assert(bytes_read == 0x200000);
 
         // Load Flash
-        self.flash = try common.GeneralAllocator.alloc(u8, 0x20000);
+        self.flash = try self._allocator.alloc(u8, 0x20000);
         var flash_file = try std.fs.cwd().openFile("./bin/dc_flash.bin", .{});
         defer flash_file.close();
         const flash_bytes_read = try flash_file.readAll(self.flash);
@@ -197,14 +201,14 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        common.GeneralAllocator.free(self.flash);
-        common.GeneralAllocator.free(self.boot);
-        common.GeneralAllocator.free(self.hardware_registers);
-        common.GeneralAllocator.free(self.texture_memory);
-        common.GeneralAllocator.free(self.ram);
-        common.GeneralAllocator.free(self.area7);
-        common.GeneralAllocator.free(self.area5);
-        common.GeneralAllocator.free(self.area4);
+        self._allocator.free(self.flash);
+        self._allocator.free(self.boot);
+        self._allocator.free(self.hardware_registers);
+        self._allocator.free(self.texture_memory);
+        self._allocator.free(self.ram);
+        self._allocator.free(self.area7);
+        self._allocator.free(self.area5);
+        self._allocator.free(self.area4);
     }
 
     pub fn reset(self: *@This()) void {
@@ -331,6 +335,7 @@ pub const SH4 = struct {
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
         // Patch some function adresses ("syscalls")
+        // FIXME: These addresses (0x8C001000-0x8C001008) will be overwritten by the load of 1ST_READ
 
         // System
         self.write32(0x8C0000B0, 0x8C001000);
@@ -354,6 +359,10 @@ pub const SH4 = struct {
 
     pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
         @memcpy(self.ram[0x8000 .. 0x8000 + bin.len], bin);
+    }
+    pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
+        const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
+        @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
     pub fn read_io_register(self: @This(), comptime T: type, r: MemoryRegister) T {
@@ -1271,7 +1280,7 @@ fn div1(cpu: *SH4, opcode: Instr) void {
 
 test "div1" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
 
     cpu.R(0).* = 0b00111110111110001001111010110000;
@@ -1288,7 +1297,7 @@ test "div1" {
 
 test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
 
     const dividend = 0b00111110111110001001111010110000;
@@ -2090,7 +2099,7 @@ fn write_and_execute(cpu: *SH4, code: u16) void {
 
 test "mov #imm,Rn" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2113,7 +2122,7 @@ test "mov #imm,Rn" {
 
 test "mov Rm,Rn" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2127,7 +2136,7 @@ test "mov Rm,Rn" {
 
 test "ldc Rn,SR" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2146,7 +2155,7 @@ test "ldc Rn,SR" {
 
 test "boot" {
     var cpu: SH4 = .{};
-    try cpu.init();
+    try cpu.init(std.testing.allocator);
     defer cpu.deinit();
 
     cpu.execute(); // mov 0x0F,R3

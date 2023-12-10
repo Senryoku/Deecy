@@ -4,6 +4,7 @@ const common = @import("./common.zig");
 const sh4 = @import("./sh4.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
+const GDI = @import("./GDI.zig").GDI;
 
 const zgui = @import("zgui");
 const zgpu = @import("zgpu");
@@ -68,7 +69,7 @@ pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
 
     var cpu: sh4.SH4 = .{};
-    try cpu.init();
+    try cpu.init(common.GeneralAllocator);
     defer cpu.deinit();
 
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
@@ -77,6 +78,13 @@ pub fn main() !void {
     defer common.GeneralAllocator.free(IPbin);
     cpu.load_IP_bin(IPbin);
     cpu.init_boot();
+
+    var gdi: GDI = .{};
+    try gdi.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    defer gdi.deinit();
+
+    const first_read = try gdi.get_1st_read();
+    cpu.load_at(0x8C010000, first_read);
 
     //while (true) {
     //    if (cpu.pc == 0x8C001008)
