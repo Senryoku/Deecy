@@ -159,9 +159,10 @@ pub const GDI = struct {
     }
 
     pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {
+        std.debug.assert(self.tracks.items.len > 0);
         var idx: u32 = 0;
         while (idx < self.tracks.items.len and self.tracks.items[idx].offset < lda) : (idx += 1) {}
-        return &self.tracks.items[idx - 1];
+        return &self.tracks.items[@max(0, idx - 1)];
     }
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !void {
@@ -193,6 +194,22 @@ pub const GDI = struct {
             curr_offset += dir_record.length;
         }
         return error.NotFound;
+    }
+
+    pub fn load_sectors(self: *const @This(), lba: u32, size: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(lba);
+        var offset = (lba - track.offset) * track.format + 0x10;
+        if (track.format == 2352) {
+            var copied: u32 = 0;
+            for (0..size) |_| {
+                @memcpy(dest[copied .. copied + 2048], track.data[offset .. offset + 2048]);
+                copied += 2048;
+                offset += 2352;
+            }
+            return copied;
+        } else {
+            @panic("Unimplemented");
+        }
     }
 };
 

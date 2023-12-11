@@ -299,6 +299,8 @@ pub const MemoryRegister = enum(u32) {
     _5F78B0 = 0x005F78B0,
     _5F78B4 = 0x005F78B4,
     _5F78B8 = 0x005F78B8,
+
+    _,
 };
 
 pub const BRCR = packed struct {

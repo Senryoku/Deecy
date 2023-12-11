@@ -7,6 +7,8 @@ const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
+const Holly = @import("Holly.zig").Holly;
+const syscall = @import("syscall.zig");
 
 const addr_t = u32;
 const byte_t = u8;
@@ -143,11 +145,12 @@ pub const SH4 = struct {
     boot: []u8 align(4) = undefined,
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
-    texture_memory: []u8 align(4) = undefined,
     area4: []u8 align(4) = undefined, // Tile Accelerator, TODO: Move this?
     area5: []u8 align(4) = undefined,
     area7: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
+
+    gpu: Holly = .{},
 
     _dummy: u32 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 
@@ -164,8 +167,9 @@ pub const SH4 = struct {
         self.area5 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
         self.area7 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
         self.ram = try self._allocator.alloc(u8, 16 * 1024 * 1024);
-        self.texture_memory = try self._allocator.alloc(u8, 8 * 1024 * 1024);
         self.hardware_registers = try self._allocator.alloc(u8, 0x200000);
+
+        try self.gpu.init(self._allocator);
 
         // Load ROM
         self.boot = try self._allocator.alloc(u8, 0x200000);
@@ -201,10 +205,10 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.gpu.deinit();
         self._allocator.free(self.flash);
         self._allocator.free(self.boot);
         self._allocator.free(self.hardware_registers);
-        self._allocator.free(self.texture_memory);
         self._allocator.free(self.ram);
         self._allocator.free(self.area7);
         self._allocator.free(self.area5);
@@ -258,6 +262,11 @@ pub const SH4 = struct {
 
         self.io_register(u32, MemoryRegister.BCR1).* = 0;
         self.io_register(u32, MemoryRegister.BCR2).* = 0x3FFC;
+
+        self.gpu.reset();
+
+        // IDK, I just hope I don't have to emulate those accurately.
+        self.write32(@intFromEnum(MemoryRegister.SB_FFST), 0);
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -331,7 +340,7 @@ pub const SH4 = struct {
 
         self.pc = 0xAC008300; // TODO: Check
 
-        self.sr = @bitCast(@as(u32, 0x400000f1));
+        self.sr = @bitCast(@as(u32, 0x400000F1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
         // Patch some function adresses ("syscalls")
@@ -534,6 +543,7 @@ pub const SH4 = struct {
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
         self.advance_timers(Opcodes[JumpTable[opcode]].issue_cycles);
+        self.gpu.update(Opcodes[JumpTable[opcode]].issue_cycles);
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -603,88 +613,6 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn _read(self: @This(), virtual_addr: addr_t) *const u8 {
-        if (is_p0(virtual_addr)) {
-            const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
-
-            const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
-                // FIXME: Handle exceptions
-                std.debug.print("Error in utlb _read: {any} at {X:0>8} ({X:0>8})\n", .{ e, external_memory_space_address, virtual_addr });
-                unreachable;
-            };
-
-            if (physical_addr != external_memory_space_address)
-                std.debug.print("  Read UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
-
-            if (physical_addr < 0x04000000) {
-                // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-                if (physical_addr < 0x200000) {
-                    return &self.boot[physical_addr];
-                } else if (physical_addr < 0x200000 + 0x20000) {
-                    return &self.flash[physical_addr - 0x200000];
-                }
-
-                //std.debug.print("  Read to hardware register @{X:0>8}\n", .{virtual_addr});
-                //std.debug.print("                            {s}\n", .{@tagName(@as(MemoryRegister, @enumFromInt(virtual_addr)))});
-
-                return &self.hardware_registers[physical_addr - 0x005F6800];
-            } else if (physical_addr < 0x08000000) {
-                // VRAM - 8MB, Mirrored at 0x06000000
-                const local_addr = physical_addr - (if (physical_addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
-                if (local_addr < 0x0080_0000) { // 64-bit access area
-                    return &self.texture_memory[local_addr];
-                } else if (local_addr < 0x0100_0000) { // Unused
-                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{physical_addr});
-                    return @ptrCast(&self._dummy);
-                } else if (local_addr < 0x0180_0000) { // 32-bit access area
-                    return &self.texture_memory[local_addr - 0x0100_0000];
-                } else { // Unused
-                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{physical_addr});
-                    return @ptrCast(&self._dummy);
-                }
-            } else if (physical_addr < 0x0C000000) {
-                // Area 2 - Nothing
-                std.debug.print("Invalid _read, Area 2: {X:0>8}\n", .{physical_addr});
-                unreachable;
-            } else if (physical_addr < 0x10000000) {
-                // Area 3 - System RAM (16MB)
-                return &self.ram[(physical_addr - 0x0C000000) % self.ram.len];
-            } else if (physical_addr < 0x14000000) {
-                // Area 4 - Tile accelerator command input
-                //std.debug.print("  Read into Area 4: {X:0>8}\n", .{physical_addr});
-                return &self.area4[physical_addr - 0x10000000];
-            } else if (physical_addr < 0x18000000) {
-                // Area 5 - Expansion (modem) port
-                std.debug.print("  Read into Area 5: {X:0>8}\n", .{physical_addr});
-                return &self.area5[external_memory_space_address - 0x14000000];
-            } else if (physical_addr < 0x1C000000) {
-                // Area 6 - Nothing
-                std.debug.print("Invalid _read, Area 6: {X:0>8}\n", .{physical_addr});
-                unreachable;
-            } else {
-                // Area 7 - Internal I/O registers (same as P4)
-                std.debug.assert(self.sr.md == 1);
-                return &self.area7[physical_addr - 0x1C000000];
-            }
-        } else if (is_p1(virtual_addr)) {
-            // TODO: Cache control, although it's probably not needed.
-            // !CCR.OCE? => P2
-            // !CCR.CB? => Cache access in write-through mode
-            //     else => Cache access in copy-back mode
-            return self._read(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p2(virtual_addr)) {
-            return self._read(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p3(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._read(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p4(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._read(virtual_addr & 0x1FFFFFFF);
-        } else {
-            unreachable;
-        }
-    }
-
     // Area 0:
     // $00000000 - $001FFFFF Boot ROM
     // $00200000 - $0021FFFF Flash Memory
@@ -701,89 +629,73 @@ pub const SH4 = struct {
     // $00800000 - $009FFFFF AICA Memory
     // $01000000 - $01FFFFFF G2 External area
 
-    pub fn _write(self: *@This(), virtual_addr: addr_t) *u8 {
-        if (is_p0(virtual_addr)) {
-            const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
+    pub fn _get_memory(self: *@This(), virtual_addr: addr_t) *u8 {
+        std.debug.assert(self.sr.md == 1 or is_p0(virtual_addr));
 
-            const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
-                // FIXME: Handle exceptions
-                std.debug.print("Error in utlb _read: {any} at {X:0>8}\n", .{ e, virtual_addr });
-                unreachable;
-            };
+        const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
 
-            if (physical_addr != external_memory_space_address)
-                std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
-
-            // FIXME: Should we actually use the physical address here?
-
-            if (external_memory_space_address < 0x04000000) {
-                if (external_memory_space_address < 0x005F6800)
-                    unreachable;
-
-                if (external_memory_space_address < 0x00600000)
-                    return &self.hardware_registers[external_memory_space_address - 0x005F6800];
-
-                std.debug.print("  Unimplemented write to Area 0: {X:0>8}\n", .{external_memory_space_address});
-                return @ptrCast(&self._dummy);
-            } else if (external_memory_space_address < 0x0800_0000) {
-                // VRAM - 8MB, Mirrored at 0x06000000
-                const local_addr = external_memory_space_address - (if (external_memory_space_address >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
-                if (local_addr < 0x0080_0000) { // 64-bit access area
-                    return &self.texture_memory[local_addr];
-                } else if (local_addr < 0x0100_0000) { // Unused
-                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{external_memory_space_address});
-                    return @ptrCast(&self._dummy);
-                } else if (local_addr < 0x0180_0000) { // 32-bit access area
-                    return &self.texture_memory[local_addr - 0x0100_0000];
-                } else { // Unused
-                    std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{external_memory_space_address});
-                    return @ptrCast(&self._dummy);
-                }
-            } else if (external_memory_space_address < 0x0C000000) {
-                // Area 2 - Nothing
-                std.debug.print("Invalid _write to Area 2: {X:0>8}\n", .{external_memory_space_address});
-                unreachable;
-            } else if (external_memory_space_address < 0x10000000) {
-                // Area 3 - System RAM (16MB)
-                return &self.ram[(external_memory_space_address - 0x0C000000) % self.ram.len];
-            } else if (external_memory_space_address < 0x14000000) {
-                // Area 4 - Tile accelerator command input
-                std.debug.print("  Area 4 Write: {X:0>8}\n", .{external_memory_space_address});
-                return &self.area4[external_memory_space_address - 0x10000000];
-            } else if (external_memory_space_address < 0x18000000) {
-                // Area 5 - Expansion (modem) port
-                std.debug.print("Unimplemented _write to Area 5: {X:0>8} - {X:0>8}\n", .{ virtual_addr, external_memory_space_address });
-                return &self.area5[external_memory_space_address - 0x14000000];
-            } else if (external_memory_space_address < 0x1C000000) {
-                // Area 6 - Nothing
-                std.debug.print("Invalid _write to Area 6: {X:0>8}\n", .{external_memory_space_address});
-                unreachable;
-            } else {
-                // Area 7 - Internal I/O registers (same as P4)
-                std.debug.assert(self.sr.md == 1);
-                return &self.area7[external_memory_space_address - 0x1C000000];
-            }
-        } else if (is_p1(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._write(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p2(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._write(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p3(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._write(virtual_addr & 0x1FFFFFFF);
-        } else if (is_p4(virtual_addr)) {
-            std.debug.assert(self.sr.md == 1);
-            return self._write(virtual_addr & 0x1FFFFFFF);
-        } else {
-            std.debug.print("  Mmh, what? Read to @{X:0>8}\n", .{virtual_addr});
+        const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
+            // FIXME: Handle exceptions
+            std.debug.print("Error in utlb _read: {any} at {X:0>8}\n", .{ e, virtual_addr });
             unreachable;
+        };
+
+        if (physical_addr != external_memory_space_address)
+            std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
+
+        // FIXME: Should we actually use the physical address here?
+
+        if (external_memory_space_address < 0x04000000) {
+            // Area 0 - Boot ROM, Flash ROM, Hardware Registers
+            if (physical_addr < 0x200000) {
+                return &self.boot[physical_addr];
+            } else if (physical_addr < 0x200000 + 0x20000) {
+                return &self.flash[physical_addr - 0x200000];
+            }
+
+            if (external_memory_space_address < 0x005F6800)
+                unreachable;
+
+            if (external_memory_space_address >= 0x005F8000 and external_memory_space_address < 0x005FA000) {
+                return self.gpu._get_register_from_addr(u8, external_memory_space_address);
+            }
+
+            if (external_memory_space_address < 0x00600000)
+                return &self.hardware_registers[external_memory_space_address - 0x005F6800];
+
+            std.debug.print("  Unimplemented write to Area 0: {X:0>8}\n", .{external_memory_space_address});
+            return @ptrCast(&self._dummy);
+        } else if (external_memory_space_address < 0x0800_0000) {
+            return self.gpu._get_vram(external_memory_space_address);
+        } else if (external_memory_space_address < 0x0C000000) {
+            // Area 2 - Nothing
+            std.debug.print("Invalid _write to Area 2: {X:0>8}\n", .{external_memory_space_address});
+            unreachable;
+        } else if (external_memory_space_address < 0x10000000) {
+            // Area 3 - System RAM (16MB)
+            return &self.ram[(external_memory_space_address - 0x0C000000) % self.ram.len];
+        } else if (external_memory_space_address < 0x14000000) {
+            // Area 4 - Tile accelerator command input
+            std.debug.print("  Area 4 Write: {X:0>8}\n", .{external_memory_space_address});
+            return &self.area4[external_memory_space_address - 0x10000000];
+        } else if (external_memory_space_address < 0x18000000) {
+            // Area 5 - Expansion (modem) port
+            std.debug.print("Unimplemented _write to Area 5: {X:0>8} - {X:0>8}\n", .{ virtual_addr, external_memory_space_address });
+            return &self.area5[external_memory_space_address - 0x14000000];
+        } else if (external_memory_space_address < 0x1C000000) {
+            // Area 6 - Nothing
+            std.debug.print("Invalid _write to Area 6: {X:0>8}\n", .{external_memory_space_address});
+            unreachable;
+        } else {
+            // Area 7 - Internal I/O registers (same as P4)
+            std.debug.assert(self.sr.md == 1);
+            return &self.area7[external_memory_space_address - 0x1C000000];
         }
     }
 
     pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
         return @as(*const u8, @alignCast(@ptrCast(
-            self._read(virtual_addr),
+            @constCast(&self)._get_memory(virtual_addr),
         ))).*;
     }
 
@@ -791,7 +703,7 @@ pub const SH4 = struct {
         switch (virtual_addr) {
             @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
                 return @as(*const u16, @alignCast(@ptrCast(
-                    self._read(virtual_addr),
+                    @constCast(&self)._get_memory(virtual_addr),
                 ))).* & 0xF;
             },
             @intFromEnum(MemoryRegister.RFCR) => {
@@ -807,19 +719,19 @@ pub const SH4 = struct {
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
-            self._read(virtual_addr),
+            @constCast(&self)._get_memory(virtual_addr),
         ))).*;
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
         return @as(*const u32, @alignCast(@ptrCast(
-            self._read(virtual_addr),
+            @constCast(&self)._get_memory(virtual_addr),
         ))).*;
     }
 
     pub fn read64(self: @This(), virtual_addr: addr_t) u64 {
         return @as(*const u64, @alignCast(@ptrCast(
-            self._read(virtual_addr),
+            @constCast(&self)._get_memory(virtual_addr),
         ))).*;
     }
 
@@ -836,7 +748,7 @@ pub const SH4 = struct {
         }
 
         @as(*u8, @alignCast(@ptrCast(
-            self._write(virtual_addr),
+            self._get_memory(virtual_addr),
         ))).* = value;
     }
 
@@ -846,13 +758,13 @@ pub const SH4 = struct {
             @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
                 std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                 @as(*u16, @alignCast(@ptrCast(
-                    self._write(virtual_addr),
+                    self._get_memory(virtual_addr),
                 ))).* = 0b10100101_00000000 | (value & 0xFF);
             },
             @intFromEnum(MemoryRegister.RFCR) => {
                 std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                 @as(*u16, @alignCast(@ptrCast(
-                    self._write(virtual_addr),
+                    self._get_memory(virtual_addr),
                 ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
             },
             else => {},
@@ -869,7 +781,7 @@ pub const SH4 = struct {
         }
 
         @as(*u16, @alignCast(@ptrCast(
-            self._write(virtual_addr),
+            self._get_memory(virtual_addr),
         ))).* = value;
     }
 
@@ -893,15 +805,18 @@ pub const SH4 = struct {
                 },
             }
         }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            return self.gpu.write_register(addr, value);
+        }
 
         @as(*u32, @alignCast(@ptrCast(
-            self._write(virtual_addr),
+            self._get_memory(virtual_addr),
         ))).* = value;
     }
 
     pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
         @as(*u64, @alignCast(@ptrCast(
-            self._write(virtual_addr),
+            self._get_memory(virtual_addr),
         ))).* = value;
     }
 
@@ -1429,11 +1344,21 @@ fn rotr_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 1) == 1);
     cpu.R(opcode.nmd.n).* = std.math.rotr(u32, cpu.R(opcode.nmd.n).*, 1);
 }
-
+// Arithmetically shifts the contents of general register Rn. General register Rm specifies the shift direction and the number of bits to be shifted.
 fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    const sign = cpu.R(opcode.nmd.m).* & 0x80000000;
+
+    if (sign == 0) {
+        cpu.R(opcode.nmd.n).* <<= @intCast(cpu.R(opcode.nmd.m).* & 0x1F);
+    } else if (cpu.R(opcode.nmd.m).* & 0x1F == 0) {
+        if (cpu.R(opcode.nmd.n).* & 0x80000000 == 0) {
+            cpu.R(opcode.nmd.n).* = 0;
+        } else {
+            cpu.R(opcode.nmd.n).* = 0xFFFFFFFF;
+        }
+    } else {
+        cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> @intCast((~cpu.R(opcode.nmd.m).* & 0x1F) + 1);
+    }
 }
 fn shal_Rn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
@@ -1547,6 +1472,11 @@ fn bra_label(cpu: *SH4, opcode: Instr) void {
     d12_label(cpu, opcode);
     execute_delay_slot(cpu, delay_slot);
 }
+fn braf_Rn(cpu: *SH4, opcode: Instr) void {
+    const delay_slot = cpu.pc + 2;
+    cpu.pc += 4 + cpu.R(opcode.nmd.n).* - 2;
+    execute_delay_slot(cpu, delay_slot);
+}
 fn bsr_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
@@ -1644,9 +1574,18 @@ fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
 fn lds_Rn_fpscr(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
 }
+fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
+}
 fn ldsl_at_Rn_inc_fpscr(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
     cpu.R(opcode.nmd.n).* += 4;
+}
+fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
+    cpu.fpul = cpu.R(opcode.nmd.n).*;
+}
+fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
 fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
@@ -1656,6 +1595,13 @@ fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
 // Inverts the FR bit in floating-point register FPSCR.
 fn frchg(cpu: *SH4, _: Instr) void {
     cpu.fpscr.fr +%= 1;
+}
+
+fn ocbi_atRn(cpu: *SH4, opcode: Instr) void {
+    _ = cpu;
+    _ = opcode;
+
+    std.debug.print("Note: ocbi @Rn not implemented\n", .{});
 }
 
 fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1806,6 +1752,32 @@ fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
+fn fldi0_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.pr == 1) @panic("Illegal instruction");
+    cpu.FR(opcode.nmd.n).* = 0.0;
+}
+fn fldi1_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.pr == 1) @panic("Illegal instruction");
+    cpu.FR(opcode.nmd.n).* = 1.0;
+}
+
+test "fldi1_FRn" {
+    var cpu: SH4 = .{};
+    try cpu.init(std.testing.allocator);
+    defer cpu.deinit();
+    cpu.fpscr.pr = 0;
+    fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    std.debug.assert(@as(u32, @bitCast(cpu.FR(0).*)) == 0x3F800000);
+}
+
+fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
+    } else {
+        cpu.DR(opcode.nmd.n).* = -cpu.DR(opcode.nmd.n).*;
+    }
+}
+
 fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         const n = cpu.FR(opcode.nmd.n).*;
@@ -1820,138 +1792,29 @@ fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    // FIXME: There's a lot more to do here.
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* *= cpu.FR(opcode.nmd.m).*;
+    } else {
+        cpu.DR(opcode.nmd.n).* *= cpu.DR(opcode.nmd.m).*;
+    }
 }
 fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
-}
-
-fn syscall(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented SYSCALL");
-}
-
-fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
-    switch (cpu.R(7).*) {
-        0 => {
-            // Prepares the other two SYSINFO calls for use by copying the relevant data from the system flashrom into 8C000068-8C00007F. Always call this function before using the other two calls.
-
-            @memcpy(cpu.ram[0x00000068 .. 0x00000068 + 8], cpu.flash[0x1A056 .. 0x1A056 + 8]);
-            @memcpy(cpu.ram[0x00000068 + 8 .. 0x00000068 + 8 + 6], cpu.flash[0x1A000 .. 0x1A000 + 6]);
-
-            cpu.R(0).* = 0;
-        },
-        3 => {
-            // Query the unique 64 bit ID number of this Dreamcast. SYSINFO_INIT must have been called first.
-            // Args: none
-            // Returns: A pointer to where the ID is stored as 8 contiguous bytes
-            cpu.R(0).* = 0x8c000068;
-        },
-        else => {
-            std.debug.print("  syscall_sysinfo with unhandled R7: R7={d}\n", .{cpu.R(7).*});
-            @panic("syscall_sysinfo with unhandled R7");
-        },
+    // FIXME: There's a lot more to do here.
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* /= cpu.FR(opcode.nmd.m).*;
+    } else {
+        cpu.DR(opcode.nmd.n).* /= cpu.DR(opcode.nmd.m).*;
     }
-
-    // Ret
-    cpu.pc = cpu.pr - 2;
 }
-
-fn syscall_romfont(cpu: *SH4, _: Instr) void {
-    switch (cpu.R(7).*) {
-        else => {
-            std.debug.print("  syscall_romfont with unhandled R7: R7={d}\n", .{cpu.R(7).*});
-            @panic("syscall_romfont with unhandled R7");
-        },
+fn ftrc_FRm_FPUL(cpu: *SH4, opcode: Instr) void {
+    // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
+    // FIXME: There's a lot more to do here.
+    if (cpu.fpscr.sz == 0) {
+        cpu.fpul = @intFromFloat(cpu.FR(opcode.nmd.m).*);
+    } else {
+        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.m).*);
     }
-
-    // Ret
-    cpu.pc = cpu.pr - 2;
-}
-
-fn syscall_flashrom(cpu: *SH4, _: Instr) void {
-    switch (cpu.R(7).*) {
-        0 => {
-            // Queries the extent of a single partition in the system flashrom.
-            // Args: r4 = partition number (0-4)
-            //       r5 = pointer to two 32 bit integers to receive the result. The first will be the offset of the partition start, in bytes from the start of the flashrom. The second will be the size of the partition, in bytes.
-            // Returns: zero if successful, -1 if no such partition exists
-
-            cpu.R(0).* = 0;
-            const dest = cpu.R(5).*;
-            switch (cpu.R(4).*) {
-                0 => {
-                    cpu.write32(dest, 0x1A000);
-                    cpu.write32(dest + 4, 8 * 1024);
-                },
-                1 => {
-                    cpu.write32(dest, 0x18000);
-                    cpu.write32(dest + 4, 8 * 1024);
-                },
-                2 => {
-                    cpu.write32(dest, 0x1C000);
-                    cpu.write32(dest + 4, 16 * 1024);
-                },
-                3 => {
-                    cpu.write32(dest, 0x10000);
-                    cpu.write32(dest + 4, 32 * 1024);
-                },
-                4 => {
-                    cpu.write32(dest, 0x00000);
-                    cpu.write32(dest + 4, 64 * 1024);
-                },
-                else => {
-                    cpu.R(0).* = @bitCast(@as(i32, @intCast(-1)));
-                },
-            }
-        },
-        1 => {
-            // Read data from the system flashrom.
-            // Args: r4 = read start position, in bytes from the start of the flashrom
-            //       r5 = pointer to destination buffer
-            //       r6 = number of bytes to read
-            // Returns: number of read bytes if successful, -1 if read failed
-
-            const start = cpu.R(4).*;
-            const len = cpu.R(6).*;
-            const dest = (cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
-            @memcpy(cpu.ram[dest .. dest + len], cpu.flash[start .. start + len]);
-            cpu.R(0).* = len;
-        },
-        else => {
-            std.debug.print("  syscall_flashrom with unhandled R7: R7={d}\n", .{cpu.R(7).*});
-            @panic("syscall_flashrom with unhandled R7");
-        },
-    }
-
-    // Ret
-    cpu.pc = cpu.pr - 2;
-}
-
-fn syscall_misc(cpu: *SH4, _: Instr) void {
-    // This comes pretty much directly from flycast, I don't think there's any official
-    // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
-    std.debug.print("syscall_misc: R4={d}\n", .{cpu.R(4).*});
-    switch (cpu.R(4).*) {
-        0 => {
-            // Normal Init
-            cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000); // + bootSectors * 2048;
-            cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
-            cpu.R(0).* = 0x00C0BEBC;
-            // TODO: VO_BORDER_COL.full = p_sh4rcb->cntx.r[0];
-        },
-        else => {
-            std.debug.print("  syscall_misc with unhandled R4: R4={d}\n", .{cpu.R(4).*});
-            @panic("syscall_misc with unhandled R4");
-        },
-    }
-    // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
-    cpu.pc = cpu.pr - 2;
 }
 
 const OpcodeDescription = struct {
@@ -1968,12 +1831,12 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     // Fake opcodes to catch emulated syscalls
-    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = syscall_flashrom, .name = "Syscall FlashROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = syscall.syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = syscall.syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = syscall.syscall_flashrom, .name = "Syscall FlashROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = syscall.syscall_gdrom, .name = "Syscall GDROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = syscall.syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = syscall.syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
@@ -2082,7 +1945,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = bt_label, .name = "bt label", .privileged = false },
     .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = bts_label, .name = "bt/s label", .privileged = false },
     .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = bra_label, .name = "bra label", .privileged = false },
-    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "braf Rm", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
+    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = braf_Rn, .name = "braf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = bsr_label, .name = "bsr label", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
@@ -2114,7 +1977,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
     .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ocbi @Rn", .privileged = false },
+    .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = ocbi_atRn, .name = "ocbi @Rn", .privileged = false },
     .{ .code = 0b0000000010100011, .mask = 0b0000111100000000, .fn_ = ocbp_atRn, .name = "ocbp @Rn", .privileged = false },
     .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ocbwb @Rn", .privileged = false },
     .{ .code = 0b0000000010000011, .mask = 0b0000111100000000, .fn_ = pref_atRn, .name = "pref @Rn", .privileged = false },
@@ -2172,12 +2035,12 @@ pub const Opcodes: [215]OpcodeDescription = .{
     //.{ .code = 0b1111000000000111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d DRm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     //.{ .code = 0b1111000000010111, .mask = 0b0000111111100000, .fn_ = unimplemented, .name = "fmov.d XDm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
 
-    .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi0 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = fldi0_FRn, .name = "fldi0 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = fldi1_FRn, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = fneg_FRn, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = fadd_FRm_FRn, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
@@ -2187,7 +2050,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ftrc FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRm_FPUL, .name = "ftrc FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = unimplemented, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
 
@@ -2206,11 +2069,11 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fcnvsd FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
     .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_fpscr, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
-    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpscr, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPSCR,@-Rn", .privileged = false },
-    .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,FPUL", .privileged = false },
-    .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = lds_Rn_FPUL, .name = "lds Rn,FPUL", .privileged = false },
+    .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = sts_FPUL_Rn, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpul, .name = "lds.l @Rn+,FPUL", .privileged = false },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPUL,@-Rn", .privileged = false },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },

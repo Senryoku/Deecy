@@ -65,6 +65,9 @@ fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
     } };
 }
 
+// FIXME
+const syscall = @import("syscall.zig");
+
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
 
@@ -72,9 +75,9 @@ pub fn main() !void {
     try cpu.init(common.GeneralAllocator);
     defer cpu.deinit();
 
-    var gdi: GDI = .{};
-    try gdi.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-    defer gdi.deinit();
+    var gdrom = &syscall.gdrom; // FIXME
+    try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    defer gdrom.disk.deinit();
 
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
     defer IPbin_file.close();
@@ -82,7 +85,7 @@ pub fn main() !void {
     defer common.GeneralAllocator.free(IPbin);
     cpu.load_IP_bin(IPbin);
 
-    try gdi.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]);
+    try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]);
 
     cpu.init_boot();
 
