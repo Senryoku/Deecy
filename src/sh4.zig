@@ -1659,9 +1659,18 @@ fn frchg(cpu: *SH4, _: Instr) void {
 }
 
 fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
     _ = cpu;
-    @panic("Unimplemented");
+    _ = opcode;
+
+    // Accesses data using the contents indicated by effective address Rn.
+    // If the cache is hit and there is unwritten information (U bit = 1),
+    // the corresponding cache block is written back to external memory and
+    // that block is invalidated (the V bit is cleared to 0).
+    // If there is no unwritten information (U bit = 0), the block is simply
+    // invalidated. No operation is performed in the case of a cache miss
+    // or an access to a non-cache area.
+
+    std.debug.print("Note: obcp @Rn not implemented\n", .{});
 }
 
 // Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.
@@ -1782,16 +1791,21 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
         cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m).*));
     }
 }
-fn fmov_DRm_DRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* + cpu.R(opcode.nmd.m).*));
+    } else {
+        @panic("Unimplemented");
+    }
 }
-fn fmovd_atRm_XDn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.write32(cpu.R(0).* + cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+    } else {
+        @panic("Unimplemented");
+    }
 }
+
 fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         const n = cpu.FR(opcode.nmd.n).*;
@@ -2137,8 +2151,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
-    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
+    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
 
     // Actually handled by single precision version - Switched by SR register
     //.{ .code = 0b1111000000001100, .mask = 0b0000111011100000, .fn_ = fmov_DRm_DRn, .name = "fmov DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
