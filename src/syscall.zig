@@ -148,6 +148,9 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             //         -1 - request has failed (examine extended status information for cause of failure)
             std.debug.print("  TODO: GDROM_CHECK_COMMAND R4={d} R5={X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).* });
             cpu.R(0).* = gdrom.check_command(cpu.R(4).*);
+            for (0..4) |i| {
+                cpu.write32(@intCast(cpu.R(5).* + 4 * i), gdrom.result[i]);
+            }
         },
         2 => {
             // GDROM_MAINLOOP
@@ -185,7 +188,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
 pub fn syscall_misc(cpu: *SH4, _: Instr) void {
     // This comes pretty much directly from flycast, I don't think there's any official
     // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
-    std.debug.print("syscall_misc: R4={d}\n", .{cpu.R(4).*});
+    std.debug.print("syscall_misc: R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
     switch (cpu.R(4).*) {
         0 => {
             // Normal Init
@@ -193,6 +196,10 @@ pub fn syscall_misc(cpu: *SH4, _: Instr) void {
             cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
             cpu.R(0).* = 0x00C0BEBC;
             // TODO: VO_BORDER_COL.full = p_sh4rcb->cntx.r[0];
+        },
+        1 => {
+            // Return to BIOS?
+            std.debug.print("syscall_misc: SET VECTOR R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
         },
         else => {
             std.debug.print("  syscall_misc with unhandled R4: R4={d}\n", .{cpu.R(4).*});

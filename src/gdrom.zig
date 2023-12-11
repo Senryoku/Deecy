@@ -71,6 +71,7 @@ pub const GDROM = struct {
                 std.debug.print("  DMARead {d} {d} {X:0>8}\n", .{ lba, size, dest });
                 const read = self.disk.load_sectors(lba, size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0 .. 2048 * size]);
 
+                @memset(&self.result, 0);
                 self.result[2] = read;
                 self.result[3] = 0;
 
@@ -94,8 +95,12 @@ pub const GDROM = struct {
         }
     }
 
-    pub fn check_command(self: @This(), cmd_id: u32) u32 {
-        if (cmd_id != self._current_command_id) return 0; // no such request active
+    pub fn check_command(self: *@This(), cmd_id: u32) u32 {
+        if (cmd_id != self._current_command_id) {
+            @memset(&self.result, 0);
+            self.result[0] = 0x5;
+            return 0; // no such request active
+        }
         if (self.status != GDROMStatus.Standby) return 1; // request is still being processed
         return 2; // request has completed
     }
