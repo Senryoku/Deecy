@@ -1295,6 +1295,9 @@ fn and_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* &= zero_extend(opcode.nd8.d);
 }
 
+fn not_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* = ~cpu.R(opcode.nmd.m).*;
+}
 fn or_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* |= cpu.R(opcode.nmd.m).*;
 }
@@ -1913,7 +1916,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = and_Rm_Rn, .name = "and Rm,Rn", .privileged = false },
     .{ .code = 0b1100100100000000, .mask = 0b0000000011111111, .fn_ = and_imm_R0, .name = "and #imm,R0", .privileged = false },
     .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "and.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
-    .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "not Rm,Rn", .privileged = false },
+    .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = not_Rm_Rn, .name = "not Rm,Rn", .privileged = false },
     .{ .code = 0b0010000000001011, .mask = 0b0000111111110000, .fn_ = or_Rm_Rn, .name = "or Rm,Rn", .privileged = false },
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = or_imm_r0, .name = "or #imm,R0", .privileged = false },
     .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
