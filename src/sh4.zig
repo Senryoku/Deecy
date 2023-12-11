@@ -1822,6 +1822,103 @@ fn syscall(cpu: *SH4, opcode: Instr) void {
     @panic("Unimplemented SYSCALL");
 }
 
+fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
+    switch (cpu.R(7).*) {
+        0 => {
+            // Prepares the other two SYSINFO calls for use by copying the relevant data from the system flashrom into 8C000068-8C00007F. Always call this function before using the other two calls.
+
+            @memcpy(cpu.ram[0x00000068 .. 0x00000068 + 8], cpu.flash[0x1A056 .. 0x1A056 + 8]);
+            @memcpy(cpu.ram[0x00000068 + 8 .. 0x00000068 + 8 + 6], cpu.flash[0x1A000 .. 0x1A000 + 6]);
+
+            cpu.R(0).* = 0;
+        },
+        3 => {
+            // Query the unique 64 bit ID number of this Dreamcast. SYSINFO_INIT must have been called first.
+            // Args: none
+            // Returns: A pointer to where the ID is stored as 8 contiguous bytes
+            cpu.R(0).* = 0x8c000068;
+        },
+        else => {
+            std.debug.print("  syscall_sysinfo with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            @panic("syscall_sysinfo with unhandled R7");
+        },
+    }
+
+    // Ret
+    cpu.pc = cpu.pr - 2;
+}
+
+fn syscall_romfont(cpu: *SH4, _: Instr) void {
+    switch (cpu.R(7).*) {
+        else => {
+            std.debug.print("  syscall_romfont with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            @panic("syscall_romfont with unhandled R7");
+        },
+    }
+
+    // Ret
+    cpu.pc = cpu.pr - 2;
+}
+
+fn syscall_flashrom(cpu: *SH4, _: Instr) void {
+    switch (cpu.R(7).*) {
+        0 => {
+            // Queries the extent of a single partition in the system flashrom.
+            // Args: r4 = partition number (0-4)
+            //       r5 = pointer to two 32 bit integers to receive the result. The first will be the offset of the partition start, in bytes from the start of the flashrom. The second will be the size of the partition, in bytes.
+            // Returns: zero if successful, -1 if no such partition exists
+
+            cpu.R(0).* = 0;
+            const dest = cpu.R(5).*;
+            switch (cpu.R(4).*) {
+                0 => {
+                    cpu.write32(dest, 0x1A000);
+                    cpu.write32(dest + 4, 8 * 1024);
+                },
+                1 => {
+                    cpu.write32(dest, 0x18000);
+                    cpu.write32(dest + 4, 8 * 1024);
+                },
+                2 => {
+                    cpu.write32(dest, 0x1C000);
+                    cpu.write32(dest + 4, 16 * 1024);
+                },
+                3 => {
+                    cpu.write32(dest, 0x10000);
+                    cpu.write32(dest + 4, 32 * 1024);
+                },
+                4 => {
+                    cpu.write32(dest, 0x00000);
+                    cpu.write32(dest + 4, 64 * 1024);
+                },
+                else => {
+                    cpu.R(0).* = @bitCast(@as(i32, @intCast(-1)));
+                },
+            }
+        },
+        1 => {
+            // Read data from the system flashrom.
+            // Args: r4 = read start position, in bytes from the start of the flashrom
+            //       r5 = pointer to destination buffer
+            //       r6 = number of bytes to read
+            // Returns: number of read bytes if successful, -1 if read failed
+
+            const start = cpu.R(4).*;
+            const len = cpu.R(6).*;
+            const dest = (cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
+            @memcpy(cpu.ram[dest .. dest + len], cpu.flash[start .. start + len]);
+            cpu.R(0).* = len;
+        },
+        else => {
+            std.debug.print("  syscall_flashrom with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            @panic("syscall_flashrom with unhandled R7");
+        },
+    }
+
+    // Ret
+    cpu.pc = cpu.pr - 2;
+}
+
 fn syscall_misc(cpu: *SH4, _: Instr) void {
     // This comes pretty much directly from flycast, I don't think there's any official
     // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
@@ -1857,9 +1954,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     // Fake opcodes to catch emulated syscalls
-    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = syscall_flashrom, .name = "Syscall FlashROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
     .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
     .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = syscall, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
     .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
