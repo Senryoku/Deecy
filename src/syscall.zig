@@ -199,7 +199,8 @@ pub fn syscall_misc(cpu: *SH4, _: Instr) void {
         },
         1 => {
             // Return to BIOS?
-            std.debug.print("syscall_misc: SET VECTOR R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+            std.debug.print("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+            @panic("Return to BIOS?");
         },
         else => {
             std.debug.print("  syscall_misc with unhandled R4: R4={d}\n", .{cpu.R(4).*});

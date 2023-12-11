@@ -1773,6 +1773,14 @@ test "fldi1_FRn" {
     std.debug.assert(@as(u32, @bitCast(cpu.FR(0).*)) == 0x3F800000);
 }
 
+fn fdls_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
+    cpu.fpul = @bitCast(cpu.FR(opcode.nmd.n).*);
+}
+
+fn fsts_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
+    cpu.FR(opcode.nmd.n).* = @bitCast(cpu.fpul);
+}
+
 fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
@@ -2064,8 +2072,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
 
     .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = fldi0_FRn, .name = "fldi0 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = fldi1_FRn, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = fdls_FRn_FPUL, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = fsts_FPUL_FRn, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = fneg_FRn, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = fadd_FRm_FRn, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
