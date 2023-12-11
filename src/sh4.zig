@@ -1810,13 +1810,21 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n).* /= cpu.DR(opcode.nmd.m).*;
     }
 }
-fn ftrc_FRm_FPUL(cpu: *SH4, opcode: Instr) void {
+fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
+    // FIXME: There's a lot more to do here.
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @floatFromInt(cpu.fpul);
+    } else {
+        cpu.DR(opcode.nmd.n).* = @floatFromInt(cpu.fpul);
+    }
+}
+fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.sz == 0) {
-        cpu.fpul = @intFromFloat(cpu.FR(opcode.nmd.m).*);
+        cpu.fpul = @intFromFloat(cpu.FR(opcode.nmd.n).*);
     } else {
-        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.m).*);
+        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n).*);
     }
 }
 
@@ -2052,8 +2060,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
     .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRm_FPUL, .name = "ftrc FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = float_FPUL_FRn, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = unimplemented, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
 
