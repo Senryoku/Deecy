@@ -1810,6 +1810,22 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n).* /= cpu.DR(opcode.nmd.m).*;
     }
 }
+fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
+    // TODO: Special float values checks?
+    if (cpu.fpscr.sz == 0) {
+        cpu.sr.t = (cpu.FR(opcode.nmd.n).* > cpu.FR(opcode.nmd.m).*);
+    } else {
+        cpu.sr.t = (cpu.DR(opcode.nmd.n).* > cpu.DR(opcode.nmd.m).*);
+    }
+}
+fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
+    // TODO: Special float values checks?
+    if (cpu.fpscr.sz == 0) {
+        cpu.sr.t = (cpu.FR(opcode.nmd.n).* == cpu.FR(opcode.nmd.m).*);
+    } else {
+        cpu.sr.t = (cpu.DR(opcode.nmd.n).* == cpu.DR(opcode.nmd.m).*);
+    }
+}
 fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.sz == 0) {
@@ -2058,8 +2074,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
     .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
-    .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = fcmp_eq_FRm_FRn, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = fcmp_gt_FRm_FRn, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = float_FPUL_FRn, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
