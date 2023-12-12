@@ -159,8 +159,7 @@ pub const GDI = struct {
     }
 
     pub fn get_primary_volume_descriptor(self: *const @This()) *const PVD {
-        // FIXME: Figure out the actual offset, don't hardcode one.
-        const offset = 0x9310; //(0xB06E - (self.tracks.items[2].offset + 150)) * self.tracks.items[2].format + 16;
+        const offset = 0x10 * self.tracks.items[2].format + 0x10; // 16th sector + skip sector header
         return @ptrCast(@alignCast(self.tracks.items[2].data.ptr + offset));
     }
 
@@ -186,27 +185,15 @@ pub const GDI = struct {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
-                const lba = dir_record.location;
-                const track = try self.get_corresponding_track(lba);
-                var offset = (lba - track.offset) * track.format + 0x10;
-                if (track.format == 2352) {
-                    var copied: u32 = 0;
-                    while (copied < dir_record.data_length) {
-                        @memcpy(dest[copied .. copied + 2048], track.data[offset .. offset + 2048]);
-                        copied += 2048;
-                        offset += 2352;
-                    }
-                } else {
-                    @panic("Unimplemented");
-                }
+                _ = self.load_sectors(dir_record.location, dir_record.data_length, dest);
                 return;
             }
-            curr_offset += dir_record.length;
+            curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;
     }
 
-    pub fn load_sectors(self: *const @This(), lba: u32, size: u32, dest: []u8) u32 {
+    pub fn load_sectors(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
         const sector_start = (lba - track.offset) * track.format;
         const header = track.data[sector_start .. sector_start + 0x10];
@@ -214,9 +201,12 @@ pub const GDI = struct {
         var offset = sector_start + 0x10;
         if (track.format == 2352) {
             var copied: u32 = 0;
-            for (0..size) |_| {
-                @memcpy(dest[copied .. copied + 2048], track.data[offset .. offset + 2048]);
-                copied += 2048;
+            var remaining: u32 = length;
+            while (remaining > 0) {
+                const chunk_size = @min(remaining, 2048);
+                @memcpy(dest[copied .. copied + chunk_size], track.data[offset .. offset + chunk_size]);
+                copied += chunk_size;
+                remaining -= chunk_size;
                 offset += 2352;
             }
             return copied;

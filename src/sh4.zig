@@ -1631,6 +1631,18 @@ fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
+fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
+    _ = cpu;
+    _ = opcode;
+    const static = struct {
+        var once = true;
+    };
+    if (static.once) {
+        static.once = false;
+        std.debug.print("Note: ocbwb @Rn not implemented\n", .{});
+    }
+}
+
 // Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.
 // The lower 5 bits of the address specified by Rn are masked to zero.
 // This instruction is also used to trigger a Store Queue write-back operation if the specified address points to the Store Queue area.
@@ -2023,7 +2035,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = ocbi_atRn, .name = "ocbi @Rn", .privileged = false },
     .{ .code = 0b0000000010100011, .mask = 0b0000111100000000, .fn_ = ocbp_atRn, .name = "ocbp @Rn", .privileged = false },
-    .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ocbwb @Rn", .privileged = false },
+    .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = ocbwb_atRn, .name = "ocbwb @Rn", .privileged = false },
     .{ .code = 0b0000000010000011, .mask = 0b0000111100000000, .fn_ = pref_atRn, .name = "pref @Rn", .privileged = false },
     .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = rte, .name = "rte", .privileged = true, .issue_cycles = 5, .latency_cycles = 5 },
     .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = sets, .name = "sets", .privileged = false },

@@ -75,12 +75,13 @@ pub const GDROM = struct {
 
         switch (self.command) {
             GDROMCommand.DMARead => {
-                const lba = self.params[0];
+                const lba = self.params[0] - 150; // FIXME: ?? I don't understand this offset, yet. This is probably not the place for it (GDI ?).
                 const size = self.params[1];
                 const dest = self.params[2];
 
                 std.debug.print("    GDROM DMARead  sector={d} size={d} destination=0x{X:0>8}\n", .{ lba, size, dest });
-                const read = self.disk.load_sectors(lba, size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0 .. 2048 * size]);
+                const byte_size = 2048 * size;
+                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
 
                 self.result = .{ 0, 0, read, 0 };
 
