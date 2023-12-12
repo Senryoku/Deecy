@@ -8,12 +8,16 @@ const MemoryRegister = MemoryRegisters.MemoryRegister;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 const Holly = @import("Holly.zig").Holly;
+const AICA = @import("aica.zig").AICA;
 const syscall = @import("syscall.zig");
 
 const addr_t = u32;
 const byte_t = u8;
 const word_t = u16;
 const longword_t = u32;
+
+// FIXME: Move.
+var aica: AICA = .{};
 
 const SR = packed struct {
     t: bool = undefined, // True/False condition or carry/borrow bit.
@@ -385,6 +389,13 @@ pub const SH4 = struct {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(addr & 0x1FFFFFFF) - 0x1C000000])));
     }
 
+    pub fn hw_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
+        return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x005F6800])));
+    }
+    pub fn read_hw_register(self: @This(), comptime T: type, r: MemoryRegister) T {
+        return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x005F6800]))).*;
+    }
+
     pub fn R(self: *@This(), r: u4) *u32 {
         if (r >= 8) return &self.r_8_15[r - 8];
         // Note: Rather than checking all the time, we could swap only once
@@ -663,6 +674,16 @@ pub const SH4 = struct {
             if (external_memory_space_address < 0x00600000)
                 return &self.hardware_registers[external_memory_space_address - 0x005F6800];
 
+            if (external_memory_space_address >= 0x00700000 and external_memory_space_address <= 0x00707FE0) {
+                // G2 AICA Register
+                return @ptrCast(&self._dummy);
+            }
+            //                                                                            is it 0x009FFFE0?
+            if (external_memory_space_address >= 0x00800000 and external_memory_space_address < 0x00A00000) {
+                // G2 Wave Memory
+                return &aica.wave_memory[external_memory_space_address - 0x00800000];
+            }
+
             std.debug.print("  Unimplemented write to Area 0: {X:0>8}\n", .{external_memory_space_address});
             return @ptrCast(&self._dummy);
         } else if (external_memory_space_address < 0x0800_0000) {
@@ -792,16 +813,54 @@ pub const SH4 = struct {
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
-                0x005F6890 => {
+                @intFromEnum(MemoryRegister.SB_SFRES) => {
                     // SB_SFRES, Software Reset
                     if (value == 0x00007611) {
                         self.software_reset();
                     }
                     return;
                 },
+                @intFromEnum(MemoryRegister.SB_ADST) => {
+                    if (value == 1) {
+                        const enabled = self.read_hw_register(u32, MemoryRegister.SB_ADEN);
+                        if (enabled == 0) return;
+                        const g2_addr = self.read_hw_register(u32, MemoryRegister.SB_ADSTAR);
+                        const sys_addr = self.read_hw_register(u32, MemoryRegister.SB_ADSTAG);
+                        const len_reg = self.read_hw_register(u32, MemoryRegister.SB_ADLEN);
+                        const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End//Restart
+                        const len = len_reg & 0x7FFFFFFF;
+                        const direction = self.read_hw_register(u32, MemoryRegister.SB_ADDIR);
+                        std.debug.print(" AICA G2-DMA Start!\n", .{});
+                        std.debug.print("   G2 Start Address: 0x{X:0>8}\n", .{g2_addr});
+                        std.debug.print("   System Start Address: 0x{X:0>8}\n", .{sys_addr});
+                        std.debug.print("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
+                        std.debug.print("   Direction: 0x{X:0>8}\n", .{direction});
+                        std.debug.print("   Trigger Select: 0x{X:0>8}\n", .{self.read_hw_register(u32, MemoryRegister.SB_ADTSEL)});
+                        std.debug.print("   Enable: 0x{X:0>8}\n", .{enabled});
+
+                        const physical_g2_addr = self._get_memory(g2_addr);
+                        const physical_sys_addr = self._get_memory(sys_addr);
+
+                        // TODO: This might raise some exceptions, if the addresses are wrong.
+
+                        if (direction == 0) {
+                            // DMA transfer from the Root Bus to a G2 device
+                            const src = physical_sys_addr;
+                            const dst = physical_g2_addr;
+                            @memcpy(@as([*]u8, @ptrCast(dst))[0..len], @as([*]u8, @ptrCast(src))[0..len]);
+                            // FIXME: Should not be instant.
+                        } else {
+                            // DMA transfer from a G2 device to the Root Bus
+                            @panic("AICA DMA reversed direction not implemented");
+                        }
+
+                        // When a transfer ends, the DMA enable register is set to "0".
+                        if (dma_end)
+                            self.hw_register(u32, MemoryRegister.SB_ADEN).* = 0;
+                    }
+                },
                 else => {
-                    std.debug.print("  Write32 to hardware register @{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
-                    std.debug.print("                               {s} = 0x{X:0>8}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
                 },
             }
         }

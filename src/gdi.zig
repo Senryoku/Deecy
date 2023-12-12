@@ -103,7 +103,7 @@ pub const SectorHeader = extern struct {
     mode: u8,
 };
 
-const GDI_SECTOR_OFFSET = 150; // Pause between tracks? I'm not sure how this works.
+const GDI_SECTOR_OFFSET = 150; // Pause between tracks? I'm not sure how this works. Cues here: https://github.com/SONIC3D/gdi-utils/blob/master/README.md
 
 pub const GDI = struct {
     tracks: std.ArrayList(Track) = undefined,
