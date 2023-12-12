@@ -75,7 +75,7 @@ pub const GDROM = struct {
 
         switch (self.command) {
             GDROMCommand.DMARead => {
-                const lba = self.params[0] - 150; // FIXME: ?? I don't understand this offset, yet. This is probably not the place for it (GDI ?).
+                const lba = self.params[0];
                 const size = self.params[1];
                 const dest = self.params[2];
 

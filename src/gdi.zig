@@ -103,6 +103,8 @@ pub const SectorHeader = extern struct {
     mode: u8,
 };
 
+const GDI_SECTOR_OFFSET = 150; // Pause between tracks? I'm not sure how this works.
+
 pub const GDI = struct {
     tracks: std.ArrayList(Track) = undefined,
 
@@ -185,7 +187,7 @@ pub const GDI = struct {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
-                _ = self.load_sectors(dir_record.location, dir_record.data_length, dest);
+                _ = self.load_sectors(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
                 return;
             }
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
@@ -195,7 +197,7 @@ pub const GDI = struct {
 
     pub fn load_sectors(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
-        const sector_start = (lba - track.offset) * track.format;
+        const sector_start = (lba - GDI_SECTOR_OFFSET - track.offset) * track.format;
         const header = track.data[sector_start .. sector_start + 0x10];
         std.debug.assert(header[0x0F] == 1); // We only support mode 1 right now.
         var offset = sector_start + 0x10;
