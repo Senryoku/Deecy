@@ -197,6 +197,8 @@ pub fn main() !void {
                 cpu.execute();
             }
 
+            _ = zgui.checkbox("Debug trace", .{ .v = &cpu.debug_trace });
+
             for (0..breakpoints.items.len) |i| {
                 zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
             }

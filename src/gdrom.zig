@@ -34,50 +34,60 @@ pub const GDROMCommand = enum(u32) {
 };
 
 pub const GDROM = struct {
-    status: GDROMStatus = GDROMStatus.Standby,
-
     disk: GDI = .{},
 
-    command: u32 = undefined,
+    status: GDROMStatus = GDROMStatus.Standby,
+    command: GDROMCommand = undefined,
     params: [4]u32 = undefined,
     result: [4]u32 = undefined,
 
-    _current_command_id: u32 = 1,
+    _next_command_id: u32 = 1,
+    _current_command_id: u32 = 0,
+
+    pub fn init(self: *@This()) void {
+        // No idea if this is needed.
+        self.status = GDROMStatus.Standby;
+        self.command = undefined;
+        @memset(&self.params, 0);
+        @memset(&self.result, 0);
+        self._next_command_id = 1;
+    }
 
     pub fn send_command(self: *@This(), command_code: u32, params: [4]u32) u32 {
         if (self.status != GDROMStatus.Standby) return 0;
 
-        self._current_command_id +%= 1;
-        if (self._current_command_id == 0) self._current_command_id = 1;
+        self._current_command_id = self._next_command_id;
+        self._next_command_id +%= 1;
+        if (self._next_command_id == 0) self._next_command_id = 1;
 
         self.status = GDROMStatus.Busy;
-        self.command = command_code;
+        self.command = @enumFromInt(command_code);
         self.params = params;
+        @memset(&self.result, 0);
 
         return self._current_command_id;
     }
 
     pub fn mainloop(self: *@This(), cpu: *SH4) void {
-        std.debug.print("  TODO: GDROM MAINLOOP {d}\n", .{self.command});
+        std.debug.print("  GDROM Mainloop - {s}\n", .{@tagName(self.command)});
 
         if (self.status != GDROMStatus.Busy) return;
 
-        switch (@as(GDROMCommand, @enumFromInt(self.command))) {
+        switch (self.command) {
             GDROMCommand.DMARead => {
                 const lba = self.params[0];
                 const size = self.params[1];
                 const dest = self.params[2];
 
-                std.debug.print("  DMARead {d} {d} {X:0>8}\n", .{ lba, size, dest });
+                std.debug.print("    GDROM DMARead  sector={d} size={d} destination=0x{X:0>8}\n", .{ lba, size, dest });
                 const read = self.disk.load_sectors(lba, size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0 .. 2048 * size]);
 
-                @memset(&self.result, 0);
-                self.result[2] = read;
-                self.result[3] = 0;
+                self.result = .{ 0, 0, read, 0 };
 
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.Init => {
+                std.debug.print("    GDROM Command Init : TODO (Reset some stuff?)\n", .{});
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.GetVersion => {
@@ -90,7 +100,7 @@ pub const GDROM = struct {
                 self.status = GDROMStatus.Standby;
             },
             else => {
-                std.debug.print("  Unhandled GDROM command {X:0>8} {s}\n", .{ self.command, @tagName(@as(GDROMCommand, @enumFromInt(self.command))) });
+                std.debug.print("  Unhandled GDROM command {X:0>8} {s}\n", .{ self.command, @tagName(self.command) });
             },
         }
     }
@@ -102,6 +112,9 @@ pub const GDROM = struct {
             return 0; // no such request active
         }
         if (self.status != GDROMStatus.Standby) return 1; // request is still being processed
-        return 2; // request has completed
+
+        // request has completed
+        self._current_command_id = 0;
+        return 2;
     }
 };

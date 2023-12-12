@@ -97,6 +97,12 @@ const Track = struct {
     }
 };
 
+pub const SectorHeader = extern struct {
+    sync_filed: [12]u8,
+    address: [3]u8,
+    mode: u8,
+};
+
 pub const GDI = struct {
     tracks: std.ArrayList(Track) = undefined,
 
@@ -170,8 +176,12 @@ pub const GDI = struct {
         const root_directory_length = root_directory_entry.length;
         const root_directory_lba = root_directory_entry.location;
         const root_track = try self.get_corresponding_track(root_directory_lba);
-        const root_directory_offset: u32 = (root_directory_lba - root_track.offset) * root_track.format + 0x10; // Why +0x10? No idea.
-        var curr_offset = root_directory_offset;
+        const sector_start = (root_directory_lba - root_track.offset) * root_track.format;
+
+        const header = root_track.data[sector_start .. sector_start + 0x10];
+        std.debug.assert(header[0x0F] == 1); // We only support mode 1 right now.
+
+        var curr_offset = sector_start + 0x10; // Skip 16 bytes header.
         // TODO: Handle directories, and not just root files.
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
@@ -198,7 +208,10 @@ pub const GDI = struct {
 
     pub fn load_sectors(self: *const @This(), lba: u32, size: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
-        var offset = (lba - track.offset) * track.format + 0x10;
+        const sector_start = (lba - track.offset) * track.format;
+        const header = track.data[sector_start .. sector_start + 0x10];
+        std.debug.assert(header[0x0F] == 1); // We only support mode 1 right now.
+        var offset = sector_start + 0x10;
         if (track.format == 2352) {
             var copied: u32 = 0;
             for (0..size) |_| {

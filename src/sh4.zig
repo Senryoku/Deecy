@@ -1600,11 +1600,14 @@ fn frchg(cpu: *SH4, _: Instr) void {
     cpu.fpscr.fr +%= 1;
 }
 
-fn ocbi_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = cpu;
-    _ = opcode;
-
-    std.debug.print("Note: ocbi @Rn not implemented\n", .{});
+fn ocbi_atRn(_: *SH4, _: Instr) void {
+    const static = struct {
+        var once = true;
+    };
+    if (static.once) {
+        static.once = false;
+        std.debug.print("Note: ocbi @Rn not implemented\n", .{});
+    }
 }
 
 fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1619,7 +1622,13 @@ fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
     // invalidated. No operation is performed in the case of a cache miss
     // or an access to a non-cache area.
 
-    std.debug.print("Note: obcp @Rn not implemented\n", .{});
+    const static = struct {
+        var once = true;
+    };
+    if (static.once) {
+        static.once = false;
+        std.debug.print("Note: obcp @Rn not implemented\n", .{});
+    }
 }
 
 // Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.

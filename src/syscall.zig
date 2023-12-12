@@ -123,15 +123,14 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            std.debug.print("  TODO: GDROM_SEND_COMMAND R4={d} R5={X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).* });
+            std.debug.print("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).* });
 
             var params: [4]u32 = .{0} ** 4;
             const params_addr = cpu.R(5).*;
             if (params_addr != 0) {
-                params[0] = cpu.read32(params_addr);
-                params[1] = cpu.read32(params_addr + 4);
-                params[2] = cpu.read32(params_addr + 8);
-                params[3] = cpu.read32(params_addr + 12);
+                for (0..4) |i| {
+                    params[i] = cpu.read32(@intCast(params_addr + 4 * i));
+                }
             }
 
             cpu.R(0).* = gdrom.send_command(cpu.R(4).*, params);
@@ -146,11 +145,11 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             //          2 - request has completed (if queried again, you will get a 0)
             //          3 - request was aborted(?)
             //         -1 - request has failed (examine extended status information for cause of failure)
-            std.debug.print("  TODO: GDROM_CHECK_COMMAND R4={d} R5={X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).* });
             cpu.R(0).* = gdrom.check_command(cpu.R(4).*);
             for (0..4) |i| {
                 cpu.write32(@intCast(cpu.R(5).* + 4 * i), gdrom.result[i]);
             }
+            std.debug.print("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(0).*, gdrom.result[0], gdrom.result[1], gdrom.result[2], gdrom.result[3] });
         },
         2 => {
             // GDROM_MAINLOOP
@@ -162,7 +161,8 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
         },
         3 => {
             // GDROM_INIT
-            std.debug.print("  TODO: GDROM_INIT\n", .{});
+            std.debug.print("  GDROM_INIT\n", .{});
+            gdrom.init();
         },
         4 => {
             // GDROM_CHECK_DRIVE
@@ -172,7 +172,8 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
 
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
-            cpu.write32(cpu.R(4).*, 0x2); // GDROM status. 0x2 => Standby.
+            std.debug.print("  GDROM_CHECK_DRIVE\n", .{});
+            cpu.write32(cpu.R(4).*, @intFromEnum(gdrom.status)); // GDROM status. 0x2 => Standby.
             cpu.write32(cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             cpu.R(0).* = 0;
         },
@@ -195,11 +196,12 @@ pub fn syscall_misc(cpu: *SH4, _: Instr) void {
             cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000); // + bootSectors * 2048;
             cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
             cpu.R(0).* = 0x00C0BEBC;
-            // TODO: VO_BORDER_COL.full = p_sh4rcb->cntx.r[0];
+            // TODO: VO_BORDER_COL.full = cpu.R(0).*;
         },
         1 => {
             // Return to BIOS?
             std.debug.print("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+            std.debug.print("                              PC={X:0>8} PR={X:0>8} \n", .{ cpu.pc, cpu.pr });
             @panic("Return to BIOS?");
         },
         else => {
