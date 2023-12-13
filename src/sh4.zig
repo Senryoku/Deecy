@@ -1657,6 +1657,21 @@ fn ldcl_at_Rn_inc_dbr(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
+fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
+    if (cpu.sr.rb == 0) {
+        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
+    } else {
+        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
+    }
+}
+fn ldcl_at_Rn_inc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
+    if (cpu.sr.rb == 0) {
+        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
+    } else {
+        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
+    }
+    cpu.R(opcode.nmd.n).* += 4;
+}
 fn ldsl_at_Rn_inc_mach(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*) | 0xFFFFFC00;
     cpu.R(opcode.nmd.n).* += 4;
@@ -1834,7 +1849,21 @@ fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
-
+fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.sr.rb == 0) {
+        cpu.R(opcode.nmd.n).* = cpu.r_bank1[opcode.nmd.m & 0b0111];
+    } else {
+        cpu.R(opcode.nmd.n).* = cpu.r_bank0[opcode.nmd.m & 0b0111];
+    }
+}
+fn stcl_Rm_BANK_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    if (cpu.sr.rb == 0) {
+        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
+    } else {
+        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
+    }
+}
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
 }
@@ -2154,8 +2183,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_spc, .name = "ldc.l @Rn+,SPC", .privileged = true },
     .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_dbr, .name = "ldc.l @Rn+,DBR", .privileged = true },
-    .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc Rm,Rn_BANK", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "ldc.l @Rm+,Rn_BANK", .privileged = true },
+    .{ .code = 0b0100000010001110, .mask = 0b0000111101110000, .fn_ = ldc_Rn_Rm_BANK, .name = "ldc Rn,Rm_BANK", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000010000111, .mask = 0b0000111101110000, .fn_ = ldcl_at_Rn_inc_Rm_BANK, .name = "ldc.l @Rn+,Rm_BANK", .privileged = true },
     .{ .code = 0b0100000000001010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACH", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000000110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_mach, .name = "lds.l @Rn+,MACH", .privileged = false },
     .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "lds Rm,MACL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
@@ -2187,8 +2216,8 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = stcl_SPC_at_Rn_dec, .name = "stc.l SPC,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = stcl_DBR_at_Rn_dec, .name = "stc.l DBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = stc_Rm_BANK_Rn, .name = "stc Rm_BANK,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = stcl_Rm_BANK_at_Rn_dec, .name = "stc.l Rm_BANK,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000001010, .mask = 0b0000111100000000, .fn_ = sts_MACH_Rn, .name = "sts MACH,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = stsl_MACH_at_Rn_dec, .name = "sts.l MACH,@-Rn", .privileged = false },
     .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
