@@ -328,12 +328,12 @@ pub const SH4 = struct {
         self.R(0x7).* = 0x00000070;
         self.R(0x8).* = 0x00000000;
         self.R(0x9).* = 0x00000000;
-        self.R(0xa).* = 0x00000000;
-        self.R(0xb).* = 0x00000000;
-        self.R(0xc).* = 0x00000000;
-        self.R(0xd).* = 0x00000000;
-        self.R(0xe).* = 0x00000000;
-        self.R(0xf).* = 0x8d000000;
+        self.R(0xA).* = 0x00000000;
+        self.R(0xB).* = 0x00000000;
+        self.R(0xC).* = 0x00000000;
+        self.R(0xD).* = 0x00000000;
+        self.R(0xE).* = 0x00000000;
+        self.R(0xF).* = 0x8d000000;
 
         self.gbr = 0x8c000000;
         self.ssr = 0x40000001;
@@ -398,7 +398,7 @@ pub const SH4 = struct {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x005F6800]))).*;
     }
 
-    pub fn R(self: *@This(), r: u4) *u32 {
+    pub inline fn R(self: *@This(), r: u4) *u32 {
         if (r >= 8) return &self.r_8_15[r - 8];
         // Note: Rather than checking all the time, we could swap only once
         //       when SR is updated.
@@ -406,18 +406,46 @@ pub const SH4 = struct {
         return &self.r_bank0[r];
     }
 
-    pub fn FR(self: *@This(), r: u4) *f32 {
+    pub inline fn FR(self: *@This(), r: u4) *f32 {
         return &self.fp_banks[self.fpscr.fr].fr[r];
     }
 
-    pub fn DR(self: *@This(), r: u4) *f64 {
+    pub inline fn DR(self: *@This(), r: u4) *f64 {
         std.debug.assert(r < 8);
         return &self.fp_banks[self.fpscr.fr].dr[r];
     }
 
-    pub fn QR(self: *@This(), r: u4) *f32 {
+    pub inline fn QR(self: *@This(), r: u4) *f32 {
         std.debug.assert(r < 4);
         return &self.fp_banks[self.fpscr.fr].qr[r];
+    }
+
+    fn jump_to_interrupt(self: *@This()) void {
+        std.debug.print("jump_to_interrupt: {X:0>4}\n", .{self.read_io_register(u32, MemoryRegister.INTEVT)});
+
+        self.execution_state = .Running;
+        self.spc = self.pc;
+        self.ssr = @bitCast(self.sr);
+        self.sr.bl = true;
+        self.sr.md = 1;
+        self.sr.rb = 1;
+        self.pc = self.vbr + 0x600;
+    }
+
+    fn jump_to_exception(self: *@This()) void {
+        self.spc = self.pc;
+        self.ssr = @bitCast(self.sr);
+        self.sr.bl = true;
+        self.sr.md = 1;
+        self.sr.rb = 1;
+
+        const offset = 0x600; // TODO
+        const UserBreak = false; // TODO
+        if (self.read_io_register(MemoryRegisters.BRCR, MemoryRegister.BRCR).ubde == 1 and UserBreak) {
+            self.pc = self.dbr;
+        } else {
+            self.pc = self.vbr + offset;
+        }
     }
 
     pub fn execute(self: *@This()) void {
@@ -427,54 +455,19 @@ pub const SH4 = struct {
 
         // See h14th002d2.pdf page 665 (or 651)
         if (!self.sr.bl or self.execution_state != .Running) {
-            var interrupt_or_exception = false;
-
-            var offset: u32 = 0; // TODO: Get the offset corresponding to the code
-
             if (self.interrupt_requests != 0) {
                 // TODO: Search the highest priority interrupt.
                 const first_set = @ctz(self.interrupt_requests);
                 // Check it against the cpu interrupt mask
-                if (first_set >= self.sr.imask) {
-                    self.interrupt_requests &= ~@as(u64, 1) << @truncate(first_set); // Clear the request
+                if (Interrupts.InterruptLevel[first_set] >= self.sr.imask) {
+                    self.interrupt_requests &= ~(@as(u64, 1) << @truncate(first_set)); // Clear the request
                     self.io_register(u32, MemoryRegister.INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
-                    interrupt_or_exception = true;
-                    offset = 0x600;
-
-                    self.debug_trace = true;
+                    self.jump_to_interrupt();
                 }
             } else if (false) {
                 // TODO: Check for exceptions
 
                 // self.io_register(u32, MemoryRegister.EXPEVT).* = code;
-            }
-
-            if (interrupt_or_exception) {
-                self.execution_state = .Running;
-                // 1. The PC and SR contents are saved in SPC and SSR.
-                // 2. The block bit (BL) in SR is set to 1.
-                // 3. The mode bit (MD) in SR is set to 1.
-                // 4. The register bank bit (RB) in SR is set to 1.
-                // 5. In a reset, the FPU disable bit (FD) in SR is cleared to 0.
-                // 6. The exception code is written to bits 11–0 of the exception event register (EXPEVT) or interrupt event register (INTEVT).
-                // 7. The CPU branches to the determined exception handling vector address, and the exception
-                // handling routine begins.
-                self.spc = self.pc;
-                self.ssr = @bitCast(self.sr);
-                self.sr.bl = true;
-                self.sr.md = 1;
-                self.sr.rb = 1;
-
-                // self.io_register(u32, MemoryRegister.EXPEVT).* = code;
-                // or
-                // self.io_register(u32, MemoryRegister.INTEVT).* = code;
-
-                const UserBreak = false; // TODO
-                if (self.read_io_register(MemoryRegisters.BRCR, MemoryRegister.BRCR).ubde == 1 and UserBreak) {
-                    self.pc = self.dbr;
-                } else {
-                    self.pc = self.vbr + offset;
-                }
             }
         } else {
             // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
@@ -513,9 +506,11 @@ pub const SH4 = struct {
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         if (istnrm & self.read_hw_register(u32, .SB_IML6NRM) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL9);
-        } else if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0) {
+        }
+        if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL11);
-        } else if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0) {
+        }
+        if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL13);
         }
     }
@@ -579,8 +574,10 @@ pub const SH4 = struct {
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
-        self.advance_timers(Opcodes[JumpTable[opcode]].issue_cycles);
-        self.gpu.update(self, Opcodes[JumpTable[opcode]].issue_cycles);
+        const cycles = Opcodes[JumpTable[opcode]].issue_cycles;
+        self.advance_timers(cycles);
+        self.gpu.update(self, cycles);
+        aica.update(self, cycles);
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -671,23 +668,26 @@ pub const SH4 = struct {
 
         const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
 
-        const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
-            // FIXME: Handle exceptions
-            std.debug.print("Error in utlb _read: {any} at {X:0>8}\n", .{ e, virtual_addr });
-            unreachable;
-        };
+        if (false) {
+            // MMU: Looks like it isn't actually used
+            const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
+                // FIXME: Handle exceptions
+                std.debug.print("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, virtual_addr });
+                unreachable;
+            };
 
-        if (physical_addr != external_memory_space_address)
-            std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
+            if (physical_addr != external_memory_space_address)
+                std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
+        }
 
         // FIXME: Should we actually use the physical address here?
 
         if (external_memory_space_address < 0x04000000) {
             // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-            if (physical_addr < 0x200000) {
-                return &self.boot[physical_addr];
-            } else if (physical_addr < 0x200000 + 0x20000) {
-                return &self.flash[physical_addr - 0x200000];
+            if (external_memory_space_address < 0x200000) {
+                return &self.boot[external_memory_space_address];
+            } else if (external_memory_space_address < 0x200000 + 0x20000) {
+                return &self.flash[external_memory_space_address - 0x200000];
             }
 
             if (external_memory_space_address < 0x005F6800)
@@ -710,28 +710,28 @@ pub const SH4 = struct {
                 return &aica.wave_memory[external_memory_space_address - 0x00800000];
             }
 
-            std.debug.print("  Unimplemented write to Area 0: {X:0>8}\n", .{external_memory_space_address});
+            std.debug.print("  \u{001B}[33mUnimplemented _get_memory to Area 0: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
             return @ptrCast(&self._dummy);
         } else if (external_memory_space_address < 0x0800_0000) {
             return self.gpu._get_vram(external_memory_space_address);
         } else if (external_memory_space_address < 0x0C000000) {
             // Area 2 - Nothing
-            std.debug.print("Invalid _write to Area 2: {X:0>8}\n", .{external_memory_space_address});
+            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 2: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
             unreachable;
         } else if (external_memory_space_address < 0x10000000) {
             // Area 3 - System RAM (16MB)
             return &self.ram[(external_memory_space_address - 0x0C000000) % self.ram.len];
         } else if (external_memory_space_address < 0x14000000) {
             // Area 4 - Tile accelerator command input
-            std.debug.print("  Area 4 Write: {X:0>8}\n", .{external_memory_space_address});
+            std.debug.print("  Area 4 _get_memory: {X:0>8}\n", .{external_memory_space_address});
             return &self.area4[external_memory_space_address - 0x10000000];
         } else if (external_memory_space_address < 0x18000000) {
             // Area 5 - Expansion (modem) port
-            std.debug.print("Unimplemented _write to Area 5: {X:0>8} - {X:0>8}\n", .{ virtual_addr, external_memory_space_address });
+            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8} - {X:0>8}\u{001B}[0m\n", .{ virtual_addr, external_memory_space_address });
             return &self.area5[external_memory_space_address - 0x14000000];
         } else if (external_memory_space_address < 0x1C000000) {
             // Area 6 - Nothing
-            std.debug.print("Invalid _write to Area 6: {X:0>8}\n", .{external_memory_space_address});
+            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 6: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
             unreachable;
         } else {
             // Area 7 - Internal I/O registers (same as P4)
@@ -856,50 +856,7 @@ pub const SH4 = struct {
                 },
                 @intFromEnum(MemoryRegister.SB_ADST) => {
                     if (value == 1) {
-                        const enabled = self.read_hw_register(u32, MemoryRegister.SB_ADEN);
-                        if (enabled == 0) return;
-                        const g2_addr = self.read_hw_register(u32, MemoryRegister.SB_ADSTAR);
-                        const sys_addr = self.read_hw_register(u32, MemoryRegister.SB_ADSTAG);
-                        const len_reg = self.read_hw_register(u32, MemoryRegister.SB_ADLEN);
-                        const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End//Restart
-                        const len = len_reg & 0x7FFFFFFF;
-                        const direction = self.read_hw_register(u32, MemoryRegister.SB_ADDIR);
-                        std.debug.print(" AICA G2-DMA Start!\n", .{});
-                        std.debug.print("   G2 Start Address: 0x{X:0>8}\n", .{g2_addr});
-                        std.debug.print("   System Start Address: 0x{X:0>8}\n", .{sys_addr});
-                        std.debug.print("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
-                        std.debug.print("   Direction: 0x{X:0>8}\n", .{direction});
-                        std.debug.print("   Trigger Select: 0x{X:0>8}\n", .{self.read_hw_register(u32, MemoryRegister.SB_ADTSEL)});
-                        std.debug.print("   Enable: 0x{X:0>8}\n", .{enabled});
-
-                        const physical_g2_addr = self._get_memory(g2_addr);
-                        const physical_sys_addr = self._get_memory(sys_addr);
-
-                        // TODO: This might raise some exceptions, if the addresses are wrong.
-
-                        if (direction == 0) {
-                            // DMA transfer from the Root Bus to a G2 device
-                            const src = physical_sys_addr;
-                            const dst = physical_g2_addr;
-                            @memcpy(@as([*]u8, @ptrCast(dst))[0..len], @as([*]u8, @ptrCast(src))[0..len]);
-                            // FIXME: Should not be instant.
-                        } else {
-                            // DMA transfer from a G2 device to the Root Bus
-                            @panic("AICA DMA reversed direction not implemented");
-                        }
-
-                        // When a transfer ends, the DMA enable register is set to "0".
-                        if (dma_end)
-                            self.hw_register(u32, MemoryRegister.SB_ADEN).* = 0;
-
-                        self.hw_register(u32, MemoryRegister.SB_ADSTAR).* += len;
-                        self.hw_register(u32, MemoryRegister.SB_ADSTAG).* += len;
-                        self.hw_register(u32, MemoryRegister.SB_ADLEN).* = 0;
-                        self.hw_register(u32, MemoryRegister.SB_ADST).* = 0;
-
-                        // FIXME: Random test
-                        self.hw_register(u32, MemoryRegister.SB_ISTEXT).* |= 1 << 1;
-                        self.hw_register(u32, MemoryRegister.SB_ISTNRM).* |= 1 << 15;
+                        aica.start_dma(self);
                     }
                 },
                 @intFromEnum(MemoryRegister.SB_MDAPRO) => {
@@ -907,9 +864,19 @@ pub const SH4 = struct {
                     // Check "Security code"
                     if (value & 0xFFFF0000 != 0x61550000) return;
                 },
+                @intFromEnum(MemoryRegister.SB_MDST) => {
+                    if (value == 1) {
+                        std.debug.print("  Unimplemented Maple-DMA initiation !!\n", .{});
+                    }
+                },
                 @intFromEnum(MemoryRegister.SB_ISTNRM) => {
                     // Interrupt can be cleared by writing "1" to the corresponding bit.
                     self.hw_register(u32, MemoryRegister.SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_ISTERR) => {
+                    // Interrupt can be cleared by writing "1" to the corresponding bit.
+                    self.hw_register(u32, MemoryRegister.SB_ISTERR).* &= ~value;
                     return;
                 },
                 else => {
@@ -1425,6 +1392,13 @@ fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
 
+fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
+    // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
+    // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
+    const tmp = cpu.read8(cpu.R(opcode.nmd.n).*);
+    cpu.sr.t = (tmp == 0);
+    cpu.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
+}
 fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
 }
@@ -1556,10 +1530,15 @@ inline fn d12_label(cpu: *SH4, opcode: Instr) void {
 }
 
 inline fn execute_delay_slot(cpu: *SH4, addr: addr_t) void {
-    // TODO: If the instruction at addr is a branch instruction,
-    // raise a Slot illegal instruction exception
+    // TODO: If the instruction at addr is a branch instruction, raise a Slot illegal instruction exception
+
+    // FIXME: If the delayed instruction references PC in any way (e.g. @(disp,PC)), it will be wrong because
+    // we always substract 2 to compensate the automatic increment. Hence this weird workaround.
+    cpu.pc += 2;
 
     cpu._execute(addr);
+
+    cpu.pc -= 2;
 }
 
 fn bf_label(cpu: *SH4, opcode: Instr) void {
@@ -1632,23 +1611,24 @@ fn rts(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pc = cpu.pr - 2; // execute will add +2
     execute_delay_slot(cpu, delay_slot);
+}
 
-    // Note: (I don't know if this is actually relevant)
-    // In an RTE delay slot, status register (SR) bits are referenced as follows. In instruction access, the
-    // MD bit is used before modification, and in data access, the MD bit is accessed after
-    // modification. The other bits—S, T, M, Q, FD, BL, and RB—after modification are used for
-    // delay slot instruction execution. The STC and STC.L SR instructions access all SR bits after
-    // modification.
+fn clrmac(cpu: *SH4, _: Instr) void {
+    cpu.mach = 0;
+    cpu.macl = 0;
+}
+fn clrs(cpu: *SH4, _: Instr) void {
+    cpu.sr.s = false;
+}
+fn clrt(cpu: *SH4, _: Instr) void {
+    cpu.sr.t = false;
 }
 
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
-    // TODO: Issuing this instruction in user mode will cause an illegal instruction exception.
-    std.debug.assert(cpu.sr.md == 1); // This instruction is only usable in privileged mode.
     cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
 fn ldcl_at_Rn_inc_sr(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
-    std.debug.print("  SR Overwrite: ({x:0>8}) {any}\n", .{ @as(u32, @bitCast(cpu.sr)), cpu.sr });
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldcl_at_Rn_inc_gbr(cpu: *SH4, opcode: Instr) void {
@@ -1672,11 +1652,9 @@ fn ldcl_at_Rn_inc_spc(cpu: *SH4, opcode: Instr) void {
 }
 fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
-    std.debug.print("  DBR Overwrite: {x:0>8}\n", .{cpu.dbr});
 }
 fn ldcl_at_Rn_inc_dbr(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
-    std.debug.print("  DBR Overwrite: {x:0>8}\n", .{cpu.dbr});
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldsl_at_Rn_inc_mach(cpu: *SH4, opcode: Instr) void {
@@ -1781,7 +1759,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.sr = @bitCast(cpu.ssr);
-    cpu.pc = @bitCast(cpu.spc);
+    cpu.pc = @bitCast(cpu.spc - 2); // Execute will add 2
     execute_delay_slot(cpu, delay_slot);
 }
 fn sets(cpu: *SH4, _: Instr) void {
@@ -2127,7 +2105,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0010000000001011, .mask = 0b0000111111110000, .fn_ = or_Rm_Rn, .name = "or Rm,Rn", .privileged = false },
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = or_imm_r0, .name = "or #imm,R0", .privileged = false },
     .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
-    .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "tas.b @Rn", .privileged = false, .issue_cycles = 5, .latency_cycles = 5 },
+    .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = tasb_at_Rn, .name = "tas.b @Rn", .privileged = false, .issue_cycles = 5, .latency_cycles = 5 },
     .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = tst_Rm_Rn, .name = "tst Rm,Rn", .privileged = false },
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = tst_imm_r0, .name = "tst #imm,R0", .privileged = false },
     .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "tst.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
@@ -2161,9 +2139,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
-    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrs", .privileged = false },
-    .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "clrt", .privileged = false },
+    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = clrmac, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = clrs, .name = "clrs", .privileged = false },
+    .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = clrt, .name = "clrt", .privileged = false },
     .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },

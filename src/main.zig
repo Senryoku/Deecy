@@ -76,8 +76,8 @@ pub fn main() !void {
     defer cpu.deinit();
 
     var gdrom = &syscall.gdrom; // FIXME
-    try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
+    try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     defer gdrom.disk.deinit();
 
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
@@ -168,7 +168,10 @@ pub fn main() !void {
 
         if (zgui.begin("CPU State", .{})) {
             zgui.text("PC: 0x{X:0>8}", .{cpu.pc});
-            zgui.text("SR: T={any}, S={any}", .{ cpu.sr.t, cpu.sr.s });
+            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ cpu.sr.t, cpu.sr.s, cpu.sr.imask });
+            zgui.text("PR: 0x{X:0>8}", .{cpu.pr});
+            zgui.text("SPC: 0x{X:0>8}", .{cpu.spc});
+            zgui.text("VBR: 0x{X:0>8}", .{cpu.vbr});
             zgui.beginGroup();
             for (0..8) |i| {
                 zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, cpu.R(@truncate(i)).* });

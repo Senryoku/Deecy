@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const MemoryRegister = @import("MemoryRegisters.zig").MemoryRegister;
+const MemoryRegisters = @import("MemoryRegisters.zig");
+const MemoryRegister = MemoryRegisters.MemoryRegister;
 
 const sh4 = @import("sh4.zig");
 const SH4 = sh4.SH4;
@@ -175,6 +176,12 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             std.debug.print("  GDROM_CHECK_DRIVE\n", .{});
             cpu.write32(cpu.R(4).*, @intFromEnum(gdrom.status)); // GDROM status. 0x2 => Standby.
             cpu.write32(cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
+            cpu.R(0).* = 0;
+        },
+        5 => {
+            // DMA END?
+            std.debug.print("  GDROM_DMA_END (R7={d})\n", .{cpu.R(7).*});
+            cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
             cpu.R(0).* = 0;
         },
         else => {

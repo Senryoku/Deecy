@@ -89,11 +89,11 @@ pub const InterruptINTEVTCodes: [41]u32 = .{
     0x2E0, // IRL7
     0x300, // IRL8
     0x320, // IRL9
-    0x340, // IRLA
-    0x360, // IRLB
-    0x380, // IRLC
-    0x3A0, // IRLD
-    0x3C0, // IRLE
+    0x340, // IRL10
+    0x360, // IRL11
+    0x380, // IRL12
+    0x3A0, // IRL13
+    0x3C0, // IRL14
     0x600, // Hitachi
     0x620, // GPIO
     0x640, // DMTE0
@@ -119,4 +119,48 @@ pub const InterruptINTEVTCodes: [41]u32 = .{
     0x560, // ITI
     0x580, // RCMI
     0x5A0, // ROVI
+};
+
+pub const InterruptLevel: [41]u32 = .{
+    3, // NMI
+    4, // IRL0
+    4, // IRL1
+    4, // IRL2
+    4, // IRL3
+    4, // IRL4
+    4, // IRL5
+    4, // IRL6
+    4, // IRL7
+    4, // IRL8
+    6, // IRL9
+    4, // IRL10
+    4, // IRL11
+    4, // IRL12
+    2, // IRL13
+    4, // IRL14
+    4, // Hitachi
+    4, // GPIO
+    4, // DMTE0
+    4, // DMTE1
+    4, // DMTE2
+    4, // DMTE3
+    4, // DMAE
+    4, // TUNI0
+    4, // TUNI1
+    4, // TUNI2
+    4, // TICPI2
+    4, // ATI
+    4, // PRI
+    4, // CUI
+    4, // SCI1_ERI
+    4, // SCI1_RXI
+    4, // SCI1_TXI
+    4, // SCI1_TEI
+    4, // SCIF_ERI
+    4, // SCIF_RXI
+    4, // SCIF_TXI
+    4, // SCIF_TEI
+    4, // ITI
+    4, // RCMI
+    4, // ROVI
 };
