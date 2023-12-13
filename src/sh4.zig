@@ -422,6 +422,8 @@ pub const SH4 = struct {
 
     fn jump_to_interrupt(self: *@This()) void {
         std.debug.print("jump_to_interrupt: {X:0>4}\n", .{self.read_io_register(u32, MemoryRegister.INTEVT)});
+        if (self.read_io_register(u32, MemoryRegister.INTEVT) == 0x03A0)
+            self.debug_trace = true;
 
         self.execution_state = .Running;
         self.spc = self.pc;
@@ -1631,6 +1633,9 @@ fn ldcl_at_Rn_inc_sr(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
     cpu.R(opcode.nmd.n).* += 4;
 }
+fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.gbr = cpu.R(opcode.nmd.n).*;
+}
 fn ldcl_at_Rn_inc_gbr(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
@@ -1719,6 +1724,10 @@ fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
 // Inverts the FR bit in floating-point register FPSCR.
 fn frchg(cpu: *SH4, _: Instr) void {
     cpu.fpscr.fr +%= 1;
+}
+fn fschg(cpu: *SH4, _: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
+    cpu.fpscr.sz +%= 1;
 }
 
 fn ocbi_atRn(_: *SH4, _: Instr) void {
@@ -1992,6 +2001,11 @@ fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n).* *= cpu.DR(opcode.nmd.m).*;
     }
 }
+fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
+    std.debug.assert(cpu.fpscr.sz == 0);
+    cpu.FR(opcode.nmd.n).* += cpu.FR(0).* * cpu.FR(opcode.nmd.m).*;
+}
 fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.sz == 0) {
@@ -2173,13 +2187,13 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = clrt, .name = "clrt", .privileged = false },
     .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
-    .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_GBR, .name = "ldc Rn,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_gbr, .name = "ldc.l @Rn+,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_VBR, .name = "ldc Rn,VBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000100111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_vbr, .name = "ldc.l @Rn+,VBR", .privileged = true },
-    .{ .code = 0b0100000000111110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SSR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000000111110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rn,SSR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000000110111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_ssr, .name = "ldc.l @Rn+,SSR", .privileged = true },
-    .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rm,SPC", .privileged = true, .issue_cycles = 3, .latency_cycles = 1 },
+    .{ .code = 0b0100000001001110, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "ldc Rn,SPC", .privileged = true, .issue_cycles = 3, .latency_cycles = 1 },
     .{ .code = 0b0100000001000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_spc, .name = "ldc.l @Rn+,SPC", .privileged = true },
     .{ .code = 0b0100000011111010, .mask = 0b0000111100000000, .fn_ = ldc_Rn_DBR, .name = "ldc Rn,DBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000011110110, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_dbr, .name = "ldc.l @Rn+,DBR", .privileged = true },
@@ -2261,7 +2275,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = fadd_FRm_FRn, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = fmac_FR0_FRm_FRn, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
     .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
     .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = fcmp_eq_FRm_FRn, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
@@ -2294,7 +2308,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpul, .name = "lds.l @Rn+,FPUL", .privileged = false },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = stsl_FPUL_at_Rn_dec, .name = "sts.l FPUL,@-Rn", .privileged = false },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },
-    .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "fschg", .privileged = false },
+    .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = fschg, .name = "fschg", .privileged = false },
 };
 
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;

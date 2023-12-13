@@ -122,22 +122,22 @@ pub const InterruptINTEVTCodes: [41]u32 = .{
 };
 
 pub const InterruptLevel: [41]u32 = .{
-    3, // NMI
-    4, // IRL0
-    4, // IRL1
-    4, // IRL2
-    4, // IRL3
-    4, // IRL4
-    4, // IRL5
-    4, // IRL6
-    4, // IRL7
-    4, // IRL8
+    16, // NMI
+    15, // IRL0
+    14, // IRL1
+    13, // IRL2
+    12, // IRL3
+    11, // IRL4
+    10, // IRL5
+    9, // IRL6
+    8, // IRL7
+    7, // IRL8
     6, // IRL9
-    4, // IRL10
+    5, // IRL10
     4, // IRL11
-    4, // IRL12
+    3, // IRL12
     2, // IRL13
-    4, // IRL14
+    1, // IRL14
     4, // Hitachi
     4, // GPIO
     4, // DMTE0
