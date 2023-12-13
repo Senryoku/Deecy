@@ -1704,6 +1704,10 @@ fn ldsl_at_Rn_inc_fpscr(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
     cpu.R(opcode.nmd.n).* += 4;
 }
+fn stsl_FPSCR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+}
 fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.R(opcode.nmd.n).*;
 }
@@ -1713,6 +1717,10 @@ fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
 fn ldsl_at_Rn_inc_fpul(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
+}
+fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
@@ -1799,46 +1807,74 @@ fn sleep(cpu: *SH4, _: Instr) void {
 fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(cpu.sr);
 }
+fn stcl_SR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
+}
 fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.tbr;
 }
 fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.gbr;
 }
+fn stcl_GBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
+}
 fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.vbr;
+}
+fn stcl_VBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
 }
 fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.sgr;
 }
+fn stcl_SGR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
+}
 fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.ssr;
+}
+fn stcl_SSR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
 }
 fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.spc;
 }
+fn stcl_SPC_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
+}
 fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.dbr;
+}
+fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
 }
-fn sts_l_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+fn stsl_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
-fn sts_l_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+fn stsl_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
-fn sts_l_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
+fn stsl_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
@@ -2160,27 +2196,27 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = sett, .name = "sett", .privileged = false },
     .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = sleep, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = stc_SR_Rn, .name = "stc SR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000000000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000000011, .mask = 0b0000111100000000, .fn_ = stcl_SR_at_Rn_dec, .name = "stc.l SR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000010010, .mask = 0b0000111100000000, .fn_ = stc_GBR_Rn, .name = "stc GBR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000000010011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l GBR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000010011, .mask = 0b0000111100000000, .fn_ = stcl_GBR_at_Rn_dec, .name = "stc.l GBR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000100010, .mask = 0b0000111100000000, .fn_ = stc_VBR_Rn, .name = "stc VBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000000100011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l VBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000100011, .mask = 0b0000111100000000, .fn_ = stcl_VBR_at_Rn_dec, .name = "stc.l VBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000111010, .mask = 0b0000111100000000, .fn_ = stc_SGR_rn, .name = "stc SGR,Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
-    .{ .code = 0b0100000000110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SGR,@-Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
+    .{ .code = 0b0100000000110010, .mask = 0b0000111100000000, .fn_ = stcl_SGR_at_Rn_dec, .name = "stc.l SGR,@-Rn", .privileged = true, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0000000000110010, .mask = 0b0000111100000000, .fn_ = stc_SSR_rn, .name = "stc SSR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SSR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000110011, .mask = 0b0000111100000000, .fn_ = stcl_SSR_at_Rn_dec, .name = "stc.l SSR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000001000010, .mask = 0b0000111100000000, .fn_ = stc_SPC_rn, .name = "stc SPC,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l SPC,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000001000011, .mask = 0b0000111100000000, .fn_ = stcl_SPC_at_Rn_dec, .name = "stc.l SPC,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000011111010, .mask = 0b0000111100000000, .fn_ = stc_DBR_rn, .name = "stc DBR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "stc.l DBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000011110010, .mask = 0b0000111100000000, .fn_ = stcl_DBR_at_Rn_dec, .name = "stc.l DBR,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000001010, .mask = 0b0000111100000000, .fn_ = sts_MACH_Rn, .name = "sts MACH,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = sts_l_MACH_at_Rn_dec, .name = "sts.l MACH,@-Rn", .privileged = false },
+    .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = stsl_MACH_at_Rn_dec, .name = "sts.l MACH,@-Rn", .privileged = false },
     .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = sts_l_MACL_at_Rn_dec, .name = "sts.l MACL,@-Rn", .privileged = false },
+    .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = stsl_MACL_at_Rn_dec, .name = "sts.l MACL,@-Rn", .privileged = false },
     .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
+    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = stsl_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
@@ -2245,11 +2281,11 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_fpscr, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpscr, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPSCR,@-Rn", .privileged = false },
+    .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = stsl_FPSCR_at_Rn_dec, .name = "sts.l FPSCR,@-Rn", .privileged = false },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = lds_Rn_FPUL, .name = "lds Rn,FPUL", .privileged = false },
     .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = sts_FPUL_Rn, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_fpul, .name = "lds.l @Rn+,FPUL", .privileged = false },
-    .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "sts.l FPUL,@-Rn", .privileged = false },
+    .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = stsl_FPUL_at_Rn_dec, .name = "sts.l FPUL,@-Rn", .privileged = false },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = frchg, .name = "frchg", .privileged = false },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "fschg", .privileged = false },
 };
