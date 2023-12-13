@@ -857,6 +857,11 @@ pub const SH4 = struct {
                         // When a transfer ends, the DMA enable register is set to "0".
                         if (dma_end)
                             self.hw_register(u32, MemoryRegister.SB_ADEN).* = 0;
+
+                        self.hw_register(u32, MemoryRegister.SB_ADSTAR).* += len;
+                        self.hw_register(u32, MemoryRegister.SB_ADSTAG).* += len;
+                        self.hw_register(u32, MemoryRegister.SB_ADLEN).* = 0;
+                        self.hw_register(u32, MemoryRegister.SB_ADST).* = 0;
                     }
                 },
                 else => {
@@ -1763,18 +1768,16 @@ fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
 }
-fn sts_l_MACH_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn sts_l_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
-fn sts_l_MACL_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+fn sts_l_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+    cpu.R(opcode.nmd.n).* -= 4;
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
@@ -2117,9 +2120,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000010000010, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc Rm_BANK,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = unimplemented, .name = "stc.l Rm_BANK,@-Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000001010, .mask = 0b0000111100000000, .fn_ = sts_MACH_Rn, .name = "sts MACH,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = sts_l_MACH_atRn, .name = "sts.l MACH,@-Rn", .privileged = false },
+    .{ .code = 0b0100000000000010, .mask = 0b0000111100000000, .fn_ = sts_l_MACH_at_Rn_dec, .name = "sts.l MACH,@-Rn", .privileged = false },
     .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = sts_l_MACL_atRn, .name = "sts.l MACL,@-Rn", .privileged = false },
+    .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = sts_l_MACL_at_Rn_dec, .name = "sts.l MACL,@-Rn", .privileged = false },
     .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = sts_l_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },

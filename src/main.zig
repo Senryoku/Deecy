@@ -76,7 +76,8 @@ pub fn main() !void {
     defer cpu.deinit();
 
     var gdrom = &syscall.gdrom; // FIXME
-    try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
+    //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     defer gdrom.disk.deinit();
 
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
