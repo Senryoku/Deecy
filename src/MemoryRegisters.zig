@@ -303,7 +303,7 @@ pub const MemoryRegister = enum(u32) {
     _,
 };
 
-pub const BRCR = packed struct {
+pub const BRCR = packed struct(u16) {
     ubde: u1 = 0,
 
     _r0: u2 = undefined,
@@ -325,14 +325,14 @@ pub const BRCR = packed struct {
     cmfa: u1 = 0,
 };
 
-pub const TSTR = packed struct {
+pub const TSTR = packed struct(u8) {
     str0: u1 = 0,
     str1: u1 = 0,
     str2: u1 = 0,
     _: u5 = undefined,
 };
 
-pub const TCR = packed struct {
+pub const TCR = packed struct(u16) {
     tpsc0: u1 = 0,
     tpsc1: u1 = 0,
     tpsc2: u1 = 0,
@@ -346,8 +346,37 @@ pub const TCR = packed struct {
     _: u6 = 0,
 };
 
-comptime {
-    std.debug.assert(@bitSizeOf(BRCR) == @bitSizeOf(u16));
-    std.debug.assert(@bitSizeOf(TSTR) == @bitSizeOf(u8));
-    std.debug.assert(@bitSizeOf(TCR) == @bitSizeOf(u16));
-}
+pub const SB_ISTNRM = packed struct(u32) {
+    RenderDoneVIdeo: u1 = 0,
+    RenderDoneISP: u1 = 0,
+    RenderDone: u1 = 0,
+    VBlankIn: u1 = 0,
+    VBlankOut: u1 = 0,
+    HBlankIn: u1 = 0,
+
+    EoT_YUV: u1 = 0, // End of Transfering
+    EoT_OpaqueList: u1 = 0,
+    EoT_OpaqueModifierVolumeList: u1 = 0,
+
+    EoT_TranslucentList: u1 = 0,
+    EoT_TranslucentModifierVolumeList: u1 = 0,
+    EoD_PVR: u1 = 0, // End of DMA
+    EoD_Maple: u1 = 0,
+
+    MapleVBlankOver: u1 = 0,
+    EoD_GDROM: u1 = 0,
+    EoD_AICA: u1 = 0,
+
+    EoD_EXT1: u1 = 0,
+    EoD_EXT2: u1 = 0,
+    EoD_DEV: u1 = 0,
+
+    EoD_CH2: u1 = 0,
+    EoD_PVRSort: u1 = 0,
+    EoD_PunchThroughList: u1 = 0,
+
+    _: u8 = 0,
+
+    ExtStatus: u1 = 0,
+    ErrorStatus: u1 = 0,
+};

@@ -263,6 +263,8 @@ pub fn main() !void {
                         pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
                         pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
                         pixels[4 * i + 3] = 255; // FIXME: Not really.
+                        start += 4;
+                        i += 1;
                     },
                     //pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
                     //pixels[4 * i + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;

@@ -1,5 +1,10 @@
 const std = @import("std");
 
+const SH4 = @import("sh4.zig").SH4;
+
+const MemoryRegisters = @import("MemoryRegisters.zig");
+const MemoryRegister = MemoryRegisters.MemoryRegister;
+
 // Holly Video Chip
 
 // Tile Accelerator and PowerVR2 core
@@ -125,19 +130,39 @@ pub const Holly = struct {
     }
 
     pub fn reset(self: *@This()) void {
-        self._get_register(u32, HollyRegister.ID).* = 0x17FD11DB;
-        self._get_register(u32, HollyRegister.SPG_STATUS).* = 0x00000000;
-        self._get_register(u32, HollyRegister.SPAN_SOFT_CFG).* = 0x00000101;
-        self._get_register(u32, HollyRegister.FPU_PARAM_CFG).* = 0x0007DF77;
-        self._get_register(u32, HollyRegister.SDRAM_REFRESH).* = 0x00000020;
-        self._get_register(u32, HollyRegister.SDRAM_CFG).* = 0x15D1C951;
-        self._get_register(u32, HollyRegister.FB_BURSTCTRL).* = 0x00093F39;
+        self._get_register(u32, .ID).* = 0x17FD11DB;
+        self._get_register(u32, .SPG_STATUS).* = 0x00000000;
+        self._get_register(u32, .SPAN_SOFT_CFG).* = 0x00000101;
+        self._get_register(u32, .FPU_PARAM_CFG).* = 0x0007DF77;
+        self._get_register(u32, .SDRAM_REFRESH).* = 0x00000020;
+        self._get_register(u32, .SDRAM_CFG).* = 0x15D1C951;
+        self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
     }
 
-    pub fn update(self: *@This(), cycles: u32) void {
-        _ = cycles;
+    pub fn update(self: *@This(), cpu: *SH4, cycles: u32) void {
         // TODO!
-        self._get_register(SPG_STATUS, HollyRegister.SPG_STATUS).*.scanline +%= 1;
+        const static = struct {
+            var _tmp_cycles: u64 = 0;
+        };
+        static._tmp_cycles += cycles;
+
+        // FIXME: Made up numbers for testing
+        if (static._tmp_cycles >= 1000) {
+            static._tmp_cycles -= 1000;
+
+            self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
+
+            if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 480) {
+                self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 1;
+                cpu.raise_normal_interrupt(MemoryRegisters.SB_ISTNRM{ .VBlankIn = 1 });
+            }
+
+            if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 500) {
+                self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline = 0;
+                self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 0;
+                cpu.raise_normal_interrupt(MemoryRegisters.SB_ISTNRM{ .VBlankOut = 1 });
+            }
+        }
     }
 
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {

@@ -1,5 +1,7 @@
 const std = @import("std");
 
+// SH4 internal interrupts
+
 pub const IPRA = packed struct(u8) {
     rtc: u4 = 0,
     tmu2: u4 = 0,
@@ -43,11 +45,11 @@ pub const Interrupt = enum {
     IRL7,
     IRL8,
     IRL9,
-    IRLA,
-    IRLB,
-    IRLC,
-    IRLD,
-    IRLE,
+    IRL10,
+    IRL11,
+    IRL12,
+    IRL13,
+    IRL14,
     HitachiUDI,
     GPIO,
     DMTE0,

@@ -3,6 +3,9 @@ const std = @import("std");
 const GDI = @import("gdi.zig").GDI;
 const SH4 = @import("sh4.zig").SH4;
 
+const MemoryRegisters = @import("MemoryRegisters.zig");
+const MemoryRegister = MemoryRegisters.MemoryRegister;
+
 pub const GDROMStatus = enum(u32) {
     Busy = 0,
     Paused = 1,
@@ -82,6 +85,10 @@ pub const GDROM = struct {
                 std.debug.print("    GDROM DMARead  sector={d} size={d} destination=0x{X:0>8}\n", .{ lba, size, dest });
                 const byte_size = 2048 * size;
                 const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
+
+                // FIXME: Random test
+                cpu.hw_register(u32, MemoryRegister.SB_ISTEXT).* |= 1 << 0;
+                cpu.hw_register(u32, MemoryRegister.SB_ISTNRM).* |= 1 << 14;
 
                 self.result = .{ 0, 0, read, 0 };
 

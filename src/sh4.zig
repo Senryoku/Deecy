@@ -271,6 +271,8 @@ pub const SH4 = struct {
 
         // IDK, I just hope I don't have to emulate those accurately.
         self.write32(@intFromEnum(MemoryRegister.SB_FFST), 0);
+
+        self.hw_register(u32, MemoryRegister.SB_ISTNRM).* = 0;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -432,12 +434,15 @@ pub const SH4 = struct {
             if (self.interrupt_requests != 0) {
                 // TODO: Search the highest priority interrupt.
                 const first_set = @ctz(self.interrupt_requests);
-                self.interrupt_requests &= ~@as(u64, 1) << @truncate(first_set); // Clear the request
-                self.io_register(u32, MemoryRegister.INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
-                interrupt_or_exception = true;
-                offset = 0x600;
+                // Check it against the cpu interrupt mask
+                if (first_set >= self.sr.imask) {
+                    self.interrupt_requests &= ~@as(u64, 1) << @truncate(first_set); // Clear the request
+                    self.io_register(u32, MemoryRegister.INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
+                    interrupt_or_exception = true;
+                    offset = 0x600;
 
-                self.debug_trace = true;
+                    self.debug_trace = true;
+                }
             } else if (false) {
                 // TODO: Check for exceptions
 
@@ -451,8 +456,7 @@ pub const SH4 = struct {
                 // 3. The mode bit (MD) in SR is set to 1.
                 // 4. The register bank bit (RB) in SR is set to 1.
                 // 5. In a reset, the FPU disable bit (FD) in SR is cleared to 0.
-                // 6. The exception code is written to bits 11–0 of the exception event register (EXPEVT) or
-                // interrupt event register (INTEVT).
+                // 6. The exception code is written to bits 11–0 of the exception event register (EXPEVT) or interrupt event register (INTEVT).
                 // 7. The CPU branches to the determined exception handling vector address, and the exception
                 // handling routine begins.
                 self.spc = self.pc;
@@ -500,6 +504,28 @@ pub const SH4 = struct {
     fn request_interrupt(self: *@This(), int: Interrupt) void {
         std.debug.print("Interrupt request! {any}\n", .{int});
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
+    }
+
+    fn check_sb_interrupts(self: *@This()) void {
+
+        // FIXME: Not sure if this is the right place to check for those.
+        // FIXME: Also check external interrupts (SB_ISTEXT) and errors (SB_ISTERR)
+        const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
+        if (istnrm & self.read_hw_register(u32, .SB_IML6NRM) != 0) {
+            self.request_interrupt(Interrupts.Interrupt.IRL9);
+        } else if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0) {
+            self.request_interrupt(Interrupts.Interrupt.IRL11);
+        } else if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0) {
+            self.request_interrupt(Interrupts.Interrupt.IRL13);
+        }
+    }
+
+    // TODO: Add helpers for external interrupts and errors.
+
+    pub fn raise_normal_interrupt(self: *@This(), int: MemoryRegisters.SB_ISTNRM) void {
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
+
+        self.check_sb_interrupts();
     }
 
     pub fn advance_timers(self: *@This(), cycles: u32) void {
@@ -554,7 +580,7 @@ pub const SH4 = struct {
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
         self.advance_timers(Opcodes[JumpTable[opcode]].issue_cycles);
-        self.gpu.update(Opcodes[JumpTable[opcode]].issue_cycles);
+        self.gpu.update(self, Opcodes[JumpTable[opcode]].issue_cycles);
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -745,6 +771,14 @@ pub const SH4 = struct {
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+        if (virtual_addr >= 0x00700000 and virtual_addr < 0x00710000) {
+            return aica.read_register(virtual_addr);
+        }
+
+        if (virtual_addr >= 0x00710000 and virtual_addr < 0x00710008) {
+            return aica.read_rtc_register(virtual_addr);
+        }
+
         return @as(*const u32, @alignCast(@ptrCast(
             @constCast(&self)._get_memory(virtual_addr),
         ))).*;
@@ -862,7 +896,21 @@ pub const SH4 = struct {
                         self.hw_register(u32, MemoryRegister.SB_ADSTAG).* += len;
                         self.hw_register(u32, MemoryRegister.SB_ADLEN).* = 0;
                         self.hw_register(u32, MemoryRegister.SB_ADST).* = 0;
+
+                        // FIXME: Random test
+                        self.hw_register(u32, MemoryRegister.SB_ISTEXT).* |= 1 << 1;
+                        self.hw_register(u32, MemoryRegister.SB_ISTNRM).* |= 1 << 15;
                     }
+                },
+                @intFromEnum(MemoryRegister.SB_MDAPRO) => {
+                    // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                    // Check "Security code"
+                    if (value & 0xFFFF0000 != 0x61550000) return;
+                },
+                @intFromEnum(MemoryRegister.SB_ISTNRM) => {
+                    // Interrupt can be cleared by writing "1" to the corresponding bit.
+                    self.hw_register(u32, MemoryRegister.SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                    return;
                 },
                 else => {
                     std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
@@ -871,6 +919,14 @@ pub const SH4 = struct {
         }
         if (addr >= 0x005F8000 and addr < 0x005FA000) {
             return self.gpu.write_register(addr, value);
+        }
+
+        if (addr >= 0x00700000 and addr < 0x00710000) {
+            return aica.write_register(addr, value);
+        }
+
+        if (addr >= 0x00710000 and addr < 0x00710008) {
+            return aica.write_rtc_register(addr, value);
         }
 
         @as(*u32, @alignCast(@ptrCast(
