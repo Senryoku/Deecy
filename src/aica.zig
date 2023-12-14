@@ -25,7 +25,10 @@ pub const SB_ADSUSP = packed struct(u32) {
     _: u26 = 0,
 };
 
+const AICARegisterStart = 0x00700000;
+
 pub const AICA = struct {
+    regs: [0x8000 / 4]u32 = undefined, // All registers are 32-bit afaik
     wave_memory: [0x200000]u8 = undefined,
 
     rtc_write_enabled: bool = false,
@@ -33,15 +36,13 @@ pub const AICA = struct {
     dma_countdown: u32 = 0,
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {
-        _ = self;
-        std.debug.print("Read from AICA at 0x{X:0>8}\n", .{addr});
-
-        return 0;
+        std.debug.print("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[addr - AICARegisterStart] });
+        return self.regs[(addr - AICARegisterStart) / 4];
     }
 
     pub fn write_register(self: *AICA, addr: u32, value: u32) void {
-        _ = self;
         std.debug.print("Write to AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+        self.regs[(addr - AICARegisterStart) / 4] = value;
     }
 
     pub fn read_rtc_register(self: *const AICA, addr: u32) u32 {
@@ -114,7 +115,6 @@ pub const AICA = struct {
             const src = physical_sys_addr;
             const dst = physical_g2_addr;
             @memcpy(@as([*]u8, @ptrCast(dst))[0..len], @as([*]u8, @ptrCast(src))[0..len]);
-            // FIXME: Should not be instant.
         } else {
             // DMA transfer from a G2 device to the Root Bus
             @panic("AICA DMA reversed direction not implemented");

@@ -17,6 +17,8 @@ pub const MemoryRegister = enum(u32) {
     QACR0 = 0xFF000038,
     QACR1 = 0xFF00003C,
 
+    _FF000030 = 0xFF000030,
+
     // UBC
     BARA = 0xFF200000,
     BAMRA = 0xFF200004,
@@ -188,6 +190,8 @@ pub const MemoryRegister = enum(u32) {
     SB_MTXDAD = 0x005F6CF4,
     SB_MRXDAD = 0x005F6CF8,
     SB_MRXDBD = 0x005F6CFC,
+
+    GDROM_AlternateStatus_DeviceControl = 0x005F709C, // Read: AlternateStatus, Write: DeviceControl
 
     // GD-DMA Control Registers
     SB_GDSTAR = 0x005F7404,

@@ -16,6 +16,11 @@ const byte_t = u8;
 const word_t = u16;
 const longword_t = u32;
 
+// FIXME: Move
+// Pluged in video cable reported to the CPU:
+// 0 = VGA, 1 = VGA, 2 = RGB, 3 = TV Composite.
+const CableType = 0;
+
 // FIXME: Move.
 var aica: AICA = .{};
 
@@ -223,6 +228,7 @@ pub const SH4 = struct {
         self.r_bank0 = undefined;
         self.r_bank1 = undefined;
         self.r_8_15 = undefined;
+        self.R(0xF).* = 0x8C00F400;
         self.sr = .{};
         self.gbr = undefined;
         self.ssr = undefined;
@@ -243,6 +249,8 @@ pub const SH4 = struct {
         self.io_register(u32, .TTB).* = 0;
         self.io_register(u32, .TEA).* = 0;
         self.io_register(u32, .MMUCR).* = 0;
+
+        self.io_register(u32, ._FF000030).* = 0x040205C1;
 
         self.io_register(u8, .BASRA).* = undefined;
         self.io_register(u8, .BASRB).* = undefined;
@@ -266,6 +274,7 @@ pub const SH4 = struct {
 
         self.io_register(u32, .BCR1).* = 0;
         self.io_register(u32, .BCR2).* = 0x3FFC;
+        self.io_register(u32, .PCTRA).* = 0;
 
         self.gpu.reset();
 
@@ -688,78 +697,77 @@ pub const SH4 = struct {
     pub fn _get_memory(self: *@This(), virtual_addr: addr_t) *u8 {
         std.debug.assert(self.sr.md == 1 or is_p0(virtual_addr));
 
-        const external_memory_space_address = virtual_addr & 0x1FFFFFFF;
+        const addr = virtual_addr & 0x1FFFFFFF;
 
         if (false) {
-            // MMU: Looks like it isn't actually used
-            const physical_addr = self.mmu_translate_utbl(external_memory_space_address) catch |e| {
+            // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
+            const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
                 // FIXME: Handle exceptions
                 std.debug.print("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, virtual_addr });
                 unreachable;
             };
 
-            if (physical_addr != external_memory_space_address)
-                std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ external_memory_space_address, physical_addr });
+            if (physical_addr != addr)
+                std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ addr, physical_addr });
         }
 
-        // FIXME: Should we actually use the physical address here?
-
-        if (external_memory_space_address < 0x04000000) {
+        if (addr < 0x04000000) {
             // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-            if (external_memory_space_address < 0x200000) {
-                return &self.boot[external_memory_space_address];
-            } else if (external_memory_space_address < 0x200000 + 0x20000) {
-                return &self.flash[external_memory_space_address - 0x200000];
+            if (addr < 0x00200000) {
+                return &self.boot[addr];
+            }
+            if (addr < 0x00200000 + 0x20000) {
+                return &self.flash[addr - 0x200000];
             }
 
-            if (external_memory_space_address < 0x005F6800)
+            if (addr < 0x005F6800)
                 unreachable;
 
-            if (external_memory_space_address >= 0x005F8000 and external_memory_space_address < 0x005FA000) {
-                return self.gpu._get_register_from_addr(u8, external_memory_space_address);
+            if (addr >= 0x005F8000 and addr < 0x005FA000) {
+                return self.gpu._get_register_from_addr(u8, addr);
             }
 
-            if (external_memory_space_address < 0x00600000) {
-                return &self.hardware_registers[external_memory_space_address - 0x005F6800];
+            if (addr < 0x00600000) {
+                return &self.hardware_registers[addr - 0x005F6800];
             }
 
-            if (external_memory_space_address >= 0x00700000 and external_memory_space_address <= 0x00707FE0) {
+            if (addr >= 0x00700000 and addr <= 0x00707FE0) {
                 // G2 AICA Register
                 return @ptrCast(&self._dummy);
             }
             //                                                                            is it 0x009FFFE0?
-            if (external_memory_space_address >= 0x00800000 and external_memory_space_address < 0x00A00000) {
+            if (addr >= 0x00800000 and addr < 0x00A00000) {
                 // G2 Wave Memory
-                return &aica.wave_memory[external_memory_space_address - 0x00800000];
+                return &aica.wave_memory[addr - 0x00800000];
             }
 
-            std.debug.print("  \u{001B}[33mUnimplemented _get_memory to Area 0: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
+            std.debug.print("  \u{001B}[33mUnimplemented _get_memory to Area 0: {X:0>8}\u{001B}[0m\n", .{addr});
             return @ptrCast(&self._dummy);
-        } else if (external_memory_space_address < 0x0800_0000) {
-            return self.gpu._get_vram(external_memory_space_address);
-        } else if (external_memory_space_address < 0x0C000000) {
+        } else if (addr < 0x0800_0000) {
+            return self.gpu._get_vram(addr);
+        } else if (addr < 0x0C000000) {
             // Area 2 - Nothing
-            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 2: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
+            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 2: {X:0>8}\u{001B}[0m\n", .{addr});
             unreachable;
-        } else if (external_memory_space_address < 0x10000000) {
-            // Area 3 - System RAM (16MB)
-            return &self.ram[(external_memory_space_address - 0x0C000000) % self.ram.len];
-        } else if (external_memory_space_address < 0x14000000) {
+        } else if (addr < 0x10000000) {
+            // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
+            return &self.ram[addr & 0x00FFFFFF];
+        } else if (addr < 0x14000000) {
             // Area 4 - Tile accelerator command input
-            std.debug.print("  Area 4 _get_memory: {X:0>8}\n", .{external_memory_space_address});
-            return &self.area4[external_memory_space_address - 0x10000000];
-        } else if (external_memory_space_address < 0x18000000) {
+            std.debug.print("  Area 4 _get_memory: {X:0>8}\n", .{addr});
+            return &self.area4[addr - 0x10000000];
+        } else if (addr < 0x18000000) {
             // Area 5 - Expansion (modem) port
-            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8} - {X:0>8}\u{001B}[0m\n", .{ virtual_addr, external_memory_space_address });
-            return &self.area5[external_memory_space_address - 0x14000000];
-        } else if (external_memory_space_address < 0x1C000000) {
+            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8} - {X:0>8}\u{001B}[0m\n", .{ virtual_addr, addr });
+            return &self.area5[addr - 0x14000000];
+        } else if (addr < 0x1C000000) {
             // Area 6 - Nothing
-            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 6: {X:0>8}\u{001B}[0m\n", .{external_memory_space_address});
+            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 6: {X:0>8}\u{001B}[0m\n", .{addr});
             unreachable;
         } else {
             // Area 7 - Internal I/O registers (same as P4)
             std.debug.assert(self.sr.md == 1);
-            return &self.area7[external_memory_space_address - 0x1C000000];
+            return &self.area7[addr - 0x1C000000];
         }
     }
 
@@ -778,22 +786,54 @@ pub const SH4 = struct {
             std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
         }
 
-        switch (virtual_addr) {
-            @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
-                return @as(*const u16, @alignCast(@ptrCast(
-                    @constCast(&self)._get_memory(virtual_addr),
-                ))).* & 0xF;
-            },
-            @intFromEnum(MemoryRegister.RFCR) => {
-                // Hack: This is the Refresh Count Register, related to DRAM control.
-                //       If don't think its proper emulation is needed, but it's accessed by the bios,
-                //       probably for synchronization purposes. I assume returning a contant value to pass this check
-                //       is enough for now, as games shouldn't access that themselves.
-                std.debug.print("[Note] Access to Refresh Count Register.\n", .{});
-                return 0x0011;
-                // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
-            },
-            else => {},
+        // SH4 Hardware registers
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                    return @as(*const u16, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(virtual_addr),
+                    ))).* & 0xF;
+                },
+                @intFromEnum(MemoryRegister.RFCR) => {
+                    // Hack: This is the Refresh Count Register, related to DRAM control.
+                    //       If don't think its proper emulation is needed, but it's accessed by the bios,
+                    //       probably for synchronization purposes. I assume returning a contant value to pass this check
+                    //       is enough for now, as games shouldn't access that themselves.
+                    std.debug.print("[Note] Access to Refresh Count Register.\n", .{});
+                    return 0x0011;
+                    // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
+                },
+                @intFromEnum(MemoryRegister.PDTRA) => {
+                    // Note: I have absolutely no idea what's going on here.
+                    //       This is directly taken from Flycast, which already got it from Chankast.
+                    //       This is needed for the bios to work properly, without it, it will
+                    //       go to sleep mode with all interrupts disabled early on.
+                    const tpctra: u32 = self.read_io_register(u32, MemoryRegister.PCTRA);
+                    const tpdtra: u32 = self.read_io_register(u32, MemoryRegister.PDTRA);
+
+                    var tfinal: u16 = 0;
+                    if ((tpctra & 0xf) == 0x8) {
+                        tfinal = 3;
+                    } else if ((tpctra & 0xf) == 0xB) {
+                        tfinal = 3;
+                    } else {
+                        tfinal = 0;
+                    }
+
+                    if ((tpctra & 0xf) == 0xB and (tpdtra & 0xf) == 2) {
+                        tfinal = 0;
+                    } else if ((tpctra & 0xf) == 0xC and (tpdtra & 0xf) == 2) {
+                        tfinal = 3;
+                    }
+
+                    tfinal |= CableType << 8;
+
+                    return tfinal;
+                },
+                else => {
+                    std.debug.print("  Read32 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+                },
+            }
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
@@ -1611,7 +1651,8 @@ fn bra_label(cpu: *SH4, opcode: Instr) void {
 }
 fn braf_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    cpu.pc += 4 + cpu.R(opcode.nmd.n).* - 2;
+    cpu.pc +%= 4 + cpu.R(opcode.nmd.n).*;
+    cpu.pc -= 2; // execute will allready add +2
     execute_delay_slot(cpu, delay_slot);
 }
 fn bsr_label(cpu: *SH4, opcode: Instr) void {
@@ -1623,7 +1664,9 @@ fn bsr_label(cpu: *SH4, opcode: Instr) void {
 fn bsrf_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
-    cpu.pc += 4 + cpu.R(opcode.nmd.n).* - 2; // execute will allready add +2
+    // Note: The Boot ROM seem to intentionally wrap around the address.
+    cpu.pc +%= 4 + cpu.R(opcode.nmd.n).*;
+    cpu.pc -= 2; // execute will allready add +2
     execute_delay_slot(cpu, delay_slot);
 }
 fn jmp_atRn(cpu: *SH4, opcode: Instr) void {
