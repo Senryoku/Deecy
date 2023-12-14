@@ -29,6 +29,8 @@ pub const GDROMCommand = enum(u32) {
     Init = 24,
     Seek = 27,
     Read = 28,
+    ReqMode = 30,
+    SetMode = 31,
     Stop = 33,
     GetSCD = 34,
     GetSession = 35,
@@ -72,9 +74,12 @@ pub const GDROM = struct {
     }
 
     pub fn mainloop(self: *@This(), cpu: *SH4) void {
-        std.debug.print("  GDROM Mainloop - {s}\n", .{@tagName(self.command)});
+        if (self.status != GDROMStatus.Busy) {
+            std.debug.print("  GDROM Mainloop - No command queued\n", .{});
+            return;
+        }
 
-        if (self.status != GDROMStatus.Busy) return;
+        std.debug.print("  GDROM Mainloop - {s}\n", .{@tagName(self.command)});
 
         switch (self.command) {
             GDROMCommand.DMARead => {
@@ -87,8 +92,7 @@ pub const GDROM = struct {
                 const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
 
                 // FIXME: Random test
-                cpu.hw_register(u32, MemoryRegister.SB_ISTEXT).* |= 1 << 0;
-                cpu.hw_register(u32, MemoryRegister.SB_ISTNRM).* |= 1 << 14;
+                cpu.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
 
                 self.result = .{ 0, 0, read, 0 };
 
@@ -107,8 +111,22 @@ pub const GDROM = struct {
                 cpu.write8(@intCast(dest + version.len), 0x2);
                 self.status = GDROMStatus.Standby;
             },
+            GDROMCommand.ReqMode => {
+                const dest = self.params[0];
+                std.debug.print("    GDROM ReqMode  dest=0x{X:0>8}\n", .{dest});
+                cpu.write32(dest + 0, 0); // Speed
+                cpu.write32(dest + 4, 0x00B4); // Standby
+                cpu.write32(dest + 8, 0x19); // Read Flags
+                cpu.write32(dest + 12, 0x08); // Read retry
+                self.result = .{ 0, 0, 0xA, 0 };
+                self.status = GDROMStatus.Standby;
+            },
+            GDROMCommand.SetMode => {
+                std.debug.print("    GDROM SetMode: TODO\n", .{});
+                self.status = GDROMStatus.Standby;
+            },
             else => {
-                std.debug.print("  Unhandled GDROM command {X:0>8} {s}\n", .{ self.command, @tagName(self.command) });
+                std.debug.print("    Unhandled GDROM command {X:0>8} {s}\n", .{ self.command, @tagName(self.command) });
             },
         }
     }

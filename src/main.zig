@@ -76,16 +76,20 @@ pub fn main() !void {
     defer cpu.deinit();
 
     var gdrom = &syscall.gdrom; // FIXME
-    try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
+    //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
     //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     defer gdrom.disk.deinit();
 
-    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    defer IPbin_file.close();
-    const IPbin = try IPbin_file.readToEndAlloc(common.GeneralAllocator, 0x10000);
-    defer common.GeneralAllocator.free(IPbin);
-    cpu.load_IP_bin(IPbin);
+    //const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
+    //defer IPbin_file.close();
+    //const IPbin = try IPbin_file.readToEndAlloc(common.GeneralAllocator, 0x10000);
+    //defer common.GeneralAllocator.free(IPbin);
+    //cpu.load_IP_bin(IPbin);
+
+    // Load IP.bin from disk (16 first sectors of the last track)
+    // FIXME: Here we assume the last track is the 3rd.
+    _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
 
     try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]);
 

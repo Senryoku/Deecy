@@ -137,6 +137,8 @@ pub const Holly = struct {
         self._get_register(u32, .SDRAM_REFRESH).* = 0x00000020;
         self._get_register(u32, .SDRAM_CFG).* = 0x15D1C951;
         self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
+
+        self._get_register(u32, .SPG_HBLANK).* = 0x007E0345;
     }
 
     pub fn update(self: *@This(), cpu: *SH4, cycles: u32) void {
@@ -147,8 +149,9 @@ pub const Holly = struct {
         static._tmp_cycles += cycles;
 
         // FIXME: Made up numbers for testing
-        if (static._tmp_cycles >= 1000) {
-            static._tmp_cycles -= 1000;
+        const cycles_per_line = 10 * (self._get_register(u32, .SPG_HBLANK).* & 0xFFF);
+        if (static._tmp_cycles >= cycles_per_line) {
+            static._tmp_cycles -= cycles_per_line;
 
             self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
 

@@ -19,27 +19,27 @@ const longword_t = u32;
 // FIXME: Move.
 var aica: AICA = .{};
 
-const SR = packed struct {
+const SR = packed struct(u32) {
     t: bool = undefined, // True/False condition or carry/borrow bit.
     s: bool = undefined, // Specifies a saturation operation for a MAC instruction
 
-    _r0: u2 = undefined,
+    _r0: u2 = 0,
 
-    imask: u4 = 1, // Interrupt mask level
+    imask: u4 = 0xF, // Interrupt mask level
     q: bool = undefined, // State for divide step.
     m: bool = undefined,
 
-    _r1: u5 = undefined,
+    _r1: u5 = 0,
 
     fd: bool = false, // FPU disable bit.
 
-    _r2: u12 = undefined,
+    _r2: u12 = 0,
 
     bl: bool = true, // Exception/interrupt block bit (set to 1 by a reset, exception, or interrupt).
     rb: u1 = 1, // General register bank specifier in privileged mode (set to 1 by a reset, exception or interrupt).
     md: u1 = 1, // Processor mode. MD = 0: User mode (Some instructions cannot be executed, and some resources cannot be accessed). MD = 1: Privileged mode.
 
-    _r3: u1 = undefined,
+    _r3: u1 = 0,
 };
 
 const FPSCR = packed struct {
@@ -238,41 +238,39 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.io_register(mmu.PTEH, MemoryRegister.PTEH).* = .{};
-        self.io_register(mmu.PTEL, MemoryRegister.PTEL).* = .{};
-        self.io_register(u32, MemoryRegister.TTB).* = 0;
-        self.io_register(u32, MemoryRegister.TEA).* = 0;
-        self.io_register(u32, MemoryRegister.MMUCR).* = 0;
+        self.io_register(mmu.PTEH, .PTEH).* = .{};
+        self.io_register(mmu.PTEL, .PTEL).* = .{};
+        self.io_register(u32, .TTB).* = 0;
+        self.io_register(u32, .TEA).* = 0;
+        self.io_register(u32, .MMUCR).* = 0;
 
-        self.io_register(u8, MemoryRegister.BASRA).* = undefined;
-        self.io_register(u8, MemoryRegister.BASRB).* = undefined;
-        self.io_register(u32, MemoryRegister.CCR).* = 0;
+        self.io_register(u8, .BASRA).* = undefined;
+        self.io_register(u8, .BASRB).* = undefined;
+        self.io_register(u32, .CCR).* = 0;
 
-        self.io_register(u32, MemoryRegister.TRA).* = 0;
-        self.io_register(u32, MemoryRegister.EXPEVT).* = 0;
-        self.io_register(u32, MemoryRegister.INTEVT).* = 0;
+        self.io_register(u32, .TRA).* = 0;
+        self.io_register(u32, .EXPEVT).* = 0;
+        self.io_register(u32, .INTEVT).* = 0;
 
-        self.io_register(u32, MemoryRegister.QACR0).* = undefined;
-        self.io_register(u32, MemoryRegister.QACR1).* = undefined;
-        self.io_register(u32, MemoryRegister.BARA).* = undefined;
-        self.io_register(u32, MemoryRegister.BAMRA).* = undefined;
+        self.io_register(u32, .QACR0).* = undefined;
+        self.io_register(u32, .QACR1).* = undefined;
+        self.io_register(u32, .BARA).* = undefined;
+        self.io_register(u32, .BAMRA).* = undefined;
 
-        self.io_register(u32, MemoryRegister.MCR).* = 0xC0091224;
-        self.io_register(u16, MemoryRegister.SDMR).* = 0x00FF;
-        self.io_register(u16, MemoryRegister.RTCSR).* = 0xA510;
-        self.io_register(u16, MemoryRegister.RTCNT).* = 0xA500;
-        self.io_register(u16, MemoryRegister.RTCOR).* = 0xA55E;
-        self.io_register(u16, MemoryRegister.RFCR).* = undefined;
+        self.io_register(u32, .MCR).* = 0xC0091224;
+        self.io_register(u16, .SDMR).* = 0x00FF;
+        self.io_register(u16, .RTCSR).* = 0xA510;
+        self.io_register(u16, .RTCNT).* = 0xA500;
+        self.io_register(u16, .RTCOR).* = 0xA55E;
+        self.io_register(u16, .RFCR).* = undefined;
 
-        self.io_register(u32, MemoryRegister.BCR1).* = 0;
-        self.io_register(u32, MemoryRegister.BCR2).* = 0x3FFC;
+        self.io_register(u32, .BCR1).* = 0;
+        self.io_register(u32, .BCR2).* = 0x3FFC;
 
         self.gpu.reset();
 
-        // IDK, I just hope I don't have to emulate those accurately.
-        self.write32(@intFromEnum(MemoryRegister.SB_FFST), 0);
-
-        self.hw_register(u32, MemoryRegister.SB_ISTNRM).* = 0;
+        self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
+        self.hw_register(u32, .SB_ISTNRM).* = 0;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -296,19 +294,19 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.io_register(mmu.PTEH, MemoryRegister.PTEH).* = .{};
-        self.io_register(mmu.PTEL, MemoryRegister.PTEL).* = .{};
-        self.io_register(u32, MemoryRegister.TTB).* = 0;
-        self.io_register(u32, MemoryRegister.TEA).* = 0;
-        self.io_register(u32, MemoryRegister.MMUCR).* = 0;
+        self.io_register(mmu.PTEH, .PTEH).* = .{};
+        self.io_register(mmu.PTEL, .PTEL).* = .{};
+        self.io_register(u32, .TTB).* = 0;
+        self.io_register(u32, .TEA).* = 0;
+        self.io_register(u32, .MMUCR).* = 0;
         // BASRA Held
         // BASRB Held
-        self.io_register(u32, MemoryRegister.CCR).* = 0;
-        self.io_register(u32, MemoryRegister.TRA).* = 0;
-        self.io_register(u32, MemoryRegister.EXPEVT).* = 0x00000020;
+        self.io_register(u32, .CCR).* = 0;
+        self.io_register(u32, .TRA).* = 0;
+        self.io_register(u32, .EXPEVT).* = 0x00000020;
         // INTEVT Held
-        self.io_register(u32, MemoryRegister.QACR0).* = undefined;
-        self.io_register(u32, MemoryRegister.QACR1).* = undefined;
+        self.io_register(u32, .QACR0).* = undefined;
+        self.io_register(u32, .QACR1).* = undefined;
         // BARA Held
         // BAMRA Held
 
@@ -369,6 +367,30 @@ pub const SH4 = struct {
         // Misc
         self.write32(0x8C0000E0, 0x8C001008);
         self.write16(0x8C001008, 0b0000000001100000);
+
+        // Patch some functions apparently used by interrupts
+        // (And some other random stuff that the boot ROM sets for some reason
+        //  and I'm afraid some games might use. I'm not taking any more chances)
+
+        // Sleep on error?
+        self.write32(0x8C000000, 0x00090009);
+        self.write32(0x8C000004, 0x001B0009);
+        self.write32(0x8C000008, 0x0009AFFD);
+        // ??
+        self.write16(0x8C00000C, 0);
+        self.write16(0x8C00000E, 0);
+        // RTE - Some interrupts jump there instead of having their own RTE, I have NO idea why.
+        self.write32(0x8C000010, 0x00090009); // nop nop
+        self.write32(0x8C000014, 0x0009002B); // rte nop
+        // RTS
+        self.write32(0x8C000018, 0x00090009);
+        self.write32(0x8C00001C, 0x0009000B);
+
+        // ??
+        self.write8(0x8C00002C, 0x16);
+        self.write32(0x8C000064, 0x8c008100);
+        self.write16(0x8C000090, 0);
+        self.write16(0x8C000092, @bitCast(@as(i16, -128)));
     }
 
     pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
@@ -421,9 +443,9 @@ pub const SH4 = struct {
     }
 
     fn jump_to_interrupt(self: *@This()) void {
-        std.debug.print("jump_to_interrupt: {X:0>4}\n", .{self.read_io_register(u32, MemoryRegister.INTEVT)});
-        if (self.read_io_register(u32, MemoryRegister.INTEVT) == 0x03A0)
-            self.debug_trace = true;
+        std.debug.print(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}\n", .{ self.vbr, self.read_io_register(u32, MemoryRegister.INTEVT) });
+        //if (self.read_io_register(u32, MemoryRegister.INTEVT) == 0x03A0)
+        //self.debug_trace = true;
 
         self.execution_state = .Running;
         self.spc = self.pc;
@@ -451,8 +473,6 @@ pub const SH4 = struct {
     }
 
     pub fn execute(self: *@This()) void {
-        // TODO: Check interrupts.
-
         // When the BL bit in SR is 0, exceptions and interrupts are accepted.
 
         // See h14th002d2.pdf page 665 (or 651)
@@ -490,19 +510,16 @@ pub const SH4 = struct {
             self.pc += 2;
         } else {
             // FIXME: Not sure if this is a thing.
-            self.advance_timers(1);
-
-            @panic("Sleeping");
+            self.add_cycles(1000);
         }
     }
 
     fn request_interrupt(self: *@This(), int: Interrupt) void {
-        std.debug.print("Interrupt request! {any}\n", .{int});
+        std.debug.print(" (Interrupt request! {s})\n", .{@tagName(int)});
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
     }
 
     fn check_sb_interrupts(self: *@This()) void {
-
         // FIXME: Not sure if this is the right place to check for those.
         // FIXME: Also check external interrupts (SB_ISTEXT) and errors (SB_ISTERR)
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
@@ -567,6 +584,12 @@ pub const SH4 = struct {
         }
     }
 
+    pub fn add_cycles(self: *@This(), cycles: u32) void {
+        self.advance_timers(cycles);
+        self.gpu.update(self, cycles);
+        aica.update(self, cycles);
+    }
+
     pub fn _execute(self: *@This(), addr: addr_t) void {
         const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
@@ -576,10 +599,7 @@ pub const SH4 = struct {
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
-        const cycles = Opcodes[JumpTable[opcode]].issue_cycles;
-        self.advance_timers(cycles);
-        self.gpu.update(self, cycles);
-        aica.update(self, cycles);
+        self.add_cycles(Opcodes[JumpTable[opcode]].issue_cycles);
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
@@ -699,8 +719,9 @@ pub const SH4 = struct {
                 return self.gpu._get_register_from_addr(u8, external_memory_space_address);
             }
 
-            if (external_memory_space_address < 0x00600000)
+            if (external_memory_space_address < 0x00600000) {
                 return &self.hardware_registers[external_memory_space_address - 0x005F6800];
+            }
 
             if (external_memory_space_address >= 0x00700000 and external_memory_space_address <= 0x00707FE0) {
                 // G2 AICA Register
@@ -743,12 +764,20 @@ pub const SH4 = struct {
     }
 
     pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
+            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+        }
+
         return @as(*const u8, @alignCast(@ptrCast(
             @constCast(&self)._get_memory(virtual_addr),
         ))).*;
     }
 
     pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
+            std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+        }
+
         switch (virtual_addr) {
             @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
                 return @as(*const u16, @alignCast(@ptrCast(
@@ -773,6 +802,10 @@ pub const SH4 = struct {
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
+            std.debug.print("  Read32 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+        }
+
         if (virtual_addr >= 0x00700000 and virtual_addr < 0x00710000) {
             return aica.read_register(virtual_addr);
         }
@@ -793,7 +826,7 @@ pub const SH4 = struct {
     }
 
     pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
-        const addr = virtual_addr & 0x01FFFFFFF;
+        const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
@@ -1783,8 +1816,10 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.sr = @bitCast(cpu.ssr);
-    cpu.pc = @bitCast(cpu.spc - 2); // Execute will add 2
+    cpu.pc = cpu.spc - 2; // Execute will add 2
     execute_delay_slot(cpu, delay_slot);
+
+    //cpu.debug_trace = false;
 }
 fn sets(cpu: *SH4, _: Instr) void {
     cpu.sr.s = true;
@@ -1804,6 +1839,7 @@ fn sleep(cpu: *SH4, _: Instr) void {
     } else {
         cpu.execution_state = .Sleep;
     }
+    std.debug.print("\u{001B}[33mSleep State: .{s}\u{001B}[0m\n", .{@tagName(cpu.execution_state)});
 }
 
 fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {

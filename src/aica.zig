@@ -4,6 +4,27 @@ const SH4 = @import("sh4.zig").SH4;
 
 // Yamaha AICA Audio Chip
 
+pub const SB_ADSUSP = packed struct(u32) {
+    // DMA Suspend Request (Write Only
+    // 0: Continues DMA transfer without going to the suspended state. Or, bit 2 of the SB_ADTSEL register is "0"
+    // 1: Suspends and terminates DMA transfer
+    DMASuspendRequest: u1 = 0,
+
+    _reserved1: u3 = 0,
+
+    // DMA Suspend or DMA Stop (Read Only)
+    // 0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
+    // 1: DMA transfer has ended, or is stopped due to a suspend
+    DMASuspend: u1 = 1,
+
+    // DMA Request Input State (Read Only)
+    // 0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
+    // 1: The DMA transfer request is low (transfer possible)
+    DMARequestInputState: u1 = 1,
+
+    _: u26 = 0,
+};
+
 pub const AICA = struct {
     wave_memory: [0x200000]u8 = undefined,
 
@@ -99,11 +120,22 @@ pub const AICA = struct {
             @panic("AICA DMA reversed direction not implemented");
         }
 
+        // Signals the DMA is in progress
+        cpu.hw_register(u32, .SB_ADST).* = 1;
+        cpu.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
+
         // Schedule the end of the transfer interrupt
         self.dma_countdown = len; // FIXME: Compute the actual cycle count.
     }
 
     fn end_dma(self: *AICA, cpu: *SH4) void {
+        const suspended = cpu.read_hw_register(u32, .SB_ADSUSP);
+        if ((suspended & 1) == 1) {
+            // The DMA is suspended, wait.
+            // FIXME: This is probably not how it's supposed to work.
+            return;
+        }
+
         self.dma_countdown = 0;
 
         const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
@@ -118,8 +150,9 @@ pub const AICA = struct {
         cpu.hw_register(u32, .SB_ADLEN).* = 0;
         cpu.hw_register(u32, .SB_ADST).* = 0;
 
-        cpu.raise_normal_interrupt(.{ .EoD_AICA = 1 });
         // Set "DMA Suspend or DMA Stop" bit in SB_ADSUSP
-        cpu.hw_register(u32, .SB_ADSUSP).* |= 0b10000;
+        cpu.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
+
+        cpu.raise_normal_interrupt(.{ .EoD_AICA = 1 });
     }
 };
