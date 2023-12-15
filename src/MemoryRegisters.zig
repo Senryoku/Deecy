@@ -307,6 +307,10 @@ pub const MemoryRegister = enum(u32) {
     _,
 };
 
+pub fn getRegisterName(addr: u32) []const u8 {
+    return std.enums.tagName(MemoryRegister, @as(MemoryRegister, @enumFromInt(addr))) orelse "Unknown";
+}
+
 pub const BRCR = packed struct(u16) {
     ubde: u1 = 0,
 
@@ -337,14 +341,10 @@ pub const TSTR = packed struct(u8) {
 };
 
 pub const TCR = packed struct(u16) {
-    tpsc0: u1 = 0,
-    tpsc1: u1 = 0,
-    tpsc2: u1 = 0,
-    ckeg0: u1 = 0,
-    ckeg1: u1 = 0,
+    tpsc: u3 = 0,
+    ckeg: u2 = 0,
     unie: u1 = 0,
-    icpe0: u1 = 0, // Only available on channel 2
-    icpe1: u1 = 0, // Only available on channel 2
+    icpe: u2 = 0, // Only available on channel 2
     unf: u1 = 0,
     icpf: u1 = 0,
     _: u6 = 0,

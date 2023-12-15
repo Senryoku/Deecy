@@ -93,7 +93,7 @@ pub fn main() !void {
 
     try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]);
 
-    // cpu.init_boot();
+    cpu.init_boot();
 
     //while (true) {
     //    if (cpu.pc == 0x8C001008)

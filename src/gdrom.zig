@@ -79,7 +79,7 @@ pub const GDROM = struct {
             return;
         }
 
-        std.debug.print("  GDROM Mainloop - {s}\n", .{@tagName(self.command)});
+        std.debug.print("  GDROM Mainloop - {s}\n", .{std.enums.tagName(GDROMCommand, self.command) orelse "Unknown"});
 
         switch (self.command) {
             GDROMCommand.DMARead => {

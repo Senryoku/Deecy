@@ -156,7 +156,7 @@ pub const SH4 = struct {
     ram: []u8 align(4) = undefined,
     area4: []u8 align(4) = undefined, // Tile Accelerator, TODO: Move this?
     area5: []u8 align(4) = undefined,
-    area7: []u8 align(4) = undefined,
+    area7: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
     gpu: Holly = .{},
@@ -164,6 +164,8 @@ pub const SH4 = struct {
     _dummy: u32 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 
     interrupt_requests: u64 = 0,
+
+    timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
 
     debug_trace: bool = false,
 
@@ -524,7 +526,7 @@ pub const SH4 = struct {
     }
 
     fn request_interrupt(self: *@This(), int: Interrupt) void {
-        std.debug.print(" (Interrupt request! {s})\n", .{@tagName(int)});
+        std.debug.print(" (Interrupt request! {s})\n", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
     }
 
@@ -551,45 +553,52 @@ pub const SH4 = struct {
         self.check_sb_interrupts();
     }
 
+    fn timer_prescaler(value: u4) u32 {
+        switch (value) {
+            0 => return 4,
+            1 => return 16,
+            2 => return 64,
+            3 => return 256,
+            5 => return 1024,
+            else => unreachable,
+        }
+    }
+
     pub fn advance_timers(self: *@This(), cycles: u32) void {
-        // TODO: Proper timer.
-        const TSTR = self.read_io_register(MemoryRegisters.TSTR, MemoryRegister.TSTR);
-        // TODO: Scale depending on Timer Control Registers' TPSC values
+        const TSTR = self.read_io_register(u32, MemoryRegister.TSTR);
 
         // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
         // (TCNT) for the corresponding channel starts counting. When TCNT underflows, the UNF flag is
         // set in the corresponding timer control register (TCR). If the UNIE bit in TCR is set to 1 at this
         // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
         // into TCNT, and the count-down continues (auto-reload function).
-        if (TSTR.str0 == 1) {
-            const tcnt = self.io_register(u32, MemoryRegister.TCNT0);
-            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR0);
-            if (tcnt.* < cycles) {
-                tcr.*.unf = 1;
-                tcnt.* = self.io_register(u32, MemoryRegister.TCOR0).*;
-                if (tcr.*.unie == 1)
-                    self.request_interrupt(Interrupt.TUNI0);
-            } else tcnt.* -= cycles;
-        }
-        if (TSTR.str1 == 1) {
-            const tcnt = self.io_register(u32, MemoryRegister.TCNT1);
-            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR1);
-            if (tcnt.* < cycles) {
-                tcr.*.unf = 1;
-                tcnt.* = self.io_register(u32, MemoryRegister.TCOR1).*;
-                if (tcr.*.unie == 1)
-                    self.request_interrupt(Interrupt.TUNI1);
-            } else tcnt.* -= cycles;
-        }
-        if (TSTR.str2 == 1) {
-            const tcnt = self.io_register(u32, MemoryRegister.TCNT2);
-            const tcr = self.io_register(MemoryRegisters.TCR, MemoryRegister.TCR2);
-            if (tcnt.* < cycles) {
-                tcr.*.unf = 1;
-                tcnt.* = self.io_register(u32, MemoryRegister.TCOR2).*;
-                if (tcr.*.unie == 1)
-                    self.request_interrupt(Interrupt.TUNI2);
-            } else tcnt.* -= cycles;
+        const timers = .{
+            .{ .counter = MemoryRegister.TCNT0, .control = MemoryRegister.TCR0, .constant = MemoryRegister.TCOR0, .interrupt = Interrupt.TUNI0 },
+            .{ .counter = MemoryRegister.TCNT1, .control = MemoryRegister.TCR1, .constant = MemoryRegister.TCOR1, .interrupt = Interrupt.TUNI1 },
+            .{ .counter = MemoryRegister.TCNT2, .control = MemoryRegister.TCR2, .constant = MemoryRegister.TCOR2, .interrupt = Interrupt.TUNI2 },
+        };
+
+        inline for (0..3) |i| {
+            if ((TSTR >> @intCast(i)) & 0x1 == 1) {
+                const tcnt = self.io_register(u32, timers[i].counter);
+
+                self.timer_cycle_counter[i] += cycles;
+
+                const tcr = self.io_register(MemoryRegisters.TCR, timers[i].control);
+
+                const scale = SH4.timer_prescaler(tcr.*.tpsc);
+                if (self.timer_cycle_counter[i] >= scale) {
+                    self.timer_cycle_counter[i] -= scale;
+                    tcnt.* -= 1;
+                }
+
+                if (tcnt.* == 0) {
+                    tcr.*.unf = 1;
+                    tcnt.* = self.io_register(u32, timers[i].constant).*;
+                    if (tcr.*.unie == 1)
+                        self.request_interrupt(timers[i].interrupt);
+                }
+            }
         }
     }
 
@@ -772,8 +781,18 @@ pub const SH4 = struct {
     }
 
     pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    std.debug.print("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(virtual_addr),
+                    ))).* });
+                },
+            }
+        }
+
         if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
-            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -782,10 +801,6 @@ pub const SH4 = struct {
     }
 
     pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
-        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
-            std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
-        }
-
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
@@ -831,9 +846,15 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 else => {
-                    std.debug.print("  Read32 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+                    std.debug.print("  Read16 to hardware register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(virtual_addr),
+                    ))).* });
                 },
             }
+        }
+
+        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
+            std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
@@ -842,8 +863,20 @@ pub const SH4 = struct {
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(virtual_addr),
+                    ))).* });
+                },
+            }
+        }
+
         if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
-            std.debug.print("  Read32 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, @tagName(@as(MemoryRegister, @enumFromInt(virtual_addr))) });
+            std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                @constCast(&self)._get_memory(virtual_addr),
+            ))).* });
         }
 
         if (virtual_addr >= 0x00700000 and virtual_addr < 0x00710000) {
@@ -866,13 +899,20 @@ pub const SH4 = struct {
     }
 
     pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    std.debug.print("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                },
+            }
+        }
+
         const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
                 else => {
-                    std.debug.print("  Write8 to hardware register @{X:0>8} = 0x{X:0>2}\n", .{ addr, value });
-                    std.debug.print("                             {s} = 0x{X:0>2}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                    std.debug.print("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -883,29 +923,31 @@ pub const SH4 = struct {
     }
 
     pub fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        // TODO: Check region/permissions?
-        switch (virtual_addr) {
-            @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
-                std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
-                @as(*u16, @alignCast(@ptrCast(
-                    self._get_memory(virtual_addr),
-                ))).* = 0b10100101_00000000 | (value & 0xFF);
-            },
-            @intFromEnum(MemoryRegister.RFCR) => {
-                std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
-                @as(*u16, @alignCast(@ptrCast(
-                    self._get_memory(virtual_addr),
-                ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
-            },
-            else => {},
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                    std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
+                    @as(*u16, @alignCast(@ptrCast(
+                        self._get_memory(virtual_addr),
+                    ))).* = 0b10100101_00000000 | (value & 0xFF);
+                },
+                @intFromEnum(MemoryRegister.RFCR) => {
+                    std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
+                    @as(*u16, @alignCast(@ptrCast(
+                        self._get_memory(virtual_addr),
+                    ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
+                },
+                else => {
+                    std.debug.print("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                },
+            }
         }
+
         const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            // Hardware registers
             switch (addr) {
                 else => {
-                    std.debug.print("  Write16 to hardware register @{X:0>8} = 0x{X:0>4}\n", .{ addr, value });
-                    std.debug.print("                               {s} = 0x{X:0>4}\n", .{ @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                    std.debug.print("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -916,8 +958,14 @@ pub const SH4 = struct {
     }
 
     pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        // Addresses with side effects
-        // TODO: Check region/permissions?
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                },
+            }
+        }
+
         const addr = virtual_addr & 0x01FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
@@ -955,7 +1003,7 @@ pub const SH4 = struct {
                     return;
                 },
                 else => {
-                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, @tagName(@as(MemoryRegister, @enumFromInt(addr))), value });
+                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
