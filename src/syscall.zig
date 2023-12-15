@@ -11,6 +11,8 @@ const Instr = sh4.Instr;
 const GDROM = @import("gdrom.zig").GDROM;
 pub var gdrom: GDROM = .{};
 
+pub var FirstReadBINSectorSize: u32 = 0; // FIXME
+
 pub fn syscall(cpu: *SH4, opcode: Instr) void {
     std.debug.print("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}\n", .{ cpu.pc, opcode.value });
     for (0..15) |i| {
@@ -200,10 +202,10 @@ pub fn syscall_misc(cpu: *SH4, _: Instr) void {
     switch (cpu.R(4).*) {
         0 => {
             // Normal Init
-            cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000); // + bootSectors * 2048;
+            cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
             cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
             cpu.R(0).* = 0x00C0BEBC;
-            // TODO: VO_BORDER_COL.full = cpu.R(0).*;
+            cpu.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC;
         },
         1 => {
             // Return to BIOS?

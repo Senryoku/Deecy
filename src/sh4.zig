@@ -358,6 +358,18 @@ pub const SH4 = struct {
         self.sr = @bitCast(@as(u32, 0x400000F1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
+        inline for (0..8) |i| {
+            self.write8(0x8C000068 + i, self.read8(0x0021A056 + i));
+        }
+        inline for (0..5) |i| {
+            self.write8(0x8C000068 + 8 + i, self.read8(0x0021A000 + i));
+        }
+        // FIXME: Load system settings from flashrom (User partition (2), logical block 5), instead of these hardcoded values.
+        //inline for (.{ 0xBC, 0xEA, 0x90, 0x5E, 0xFF, 0x04, 0x00, 0x01 }, 0..) |val, i| {
+        inline for (.{ 0x00, 0x00, 0x89, 0xFC, 0x5B, 0xFF, 0x01, 0x00, 0x00, 0x7D, 0x0A, 0x62, 0x61 }, 0..) |val, i| {
+            self.write8(0x8C000068 + 13 + i, val);
+        }
+
         // Patch some function adresses ("syscalls")
 
         // System
@@ -446,6 +458,14 @@ pub const SH4 = struct {
     pub inline fn DR(self: *@This(), r: u4) *f64 {
         std.debug.assert(r < 8);
         return &self.fp_banks[self.fpscr.fr].dr[r];
+    }
+    pub inline fn XF(self: *@This(), r: u4) *f32 {
+        return &self.fp_banks[self.fpscr.fr +% 1].fr[r];
+    }
+
+    pub inline fn XD(self: *@This(), r: u4) *f64 {
+        std.debug.assert(r < 8);
+        return &self.fp_banks[self.fpscr.fr +% 1].dr[r];
     }
 
     pub inline fn QR(self: *@This(), r: u4) *f32 {
@@ -2050,9 +2070,19 @@ fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = cpu.FR(opcode.nmd.m).*;
     } else {
-        std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+        if (opcode.nmd.n & 0x1 == 0 and opcode.nmd.m & 0x1 == 0) {
+            // fmov DRm,DRn
+            cpu.DR(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+        } else if (opcode.nmd.n & 0x1 == 1 and opcode.nmd.m & 0x1 == 0) {
+            // fmov DRm,XDn
+            cpu.XD(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+        } else if (opcode.nmd.n & 0x1 == 0 and opcode.nmd.m & 0x1 == 1) {
+            // fmov XDm,DRn
+            cpu.DR(opcode.nmd.n >> 1).* = cpu.XD(opcode.nmd.m >> 1).*;
+        } else if (opcode.nmd.n & 0x1 == 1 and opcode.nmd.m & 0x1 == 1) {
+            // fmov XDm,XDn
+            cpu.XD(opcode.nmd.n >> 1).* = cpu.XD(opcode.nmd.m >> 1).*;
+        }
     }
 }
 fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {

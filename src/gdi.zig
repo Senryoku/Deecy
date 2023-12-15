@@ -172,7 +172,7 @@ pub const GDI = struct {
         return &self.tracks.items[@max(0, idx - 1)];
     }
 
-    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !void {
+    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
         const root_directory_entry = self.get_primary_volume_descriptor().*.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
         const root_directory_lba = root_directory_entry.location;
@@ -187,8 +187,7 @@ pub const GDI = struct {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
-                _ = self.load_sectors(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
-                return;
+                return self.load_sectors(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
             }
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
