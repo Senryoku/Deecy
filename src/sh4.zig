@@ -553,7 +553,7 @@ pub const SH4 = struct {
         self.check_sb_interrupts();
     }
 
-    fn timer_prescaler(value: u4) u32 {
+    fn timer_prescaler(value: u3) u32 {
         switch (value) {
             0 => return 4,
             1 => return 16,
@@ -581,22 +581,22 @@ pub const SH4 = struct {
         inline for (0..3) |i| {
             if ((TSTR >> @intCast(i)) & 0x1 == 1) {
                 const tcnt = self.io_register(u32, timers[i].counter);
+                const tcr = self.io_register(MemoryRegisters.TCR, timers[i].control);
 
                 self.timer_cycle_counter[i] += cycles;
-
-                const tcr = self.io_register(MemoryRegisters.TCR, timers[i].control);
 
                 const scale = SH4.timer_prescaler(tcr.*.tpsc);
                 if (self.timer_cycle_counter[i] >= scale) {
                     self.timer_cycle_counter[i] -= scale;
-                    tcnt.* -= 1;
-                }
 
-                if (tcnt.* == 0) {
-                    tcr.*.unf = 1;
-                    tcnt.* = self.io_register(u32, timers[i].constant).*;
-                    if (tcr.*.unie == 1)
-                        self.request_interrupt(timers[i].interrupt);
+                    if (tcnt.* == 0) {
+                        tcr.*.unf = 1; // Signals underflow
+                        tcnt.* = self.io_register(u32, timers[i].constant).*; // Reset counter
+                        if (tcr.*.unie == 1)
+                            self.request_interrupt(timers[i].interrupt);
+                    } else {
+                        tcnt.* -= 1;
+                    }
                 }
             }
         }
@@ -1447,7 +1447,7 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
 // Decrements the contents of general register Rn by 1 and compares the result with zero.
 // If the result is zero, the T bit is set to 1. If the result is nonzero, the T bit is cleared to 0.
 fn dt_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* -% 1;
+    cpu.R(opcode.nmd.n).* -%= 1;
     cpu.sr.t = (cpu.R(opcode.nmd.n).* == 0);
 }
 
@@ -1640,23 +1640,28 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
 inline fn d8_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u8(opcode.nd8.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    // -2 to account for the generic, inavoidable pc advancement of the current implementation.
-    pc += 4 + (displacement << 1) - 2;
+    pc += 4 + (displacement << 1);
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+    cpu.pc -= 2;
 }
 
 inline fn d12_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u12(opcode.d12.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    pc += 4 + (displacement << 1) - 2; // -2 Because of the unconditional +2 in execute
+    pc += 4 + (displacement << 1);
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    // -2 to account for the generic, inavoidable pc advancement of the current implementation.
+    cpu.pc -= 2;
 }
 
 inline fn execute_delay_slot(cpu: *SH4, addr: addr_t) void {
     // TODO: If the instruction at addr is a branch instruction, raise a Slot illegal instruction exception
 
     // FIXME: If the delayed instruction references PC in any way (e.g. @(disp,PC)), it will be wrong because
-    // we always substract 2 to compensate the automatic increment. Hence this weird workaround.
+    //        we always substract 2 to compensate the automatic increment. Hence this weird workaround.
+    //        The instructions referencing PC are probably all sources of Slot Illegal instruction exceptions,
+    //        but just to be sure...
     cpu.pc += 2;
 
     cpu._execute(addr);
@@ -1673,8 +1678,9 @@ fn bfs_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     if (!cpu.sr.t) {
         d8_label(cpu, opcode);
-    } else {
-        cpu.pc += 2;
+    } else { // Don't execute the delay slot twice.
+        cpu.pc += 4;
+        cpu.pc -= 2; // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     }
     execute_delay_slot(cpu, delay_slot);
 }
@@ -1687,8 +1693,9 @@ fn bts_label(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     if (cpu.sr.t) {
         d8_label(cpu, opcode);
-    } else {
-        cpu.pc += 2;
+    } else { // Don't execute the delay slot twice.
+        cpu.pc += 4;
+        cpu.pc -= 2; // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     }
     execute_delay_slot(cpu, delay_slot);
 }
@@ -1719,7 +1726,8 @@ fn bsrf_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn jmp_atRn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
-    cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
+    cpu.pc = cpu.R(opcode.nmd.n).*;
+    cpu.pc -= 2; // -2 to account for the standard +2
     execute_delay_slot(cpu, delay_slot);
 }
 // Makes a delayed branch to the subroutine procedure at the specified address after execution of the following instruction.
@@ -1730,12 +1738,14 @@ fn jmp_atRn(cpu: *SH4, opcode: Instr) void {
 fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
-    cpu.pc = cpu.R(opcode.nmd.n).* - 2; // -2 to account for the standard +2
+    cpu.pc = cpu.R(opcode.nmd.n).*;
+    cpu.pc -= 2; // -2 to account for the standard +2
     execute_delay_slot(cpu, delay_slot);
 }
 fn rts(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
-    cpu.pc = cpu.pr - 2; // execute will add +2
+    cpu.pc = cpu.pr;
+    cpu.pc -= 2; // execute will add +2
     execute_delay_slot(cpu, delay_slot);
 }
 

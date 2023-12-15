@@ -82,7 +82,7 @@ pub const MemoryRegister = enum(u32) {
     IPRC = 0xFFD0000C,
 
     // TMU
-    TOCR = 0xFFD8000,
+    TOCR = 0xFFD80000,
     TSTR = 0xFFD80004,
     TCOR0 = 0xFFD80008,
     TCNT0 = 0xFFD8000C,
@@ -126,6 +126,16 @@ pub const MemoryRegister = enum(u32) {
     SAR1 = 0xFFA00010,
     DAR1 = 0xFFA00014,
     DMATCR1 = 0xFFA00018,
+    CHCR1 = 0xFFA0001C,
+    SAR2 = 0xFFA00020,
+    DAR2 = 0xFFA00024,
+    DMATCR2 = 0xFFA00028,
+    CHCR2 = 0xFFA0002C,
+    SAR3 = 0xFFA00030,
+    DAR3 = 0xFFA00034,
+    DMATCR3 = 0xFFA00038,
+    CHCR3 = 0xFFA0003C,
+    DMAOR = 0xFFA00040,
 
     // Dreamcast specific
 
