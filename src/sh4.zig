@@ -1763,7 +1763,7 @@ fn clrt(cpu: *SH4, _: Instr) void {
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
-fn ldcl_at_Rn_inc_sr(cpu: *SH4, opcode: Instr) void {
+fn ldcl_at_Rn_inc_SR(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
     cpu.R(opcode.nmd.n).* += 4;
 }
@@ -1869,6 +1869,7 @@ fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
 
 // Inverts the FR bit in floating-point register FPSCR.
 fn frchg(cpu: *SH4, _: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
     cpu.fpscr.fr +%= 1;
 }
 fn fschg(cpu: *SH4, _: Instr) void {
@@ -1929,7 +1930,8 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.sr = @bitCast(cpu.ssr);
-    cpu.pc = cpu.spc - 2; // Execute will add 2
+    cpu.pc = cpu.spc;
+    cpu.pc -= 2; // Execute will add 2
     execute_delay_slot(cpu, delay_slot);
 
     //cpu.debug_trace = false;
@@ -2054,10 +2056,20 @@ fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
-    cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+    } else {
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+    }
 }
 fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+    if (cpu.fpscr.sz == 0) {
+        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+    } else {
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+    }
 }
 fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
@@ -2076,8 +2088,9 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
         cpu.R(opcode.nmd.n).* -= 4;
         cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else { // Double-precision
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
         cpu.R(opcode.nmd.n).* -= 8;
-        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m).*));
+        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
     }
 }
 fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2125,7 +2138,9 @@ fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
     } else {
-        cpu.DR(opcode.nmd.n).* = -cpu.DR(opcode.nmd.n).*;
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = -cpu.DR(opcode.nmd.n >> 1).*;
     }
 }
 
@@ -2137,9 +2152,9 @@ fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
         // if(!cpu.fpscr.dn and (n is denorm or m  is denorm)) ...
         cpu.FR(opcode.nmd.n).* = n + m;
     } else {
-        const n = cpu.DR(opcode.nmd.n).*;
-        const m = cpu.DR(opcode.nmd.m).*;
-        cpu.DR(opcode.nmd.n).* = n + m;
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* += cpu.DR(opcode.nmd.m >> 1).*;
     }
 }
 fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2147,7 +2162,9 @@ fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* *= cpu.FR(opcode.nmd.m).*;
     } else {
-        cpu.DR(opcode.nmd.n).* *= cpu.DR(opcode.nmd.m).*;
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* *= cpu.DR(opcode.nmd.m >> 1).*;
     }
 }
 fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2160,7 +2177,9 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* /= cpu.FR(opcode.nmd.m).*;
     } else {
-        cpu.DR(opcode.nmd.n).* /= cpu.DR(opcode.nmd.m).*;
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* /= cpu.DR(opcode.nmd.m >> 1).*;
     }
 }
 fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2168,7 +2187,9 @@ fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* > cpu.FR(opcode.nmd.m).*);
     } else {
-        cpu.sr.t = (cpu.DR(opcode.nmd.n).* > cpu.DR(opcode.nmd.m).*);
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.sr.t = (cpu.DR(opcode.nmd.n >> 1).* > cpu.DR(opcode.nmd.m >> 1).*);
     }
 }
 fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2176,7 +2197,9 @@ fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* == cpu.FR(opcode.nmd.m).*);
     } else {
-        cpu.sr.t = (cpu.DR(opcode.nmd.n).* == cpu.DR(opcode.nmd.m).*);
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.sr.t = (cpu.DR(opcode.nmd.n >> 1).* == cpu.DR(opcode.nmd.m >> 1).*);
     }
 }
 fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2184,7 +2207,8 @@ fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @floatFromInt(cpu.fpul);
     } else {
-        cpu.DR(opcode.nmd.n).* = @floatFromInt(cpu.fpul);
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(cpu.fpul);
     }
 }
 fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
@@ -2193,7 +2217,8 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.fpul = @intFromFloat(cpu.FR(opcode.nmd.n).*);
     } else {
-        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n).*);
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
 
@@ -2335,7 +2360,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = clrs, .name = "clrs", .privileged = false },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = clrt, .name = "clrt", .privileged = false },
     .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
-    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_sr, .name = "ldc.l @Rn+,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b0100000000000111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_SR, .name = "ldc.l @Rn+,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000011110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_GBR, .name = "ldc Rn,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0100000000010111, .mask = 0b0000111100000000, .fn_ = ldcl_at_Rn_inc_GBR, .name = "ldc.l @Rn+,GBR", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0100000000101110, .mask = 0b0000111100000000, .fn_ = ldc_Rn_VBR, .name = "ldc Rn,VBR", .privileged = true, .issue_cycles = 1, .latency_cycles = 3 },
