@@ -2315,6 +2315,14 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n >> 1).* /= cpu.DR(opcode.nmd.m >> 1).*;
     }
 }
+fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
+    } else {
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        cpu.DR(opcode.nmd.n).* = @sqrt(cpu.DR(opcode.nmd.n).*);
+    }
+}
 fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // TODO: Special float values checks?
     if (cpu.fpscr.sz == 0) {
@@ -2610,7 +2618,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = fmac_FR0_FRm_FRn, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
-    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
+    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = fsqrt_FRn, .name = "fsqrt FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
     .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = fcmp_eq_FRm_FRn, .name = "fcmp/eq FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = fcmp_gt_FRm_FRn, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = float_FPUL_FRn, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
