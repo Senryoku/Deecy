@@ -71,8 +71,7 @@ const syscall = @import("syscall.zig");
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
 
-    var cpu: sh4.SH4 = .{};
-    try cpu.init(common.GeneralAllocator);
+    var cpu = try sh4.SH4.init(common.GeneralAllocator);
     defer cpu.deinit();
 
     cpu.init_boot();

@@ -173,7 +173,9 @@ pub const SH4 = struct {
 
     _allocator: std.mem.Allocator = undefined,
 
-    pub fn init(self: *@This(), allocator: std.mem.Allocator) !void {
+    pub fn init(allocator: std.mem.Allocator) !SH4 {
+        var self: SH4 = .{};
+
         self._allocator = allocator;
 
         self.area4 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
@@ -201,6 +203,8 @@ pub const SH4 = struct {
         init_jump_table();
 
         self.reset();
+
+        return self;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -1120,7 +1124,7 @@ fn as_i32(val: u32) i32 {
 
 fn unknown(cpu: *SH4, opcode: Instr) void {
     std.debug.print("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
-    std.debug.print("CPU State: PC={X:0>8}\n", .{cpu.pc});
+    std.debug.print("  CPU State: PC={X:0>8}\n", .{cpu.pc});
     @panic("Unknown opcode");
 }
 
@@ -1448,8 +1452,7 @@ fn div1(cpu: *SH4, opcode: Instr) void {
 }
 
 test "div1" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     cpu.R(0).* = 0b00111110111110001001111010110000;
@@ -1465,8 +1468,7 @@ test "div1" {
 }
 
 test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     const dividend = 0b00111110111110001001111010110000;
@@ -1527,6 +1529,27 @@ fn muluwRmRn(cpu: *SH4, opcode: Instr) void {
 
 fn neg_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = 0 -% cpu.R(opcode.nmd.m).*;
+}
+
+test "neg Rm,Rn" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 1;
+    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try std.testing.expect(as_i32(cpu.R(1).*) == -1);
+
+    cpu.R(0).* = @bitCast(@as(i32, -1));
+    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try std.testing.expect(as_i32(cpu.R(1).*) == 1);
+
+    cpu.R(0).* = 1337;
+    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try std.testing.expect(as_i32(cpu.R(1).*) == -1337);
+
+    cpu.R(0).* = @bitCast(@as(i32, -1337));
+    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try std.testing.expect(as_i32(cpu.R(1).*) == 1337);
 }
 
 fn sub_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -2185,8 +2208,7 @@ fn fldi1_FRn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "fldi1_FRn" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.fpscr.pr = 0;
     fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
@@ -2716,8 +2738,7 @@ fn write_and_execute(cpu: *SH4, code: u16) void {
 }
 
 test "mov #imm,Rn" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2739,8 +2760,7 @@ test "mov #imm,Rn" {
 }
 
 test "mov Rm,Rn" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2753,8 +2773,7 @@ test "mov Rm,Rn" {
 }
 
 test "ldc Rn,SR" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
@@ -2772,8 +2791,7 @@ test "ldc Rn,SR" {
 }
 
 test "boot" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     cpu.execute(); // mov 0x0F,R3
@@ -2940,8 +2958,7 @@ test "boot" {
 }
 
 test "IP.bin" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     // Example IP.bin file
@@ -2957,8 +2974,7 @@ test "IP.bin" {
 }
 
 test "IP.bin init boot" {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     cpu.init_boot();
@@ -2977,8 +2993,7 @@ test "IP.bin init boot" {
 
 // Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
 fn load_and_test_binary(comptime filename: []const u8) !void {
-    var cpu: SH4 = .{};
-    try cpu.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
     const bin_file = try std.fs.cwd().openFile("./test/bin/" ++ filename, .{});
