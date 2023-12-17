@@ -92,32 +92,34 @@ pub const AICA = struct {
         const enabled = cpu.read_hw_register(u32, .SB_ADEN);
         if (enabled == 0) return;
 
-        const g2_addr = cpu.read_hw_register(u32, .SB_ADSTAR);
-        const sys_addr = cpu.read_hw_register(u32, .SB_ADSTAG);
+        const aica_addr = cpu.read_hw_register(u32, .SB_ADSTAG);
+        const root_bus_addr = cpu.read_hw_register(u32, .SB_ADSTAR);
         const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
         const len = len_reg & 0x7FFFFFFF;
         const direction = cpu.read_hw_register(u32, .SB_ADDIR);
         std.debug.print(" AICA G2-DMA Start!\n", .{});
-        std.debug.print("   G2 Start Address: 0x{X:0>8}\n", .{g2_addr});
-        std.debug.print("   System Start Address: 0x{X:0>8}\n", .{sys_addr});
+        std.debug.print("   AICA Address: 0x{X:0>8}\n", .{aica_addr});
+        std.debug.print("   Root Bus Address: 0x{X:0>8}\n", .{root_bus_addr});
         std.debug.print("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
         std.debug.print("   Direction: 0x{X:0>8}\n", .{direction});
         std.debug.print("   Trigger Select: 0x{X:0>8}\n", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
         std.debug.print("   Enable: 0x{X:0>8}\n", .{enabled});
 
-        const physical_g2_addr = cpu._get_memory(g2_addr);
-        const physical_sys_addr = cpu._get_memory(sys_addr);
+        const physical_root_addr = cpu._get_memory(root_bus_addr);
+        const physical_aica_addr = cpu._get_memory(aica_addr);
 
         // TODO: This might raise some exceptions, if the addresses are wrong.
 
         if (direction == 0) {
             // DMA transfer from the Root Bus to a G2 device
-            const src = physical_sys_addr;
-            const dst = physical_g2_addr;
-            @memcpy(@as([*]u8, @ptrCast(dst))[0..len], @as([*]u8, @ptrCast(src))[0..len]);
+            const src = physical_root_addr;
+            const dst = physical_aica_addr;
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len], @as([*]u32, @ptrCast(@alignCast(src)))[0..len]);
         } else {
             // DMA transfer from a G2 device to the Root Bus
-            @panic("AICA DMA reversed direction not implemented");
+            const src = physical_aica_addr;
+            const dst = physical_root_addr;
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len], @as([*]u32, @ptrCast(@alignCast(src)))[0..len]);
         }
 
         // Signals the DMA is in progress
@@ -154,5 +156,8 @@ pub const AICA = struct {
         cpu.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
 
         cpu.raise_normal_interrupt(.{ .EoD_AICA = 1 });
+        cpu.raise_external_interrupt(.{ .AICA = 1 });
+
+        cpu.debug_trace = true;
     }
 };

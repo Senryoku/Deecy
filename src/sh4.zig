@@ -582,16 +582,19 @@ pub const SH4 = struct {
     }
 
     fn check_sb_interrupts(self: *@This()) void {
+
         // FIXME: Not sure if this is the right place to check for those.
         // FIXME: Also check external interrupts (SB_ISTEXT) and errors (SB_ISTERR)
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
-        if (istnrm & self.read_hw_register(u32, .SB_IML6NRM) != 0) {
+        const istext = self.read_hw_register(u32, .SB_ISTEXT);
+        const isterr = self.read_hw_register(u32, .SB_ISTERR);
+        if (istnrm & self.read_hw_register(u32, .SB_IML6NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML6EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML6ERR) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL9);
         }
-        if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0) {
+        if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML4EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML4ERR) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL11);
         }
-        if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0) {
+        if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML2EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML2ERR) != 0) {
             self.request_interrupt(Interrupts.Interrupt.IRL13);
         }
     }
@@ -600,6 +603,13 @@ pub const SH4 = struct {
 
     pub fn raise_normal_interrupt(self: *@This(), int: MemoryRegisters.SB_ISTNRM) void {
         self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
+
+        self.check_sb_interrupts();
+    }
+
+    pub fn raise_external_interrupt(self: *@This(), int: MemoryRegisters.SB_ISTEXT) void {
+        self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(MemoryRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
 
         self.check_sb_interrupts();
     }
@@ -663,7 +673,7 @@ pub const SH4 = struct {
         const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)
-            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>8}\n", .{ addr, opcode, Opcodes[JumpTable[opcode]].name, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d });
+            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, Opcodes[JumpTable[opcode]].name, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
         Opcodes[JumpTable[opcode]].fn_(self, instr);
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
@@ -1681,26 +1691,26 @@ fn shll(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* <<= 1;
 }
 fn shll2(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* << 2;
+    cpu.R(opcode.nmd.n).* <<= 2;
 }
 fn shll8(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* << 8;
+    cpu.R(opcode.nmd.n).* <<= 8;
 }
 fn shll16(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* << 16;
+    cpu.R(opcode.nmd.n).* <<= 16;
 }
 fn shlr(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 1) == 1);
     cpu.R(opcode.nmd.n).* >>= 1;
 }
 fn shlr2(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 2;
+    cpu.R(opcode.nmd.n).* >>= 2;
 }
 fn shlr8(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 8;
+    cpu.R(opcode.nmd.n).* >>= 8;
 }
 fn shlr16(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> 16;
+    cpu.R(opcode.nmd.n).* >>= 16;
 }
 
 inline fn d8_label(cpu: *SH4, opcode: Instr) void {
@@ -2675,6 +2685,7 @@ fn test_decoding(instruction: Instr, comptime expected: []const u8) !void {
 }
 
 test "Instruction Decoding" {
+    defer free_disassembly_cache(std.testing.allocator);
     init_jump_table();
 
     try test_decoding(.{ .value = 0b1110_0000_0000_0001 }, "mov #1,R0");
@@ -2729,7 +2740,17 @@ test "Instruction Decoding" {
     try test_decoding(.{ .value = 0b1100_0111_0000_0000 }, "mova @(0,PC),R0");
     try test_decoding(.{ .value = 0b0000_0011_0010_1001 }, "movt R3");
 
-    free_disassembly_cache(std.testing.allocator);
+    try test_decoding(.{ .value = 0b1000_1011_0000_0100 }, "bf label");
+    try test_decoding(.{ .value = 0b1000_1111_0000_0100 }, "bf/s label");
+    try test_decoding(.{ .value = 0b1000_1001_0000_0100 }, "bt label");
+    try test_decoding(.{ .value = 0b1000_1101_0000_0100 }, "bt/s label");
+    try test_decoding(.{ .value = 0b1010_0000_0000_0100 }, "bra label");
+    try test_decoding(.{ .value = 0b0000_0001_0010_0011 }, "braf R1");
+    try test_decoding(.{ .value = 0b1011_0000_0000_0100 }, "bsr label");
+    try test_decoding(.{ .value = 0b0000_0001_0000_0011 }, "bsrf R1");
+    try test_decoding(.{ .value = 0b0100_0001_0010_1011 }, "jmp @R1");
+    try test_decoding(.{ .value = 0b0100_0001_0000_1011 }, "jsr @R1");
+    try test_decoding(.{ .value = 0b0000_0000_0000_1011 }, "rts");
 }
 
 fn write_and_execute(cpu: *SH4, code: u16) void {

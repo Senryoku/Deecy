@@ -91,8 +91,8 @@ pub const GDROM = struct {
                 const byte_size = 2048 * size;
                 const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
 
-                // FIXME: Random test
                 cpu.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+                cpu.raise_external_interrupt(.{ .GDRom = 1 });
 
                 self.result = .{ 0, 0, read, 0 };
 

@@ -394,3 +394,11 @@ pub const SB_ISTNRM = packed struct(u32) {
     ExtStatus: u1 = 0,
     ErrorStatus: u1 = 0,
 };
+
+pub const SB_ISTEXT = packed struct(u32) {
+    GDRom: u1 = 0,
+    AICA: u1 = 0,
+    Modem: u1 = 0,
+    ExternalDevice: u1 = 0,
+    _: u28 = 0,
+};
