@@ -302,6 +302,8 @@ pub const MemoryRegister = enum(u32) {
     // PVR-DMA Secret Registers
     SB_PDAPRO = 0x005F7C80,
 
+    REVISION = 0x005F8004,
+
     // Other - Not sure what these are - Probably test registers - but they are accessed by the boot ROM.
     RBERRC = 0x005F68A4, // "RootBus control register (secret register, for chip debugging)" ?
     _5F68AC = 0x005F68AC,

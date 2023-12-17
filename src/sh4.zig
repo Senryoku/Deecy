@@ -445,6 +445,11 @@ pub const SH4 = struct {
         self.write32(0x8C000064, 0x8c008100);
         self.write16(0x8C000090, 0);
         self.write16(0x8C000092, @bitCast(@as(i16, -128)));
+
+        // Holly Version. TODO: Make it configurable?
+        self.hw_register(u32, .SB_SBREV).* = 0x0B;
+        self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
+        self.hw_register(u32, .REVISION).* = 0x0011;
     }
 
     pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
@@ -953,7 +958,7 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (addr != 0x005F6900 and addr != 0x005F688C) // Filter SB_ISTNRM and SB_FFST
+            if (self.debug_trace)
                 std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                     @constCast(&self)._get_memory(addr),
                 ))).* });
