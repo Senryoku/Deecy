@@ -2376,6 +2376,10 @@ fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(n + i).* = cpu.XF(4 * i + 0).* * FVn[0] + cpu.XF(4 * i + 1).* * FVn[1] + cpu.XF(4 * i + 2).* * FVn[2] + cpu.XF(4 * i + 3).* * FVn[3];
     }
 }
+fn fsrra_FRn(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
+    cpu.FR(opcode.nmd.n).* = 1.0 / @sqrt(cpu.FR(opcode.nmd.n).*);
+}
 fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
     std.debug.assert(opcode.nmd.n & 1 == 0);
@@ -2626,7 +2630,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
     // Undocumented opcodes - Supposed to be exclusive to the SH4A, but some games seem to use them (I hope this is not sue to a mistake I made somewhere else :D).
-    .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsrra FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = fsrra_FRn, .name = "fsrra FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1111000011111101, .mask = 0b0000111000000000, .fn_ = fsca_FPUL_DRn, .name = "fsca FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
     //.{ .code = 0b1111000001011101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fabs DRn", .privileged = false },
