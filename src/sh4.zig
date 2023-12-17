@@ -1372,7 +1372,7 @@ fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 // Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.
 // If they are not equal the T bit is cleared. The contents of R0 are not changed.
 fn cmpeq_imm_r0(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = (cpu.R(0).* == sign_extension_u8(opcode.nd8.d));
+    cpu.sr.t = (cpu.R(0).* == @as(u32, @bitCast(sign_extension_u8(opcode.nd8.d))));
 }
 fn cmpeq_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* == cpu.R(opcode.nmd.m).*);
