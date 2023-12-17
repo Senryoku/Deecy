@@ -2362,6 +2362,17 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
         cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
+fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
+    // Computes the dot product of FVn and FVm and stores it into Fn+3.
+    const n = opcode.nmd.n & 0b1100;
+    const m = (opcode.nmd.n << 2) & 0b1100;
+    // FIXME: Not accurate to the actual hardware implementation.
+
+    // TODO: Use direct address, unless the compiler can figure it out itself?
+    const FVn = @Vector(4, f32){ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+    const FVm = @Vector(4, f32){ cpu.FR(m + 0).*, cpu.FR(m + 1).*, cpu.FR(m + 2).*, cpu.FR(m + 3).* };
+    cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
+}
 fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
 
@@ -2627,7 +2638,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = fcmp_gt_FRm_FRn, .name = "fcmp/gt FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = float_FPUL_FRn, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = fipr_FVm_FVn, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
     // Undocumented opcodes - Supposed to be exclusive to the SH4A, but some games seem to use them (I hope this is not sue to a mistake I made somewhere else :D).
     .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = fsrra_FRn, .name = "fsrra FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
