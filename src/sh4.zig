@@ -2368,6 +2368,18 @@ fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(n + i).* = cpu.XF(4 * i + 0).* * FVn[0] + cpu.XF(4 * i + 1).* * FVn[1] + cpu.XF(4 * i + 2).* * FVn[2] + cpu.XF(4 * i + 3).* * FVn[3];
     }
 }
+fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
+    std.debug.assert(opcode.nmd.n & 1 == 0);
+
+    // TODO: Check implementation.
+
+    const fraction = cpu.fpul & 0x0000_FFFF;
+    const angle = 2 * std.math.pi * @as(f32, @floatFromInt(fraction)) / 0x10000;
+
+    cpu.FR(opcode.nmd.n).* = @sin(angle);
+    cpu.FR(opcode.nmd.n + 1).* = @cos(angle);
+}
 
 const OpcodeDescription = struct {
     code: u16,
@@ -2379,7 +2391,7 @@ const OpcodeDescription = struct {
     latency_cycles: u5 = 1,
 };
 
-pub const Opcodes: [215]OpcodeDescription = .{
+pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     // Fake opcodes to catch emulated syscalls
@@ -2605,6 +2617,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
+    // Undocumented opcodes - Supposed to be exclusive to the SH4A, but some games seem to use them (I hope this is not sue to a mistake I made somewhere else :D).
+    .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fsrra FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1111000011111101, .mask = 0b0000111000000000, .fn_ = fsca_FPUL_DRn, .name = "fsca FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
     //.{ .code = 0b1111000001011101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fabs DRn", .privileged = false },
     //.{ .code = 0b1111000001001101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fneg DRn", .privileged = false },
