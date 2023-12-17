@@ -673,7 +673,7 @@ pub const SH4 = struct {
         const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)
-            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, Opcodes[JumpTable[opcode]].name, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
+            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
         Opcodes[JumpTable[opcode]].fn_(self, instr);
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
@@ -764,16 +764,16 @@ pub const SH4 = struct {
     // $00800000 - $009FFFFF AICA Memory
     // $01000000 - $01FFFFFF G2 External area
 
-    pub fn _get_memory(self: *@This(), virtual_addr: addr_t) *u8 {
-        std.debug.assert(self.sr.md == 1 or is_p0(virtual_addr));
+    pub fn _get_memory(self: *@This(), addr: addr_t) *u8 {
+        std.debug.assert(self.sr.md == 1 or is_p0(addr));
 
-        const addr = virtual_addr & 0x1FFFFFFF;
+        std.debug.assert(addr == addr & 0x1FFFFFFF);
 
         if (false) {
             // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
             const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
                 // FIXME: Handle exceptions
-                std.debug.print("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, virtual_addr });
+                std.debug.print("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, addr });
                 unreachable;
             };
 
@@ -805,8 +805,14 @@ pub const SH4 = struct {
 
             if (addr >= 0x00700000 and addr <= 0x00707FE0) {
                 // G2 AICA Register
-                return @ptrCast(&self._dummy);
+                @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
             }
+
+            if (addr >= 0x00710000 and addr <= 0x00710008) {
+                // G2 AICA RTC Registers
+                @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
+            }
+
             //                                                                            is it 0x009FFFE0?
             if (addr >= 0x00800000 and addr < 0x00A00000) {
                 // G2 Wave Memory
@@ -830,7 +836,7 @@ pub const SH4 = struct {
             return &self.area4[addr - 0x10000000];
         } else if (addr < 0x18000000) {
             // Area 5 - Expansion (modem) port
-            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8} - {X:0>8}\u{001B}[0m\n", .{ virtual_addr, addr });
+            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8}\u{001B}[0m\n", .{addr});
             return &self.area5[addr - 0x14000000];
         } else if (addr < 0x1C000000) {
             // Area 6 - Nothing
@@ -844,32 +850,36 @@ pub const SH4 = struct {
     }
 
     pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
                     std.debug.print("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(virtual_addr),
+                        @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
             }
         }
 
-        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
-            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ addr, MemoryRegisters.getRegisterName(addr) });
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(virtual_addr),
+            @constCast(&self)._get_memory(addr),
         ))).*;
     }
 
     pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
                     return @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(virtual_addr),
+                        @constCast(&self)._get_memory(addr),
                     ))).* & 0xF;
                 },
                 @intFromEnum(MemoryRegister.RFCR) => {
@@ -910,54 +920,62 @@ pub const SH4 = struct {
                 },
                 else => {
                     std.debug.print("  Read16 to hardware register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(virtual_addr),
+                        @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
             }
         }
 
-        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
             std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
+        if (addr >= 0x00710000 and addr <= 0x00710008) {
+            return @truncate(aica.read_rtc_register(addr));
+        }
+
         return @as(*const u16, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(virtual_addr),
+            @constCast(&self)._get_memory(addr),
         ))).*;
     }
 
     pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
                     std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(virtual_addr),
+                        @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
             }
         }
 
-        if (virtual_addr >= 0x005F6800 and virtual_addr < 0x005F8000) {
-            std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                @constCast(&self)._get_memory(virtual_addr),
-            ))).* });
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            if (addr != 0x005F6900 and addr != 0x005F688C) // Filter SB_ISTNRM and SB_FFST
+                std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                    @constCast(&self)._get_memory(addr),
+                ))).* });
         }
 
-        if (virtual_addr >= 0x00700000 and virtual_addr < 0x00710000) {
-            return aica.read_register(virtual_addr);
+        if (addr >= 0x00700000 and addr <= 0x00707FE0) {
+            return aica.read_register(addr);
         }
 
-        if (virtual_addr >= 0x00710000 and virtual_addr < 0x00710008) {
-            return aica.read_rtc_register(virtual_addr);
+        if (addr >= 0x00710000 and addr <= 0x00710008) {
+            return aica.read_rtc_register(addr);
         }
 
         return @as(*const u32, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(virtual_addr),
+            @constCast(&self)._get_memory(addr),
         ))).*;
     }
 
     pub fn read64(self: @This(), virtual_addr: addr_t) u64 {
+        const addr = virtual_addr & 0x1FFFFFFF;
         return @as(*const u64, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(virtual_addr),
+            @constCast(&self)._get_memory(addr),
         ))).*;
     }
 
@@ -981,7 +999,7 @@ pub const SH4 = struct {
         }
 
         @as(*u8, @alignCast(@ptrCast(
-            self._get_memory(virtual_addr),
+            self._get_memory(addr),
         ))).* = value;
     }
 
@@ -1016,7 +1034,7 @@ pub const SH4 = struct {
         }
 
         @as(*u16, @alignCast(@ptrCast(
-            self._get_memory(virtual_addr),
+            self._get_memory(addr),
         ))).* = value;
     }
 
@@ -1083,13 +1101,14 @@ pub const SH4 = struct {
         }
 
         @as(*u32, @alignCast(@ptrCast(
-            self._get_memory(virtual_addr),
+            self._get_memory(addr),
         ))).* = value;
     }
 
     pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+        const addr = virtual_addr & 0x01FFFFFFF;
         @as(*u64, @alignCast(@ptrCast(
-            self._get_memory(virtual_addr),
+            self._get_memory(addr),
         ))).* = value;
     }
 

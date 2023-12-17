@@ -182,8 +182,8 @@ pub fn main() !void {
             }
             zgui.endGroup();
 
-            var addr = @max(0, cpu.pc - 8);
-            const end_addr = @min(0xFFFFFFFFF, addr + 16);
+            var addr = @max(0, @min(0x100000000 - 16, cpu.pc - 8));
+            const end_addr = @min(0xFFFFFFFFF, @min(0x100000000 - 16, addr) + 16);
             while (addr < end_addr) {
                 //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
                 const disassembly = try sh4.disassemble(.{ .value = cpu.read16(@intCast(addr)) }, common.GeneralAllocator);

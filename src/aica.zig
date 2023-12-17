@@ -36,7 +36,7 @@ pub const AICA = struct {
     dma_countdown: u32 = 0,
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {
-        std.debug.print("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[addr - AICARegisterStart] });
+        std.debug.print("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
         return self.regs[(addr - AICARegisterStart) / 4];
     }
 
@@ -157,7 +157,5 @@ pub const AICA = struct {
 
         cpu.raise_normal_interrupt(.{ .EoD_AICA = 1 });
         cpu.raise_external_interrupt(.{ .AICA = 1 });
-
-        cpu.debug_trace = true;
     }
 };
