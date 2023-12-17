@@ -75,25 +75,19 @@ pub fn main() !void {
     try cpu.init(common.GeneralAllocator);
     defer cpu.deinit();
 
+    cpu.init_boot();
+
     var gdrom = &syscall.gdrom; // FIXME
-    try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
+    //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
+    try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
     //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     defer gdrom.disk.deinit();
-
-    //const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    //defer IPbin_file.close();
-    //const IPbin = try IPbin_file.readToEndAlloc(common.GeneralAllocator, 0x10000);
-    //defer common.GeneralAllocator.free(IPbin);
-    //cpu.load_IP_bin(IPbin);
 
     // Load IP.bin from disk (16 first sectors of the last track)
     // FIXME: Here we assume the last track is the 3rd.
     _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
 
     syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
-
-    cpu.init_boot();
 
     //while (true) {
     //    if (cpu.pc == 0x8C001008)
@@ -172,10 +166,10 @@ pub fn main() !void {
         zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
 
         if (zgui.begin("CPU State", .{})) {
-            zgui.text("PC: 0x{X:0>8}", .{cpu.pc});
-            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ cpu.sr.t, cpu.sr.s, cpu.sr.imask });
+            zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ cpu.pc, cpu.spc });
             zgui.text("PR: 0x{X:0>8}", .{cpu.pr});
-            zgui.text("SPC: 0x{X:0>8}", .{cpu.spc});
+            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ cpu.sr.t, cpu.sr.s, cpu.sr.imask });
+            zgui.text("GBR: 0x{X:0>8}", .{cpu.gbr});
             zgui.text("VBR: 0x{X:0>8}", .{cpu.vbr});
             zgui.beginGroup();
             for (0..8) |i| {

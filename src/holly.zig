@@ -5,6 +5,8 @@ const SH4 = @import("sh4.zig").SH4;
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 
+const termcolor = @import("termcolor.zig");
+
 // Holly Video Chip
 
 // Tile Accelerator and PowerVR2 core
@@ -157,13 +159,13 @@ pub const Holly = struct {
 
             if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 480) {
                 self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 1;
-                cpu.raise_normal_interrupt(MemoryRegisters.SB_ISTNRM{ .VBlankIn = 1 });
+                cpu.raise_normal_interrupt(.{ .VBlankIn = 1 });
             }
 
             if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 500) {
                 self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline = 0;
                 self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 0;
-                cpu.raise_normal_interrupt(MemoryRegisters.SB_ISTNRM{ .VBlankOut = 1 });
+                cpu.raise_normal_interrupt(.{ .VBlankOut = 1 });
             }
         }
     }
@@ -204,12 +206,12 @@ pub const Holly = struct {
         if (local_addr < 0x0080_0000) { // 64-bit access area
             return &self.vram[local_addr];
         } else if (local_addr < 0x0100_0000) { // Unused
-            std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{addr});
+            std.debug.print(termcolor.red("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n"), .{addr});
             return &self.vram[0];
         } else if (local_addr < 0x0180_0000) { // 32-bit access area
             return &self.vram[local_addr - 0x0100_0000];
         } else { // Unused
-            std.debug.print("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n", .{addr});
+            std.debug.print(termcolor.red("  Out of bounds write to Area 1 (VRAM): {X:0>8}\n"), .{addr});
             return &self.vram[0];
         }
     }

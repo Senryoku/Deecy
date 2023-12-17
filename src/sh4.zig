@@ -2,6 +2,8 @@
 
 const std = @import("std");
 const common = @import("./common.zig");
+const termcolor = @import("termcolor.zig");
+
 const mmu = @import("./mmu.zig");
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
@@ -196,21 +198,7 @@ pub const SH4 = struct {
         const flash_bytes_read = try flash_file.readAll(self.flash);
         std.debug.assert(flash_bytes_read == 0x20000);
 
-        if (JumpTable[0] == 1) {
-            JumpTable[0] = 0; // NOP
-            for (1..0x10000) |i| {
-                for (2..Opcodes.len) |idx| {
-                    if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
-                        if (JumpTable[i] != 1) {
-                            std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
-                            @panic("Duplicate matching instruction.");
-                        }
-                        JumpTable[i] = @intCast(idx);
-                        //break;
-                    }
-                }
-            }
-        }
+        init_jump_table();
 
         self.reset();
     }
@@ -327,13 +315,13 @@ pub const SH4 = struct {
 
     // Reset state to after bios.
     pub fn init_boot(self: *@This()) void {
-        self.R(0x0).* = 0xac0005d8;
+        self.R(0x0).* = 0xAC0005D8;
         self.R(0x1).* = 0x00000009;
-        self.R(0x2).* = 0xac00940c;
+        self.R(0x2).* = 0xAC00940C;
         self.R(0x3).* = 0x00000000;
-        self.R(0x4).* = 0xac008300;
-        self.R(0x5).* = 0xf4000000;
-        self.R(0x6).* = 0xf4002000;
+        self.R(0x4).* = 0xAC008300;
+        self.R(0x5).* = 0xF4000000;
+        self.R(0x6).* = 0xF4002000;
         self.R(0x7).* = 0x00000070;
         self.R(0x8).* = 0x00000000;
         self.R(0x9).* = 0x00000000;
@@ -342,54 +330,93 @@ pub const SH4 = struct {
         self.R(0xC).* = 0x00000000;
         self.R(0xD).* = 0x00000000;
         self.R(0xE).* = 0x00000000;
-        self.R(0xF).* = 0x8d000000;
+        self.R(0xF).* = 0x8D000000;
 
-        self.gbr = 0x8c000000;
+        self.gbr = 0x8C000000;
         self.ssr = 0x40000001;
-        self.spc = 0x8c000776;
+        self.spc = 0x8C000776;
         self.sgr = 0x8d000000;
-        self.dbr = 0x8c000010;
-        self.vbr = 0x8c000000;
-        self.pr = 0xac00043c;
+        self.dbr = 0x8C000010;
+        self.vbr = 0x8C000000;
+        self.pr = 0xAC00043C;
         self.fpul = 0x00000000;
 
-        self.pc = 0xAC008300; // TODO: Check
+        self.pc = 0xAC008300; // Start address of IP.bin Licence screen
 
         self.sr = @bitCast(@as(u32, 0x400000F1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
-        inline for (0..8) |i| {
-            self.write8(0x8C000068 + i, self.read8(0x0021A056 + i));
+        // Copy subroutine to RAM. Some of it will be overwritten, I'm trying to work out what's important and what's not.
+        inline for (0..16) |i| {
+            self.write16(0x8C0000E0 + 2 * i, self.read16(0x800000FE - 2 * i));
         }
-        inline for (0..5) |i| {
-            self.write8(0x8C000068 + 8 + i, self.read8(0x0021A000 + i));
-        }
-        // FIXME: Load system settings from flashrom (User partition (2), logical block 5), instead of these hardcoded values.
-        //inline for (.{ 0xBC, 0xEA, 0x90, 0x5E, 0xFF, 0x04, 0x00, 0x01 }, 0..) |val, i| {
-        inline for (.{ 0x00, 0x00, 0x89, 0xFC, 0x5B, 0xFF, 0x01, 0x00, 0x00, 0x7D, 0x0A, 0x62, 0x61 }, 0..) |val, i| {
-            self.write8(0x8C000068 + 13 + i, val);
+        // Copy a portion of the boot ROM to RAM.
+        self.write32(0xA05F74E4, 0x001FFFFF);
+        @memcpy(self.ram[0x00000100 .. 0x100 + 0x0007FFC0], self.boot[0x00000100 .. 0x100 + 0x0007FFC0]);
+
+        const IP_bin_HLE = false;
+        if (IP_bin_HLE) {
+            // Copy a portion of the flash ROM to RAM.
+            inline for (0..8) |i| {
+                self.write8(0x8C000068 + i, self.read8(0x0021A056 + i));
+            }
+            inline for (0..5) |i| {
+                self.write8(0x8C000068 + 8 + i, self.read8(0x0021A000 + i));
+            }
+            // FIXME: Load system settings from flashrom (User partition (2), logical block 5), instead of these hardcoded values.
+            //inline for (.{ 0xBC, 0xEA, 0x90, 0x5E, 0xFF, 0x04, 0x00, 0x01 }, 0..) |val, i| {
+            inline for (.{ 0x00, 0x00, 0x89, 0xFC, 0x5B, 0xFF, 0x01, 0x00, 0x00, 0x7D, 0x0A, 0x62, 0x61 }, 0..) |val, i| {
+                self.write8(0x8C000068 + 13 + i, val);
+            }
         }
 
         // Patch some function adresses ("syscalls")
 
-        // System
-        self.write32(0x8C0000B0, 0x8C001000);
-        self.write16(0x8C001000, 0b0000000000010000);
-        // Font
-        self.write32(0x8C0000B4, 0x8C001002);
-        self.write16(0x8C001002, 0b0000000000100000);
-        // Flashrom
-        self.write32(0x8C0000B8, 0x8C001004);
-        self.write16(0x8C001004, 0b0000000000110000);
-        // GD
-        self.write32(0x8C0000BC, 0x8C001006);
-        self.write16(0x8C001006, 0b0000000001000000);
-        // GD2
-        self.write32(0x8C0000C0, 0x8C0010F0);
-        self.write16(0x8C0010F0, 0b0000000001010000);
-        // Misc
-        self.write32(0x8C0000E0, 0x8C001008);
-        self.write16(0x8C001008, 0b0000000001100000);
+        const HLE_syscalls = true;
+        if (HLE_syscalls) {
+            // System
+            self.write32(0x8C0000B0, 0x8C001000);
+            self.write16(0x8C001000, 0b0000000000010000);
+            // Font
+            self.write32(0x8C0000B4, 0x8C001002);
+            self.write16(0x8C001002, 0b0000000000100000);
+            // Flashrom
+            self.write32(0x8C0000B8, 0x8C001004);
+            self.write16(0x8C001004, 0b0000000000110000);
+            // GD
+            self.write32(0x8C0000BC, 0x8C001006);
+            self.write16(0x8C001006, 0b0000000001000000);
+            // GD2
+            self.write32(0x8C0000C0, 0x8C0010F0);
+            self.write16(0x8C0010F0, 0b0000000001010000);
+            // Misc
+            self.write32(0x8C0000E0, 0x8C001008);
+            self.write16(0x8C001008, 0b0000000001100000);
+        } else {
+            inline for (.{
+                .{ 0x8C0000B0, 0x8C003C00 },
+                .{ 0x8C0000B4, 0x8C003D80 },
+                .{ 0x8C0000B8, 0x8C003D00 },
+                .{ 0x8C0000BC, 0x8C001000 },
+                .{ 0x8C0000C0, 0x8C0010F0 },
+                .{ 0x8C0000E0, 0x8C000800 },
+            }) |p| {
+                self.write32(p[0], p[1]);
+            }
+        }
+
+        // Other set values, IDK
+
+        inline for (.{
+            .{ 0x8C0000AC, 0xA05F7000 },
+            .{ 0x8C0000A8, 0xA0200000 },
+            .{ 0x8C0000A4, 0xA0100000 },
+            .{ 0x8C0000A0, 0x00000000 },
+            .{ 0x8C00002C, 0x00000000 },
+            .{ 0x8CFFFFF8, 0x8C000128 },
+        }) |p| {
+            self.write32(p[0], p[1]);
+        }
 
         // Patch some functions apparently used by interrupts
         // (And some other random stuff that the boot ROM sets for some reason
@@ -749,8 +776,10 @@ pub const SH4 = struct {
                 return &self.flash[addr - 0x200000];
             }
 
-            if (addr < 0x005F6800)
+            if (addr < 0x005F6800) {
+                std.debug.print(termcolor.red("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
                 unreachable;
+            }
 
             if (addr >= 0x005F8000 and addr < 0x005FA000) {
                 return self.gpu._get_register_from_addr(u8, addr);
@@ -1009,7 +1038,7 @@ pub const SH4 = struct {
                 },
                 @intFromEnum(MemoryRegister.SB_MDST) => {
                     if (value == 1) {
-                        std.debug.print("  Unimplemented Maple-DMA initiation !!\n", .{});
+                        std.debug.print(termcolor.yellow("  Unimplemented Maple-DMA initiation !!\n"), .{});
                     }
                 },
                 @intFromEnum(MemoryRegister.SB_ISTNRM) => {
@@ -1057,32 +1086,32 @@ pub const SH4 = struct {
     }
 };
 
+fn zero_extend(d: anytype) u32 {
+    return @intCast(d);
+}
+
 fn sign_extension_u8(d: u8) i32 {
     if ((d & 0x80) == 0) {
-        return @bitCast(0x000000FF & @as(u32, @intCast(d)));
+        return @bitCast(0x000000FF & zero_extend(d));
     } else {
-        return @bitCast(0xFFFFFF00 | @as(u32, @intCast(d)));
+        return @bitCast(0xFFFFFF00 | zero_extend(d));
     }
 }
 
 fn sign_extension_u12(d: u12) i32 {
     if ((d & 0x800) == 0) {
-        return @bitCast(0x00000FFF & @as(u32, @intCast(d)));
+        return @bitCast(0x00000FFF & zero_extend(d));
     } else {
-        return @bitCast(0xFFFFF000 | @as(u32, @intCast(d)));
+        return @bitCast(0xFFFFF000 | zero_extend(d));
     }
 }
 
 fn sign_extension_u16(d: u16) i32 {
     if ((d & 0x8000) == 0) {
-        return @bitCast(0x0000FFFF & @as(u32, @intCast(d)));
+        return @bitCast(0x0000FFFF & zero_extend(d));
     } else {
-        return @bitCast(0xFFFF0000 | @as(u32, @intCast(d)));
+        return @bitCast(0xFFFF0000 | zero_extend(d));
     }
-}
-
-fn zero_extend(d: anytype) u32 {
-    return @intCast(d);
 }
 
 fn as_i32(val: u32) i32 {
@@ -1203,13 +1232,13 @@ fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
-fn movb_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
+fn movb_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
 }
 
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
-fn movw_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
+fn movw_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
 }
 
@@ -1218,14 +1247,8 @@ fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
-fn movl_atdispRm_Rn(cpu: *SH4, opcode: Instr) void {
+fn movl_at_disp_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
-}
-
-fn movw_atdispRm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
 }
 
 // The 4-bit displacement is only zero-extended, so a range up to +15 bytes can be specified.
@@ -1660,7 +1683,7 @@ fn shlr16(cpu: *SH4, opcode: Instr) void {
 inline fn d8_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u8(opcode.nd8.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    pc += 4 + (displacement << 1);
+    pc += 4 + (displacement * 2);
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
     // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     cpu.pc -= 2;
@@ -1669,7 +1692,7 @@ inline fn d8_label(cpu: *SH4, opcode: Instr) void {
 inline fn d12_label(cpu: *SH4, opcode: Instr) void {
     const displacement = sign_extension_u12(opcode.d12.d);
     var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
-    pc += 4 + (displacement << 1);
+    pc += 4 + (displacement * 2);
     cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
     // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     cpu.pc -= 2;
@@ -2089,16 +2112,22 @@ fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
     } else {
-        std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        if (opcode.nmd.n & 0x1 == 0) {
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        } else {
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        }
     }
 }
 fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
-        std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+        if (opcode.nmd.m & 0x1 == 0) {
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+        } else {
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+        }
     }
 }
 fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2107,8 +2136,11 @@ fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
         cpu.R(opcode.nmd.m).* += 4;
     } else { // Double-precision
-        std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        if (opcode.nmd.n & 0x1 == 0) {
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        } else {
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+        }
         cpu.R(opcode.nmd.m).* += 8;
     }
 }
@@ -2118,9 +2150,14 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
         cpu.R(opcode.nmd.n).* -= 4;
         cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else { // Double-precision
-        std.debug.assert(opcode.nmd.m & 0x1 == 0);
         cpu.R(opcode.nmd.n).* -= 8;
-        cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+        if (opcode.nmd.m & 0x1 == 0) {
+            // fmov.d	DRm,@-Rn
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+        } else {
+            // fmov.d	XDm,@-Rn
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+        }
     }
 }
 fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2163,7 +2200,15 @@ fn fdls_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
 fn fsts_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     cpu.FR(opcode.nmd.n).* = @bitCast(cpu.fpul);
 }
-
+fn fabs_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* = @abs(cpu.FR(opcode.nmd.n).*);
+    } else {
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* = @abs(cpu.DR(opcode.nmd.n >> 1).*);
+    }
+}
 fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
@@ -2176,15 +2221,22 @@ fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
 
 fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        const n = cpu.FR(opcode.nmd.n).*;
-        const m = cpu.FR(opcode.nmd.m).*;
         // TODO: Handle exceptions
         // if(!cpu.fpscr.dn and (n is denorm or m  is denorm)) ...
-        cpu.FR(opcode.nmd.n).* = n + m;
+        cpu.FR(opcode.nmd.n).* += cpu.FR(opcode.nmd.m).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
         cpu.DR(opcode.nmd.n >> 1).* += cpu.DR(opcode.nmd.m >> 1).*;
+    }
+}
+fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) void {
+    if (cpu.fpscr.sz == 0) {
+        cpu.FR(opcode.nmd.n).* -= cpu.FR(opcode.nmd.m).*;
+    } else {
+        std.debug.assert(opcode.nmd.n & 0x1 == 0);
+        std.debug.assert(opcode.nmd.m & 0x1 == 0);
+        cpu.DR(opcode.nmd.n >> 1).* -= cpu.DR(opcode.nmd.m >> 1).*;
     }
 }
 fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -2251,6 +2303,20 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
         cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
+fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 0);
+
+    // Note: Very crude implementation (and even probably wrong.)
+    //       Doesn't handle exceptions.
+    // TODO: Vectorize?
+
+    const n = opcode.nmd.n & 0b1100;
+    const FVn = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+    inline for (0..4) |u| {
+        const i: u4 = @intCast(u);
+        cpu.FR(n + i).* = cpu.XF(4 * i + 0).* * FVn[0] + cpu.XF(4 * i + 1).* * FVn[1] + cpu.XF(4 * i + 2).* * FVn[2] + cpu.XF(4 * i + 3).* * FVn[3];
+    }
+}
 
 const OpcodeDescription = struct {
     code: u16,
@@ -2275,9 +2341,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = mova_atdispPC_R0, .name = "mova @(disp,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = movw_atdispPC_Rn, .name = "mov.w @(disp,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispPC_Rn, .name = "mov.l @(disp,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = mova_atdispPC_R0, .name = "mova @(d:8,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = movw_atdispPC_Rn, .name = "mov.w @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispPC_Rn, .name = "mov.l @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = movw_at_rm_rn, .name = "mov.w @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b0110000000000010, .mask = 0b0000111111110000, .fn_ = movl_at_rm_rn, .name = "mov.l @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
@@ -2290,9 +2356,9 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = movb_at_dispRm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = movw_at_dispRm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = movl_atdispRm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = movb_at_disp_Rm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = movw_at_disp_Rm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = movl_at_disp_Rm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1000000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_at_dispRm, .name = "mov.b R0,@(disp,Rm)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1000000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_at_dispRm, .name = "mov.w R0,@(disp,Rm)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0001000000000000, .mask = 0b0000111111111111, .fn_ = movl_Rm_atdispRn, .name = "mov.l Rm,@(disp,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
@@ -2302,12 +2368,12 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b0000000000000100, .mask = 0b0000111111110000, .fn_ = movb_Rm_atR0Rn, .name = "mov.b Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000101, .mask = 0b0000111111110000, .fn_ = movw_Rm_atR0Rn, .name = "mov.w Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000110, .mask = 0b0000111111110000, .fn_ = movl_Rm_atR0Rn, .name = "mov.l Rm,@(R0,Rn)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdisp_GBR_R0, .name = "mov.b @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdisp_GBR_R0, .name = "mov.w @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdisp_GBR_R0, .name = "mov.l @(disp,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdisp_GBR, .name = "mov.b R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdisp_GBR, .name = "mov.w R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdisp_GBR, .name = "mov.l R0,@(disp,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100010000000000, .mask = 0b0000000011111111, .fn_ = movb_atdisp_GBR_R0, .name = "mov.b @(d:8,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100010100000000, .mask = 0b0000000011111111, .fn_ = movw_atdisp_GBR_R0, .name = "mov.w @(d:8,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100011000000000, .mask = 0b0000000011111111, .fn_ = movl_atdisp_GBR_R0, .name = "mov.l @(d:8,GBR),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1100000000000000, .mask = 0b0000000011111111, .fn_ = movb_R0_atdisp_GBR, .name = "mov.b R0,@(d:8,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = movw_R0_atdisp_GBR, .name = "mov.w R0,@(d:8,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = movl_R0_atdisp_GBR, .name = "mov.l R0,@(d:8,GBR)", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000101001, .mask = 0b0000111100000000, .fn_ = movt_Rn, .name = "movt Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = swapb, .name = "swap.b Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = swapw, .name = "swap.w Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
@@ -2474,10 +2540,10 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = fldi1_FRn, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = fdls_FRn_FPUL, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = fsts_FPUL_FRn, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = fabs_FRn, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = fneg_FRn, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = fadd_FRm_FRn, .name = "fadd FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b1111000000000001, .mask = 0b0000111111110000, .fn_ = fsub_FRm_FRn, .name = "fsub FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = fmul_FRm_FRn, .name = "fmul FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = fmac_FR0_FRm_FRn, .name = "fmac FR0,FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 11 },
@@ -2487,7 +2553,7 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = float_FPUL_FRn, .name = "float FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
-    .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = unimplemented, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
+    .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
 
     //.{ .code = 0b1111000001011101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fabs DRn", .privileged = false },
     //.{ .code = 0b1111000001001101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fneg DRn", .privileged = false },
@@ -2515,6 +2581,24 @@ pub const Opcodes: [215]OpcodeDescription = .{
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = fschg, .name = "fschg", .privileged = false },
 };
 
+fn init_jump_table() void {
+    if (JumpTable[0] == 1) {
+        JumpTable[0] = 0; // NOP
+        for (1..0x10000) |i| {
+            for (2..Opcodes.len) |idx| {
+                if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
+                    if (JumpTable[i] != 1) {
+                        std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
+                        @panic("Duplicate matching instruction.");
+                    }
+                    JumpTable[i] = @intCast(idx);
+                    //break;
+                }
+            }
+        }
+    }
+}
+
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
 
 pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
@@ -2527,10 +2611,14 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     const Rn = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.n});
     const Rm = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.m});
     const disp = try std.fmt.allocPrint(allocator, "{d}", .{opcode.nmd.d});
+    const d8 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
+    const d12 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i12, @bitCast(opcode.d12.d))});
     const imm = try std.fmt.allocPrint(allocator, "#{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
     defer allocator.free(Rn);
     defer allocator.free(Rm);
     defer allocator.free(disp);
+    defer allocator.free(d8);
+    defer allocator.free(d12);
     defer allocator.free(imm);
 
     const n0 = try std.mem.replaceOwned(u8, allocator, desc.name, "Rn", Rn);
@@ -2539,11 +2627,87 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(n1);
     const n2 = try std.mem.replaceOwned(u8, allocator, n1, "disp", disp);
     defer allocator.free(n2);
-    const final_buff = try std.mem.replaceOwned(u8, allocator, n2, "#imm", imm);
+    const n3 = try std.mem.replaceOwned(u8, allocator, n2, "d:8", d8);
+    defer allocator.free(n3);
+    const n4 = try std.mem.replaceOwned(u8, allocator, n3, "d:12", d12);
+    defer allocator.free(n4);
+    const final_buff = try std.mem.replaceOwned(u8, allocator, n4, "#imm", imm);
 
     DisassemblyCache[opcode.value] = final_buff;
 
     return final_buff;
+}
+
+pub fn free_disassembly_cache(allocator: std.mem.Allocator) void {
+    for (DisassemblyCache) |d| {
+        if (d != null) {
+            allocator.free(d.?);
+        }
+    }
+}
+
+fn test_decoding(instruction: Instr, comptime expected: []const u8) !void {
+    const dis = try disassemble(instruction, std.testing.allocator);
+    std.debug.print("{b:0>16}: {s} - {s}\n", .{ instruction.value, dis, expected });
+    try std.testing.expect(std.mem.eql(u8, dis, expected));
+}
+
+test "Instruction Decoding" {
+    init_jump_table();
+
+    try test_decoding(.{ .value = 0b1110_0000_0000_0001 }, "mov #1,R0");
+
+    try test_decoding(.{ .value = 0b1001_0000_0000_0001 }, "mov.w @(1,PC),R0");
+    try test_decoding(.{ .value = 0b1101_0000_0000_0001 }, "mov.l @(1,PC),R0");
+
+    try test_decoding(.{ .value = 0b0110_0000_0000_0011 }, "mov R0,R0");
+
+    try test_decoding(.{ .value = 0b0010_0000_0001_0000 }, "mov.b R1,@R0");
+    try test_decoding(.{ .value = 0b0010_0000_0001_0001 }, "mov.w R1,@R0");
+    try test_decoding(.{ .value = 0b0010_0000_0001_0010 }, "mov.l R1,@R0");
+
+    try test_decoding(.{ .value = 0b0110_0000_0001_0000 }, "mov.b @R1,R0");
+    try test_decoding(.{ .value = 0b0110_0000_0001_0001 }, "mov.w @R1,R0");
+    try test_decoding(.{ .value = 0b0110_0000_0001_0010 }, "mov.l @R1,R0");
+
+    try test_decoding(.{ .value = 0b0010_0000_0001_0100 }, "mov.b R1,@-R0");
+    try test_decoding(.{ .value = 0b0010_0000_0001_0101 }, "mov.w R1,@-R0");
+    try test_decoding(.{ .value = 0b0010_0000_0001_0110 }, "mov.l R1,@-R0");
+
+    try test_decoding(.{ .value = 0b0110_0000_0001_0100 }, "mov.b @R1+,R0");
+    try test_decoding(.{ .value = 0b0110_0000_0001_0101 }, "mov.w @R1+,R0");
+    try test_decoding(.{ .value = 0b0110_0000_0001_0110 }, "mov.l @R1+,R0");
+
+    try test_decoding(.{ .value = 0b1000_0000_0001_0010 }, "mov.b R0,@(2,R1)");
+    try test_decoding(.{ .value = 0b1000_0001_0001_0010 }, "mov.w R0,@(2,R1)");
+
+    try test_decoding(.{ .value = 0b0001_0001_0011_0010 }, "mov.l R3,@(2,R1)");
+
+    try test_decoding(.{ .value = 0b1000_0100_0001_0010 }, "mov.b @(2,R1),R0");
+    try test_decoding(.{ .value = 0b1000_0101_0001_0010 }, "mov.w @(2,R1),R0");
+
+    try test_decoding(.{ .value = 0b0101_0011_0001_0010 }, "mov.l @(2,R1),R3");
+
+    try test_decoding(.{ .value = 0b0000_0001_0011_0100 }, "mov.b R3,@(R0,R1)");
+    try test_decoding(.{ .value = 0b0000_0001_0011_0101 }, "mov.w R3,@(R0,R1)");
+    try test_decoding(.{ .value = 0b0000_0001_0011_0110 }, "mov.l R3,@(R0,R1)");
+
+    try test_decoding(.{ .value = 0b0000_0001_0011_1100 }, "mov.b @(R0,R3),R1");
+    try test_decoding(.{ .value = 0b0000_0001_0011_1101 }, "mov.w @(R0,R3),R1");
+    try test_decoding(.{ .value = 0b0000_0001_0011_1110 }, "mov.l @(R0,R3),R1");
+
+    try test_decoding(.{ .value = 0b1100_0000_0000_0001 }, "mov.b R0,@(1,GBR)");
+    try test_decoding(.{ .value = 0b1100_0001_0000_0001 }, "mov.w R0,@(1,GBR)");
+    try test_decoding(.{ .value = 0b1100_0010_0000_0001 }, "mov.l R0,@(1,GBR)");
+
+    try test_decoding(.{ .value = 0b1100_0100_0000_0001 }, "mov.b @(1,GBR),R0");
+    try test_decoding(.{ .value = 0b1100_0101_0000_0001 }, "mov.w @(1,GBR),R0");
+    try test_decoding(.{ .value = 0b1100_0110_0000_0001 }, "mov.l @(1,GBR),R0");
+
+    try test_decoding(.{ .value = 0b1100_0111_0000_0000 }, "mova @(0,PC),R0");
+    try test_decoding(.{ .value = 0b0000_0011_0010_1001 }, "movt R3");
+
+    free_disassembly_cache(std.testing.allocator);
 }
 
 fn write_and_execute(cpu: *SH4, code: u16) void {
@@ -2773,4 +2937,69 @@ test "boot" {
     cpu.execute(); //
 
     cpu.execute(); //
+}
+
+test "IP.bin" {
+    var cpu: SH4 = .{};
+    try cpu.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    // Example IP.bin file
+    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
+    defer IPbin_file.close();
+    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(IPbin);
+    cpu.load_at(0x8C008000, IPbin);
+
+    for (0..10000000) |_| {
+        cpu.execute();
+    }
+}
+
+test "IP.bin init boot" {
+    var cpu: SH4 = .{};
+    try cpu.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    cpu.init_boot();
+
+    // Example IP.bin file
+    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
+    defer IPbin_file.close();
+    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(IPbin);
+    cpu.load_at(0x8C008000, IPbin);
+
+    for (0..10000000) |_| {
+        cpu.execute();
+    }
+}
+
+// Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
+fn load_and_test_binary(comptime filename: []const u8) !void {
+    var cpu: SH4 = .{};
+    try cpu.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    const bin_file = try std.fs.cwd().openFile("./test/bin/" ++ filename, .{});
+    defer bin_file.close();
+    const bin = try bin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(bin);
+    cpu.load_at(0x8C080000, bin);
+
+    cpu.pc = 0x8C080000;
+    cpu.R(14).* = 1;
+
+    var prev = cpu.pc;
+    while (cpu.R(14).* != 0) {
+        cpu.execute();
+        try std.testing.expect(cpu.pc != prev); // Crude check for infinite loops, there might be legitiple reason to do this (loops with process in delay slot?), but we'll just choose not to and be fine :))
+        prev = cpu.pc;
+    }
+    try std.testing.expect(cpu.R(14).* == 0);
+}
+
+test "Binaries" {
+    try load_and_test_binary("0.bin");
+    try load_and_test_binary("stack_0.bin");
 }

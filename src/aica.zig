@@ -125,7 +125,7 @@ pub const AICA = struct {
         cpu.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
 
         // Schedule the end of the transfer interrupt
-        self.dma_countdown = len; // FIXME: Compute the actual cycle count.
+        self.dma_countdown = 10 * len; // FIXME: Compute the actual cycle count.
     }
 
     fn end_dma(self: *AICA, cpu: *SH4) void {
