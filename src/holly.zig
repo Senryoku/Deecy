@@ -13,16 +13,6 @@ const termcolor = @import("termcolor.zig");
 
 const TileAccelerator = struct {};
 
-pub const SPG_STATUS = packed struct(u32) {
-    scanline: u10 = 0,
-    fieldnum: u1 = 0,
-    blank: u1 = 0,
-    hblank: u1 = 0,
-    vsync: u1 = 0,
-
-    _: u18 = 0,
-};
-
 const HollyRegister = enum(u32) {
     ID = 0x005F8000,
     REVISION = 0x005F8004,
@@ -109,9 +99,79 @@ const HollyRegister = enum(u32) {
     FOG_TABLE_START = 0x005F8200,
     TA_OL_POINTERS_START = 0x005F8600,
     PALETTE_RAM_START = 0x005F9000,
+
+    _,
 };
 
 const HollyRegisterStart: u32 = 0x005F8000;
+
+pub const SOFT_RESET = packed struct(u32) {
+    TASoftReset: u1 = 0,
+    PipelineSoftReset: u1 = 0,
+    SDRAMInterfaceSoftReset: u1 = 0,
+    _: u29 = 0,
+};
+
+pub const SPG_STATUS = packed struct(u32) {
+    scanline: u10 = 0,
+    fieldnum: u1 = 0,
+    blank: u1 = 0,
+    hblank: u1 = 0,
+    vsync: u1 = 0,
+
+    _: u18 = 0,
+};
+
+pub const SPG_HBLANK_INT = packed struct(u32) {
+    line_comp_val: u10 = 0,
+    _r0: u2 = 0,
+    hblank_int_mode: u2 = 0,
+    _r1: u2 = 0,
+    hblank_in_interrupt: u10 = 0x31D,
+    _r2: u6 = 0,
+};
+
+pub const SPG_VBLANK_INT = packed struct(u32) {
+    vblank_in_interrupt_line_number: u10 = 0x104,
+    _r0: u6 = 0,
+    vblank_out_interrupt_line_number: u10 = 0x150,
+    _r1: u6 = 0,
+};
+
+pub const SPG_CONTROL = packed struct(u32) {
+    mhsync_pol: u1 = 0,
+    mvsync_pol: u1 = 0,
+    mcsync_pol: u1 = 0,
+    spg_lock: u1 = 0,
+    interlace: u1 = 0,
+    force_field2: u1 = 0,
+    NTSC: u1 = 0,
+    PAL: u1 = 0,
+    sync_direction: u1 = 0,
+    csync_on_h: u1 = 0,
+    _: u21 = 0,
+};
+
+pub const SPG_LOAD = packed struct(u32) {
+    hcount: u10 = 0x359,
+    _r0: u6 = 0,
+    vcount: u10 = 0x106,
+    _r1: u6 = 0,
+};
+
+pub const SPG_HBLANK = packed struct(u32) {
+    hbstart: u10 = 0x345,
+    _r0: u6 = 0,
+    hbend: u10 = 0x07E,
+    _r1: u6 = 0,
+};
+
+pub const SPG_VBLANK = packed struct(u32) {
+    vbstart: u10 = 0x104,
+    _r0: u6 = 0,
+    vbend: u10 = 0x150,
+    _r1: u6 = 0,
+};
 
 pub const Holly = struct {
     vram: []u8 = undefined,
@@ -133,14 +193,18 @@ pub const Holly = struct {
 
     pub fn reset(self: *@This()) void {
         self._get_register(u32, .ID).* = 0x17FD11DB;
-        self._get_register(u32, .SPG_STATUS).* = 0x00000000;
+        self._get_register(u32, .REVISION).* = 0x0011;
+        self._get_register(SPG_STATUS, .SPG_STATUS).* = .{};
         self._get_register(u32, .SPAN_SOFT_CFG).* = 0x00000101;
         self._get_register(u32, .FPU_PARAM_CFG).* = 0x0007DF77;
         self._get_register(u32, .SDRAM_REFRESH).* = 0x00000020;
         self._get_register(u32, .SDRAM_CFG).* = 0x15D1C951;
         self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
 
-        self._get_register(u32, .SPG_HBLANK).* = 0x007E0345;
+        self._get_register(SPG_LOAD, .SPG_LOAD).* = .{};
+        self._get_register(SPG_HBLANK, .SPG_HBLANK).* = .{};
+        self._get_register(SPG_VBLANK, .SPG_VBLANK).* = .{};
+        self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).* = .{};
     }
 
     pub fn update(self: *@This(), cpu: *SH4, cycles: u32) void {
@@ -150,22 +214,32 @@ pub const Holly = struct {
         };
         static._tmp_cycles += cycles;
 
+        const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
         // FIXME: Made up numbers for testing
-        const cycles_per_line = 10 * (self._get_register(u32, .SPG_HBLANK).* & 0xFFF);
+        const cycles_per_line: u64 = 10 * @as(u64, @intCast(spg_load.hcount));
         if (static._tmp_cycles >= cycles_per_line) {
             static._tmp_cycles -= cycles_per_line;
 
+            const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
+            const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
+            const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
+
             self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
 
-            if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 480) {
-                self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 1;
+            if (spg_status.*.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
                 cpu.raise_normal_interrupt(.{ .VBlankIn = 1 });
             }
-
-            if (self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline == 500) {
-                self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline = 0;
-                self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = 0;
+            if (spg_status.*.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
                 cpu.raise_normal_interrupt(.{ .VBlankOut = 1 });
+            }
+            if (spg_status.*.scanline == spg_vblank.vbstart) {
+                spg_status.*.vsync = 1;
+            }
+            if (spg_status.*.scanline == spg_vblank.vbend) {
+                spg_status.*.vsync = 0;
+            }
+            if (spg_status.*.scanline == spg_load.vcount) {
+                spg_status.*.scanline = 0;
             }
         }
     }
@@ -174,12 +248,25 @@ pub const Holly = struct {
         switch (addr) {
             @intFromEnum(HollyRegister.SOFTRESET) => {
                 std.debug.print("[Holly] TODO SOFTRESET: {X:0>8}\n", .{v});
+                const sr: SOFT_RESET = @bitCast(v);
+                if (sr.TASoftReset == 1) {
+                    std.debug.print("[Holly]   TODO: Tile Accelerator Soft Reset\n", .{});
+                }
+                if (sr.PipelineSoftReset == 1) {
+                    std.debug.print("[Holly]   TODO: Pipeine Soft Reset\n", .{});
+                }
+                if (sr.SDRAMInterfaceSoftReset == 1) {
+                    std.debug.print("[Holly]   TODO: SDRAM Interface Soft Reset\n", .{});
+                }
+                return;
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
                 std.debug.print("[Holly] TODO STARTRENDER: {X:0>8}\n", .{v});
             },
             @intFromEnum(HollyRegister.TA_LIST_INIT) => {
-                std.debug.print("[Holly] TODO TA_LIST_INIT: {X:0>8}\n", .{v});
+                if (v == 0x80000000) {
+                    std.debug.print("[Holly] TODO TA_LIST_INIT: {X:0>8}\n", .{v});
+                }
             },
             @intFromEnum(HollyRegister.TA_LIST_CONT) => {
                 std.debug.print("[Holly] TODO TA_LIST_CONT: {X:0>8}\n", .{v});
@@ -187,7 +274,9 @@ pub const Holly = struct {
             @intFromEnum(HollyRegister.SPG_CONTROL), @intFromEnum(HollyRegister.SPG_LOAD) => {
                 std.debug.print("[Holly] TODO SPG_CONTROL/SPG_LOAD: {X:0>8}\n", .{v});
             },
-            else => {},
+            else => {
+                std.debug.print("[Holly] Write to Register: @{X:0>8} {s} = {X:0>8}\n", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
+            },
         }
         self._get_register_from_addr(u32, addr).* = v;
     }

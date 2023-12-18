@@ -302,8 +302,6 @@ pub const MemoryRegister = enum(u32) {
     // PVR-DMA Secret Registers
     SB_PDAPRO = 0x005F7C80,
 
-    REVISION = 0x005F8004,
-
     // Other - Not sure what these are - Probably test registers - but they are accessed by the boot ROM.
     RBERRC = 0x005F68A4, // "RootBus control register (secret register, for chip debugging)" ?
     _5F68AC = 0x005F68AC,
@@ -360,6 +358,38 @@ pub const TCR = packed struct(u16) {
     unf: u1 = 0,
     icpf: u1 = 0,
     _: u6 = 0,
+};
+
+pub const CHCR = packed struct(u32) {
+    de: u1 = 0, // DMAC Enable
+    te: u1 = 0, // Transfer End
+    ie: u1 = 0, // Interrupt Enable
+    _r0: u1 = 0,
+    ts: u3 = 0, // Transfer Size
+    tm: u1 = 0, // Transfer Mode
+    rs: u4 = 0, // Resource Select
+    sm: u2 = 0, // Source Address Mode
+    dm: u2 = 0, // Destination Address Mode
+    al: u1 = 0, // Acknowledge Level
+    am: u1 = 0, // Acknowledge Mode
+    rl: u1 = 0, // Request Check Level
+    ds: u1 = 0, // SREQ Select
+    _r1: u4 = 0,
+    dtc: u1 = 0, // Destination Address Wait Control Select
+    dsa: u3 = 0, // Destination Address Space Attribute Specification
+    stc: u1 = 0, // Source Address Wait Control Select
+    ssa: u3 = 0, // Source Address Space Attribute Specification
+};
+
+pub const DMAOR = packed struct(u32) {
+    dme: u1 = 0, // DMAC Master Enable
+    nmif: u1 = 0, // NMI Flag
+    ae: u1 = 0, // Address Error Flag
+    _r0: u5 = 0,
+    pr: u2 = 0, // Priority Mode
+    _r1: u5 = 0,
+    ddt: u1 = 0, // On-Demand Data Transfer
+    _r2: u16 = 0,
 };
 
 pub const SB_ISTNRM = packed struct(u32) {

@@ -449,7 +449,6 @@ pub const SH4 = struct {
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
-        self.hw_register(u32, .REVISION).* = 0x0011;
     }
 
     pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
@@ -1088,6 +1087,18 @@ pub const SH4 = struct {
                     self.hw_register(u32, MemoryRegister.SB_ISTERR).* &= ~value;
                     return;
                 },
+                @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
+                    self.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_C2DST) => {
+                    if (value == 1) {
+                        self.start_ch2_dma();
+                    } else {
+                        self.end_ch2_dma();
+                    }
+                    return;
+                },
                 else => {
                     std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
@@ -1117,10 +1128,58 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
-    pub fn prefetch_operand_cache_block(self: *@This(), virtual_addr: addr_t) void {
-        _ = self;
-        // TODO: (Rn) → operand cache
-        std.debug.print("prefetch_operand_cache_block: {X:0>8}\n", .{virtual_addr});
+    // FIXME: This should probably not be here.
+    pub fn start_ch2_dma(self: *@This()) void {
+        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 1;
+
+        const dst_addr = self.read_hw_register(u32, MemoryRegister.SB_C2DSTAT);
+        const len = self.read_hw_register(u32, MemoryRegister.SB_C2DLEN);
+
+        std.debug.print("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)\n", .{ self.read_io_register(u32, MemoryRegister.SAR2), dst_addr, len });
+
+        std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
+        self.io_register(u32, MemoryRegister.DAR2).* = dst_addr; // FIXME: Not sure this is correct
+
+        const dmac_len = self.read_io_register(u32, MemoryRegister.DMATCR2);
+        std.debug.assert(32 * dmac_len == len);
+
+        self.start_dmac(2);
+
+        // TODO: Schedule for later?
+        self.hw_register(u32, MemoryRegister.SB_C2DSTAT).* += len;
+        self.hw_register(u32, MemoryRegister.SB_C2DLEN).* = 0;
+        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 0;
+
+        self.raise_normal_interrupt(.{ .EoD_CH2 = 1 });
+    }
+
+    pub fn end_ch2_dma(self: *@This()) void {
+        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 0;
+
+        // TODO: Acutally cancel the DMA, right now they're instantaneous.
+    }
+
+    pub fn start_dmac(self: *@This(), channel: u32) void {
+        std.debug.assert(channel == 2); // TODO: Implement others? It is needed?
+
+        const chcr = self.read_io_register(MemoryRegisters.CHCR, .CHCR2);
+
+        const src_addr = self.read_io_register(u32, MemoryRegister.SAR2);
+        const dst_addr = self.read_io_register(u32, MemoryRegister.DAR2);
+        const len = 32 * self.read_io_register(u32, MemoryRegister.DMATCR2);
+
+        // FIXME: Check Address Direction (Destination Address Mode and Source Address Mode)
+
+        const src = @as([*]u8, @ptrCast(self._get_memory(src_addr & 0x1FFFFFFF)));
+        const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr & 0x1FFFFFFF)));
+        @memcpy(dst[0..len], src[0..len]);
+
+        // TODO: Schedule for later?
+        if (chcr.ie == 1)
+            self.request_interrupt(Interrupts.Interrupt.DMTE2);
+        self.io_register(u32, .SAR2).* += len;
+        self.io_register(u32, .DMATCR2).* = 0;
+        self.io_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
     }
 };
 
@@ -1987,10 +2046,7 @@ fn ocbi_atRn(_: *SH4, _: Instr) void {
     }
 }
 
-fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = cpu;
-    _ = opcode;
-
+fn ocbp_atRn(_: *SH4, _: Instr) void {
     // Accesses data using the contents indicated by effective address Rn.
     // If the cache is hit and there is unwritten information (U bit = 1),
     // the corresponding cache block is written back to external memory and
@@ -2008,9 +2064,7 @@ fn ocbp_atRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
-fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
-    _ = cpu;
-    _ = opcode;
+fn ocbwb_atRn(_: *SH4, _: Instr) void {
     const static = struct {
         var once = true;
     };
@@ -2023,8 +2077,14 @@ fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
 // Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.
 // The lower 5 bits of the address specified by Rn are masked to zero.
 // This instruction is also used to trigger a Store Queue write-back operation if the specified address points to the Store Queue area.
-fn pref_atRn(cpu: *SH4, opcode: Instr) void {
-    cpu.prefetch_operand_cache_block(cpu.R(opcode.nmd.n).*);
+fn pref_atRn(_: *SH4, _: Instr) void {
+    const static = struct {
+        var once = true;
+    };
+    if (static.once) {
+        static.once = false;
+        std.debug.print("Note: pref @Rn not implemented\n", .{});
+    }
 }
 // Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.
 fn rte(cpu: *SH4, _: Instr) void {
