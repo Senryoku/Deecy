@@ -156,8 +156,7 @@ pub const SH4 = struct {
     boot: []u8 align(4) = undefined,
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
-    area4: []u8 align(4) = undefined, // Tile Accelerator, TODO: Move this?
-    area5: []u8 align(4) = undefined,
+    dummy_area5: u8 align(32) = 0,
     area7: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
@@ -178,8 +177,6 @@ pub const SH4 = struct {
 
         self._allocator = allocator;
 
-        self.area4 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
-        self.area5 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
         self.area7 = try self._allocator.alloc(u8, 64 * 1024 * 1024);
         self.ram = try self._allocator.alloc(u8, 16 * 1024 * 1024);
         self.hardware_registers = try self._allocator.alloc(u8, 0x200000);
@@ -214,8 +211,6 @@ pub const SH4 = struct {
         self._allocator.free(self.hardware_registers);
         self._allocator.free(self.ram);
         self._allocator.free(self.area7);
-        self._allocator.free(self.area5);
-        self._allocator.free(self.area4);
     }
 
     pub fn reset(self: *@This()) void {
@@ -836,12 +831,11 @@ pub const SH4 = struct {
             return &self.ram[addr & 0x00FFFFFF];
         } else if (addr < 0x14000000) {
             // Area 4 - Tile accelerator command input
-            std.debug.print("  Area 4 _get_memory: {X:0>8}\n", .{addr});
-            return &self.area4[addr - 0x10000000];
+            @panic("Unexpected _get_memory to Area 4 - This should only be accessible via write32 or DMA.");
         } else if (addr < 0x18000000) {
             // Area 5 - Expansion (modem) port
             std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8}\u{001B}[0m\n", .{addr});
-            return &self.area5[addr - 0x14000000];
+            return &self.dummy_area5;
         } else if (addr < 0x1C000000) {
             // Area 6 - Nothing
             std.debug.print("\u{001B}[31mInvalid _get_memory to Area 6: {X:0>8}\u{001B}[0m\n", .{addr});
@@ -1116,6 +1110,10 @@ pub const SH4 = struct {
             return aica.write_rtc_register(addr, value);
         }
 
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            return self.gpu.write_ta(self, addr, value);
+        }
+
         @as(*u32, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
@@ -1164,20 +1162,29 @@ pub const SH4 = struct {
 
         const chcr = self.read_io_register(MemoryRegisters.CHCR, .CHCR2);
 
-        const src_addr = self.read_io_register(u32, MemoryRegister.SAR2);
-        const dst_addr = self.read_io_register(u32, MemoryRegister.DAR2);
+        const src_addr = self.read_io_register(u32, MemoryRegister.SAR2) & 0x1FFFFFFF;
+        const dst_addr = self.read_io_register(u32, MemoryRegister.DAR2) & 0x1FFFFFFF;
         const len = 32 * self.read_io_register(u32, MemoryRegister.DMATCR2);
 
         // FIXME: Check Address Direction (Destination Address Mode and Source Address Mode)
 
-        const src = @as([*]u8, @ptrCast(self._get_memory(src_addr & 0x1FFFFFFF)));
-        const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr & 0x1FFFFFFF)));
-        @memcpy(dst[0..len], src[0..len]);
+        // Write to Tile Accelerator, we can bypass write32
+        if (dst_addr >= 0x10000000 and dst_addr < 0x14000000) {
+            for (0..len / 4) |i| {
+                self.gpu.write_ta(self, @intCast(dst_addr + 4 * i), self.read32(@intCast(src_addr + 4 * i)));
+            }
+        } else {
+            // FIXME: When can we safely memset?
+            const src = @as([*]u8, @ptrCast(self._get_memory(src_addr)));
+            const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)));
+            @memcpy(dst[0..len], src[0..len]);
+        }
 
         // TODO: Schedule for later?
         if (chcr.ie == 1)
             self.request_interrupt(Interrupts.Interrupt.DMTE2);
         self.io_register(u32, .SAR2).* += len;
+        self.io_register(u32, .DAR2).* += len;
         self.io_register(u32, .DMATCR2).* = 0;
         self.io_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
     }

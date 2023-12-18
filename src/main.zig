@@ -267,6 +267,17 @@ pub fn main() !void {
                         start += 4;
                         i += 1;
                     },
+                    0x1 => { // 565 RGB 16 bit
+                        const color: Color = .{
+                            .value = cpu.read16(@intCast(start)),
+                        };
+                        pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
+                        pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
+                        pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
+                        pixels[4 * i + 3] = 255; // FIXME: Not really.
+                        start += 4;
+                        i += 1;
+                    },
                     //pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
                     //pixels[4 * i + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
                     //pixels[4 * i + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
