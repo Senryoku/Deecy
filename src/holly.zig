@@ -277,11 +277,15 @@ pub const Holly = struct {
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
 
+    _scheduled_interrupts: std.ArrayList(struct { cycles: u32, int: MemoryRegisters.SB_ISTNRM }) = undefined,
+
     pub fn init(self: *@This(), allocator: std.mem.Allocator) !void {
         self._allocator = allocator;
 
         self.vram = try self._allocator.alloc(u8, 8 * 1024 * 1024);
         self.registers = try self._allocator.alloc(u8, 0x2000);
+
+        self._scheduled_interrupts = try @TypeOf(self._scheduled_interrupts).initCapacity(self._allocator, 32);
     }
 
     pub fn deinit(self: *@This()) void {
@@ -312,6 +316,18 @@ pub const Holly = struct {
             var _pixel: u32 = 0;
         };
         static._tmp_cycles += cycles;
+
+        // Update scheduled interrupts
+        var idx: u32 = 0;
+        while (idx < self._scheduled_interrupts.items.len) {
+            if (self._scheduled_interrupts.items[idx].cycles < cycles) {
+                cpu.raise_normal_interrupt(self._scheduled_interrupts.items[idx].int);
+                _ = self._scheduled_interrupts.swapRemove(idx);
+            } else {
+                self._scheduled_interrupts.items[idx].cycles -= cycles;
+                idx += 1;
+            }
+        }
 
         const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
@@ -376,6 +392,10 @@ pub const Holly = struct {
         }
     }
 
+    pub fn schedule_interrupt(self: *@This(), cycles: u32, int: MemoryRegisters.SB_ISTNRM) void {
+        self._scheduled_interrupts.appendAssumeCapacity(.{ .cycles = cycles, .int = int });
+    }
+
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (addr) {
             @intFromEnum(HollyRegister.SOFTRESET) => {
@@ -418,7 +438,7 @@ pub const Holly = struct {
     }
 
     // Write to the Tile Accelerator
-    pub fn write_ta(self: *@This(), cpu: *SH4, addr: u32, v: u32) void {
+    pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
         std.debug.print("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
 
         self._ta_command_buffer[self._ta_command_buffer_index] = v;
@@ -431,21 +451,23 @@ pub const Holly = struct {
         switch (parameter_control_word.parameter_control.parameter_type) {
             .EndOfList => {
                 if (self._ta_list_type != null) { // Apprently this happpens?... Why would a game do this?
+                    // Fire corresponding interrupt.
+                    // FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
                     switch (self._ta_list_type.?) {
                         .Opaque => {
-                            cpu.raise_normal_interrupt(.{ .EoT_OpaqueList = 1 });
+                            self.schedule_interrupt(800, .{ .EoT_OpaqueList = 1 });
                         },
                         .OpaqueModifierVolume => {
-                            cpu.raise_normal_interrupt(.{ .EoT_OpaqueModifierVolumeList = 1 });
+                            self.schedule_interrupt(800, .{ .EoT_OpaqueModifierVolumeList = 1 });
                         },
                         .Translucent => {
-                            cpu.raise_normal_interrupt(.{ .EoT_TranslucentList = 1 });
+                            self.schedule_interrupt(800, .{ .EoT_TranslucentList = 1 });
                         },
                         .TranslucentModifierVolume => {
-                            cpu.raise_normal_interrupt(.{ .EoT_TranslucentModifierVolumeList = 1 });
+                            self.schedule_interrupt(800, .{ .EoT_TranslucentModifierVolumeList = 1 });
                         },
                         .PunchThrough => {
-                            cpu.raise_normal_interrupt(.{ .EoD_PunchThroughList = 1 });
+                            self.schedule_interrupt(800, .{ .EoD_PunchThroughList = 1 });
                         },
                     }
                 }

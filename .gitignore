@@ -6,5 +6,6 @@ zig-out
 bin
 src/bin
 docs
+logs
 
 imgui.ini

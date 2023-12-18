@@ -1111,7 +1111,7 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x10000000 and addr < 0x14000000) {
-            return self.gpu.write_ta(self, addr, value);
+            return self.gpu.write_ta(addr, value);
         }
 
         @as(*u32, @alignCast(@ptrCast(
@@ -1171,7 +1171,7 @@ pub const SH4 = struct {
         // Write to Tile Accelerator, we can bypass write32
         if (dst_addr >= 0x10000000 and dst_addr < 0x14000000) {
             for (0..len / 4) |i| {
-                self.gpu.write_ta(self, @intCast(dst_addr + 4 * i), self.read32(@intCast(src_addr + 4 * i)));
+                self.gpu.write_ta(@intCast(dst_addr + 4 * i), self.read32(@intCast(src_addr + 4 * i)));
             }
         } else {
             // FIXME: When can we safely memset?
