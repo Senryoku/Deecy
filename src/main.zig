@@ -103,7 +103,9 @@ pub fn main() !void {
     };
     defer window.destroy();
 
-    const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{});
+    const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
+        .present_mode = .mailbox,
+    });
     defer gctx.destroy(common.GeneralAllocator);
 
     const scale_factor = scale_factor: {

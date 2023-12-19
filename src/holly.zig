@@ -307,6 +307,8 @@ pub const Holly = struct {
         self._get_register(SPG_HBLANK, .SPG_HBLANK).* = .{};
         self._get_register(SPG_VBLANK, .SPG_VBLANK).* = .{};
         self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).* = .{};
+
+        self._get_register(u32, .TA_LIST_CONT).* = 0;
     }
 
     pub fn update(self: *@This(), cpu: *SH4, cycles: u32) void {
@@ -442,6 +444,7 @@ pub const Holly = struct {
     // Write to the Tile Accelerator
     pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
         std.debug.print("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
+        std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
 
         self._ta_command_buffer[self._ta_command_buffer_index] = v;
         self._ta_command_buffer_index += 1;

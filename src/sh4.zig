@@ -80,20 +80,28 @@ const VirtualAddr = packed union {
     addr: u29,
 };
 
+const StoreQueueAddr = packed struct(u32) {
+    _: u2 = 0,
+    lw_spec: u3 = 0,
+    sq: u1 = 0,
+    address: u20 = 0,
+    spec: u6 = 0b111000,
+};
+
 pub fn is_p0(addr: addr_t) bool {
-    return (addr & 0b10000000000000000000000000000000) == 0b00000000000000000000000000000000;
+    return (addr & 0xE0000000) == 0b00000000000000000000000000000000;
 }
 pub fn is_p1(addr: addr_t) bool {
-    return (addr & 0b11100000000000000000000000000000) == 0b10000000000000000000000000000000;
+    return (addr & 0xE0000000) == 0b10000000000000000000000000000000;
 }
 pub fn is_p2(addr: addr_t) bool {
-    return (addr & 0b11100000000000000000000000000000) == 0b10100000000000000000000000000000;
+    return (addr & 0xE0000000) == 0b10100000000000000000000000000000;
 }
 pub fn is_p3(addr: addr_t) bool {
-    return (addr & 0b11100000000000000000000000000000) == 0b11000000000000000000000000000000;
+    return (addr & 0xE0000000) == 0b11000000000000000000000000000000;
 }
 pub fn is_p4(addr: addr_t) bool {
-    return (addr & 0b11100000000000000000000000000000) == 0b11100000000000000000000000000000;
+    return (addr & 0xE0000000) == 0xE0000000;
 }
 
 pub const Instr = packed union {
@@ -157,6 +165,7 @@ pub const SH4 = struct {
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
     dummy_area5: u8 align(32) = 0,
+    store_queues: [2][8 * 4]u32 align(4) = undefined,
     area7: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
@@ -351,7 +360,9 @@ pub const SH4 = struct {
         }
         // Copy a portion of the boot ROM to RAM.
         self.write32(0xA05F74E4, 0x001FFFFF);
-        @memcpy(self.ram[0x00000100 .. 0x100 + 0x0007FFC0], self.boot[0x00000100 .. 0x100 + 0x0007FFC0]);
+        // @memcpy(self.ram[0x00000100 .. 0x100 + 0x0007FFC0], self.boot[0x00000100 .. 0x100 + 0x0007FFC0]);
+        @memcpy(self.ram[0x00000100..0x00004000], self.boot[0x00000100..0x00004000]);
+        @memcpy(self.ram[0x00008000..0x00200000], self.boot[0x00008000..0x00200000]);
 
         const IP_bin_HLE = false;
         if (IP_bin_HLE) {
@@ -748,20 +759,22 @@ pub const SH4 = struct {
     }
 
     // Area 0:
-    // $00000000 - $001FFFFF Boot ROM
-    // $00200000 - $0021FFFF Flash Memory
-    // $005F6800 - $005F69FF System Control Reg.
-    // $005F6C00 - $005F6CFF Maple Control Reg.
-    // $005F7000 - $005F70FF GD-ROM
-    // $005F7400 - $005F74FF G1 Control Reg.
-    // $005F7800 - $005F78FF G2 Control Reg.
-    // $005F7C00 - $005F7CFF PVR Control Reg.
-    // $005F8000 - $005F9FFF TA/PVR Core Reg.
-    // $00600000 - $006007FF MODEM
-    // $00700000 - $00707FFF AICA sound Reg.
-    // $00710000 - $00710007 AICA RTC Reg.
-    // $00800000 - $009FFFFF AICA Memory
-    // $01000000 - $01FFFFFF G2 External area
+    // 0x00000000 - 0x001FFFFF Boot ROM
+    // 0x00200000 - 0x0021FFFF Flash Memory
+    // 0x005F6800 - 0x005F69FF System Control Reg.
+    // 0x005F6C00 - 0x005F6CFF Maple Control Reg.
+    // 0x005F7000 - 0x005F70FF GD-ROM
+    // 0x005F7400 - 0x005F74FF G1 Control Reg.
+    // 0x005F7800 - 0x005F78FF G2 Control Reg.
+    // 0x005F7C00 - 0x005F7CFF PVR Control Reg.
+    // 0x005F8000 - 0x005F9FFF TA/PVR Core Reg.
+    // 0x00600000 - 0x006007FF MODEM
+    // 0x00700000 - 0x00707FFF AICA sound Reg.
+    // 0x00710000 - 0x00710007 AICA RTC Reg.
+    // 0x00800000 - 0x009FFFFF AICA Memory
+    // 0x01000000 - 0x01FFFFFF G2 External Device #1
+    // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
+    // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
     pub fn _get_memory(self: *@This(), addr: addr_t) *u8 {
         std.debug.assert(self.sr.md == 1 or is_p0(addr));
@@ -853,15 +866,17 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.debug.print("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
-                    ))).* });
+                    if (self.debug_trace)
+                        std.debug.print("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                            @constCast(&self)._get_memory(addr),
+                        ))).* });
                 },
             }
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ addr, MemoryRegisters.getRegisterName(addr) });
+            if (self.debug_trace)
+                std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ addr, MemoryRegisters.getRegisterName(addr) });
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -917,15 +932,17 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 else => {
-                    std.debug.print("  Read16 to hardware register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
-                    ))).* });
+                    if (self.debug_trace)
+                        std.debug.print("  Read16 to hardware register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                            @constCast(&self)._get_memory(addr),
+                        ))).* });
                 },
             }
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+            if (self.debug_trace)
+                std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
         if (addr >= 0x00710000 and addr <= 0x00710008) {
@@ -943,9 +960,10 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    //std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                    //    @constCast(&self)._get_memory(addr),
-                    //))).* });
+                    if (self.debug_trace)
+                        std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                            @constCast(&self)._get_memory(addr),
+                        ))).* });
                 },
             }
         }
@@ -1049,12 +1067,26 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
+    fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        std.debug.print("  StoreQueue write @{X:0>8} = 0x{X:0>8}\n", .{ virtual_addr, value });
+        const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
+        std.debug.assert(sq_addr.spec == 0b111000);
+        self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
+    }
+
     pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                else => {
-                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
-                },
+        if (virtual_addr >= 0xE0000000) {
+            // P4
+            if (virtual_addr < 0xE4000000) {
+                self.store_queue_write(virtual_addr, value);
+                return;
+            }
+            if (virtual_addr >= 0xFF000000) {
+                switch (virtual_addr) {
+                    else => {
+                        std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                    },
+                }
             }
         }
 
@@ -1167,7 +1199,7 @@ pub const SH4 = struct {
     pub fn end_ch2_dma(self: *@This()) void {
         self.hw_register(u32, MemoryRegister.SB_C2DST).* = 0;
 
-        // TODO: Acutally cancel the DMA, right now they're instantaneous.
+        // TODO: Actually cancel the DMA, right now they're instantaneous.
     }
 
     pub fn start_dmac(self: *@This(), channel: u32) void {
@@ -2097,13 +2129,28 @@ fn ocbwb_atRn(_: *SH4, _: Instr) void {
 // Reads a 32-byte data block starting at a 32-byte boundary into the operand cache.
 // The lower 5 bits of the address specified by Rn are masked to zero.
 // This instruction is also used to trigger a Store Queue write-back operation if the specified address points to the Store Queue area.
-fn pref_atRn(_: *SH4, _: Instr) void {
-    const static = struct {
-        var once = true;
-    };
-    if (static.once) {
-        static.once = false;
-        std.debug.print("Note: pref @Rn not implemented\n", .{});
+fn pref_atRn(cpu: *SH4, opcode: Instr) void {
+    const addr = cpu.R(opcode.nmd.n).*;
+    if (addr & 0xEC000000 == 0xE0000000) {
+        std.debug.print("pref @Rn: Transfer to External Memory from Store Queue\n", .{});
+        if (cpu.read_io_register(mmu.MMUCR, .MMUCR).at == 1) {
+            std.debug.print(termcolor.yellow("  MMU ON: Not implemented\n"), .{});
+        } else {
+            const sq_addr: StoreQueueAddr = @bitCast(addr);
+            const ext_addr = (@as(u32, @intCast(sq_addr.address)) << 6) + if (sq_addr.sq == 0) ((cpu.read_io_register(u32, .QACR0) & 0b11100) << 24) else (((cpu.read_io_register(u32, .QACR1) & 0b11100) << 24) + (1 << 5));
+            std.debug.print("  Start Ext Addr: {X:0>8}; Addr: {any}\n", .{ ext_addr, sq_addr });
+            inline for (0..8) |i| {
+                cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+            }
+        }
+    } else {
+        const static = struct {
+            var once = true;
+        };
+        if (static.once) {
+            static.once = false;
+            std.debug.print("Note: pref @Rn not implemented\n", .{});
+        }
     }
 }
 // Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.

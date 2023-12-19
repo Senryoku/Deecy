@@ -201,8 +201,16 @@ pub const MemoryRegister = enum(u32) {
     SB_MRXDAD = 0x005F6CF8,
     SB_MRXDBD = 0x005F6CFC,
 
-    GDROM_AlternateStatus_DeviceControl = 0x005F709C, // Read: AlternateStatus, Write: DeviceControl
-    GDROM_AlternateStatus_DeviceControl_ALT = 0x005F7018, // Same? IDK.
+    // GD-ROM Registers
+    GD_AlternateStatus_DeviceControl = 0x005F7018,
+    GD_Data = 0x005F7080,
+    GD_Error_Features = 0x005F7084,
+    GD_InterruptReason_SectorCount = 0x005F7088,
+    GD_SectorNumber = 0x005F708C,
+    GD_ByteCountLow = 0x005F7090,
+    GD_ByteCountLowHigh = 0x005F7094,
+    GD_DriveSelect = 0x005F7098,
+    GD_Status_Command = 0x005F709C, // Read: Status, Write: Command
 
     // GD-DMA Control Registers
     SB_GDSTAR = 0x005F7404,
