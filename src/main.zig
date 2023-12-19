@@ -152,6 +152,23 @@ pub fn main() !void {
         .mip_level_count = 1,
     });
     const texture_view = gctx.createTextureView(texture, .{});
+
+    var vram_texture = gctx.createTexture(.{
+        .usage = .{ .texture_binding = true, .copy_dst = true },
+        .size = .{
+            .width = vram_width,
+            .height = vram_height,
+            .depth_or_array_layers = 1,
+        },
+        .format = zgpu.imageInfoToTextureFormat(
+            4,
+            1,
+            false,
+        ),
+        .mip_level_count = 1,
+    });
+    var vram_texture_view = gctx.createTextureView(vram_texture, .{});
+
     const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
     defer common.GeneralAllocator.free(pixels);
 
@@ -339,14 +356,38 @@ pub fn main() !void {
                 const static = struct {
                     var start: i32 = 0;
                     var format: i32 = 0x6;
+                    var display_width: i32 = vram_width;
+                    var scale: i32 = 1;
                 };
 
                 const bytes_per_pixels: u32 = if (static.format == 0x6) 4 else 2;
 
-                _ = zgui.inputInt("Start", .{ .v = &static.start, .step = @intCast(bytes_per_pixels * vram_width), .flags = .{ .chars_hexadecimal = true } });
+                _ = zgui.inputInt("Start", .{ .v = &static.start, .step = @intCast(bytes_per_pixels * vram_width), .step_fast = @intCast(16 * bytes_per_pixels * vram_width), .flags = .{ .chars_hexadecimal = true } });
                 static.start = @max(0, @min(static.start, @as(i32, @intCast(cpu.gpu.vram.len)) - @as(i32, @intCast(bytes_per_pixels * vram_width * vram_height))));
                 _ = zgui.inputInt("Format", .{ .v = &static.format });
                 static.format = @max(0, @min(static.format, 0x9));
+                if (zgui.inputInt("Width", .{ .v = &static.display_width, .step = 1 })) {
+                    static.display_width = @max(8, @min(static.display_width, vram_width));
+                    gctx.releaseResource(vram_texture);
+                    vram_texture = gctx.createTexture(.{
+                        .usage = .{ .texture_binding = true, .copy_dst = true },
+                        .size = .{
+                            .width = @intCast(static.display_width),
+                            .height = vram_height,
+                            .depth_or_array_layers = 1,
+                        },
+                        .format = zgpu.imageInfoToTextureFormat(
+                            4,
+                            1,
+                            false,
+                        ),
+                        .mip_level_count = 1,
+                    });
+                    gctx.releaseResource(vram_texture_view);
+                    vram_texture_view = gctx.createTextureView(vram_texture, .{});
+                }
+                _ = zgui.inputInt("Scale", .{ .v = &static.scale, .step = 1 });
+                static.scale = @max(1, @min(static.scale, 8));
 
                 var start: i32 = static.start;
                 const end: i32 = start + @as(i32, @intCast(bytes_per_pixels * vram_width * vram_height));
@@ -391,18 +432,18 @@ pub fn main() !void {
                 }
 
                 gctx.queue.writeTexture(
-                    .{ .texture = gctx.lookupResource(texture).? },
+                    .{ .texture = gctx.lookupResource(vram_texture).? },
                     .{
-                        .bytes_per_row = 4 * vram_width,
+                        .bytes_per_row = @intCast(4 * static.display_width),
                         .rows_per_image = vram_height,
                     },
-                    .{ .width = vram_width, .height = vram_height },
+                    .{ .width = @intCast(static.display_width), .height = @intCast(vram_height) },
                     u8,
                     pixels,
                 );
-                const tex_id = gctx.lookupResource(texture_view).?;
+                const tex_id = gctx.lookupResource(vram_texture_view).?;
 
-                zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
+                zgui.image(tex_id, .{ .w = @floatFromInt(static.scale * static.display_width), .h = @floatFromInt(static.scale * vram_height) });
             }
         }
         zgui.end();
