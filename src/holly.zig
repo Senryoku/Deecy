@@ -487,7 +487,7 @@ pub const Holly = struct {
                 }
                 std.debug.assert(self._ta_list_type == parameter_control_word.parameter_control.list_type);
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
-                    @panic("TODO");
+                    std.debug.print(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume\n"), .{});
                 } else {
                     // "With Two Volumes"
                     if (parameter_control_word.obj_control.volume == 0) {
@@ -497,7 +497,7 @@ pub const Holly = struct {
                                 std.debug.print("    Polygon Type 3: {any}\n", .{polygon_type_3});
                             },
                             else => {
-                                @panic("TODO");
+                                std.debug.print(termcolor.red("  Unimplemented 'With Two Volumes' Polygon Type\n"), .{});
                             },
                         }
                     } else {
@@ -507,7 +507,7 @@ pub const Holly = struct {
                                 std.debug.print("    Polygon Type 0: {any}\n", .{polygon_type_0});
                             },
                             else => {
-                                @panic("TODO");
+                                std.debug.print(termcolor.red("  Unimplemented Polygon Type\n"), .{});
                             },
                         }
                     }

@@ -202,6 +202,7 @@ pub const MemoryRegister = enum(u32) {
     SB_MRXDBD = 0x005F6CFC,
 
     GDROM_AlternateStatus_DeviceControl = 0x005F709C, // Read: AlternateStatus, Write: DeviceControl
+    GDROM_AlternateStatus_DeviceControl_ALT = 0x005F7018, // Same? IDK.
 
     // GD-DMA Control Registers
     SB_GDSTAR = 0x005F7404,

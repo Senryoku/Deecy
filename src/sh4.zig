@@ -943,9 +943,9 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
-                    ))).* });
+                    //std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                    //    @constCast(&self)._get_memory(addr),
+                    //))).* });
                 },
             }
         }
@@ -995,6 +995,12 @@ pub const SH4 = struct {
                 },
             }
         }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            @panic("write8 to GPU register not implemented");
+        }
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            @panic("write8 to TA not implemented");
+        }
 
         @as(*u8, @alignCast(@ptrCast(
             self._get_memory(addr),
@@ -1002,18 +1008,20 @@ pub const SH4 = struct {
     }
 
     pub fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
                     std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                     @as(*u16, @alignCast(@ptrCast(
-                        self._get_memory(virtual_addr),
+                        self._get_memory(addr),
                     ))).* = 0b10100101_00000000 | (value & 0xFF);
                 },
                 @intFromEnum(MemoryRegister.RFCR) => {
                     std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                     @as(*u16, @alignCast(@ptrCast(
-                        self._get_memory(virtual_addr),
+                        self._get_memory(addr),
                     ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
                 },
                 else => {
@@ -1022,13 +1030,18 @@ pub const SH4 = struct {
             }
         }
 
-        const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
                 else => {
                     std.debug.print("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
+        }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            @panic("write16 to GPU register not implemented");
+        }
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            @panic("write16 to TA not implemented");
         }
 
         @as(*u16, @alignCast(@ptrCast(
@@ -1623,7 +1636,7 @@ fn mulsw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 
 // Performs 16-bit multiplication of the contents of general registers Rn and Rm, and stores the 32-bit result in the MACL register.
 // The multiplication is performed as an unsigned arithmetic operation. The contents of MACH are not changed
-fn muluwRmRn(cpu: *SH4, opcode: Instr) void {
+fn muluw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.macl = @as(u32, @intCast(@as(u16, @truncate(cpu.R(opcode.nmd.n).*)))) * @as(u32, @intCast(@as(u16, @truncate(cpu.R(opcode.nmd.m).*))));
 }
 
@@ -1762,7 +1775,7 @@ fn shar_Rn(cpu: *SH4, opcode: Instr) void {
     if (tmp) {
         cpu.R(opcode.nmd.n).* |= 0x80000000;
     } else {
-        cpu.R(opcode.nmd.n).* &= 0x7fffffff;
+        cpu.R(opcode.nmd.n).* &= 0x7FFFFFFF;
     }
 }
 
@@ -2563,7 +2576,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000001111, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "mac.w @Rm+,@Rn+", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0000000000000111, .mask = 0b0000111111110000, .fn_ = mull_Rm_Rn, .name = "mul.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0010000000001111, .mask = 0b0000111111110000, .fn_ = mulsw_Rm_Rn, .name = "muls.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
-    .{ .code = 0b0010000000001110, .mask = 0b0000111111110000, .fn_ = muluwRmRn, .name = "mulu.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0010000000001110, .mask = 0b0000111111110000, .fn_ = muluw_Rm_Rn, .name = "mulu.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0110000000001011, .mask = 0b0000111111110000, .fn_ = neg_Rm_Rn, .name = "neg Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "negc Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001000, .mask = 0b0000111111110000, .fn_ = sub_Rm_Rn, .name = "sub Rm,Rn", .privileged = false },

@@ -74,12 +74,12 @@ pub fn main() !void {
     var cpu = try sh4.SH4.init(common.GeneralAllocator);
     defer cpu.deinit();
 
-    cpu.init_boot();
+    //cpu.init_boot();
 
     var gdrom = &syscall.gdrom; // FIXME
-    try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
+    //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
     //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+    try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     defer gdrom.disk.deinit();
 
     // Load IP.bin from disk (16 first sectors of the last track)
