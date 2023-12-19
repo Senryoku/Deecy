@@ -2104,6 +2104,15 @@ fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
+fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
+    // TODO: This instruction deals with cache, no idea if this is important to get right.
+
+    // Stores the contents of general register R0 in the memory location indicated by effective address Rn.
+    // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an
+    // R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
+
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
+}
 fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
 }
@@ -2752,7 +2761,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_PR, .name = "lds Rn,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
-    .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = unimplemented, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = movcal_R0_atRn, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = ocbi_atRn, .name = "ocbi @Rn", .privileged = false },
     .{ .code = 0b0000000010100011, .mask = 0b0000111100000000, .fn_ = ocbp_atRn, .name = "ocbp @Rn", .privileged = false },
