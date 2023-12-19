@@ -402,9 +402,9 @@ pub const DMAOR = packed struct(u32) {
 };
 
 pub const SB_ISTNRM = packed struct(u32) {
-    RenderDoneVIdeo: u1 = 0,
+    RenderDoneVideo: u1 = 0,
     RenderDoneISP: u1 = 0,
-    RenderDone: u1 = 0,
+    RenderDoneTSP: u1 = 0,
     VBlankIn: u1 = 0,
     VBlankOut: u1 = 0,
     HBlankIn: u1 = 0,

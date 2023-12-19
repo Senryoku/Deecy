@@ -193,18 +193,11 @@ pub const ListType = enum(u3) {
     PunchThrough = 4,
 };
 
-pub const ParameterControl = packed struct(u8) {
-    list_type: ListType = .Opaque,
-    _: u1 = 0,
-    end_of_strip: u1 = 0,
-    parameter_type: ParameterType = .EndOfList,
-};
-
 pub const GroupControl = packed struct(u8) {
-    user_clip: u2 = 0,
-    strip_len: u2 = 0,
-    _: u3 = 0,
-    en: u1 = 0,
+    user_clip: u2,
+    strip_len: u2,
+    _: u3,
+    en: u1,
 };
 
 pub const ColorType = enum(u2) {
@@ -215,20 +208,23 @@ pub const ColorType = enum(u2) {
 };
 
 pub const ObjControl = packed struct(u16) {
-    uv_16bit: u1 = 0,
-    gouraud: u1 = 0,
-    offset: u1 = 0,
-    texture: u1 = 0,
-    col_type: ColorType = .PackedColor,
-    volume: u1 = 0,
-    shadow: u1 = 0,
-    _: u8 = 0,
+    uv_16bit: u1,
+    gouraud: u1,
+    offset: u1,
+    texture: u1,
+    col_type: ColorType,
+    volume: u1,
+    shadow: u1,
+    _: u8,
 };
 
 pub const ParameterControlWord = packed struct(u32) {
-    obj_control: ObjControl = .{},
-    group_control: GroupControl = .{},
-    parameter_control: ParameterControl = .{},
+    obj_control: ObjControl,
+    group_control: GroupControl,
+    list_type: ListType,
+    _: u1,
+    end_of_strip: u1,
+    parameter_type: ParameterType,
 };
 
 // Control Parameter Formats
@@ -244,27 +240,143 @@ const UserTileClip = packed struct(u256) {
 
 // Global Parameter Formats
 
+const ISPTSPInstructionWord = packed struct(u32) {
+    _: u20,
+    dcalc_ctrl: u1,
+    cache_bypass: u1,
+    uv_16bit: u1,
+    gouraud: u1,
+    offset: u1,
+    texture: u1,
+    z_write_disable: u1,
+    culling_mode: u2,
+    depth_compare_mode: u3,
+};
+
+const TSPInstructionWord = packed struct(u32) {
+    texture_v_size: u3,
+    texture_u_size: u3,
+    texture_shading_instruction: u2,
+    mapmap_d_adjust: u4,
+    supersample_texture: u1,
+    filter_mode: u2,
+    clamp_uv: u2,
+    flip_uv: u2,
+    ignore_texture_alpha: u1,
+    use_alpha: u1,
+    color_clamp: u1,
+    fog_control: u2,
+    dst_select: u1,
+    src_select: u1,
+    dst_alpha_instr: u3,
+    src_alpha_instr: u3,
+};
+
 // Packed/Floating Color
 const PolygonType0 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
-    isp_tsp_instruction: u32,
-    tsp_instruction: u32,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
     texture_control: u32,
     _ignored: u64,
     data_size: u32,
     next_address: u32,
 };
 
+// Intensity, no Offset Color
+const PolygonType1 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
+    texture_control: u32,
+    face_color_a: u32,
+    face_color_r: u32,
+    face_color_g: u32,
+    face_color_b: u32,
+};
+
+// Intensity, use Offset Color
+const PolygonType2 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
+    texture_control: u32,
+    _ignored: u64,
+    data_size: u32,
+    next_address: u32,
+    face_color_a: u32,
+    face_color_r: u32,
+    face_color_g: u32,
+    face_color_b: u32,
+    face_offset_color_a: u32,
+    face_offset_color_r: u32,
+    face_offset_color_g: u32,
+    face_offset_color_b: u32,
+};
+
 // Packed Color, with Two Volumes
 const PolygonType3 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
-    isp_tsp_instruction: u32,
-    tsp_instruction_0: u32,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction_0: TSPInstructionWord,
     texture_control_0: u32,
-    tsp_instruction_1: u32,
+    tsp_instruction_1: TSPInstructionWord,
     texture_control_1: u32,
     data_size: u32,
     next_address: u32,
+};
+
+// Intensity, with Two Volumes
+const PolygonType4 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction_0: TSPInstructionWord,
+    texture_control_0: u32,
+    tsp_instruction_1: TSPInstructionWord,
+    texture_control_1: u32,
+    data_size: u32,
+    next_address: u32,
+    face_color_a: u32,
+    face_color_r: u32,
+    face_color_g: u32,
+    face_color_b: u32,
+    face_offset_color_a: u32,
+    face_offset_color_r: u32,
+    face_offset_color_g: u32,
+    face_offset_color_b: u32,
+};
+
+const PolygonType = enum {
+    PolygonType0,
+    PolygonType1,
+    PolygonType2,
+    PolygonType3,
+    PolygonType4,
+};
+
+const Polygon = union(PolygonType) {
+    PolygonType0: PolygonType0,
+    PolygonType1: PolygonType1,
+    PolygonType2: PolygonType2,
+    PolygonType3: PolygonType3,
+    PolygonType4: PolygonType4,
+};
+
+const Sprite = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
+    texture_control: u32,
+    base_color: u32,
+    offset_color: u32,
+    data_size: u32,
+    next_address: u32,
+};
+
+const ModifierVolume = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    _ignored: u192,
 };
 
 pub const Holly = struct {
@@ -276,6 +388,7 @@ pub const Holly = struct {
     _ta_command_buffer: [16]u32 align(8) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
+    _ta_current_polygon: ?Polygon = null,
 
     _scheduled_interrupts: std.ArrayList(struct { cycles: u32, int: MemoryRegisters.SB_ISTNRM }) = undefined,
 
@@ -416,6 +529,10 @@ pub const Holly = struct {
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
                 std.debug.print(termcolor.green("[Holly] TODO STARTRENDER: {X:0>8}\n"), .{v});
+                // FIXME: Obviouly, TODO
+                self.schedule_interrupt(200, .{ .RenderDoneTSP = 1 });
+                self.schedule_interrupt(400, .{ .RenderDoneISP = 1 });
+                self.schedule_interrupt(600, .{ .RenderDoneVideo = 1 });
             },
             @intFromEnum(HollyRegister.TA_LIST_INIT) => {
                 if (v == 0x80000000) {
@@ -445,15 +562,39 @@ pub const Holly = struct {
     pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
         std.debug.print("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
+        if (addr >= 0x10000000 and addr < 0x10800000 or addr >= 0x12000000 and addr < 0x12800000) {
+            // Commands
+            self._ta_command_buffer[self._ta_command_buffer_index] = v;
+            self._ta_command_buffer_index += 1;
+            self.handle_command();
+        } else if (addr >= 0x10800000 and addr < 0x11000000 or addr >= 0x12800000 and addr < 0x13000000) {
+            // YUV Conv.
+            std.debug.print(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}\n"), .{ addr, v });
+        } else if (addr >= 0x11000000 and addr < 0x12000000 or addr >= 0x13000000 and addr < 0x14000000) {
+            // Direct Texture Path
+            if (addr & 0x00FFFFFF > 0x00800000) {
+                std.debug.print(termcolor.yellow("  Direct Texture Path write out of bounds? {X:0>8} = {X:0>8}\n"), .{ addr, v });
+                return;
+            }
+            @as(*u32, @alignCast(@ptrCast(&self.vram[addr & 0x00FFFFFF]))).* = v;
+        }
+    }
 
-        self._ta_command_buffer[self._ta_command_buffer_index] = v;
-        self._ta_command_buffer_index += 1;
+    pub fn write_ta_fifo_polygon_path(self: *@This(), v: []u32) void {
+        std.debug.assert(v.len == 8);
+        @memcpy(self._ta_command_buffer[self._ta_command_buffer_index .. self._ta_command_buffer_index + 8], v);
 
-        if (self._ta_command_buffer_index < 8) return; // All commands are at least 8 bytes long
+        self._ta_command_buffer_index += 8;
+
+        self.handle_command();
+    }
+
+    pub fn handle_command(self: *@This()) void {
+        if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 bytes or 16 bytes long
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
-        std.debug.print("    Parameter Control Word: {any}\n", .{parameter_control_word});
-        switch (parameter_control_word.parameter_control.parameter_type) {
+        std.debug.print("    Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+        switch (parameter_control_word.parameter_type) {
             .EndOfList => {
                 if (self._ta_list_type != null) { // Apprently this happpens?... Why would a game do this?
                     // Fire corresponding interrupt.
@@ -478,39 +619,50 @@ pub const Holly = struct {
                 }
                 self._ta_list_type = null;
             },
-            .UserTileClip => {},
+            .UserTileClip => {
+                @panic("Unimplemented UserTileClip");
+            },
             .ObjectListSet => {
                 if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.parameter_control.list_type;
+                    self._ta_list_type = parameter_control_word.list_type;
                 }
+                @panic("Unimplemented ObjectListSet");
             },
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.parameter_control.list_type;
+                    self._ta_list_type = parameter_control_word.list_type;
                 }
-                std.debug.assert(self._ta_list_type == parameter_control_word.parameter_control.list_type);
+                std.debug.assert(self._ta_list_type == parameter_control_word.list_type);
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
                     std.debug.print(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume\n"), .{});
                 } else {
-                    // "With Two Volumes"
                     if (parameter_control_word.obj_control.volume == 0) {
-                        switch (parameter_control_word.obj_control.col_type) {
-                            .PackedColor, .FloatingColor => {
-                                const polygon_type_3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).*;
-                                std.debug.print("    Polygon Type 3: {any}\n", .{polygon_type_3});
-                            },
-                            else => {
-                                std.debug.print(termcolor.red("  Unimplemented 'With Two Volumes' Polygon Type\n"), .{});
-                            },
-                        }
-                    } else {
                         switch (parameter_control_word.obj_control.col_type) {
                             .PackedColor, .FloatingColor => {
                                 const polygon_type_0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).*;
                                 std.debug.print("    Polygon Type 0: {any}\n", .{polygon_type_0});
                             },
-                            else => {
-                                std.debug.print(termcolor.red("  Unimplemented Polygon Type\n"), .{});
+                            .IntensityMode1, .IntensityMode2 => {
+                                if (parameter_control_word.obj_control.offset == 0) {
+                                    const polygon_type_1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).*;
+                                    std.debug.print("    Polygon Type 1: {any}\n", .{polygon_type_1});
+                                } else {
+                                    if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
+                                    const polygon_type_2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).*;
+                                    std.debug.print("    Polygon Type 2: {any}\n", .{polygon_type_2});
+                                }
+                            },
+                        }
+                    } else { // "With Two Volumes"
+                        switch (parameter_control_word.obj_control.col_type) {
+                            .PackedColor, .FloatingColor => {
+                                const polygon_type_3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).*;
+                                std.debug.print("    Polygon Type 3: {any}\n", .{polygon_type_3});
+                            },
+                            .IntensityMode1, .IntensityMode2 => {
+                                if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
+                                const polygon_type_4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).*;
+                                std.debug.print("    Polygon Type 4: {any}\n", .{polygon_type_4});
                             },
                         }
                     }
@@ -518,13 +670,31 @@ pub const Holly = struct {
             },
             .SpriteList => {
                 if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.parameter_control.list_type;
+                    self._ta_list_type = parameter_control_word.list_type;
+                }
+                @panic("Unimplemented SpriteList");
+            },
+            .VertexParameter => {
+                std.debug.print(termcolor.yellow("  Unimplemented VertexParameter\n"), .{});
+                if (self._ta_current_polygon == null) {
+                    std.debug.print(termcolor.red("    No current polygon!\n"), .{});
+                    @panic("No current polygon");
                 }
             },
-            .VertexParameter => {},
         }
         // Command has been handled, reset buffer.
         self._ta_command_buffer_index = 0;
+    }
+
+    pub fn ta_fifo_yuv_converter_path(self: *@This()) void {
+        _ = self;
+
+        @panic("Unimplemented ta_fifo_yuv_converter_path");
+    }
+
+    pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
+        std.debug.print("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})\n", .{ addr, value.len });
+        @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
     pub fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {

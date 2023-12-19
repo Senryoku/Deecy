@@ -165,7 +165,7 @@ pub const SH4 = struct {
     flash: []u8 align(4) = undefined,
     ram: []u8 align(4) = undefined,
     dummy_area5: u8 align(32) = 0,
-    store_queues: [2][8 * 4]u32 align(4) = undefined,
+    store_queues: [2][8]u32 align(4) = undefined,
     area7: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
@@ -825,7 +825,7 @@ pub const SH4 = struct {
                 @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
             }
 
-            //                                                                            is it 0x009FFFE0?
+            //                          is it 0x009FFFE0?
             if (addr >= 0x00800000 and addr < 0x00A00000) {
                 // G2 Wave Memory
                 return &aica.wave_memory[addr - 0x00800000];
@@ -1068,8 +1068,8 @@ pub const SH4 = struct {
     }
 
     fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        std.debug.print("  StoreQueue write @{X:0>8} = 0x{X:0>8}\n", .{ virtual_addr, value });
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
+        std.debug.print("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})\n", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
         self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
     }
@@ -1207,22 +1207,77 @@ pub const SH4 = struct {
 
         const chcr = self.read_io_register(MemoryRegisters.CHCR, .CHCR2);
 
+        std.debug.print(" CHCR: {any}\n", .{chcr});
+        // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
+        std.debug.assert(chcr.ts == 0b100);
+        std.debug.assert(chcr.rs == 2); // "External request, single address mode"
+
         const src_addr = self.read_io_register(u32, MemoryRegister.SAR2) & 0x1FFFFFFF;
         const dst_addr = self.read_io_register(u32, MemoryRegister.DAR2) & 0x1FFFFFFF;
-        const len = 32 * self.read_io_register(u32, MemoryRegister.DMATCR2);
+        const transfer_size: u32 = switch (chcr.ts) {
+            0 => 8, // Quadword size
+            1 => 1, // Byte
+            2 => 2, // Word
+            3 => 4, // Longword
+            4 => 32, // 32-bytes block
+            else => unreachable,
+        };
+        const len = self.read_io_register(u32, MemoryRegister.DMATCR2);
+        const byte_len = transfer_size * len;
 
-        // FIXME: Check Address Direction (Destination Address Mode and Source Address Mode)
+        const dst_stride: i32 = switch (chcr.dm) {
+            0 => 0,
+            1 => 1,
+            2 => -1,
+            else => unreachable,
+        };
+        const src_stride: i32 = switch (chcr.sm) {
+            0 => 0,
+            1 => 1,
+            2 => -1,
+            else => unreachable,
+        };
+
+        const is_memcpy_safe = dst_stride == 1 and src_stride == 1;
 
         // Write to Tile Accelerator, we can bypass write32
+        // 0x10000000 ~ 0x107FFFE0 : TA FIFO - Polygon Path (8MB)         (0x12000000 ~ 0x127FFFE0 Mirror)
+        // 0x10800000 ~ 0x10FFFFE0 : TA FIFO - YUV Converter Path (8MB)   (0x12800000 ~ 0x12FFFFE0 Mirror)
+        // 0x11000000 ~ 0x11FFFFE0 : TA FIFO - Direct Texture Path (16MB) (0x13000000 ~ 0x13FFFFE0 Mirror)
         if (dst_addr >= 0x10000000 and dst_addr < 0x14000000) {
-            for (0..len / 4) |i| {
-                self.gpu.write_ta(@intCast(dst_addr + 4 * i), self.read32(@intCast(src_addr + 4 * i)));
+            std.debug.assert(src_stride > 0);
+            std.debug.assert(transfer_size == 32); // We'll copy 32-bytes blocks
+            std.debug.assert(chcr.ts == 0b100); // We'll copy 32-bytes blocks
+            // Polygon Path
+            if (dst_addr >= 0x10000000 and dst_addr < 0x10800000 or dst_addr >= 0x12000000 and dst_addr < 0x12800000) {
+                var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                for (0..len) |_| {
+                    self.gpu.write_ta_fifo_polygon_path(src[0..8]);
+                    src += 8;
+                }
             }
-        } else {
+            // YUV Converter Path
+            if (dst_addr >= 0x10800000 and dst_addr < 0x11000000 or dst_addr >= 0x12800000 and dst_addr < 0x13000000) {
+                self.gpu.ta_fifo_yuv_converter_path();
+            }
+            // Direct Texture Path
+            if (dst_addr >= 0x11000000 and dst_addr < 0x12000000 or dst_addr >= 0x13000000 and dst_addr < 0x14000000) {
+                self.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._get_memory(src_addr)))[0..byte_len]);
+            }
+        } else if (is_memcpy_safe) {
+            std.debug.assert(dst_stride == src_stride);
             // FIXME: When can we safely memset?
             const src = @as([*]u8, @ptrCast(self._get_memory(src_addr)));
             const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)));
-            @memcpy(dst[0..len], src[0..len]);
+            @memcpy(dst[0..byte_len], src[0..byte_len]);
+        } else {
+            var curr_dst: i32 = @intCast(dst_addr);
+            var curr_src: i32 = @intCast(src_addr);
+            for (0..byte_len / 4) |_| {
+                self.write32(@intCast(curr_dst), self.read32(@intCast(curr_src)));
+                curr_dst += 4 * dst_stride;
+                curr_src += 4 * src_stride;
+            }
         }
 
         // TODO: Schedule for later?
@@ -2135,9 +2190,12 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         std.debug.print("pref @Rn: Transfer to External Memory from Store Queue\n", .{});
         if (cpu.read_io_register(mmu.MMUCR, .MMUCR).at == 1) {
             std.debug.print(termcolor.yellow("  MMU ON: Not implemented\n"), .{});
+            @panic("pref @Rn with MMU ON: Not implemented");
         } else {
             const sq_addr: StoreQueueAddr = @bitCast(addr);
-            const ext_addr = (@as(u32, @intCast(sq_addr.address)) << 6) + if (sq_addr.sq == 0) ((cpu.read_io_register(u32, .QACR0) & 0b11100) << 24) else (((cpu.read_io_register(u32, .QACR1) & 0b11100) << 24) + (1 << 5));
+            std.debug.assert(sq_addr.spec == 0b111000);
+            //               The full address also includes the sq bit.
+            const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_io_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
             std.debug.print("  Start Ext Addr: {X:0>8}; Addr: {any}\n", .{ ext_addr, sq_addr });
             inline for (0..8) |i| {
                 cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
