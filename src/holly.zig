@@ -418,8 +418,10 @@ pub const Holly = struct {
             @intFromEnum(HollyRegister.TA_LIST_INIT) => {
                 if (v == 0x80000000) {
                     std.debug.print("[Holly] TODO TA_LIST_INIT: {X:0>8}\n", .{v});
-                    if (self._get_register(u32, .TA_LIST_CONT).* == 0x80000000)
+                    if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
                         self._get_register(u32, .TA_NEXT_OPB).* = self._get_register(u32, .TA_NEXT_OPB_INIT).*;
+                        self._get_register(u32, .TA_ITP_CURRENT).* = self._get_register(u32, .TA_ISP_BASE).*;
+                    }
                     self._ta_list_type = null;
                     self._ta_command_buffer_index = 0;
                 }
