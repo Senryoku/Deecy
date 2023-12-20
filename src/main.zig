@@ -80,6 +80,23 @@ fn zorder_curve(x: u32, y: u32) u32 {
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
 
+    var load_binary = false;
+    var binary_path: ?[]const u8 = null;
+
+    var args = try std.process.argsWithAllocator(common.GeneralAllocator);
+    defer args.deinit();
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-b")) {
+            const v = args.next();
+            if (v == null) {
+                std.debug.print(termcolor.red("Expected path to binary file after -b.\n"), .{});
+                return;
+            }
+            load_binary = true;
+            binary_path = v.?;
+        }
+    }
+
     // FIXME: Make this comptime?
     moser_de_bruijin_sequence[0] = 0;
     for (1..moser_de_bruijin_sequence.len) |idx| {
@@ -89,26 +106,27 @@ pub fn main() !void {
     var cpu = try sh4.SH4.init(common.GeneralAllocator);
     defer cpu.deinit();
 
-    cpu.init_boot();
+    if (load_binary) {
+        var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
+        defer bin_file.close();
+        _ = try bin_file.readAll(cpu.ram[0x10000..]);
+        cpu.pc = 0xAC010000;
+    } else {
+        cpu.init_boot();
 
-    var gdrom = &syscall.gdrom; // FIXME
-    //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-    //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-    try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
-    defer gdrom.disk.deinit();
+        var gdrom = &syscall.gdrom; // FIXME
+        //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
+        //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
+        //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+        try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
+        defer gdrom.disk.deinit();
 
-    // Load IP.bin from disk (16 first sectors of the last track)
-    // FIXME: Here we assume the last track is the 3rd.
-    _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
+        // Load IP.bin from disk (16 first sectors of the last track)
+        // FIXME: Here we assume the last track is the 3rd.
+        _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
 
-    syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
-
-    //while (true) {
-    //    if (cpu.pc == 0x8C001008)
-    //        cpu.debug_trace = true;
-    //    cpu.execute();
-    //}
+        syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
+    }
 
     try zglfw.init();
     defer zglfw.terminate();
@@ -217,12 +235,15 @@ pub fn main() !void {
             }
             zgui.endGroup();
 
-            var addr = @max(0, @min(0x100000000 - 16, cpu.pc - 8));
-            const end_addr = @min(0xFFFFFFFFF, @min(0x100000000 - 16, addr) + 16);
+            const range = 16; // In bytes.
+            const pc = cpu.pc & 0x1FFFFFFF;
+            //            In RAM                                                                                    In BootROM
+            var addr = if (pc >= 0x0C000000) std.math.clamp(pc - range / 2, 0x0C000000, 0x0D000000 - range) else std.math.clamp(pc - range / 2, 0x00000000, 0x02000000 - range);
+            const end_addr = addr + range;
             while (addr < end_addr) {
                 //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
                 const disassembly = try sh4.disassemble(.{ .value = cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
-                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", disassembly });
+                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
                 addr += 2;
             }
 
