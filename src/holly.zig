@@ -402,6 +402,7 @@ pub const Holly = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self._scheduled_interrupts.deinit();
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }

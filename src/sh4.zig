@@ -1752,6 +1752,45 @@ test "neg Rm,Rn" {
     try std.testing.expect(as_i32(cpu.R(1).*) == 1337);
 }
 
+fn negc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    const tmp = 0 -% cpu.R(opcode.nmd.m).*;
+    cpu.R(opcode.nmd.n).* = tmp -% (if (cpu.sr.t) @as(u32, 1) else 0);
+    cpu.sr.t = (0 < tmp);
+    if (tmp < cpu.R(opcode.nmd.n).*)
+        cpu.sr.t = true;
+}
+
+test "negc Rm,Rn" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    // Examples from the manual
+
+    cpu.R(1).* = 1;
+    cpu.sr.t = false;
+    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
+    try std.testing.expect(cpu.R(1).* == 0xFFFFFFFF);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(0).* = 0;
+    cpu.sr.t = true;
+    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 0, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(1).* = @bitCast(@as(i32, -1));
+    cpu.sr.t = true;
+    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(1).* = @bitCast(@as(i32, -1));
+    cpu.sr.t = false;
+    negc_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = 1, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 1);
+    try std.testing.expect(cpu.sr.t);
+}
+
 fn sub_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -%= cpu.R(opcode.nmd.m).*;
 }
@@ -2692,7 +2731,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0010000000001111, .mask = 0b0000111111110000, .fn_ = mulsw_Rm_Rn, .name = "muls.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0010000000001110, .mask = 0b0000111111110000, .fn_ = muluw_Rm_Rn, .name = "mulu.w Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0110000000001011, .mask = 0b0000111111110000, .fn_ = neg_Rm_Rn, .name = "neg Rm,Rn", .privileged = false },
-    .{ .code = 0b0110000000001010, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "negc Rm,Rn", .privileged = false },
+    .{ .code = 0b0110000000001010, .mask = 0b0000111111110000, .fn_ = negc_Rm_Rn, .name = "negc Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001000, .mask = 0b0000111111110000, .fn_ = sub_Rm_Rn, .name = "sub Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001010, .mask = 0b0000111111110000, .fn_ = subc_Rm_Rn, .name = "subc Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "subv Rm,Rn", .privileged = false },
