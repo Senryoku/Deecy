@@ -354,6 +354,8 @@ pub const SH4 = struct {
         self.sr = @bitCast(@as(u32, 0x400000F1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
 
+        @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
+
         // Copy subroutine to RAM. Some of it will be overwritten, I'm trying to work out what's important and what's not.
         inline for (0..16) |i| {
             self.write16(0x8C0000E0 + 2 * i, self.read16(0x800000FE - 2 * i));
