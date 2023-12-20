@@ -1472,15 +1472,15 @@ fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + cpu.R(0).*);
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
 }
 
 fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
@@ -1687,6 +1687,17 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
     extuw_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 1, .d = undefined } });
 
     try std.testing.expect(cpu.R(1).* == dividend / divisor);
+}
+
+fn dmulsl_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    const r: u64 = @bitCast(@as(i64, cpu.R(opcode.nmd.n).*) * @as(i64, cpu.R(opcode.nmd.m).*));
+    cpu.mach = @truncate(r >> 32);
+    cpu.macl = @truncate(r);
+}
+fn dmulul_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+    const r = @as(u64, cpu.R(opcode.nmd.n).*) * @as(u64, cpu.R(opcode.nmd.m).*);
+    cpu.mach = @truncate(r >> 32);
+    cpu.macl = @truncate(r);
 }
 
 // Decrements the contents of general register Rn by 1 and compares the result with zero.
@@ -2718,8 +2729,8 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0010000000000111, .mask = 0b0000111111110000, .fn_ = div0s_Rm_Rn, .name = "div0s Rm,Rn", .privileged = false },
     .{ .code = 0b0000000000011001, .mask = 0b0000000000000000, .fn_ = div0u, .name = "div0u", .privileged = false },
     .{ .code = 0b0011000000000100, .mask = 0b0000111111110000, .fn_ = div1, .name = "div1 Rm,Rn", .privileged = false },
-    .{ .code = 0b0011000000001101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmuls.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
-    .{ .code = 0b0011000000000101, .mask = 0b0000111111110000, .fn_ = unimplemented, .name = "dmulu.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0011000000001101, .mask = 0b0000111111110000, .fn_ = dmulsl_Rm_Rn, .name = "dmuls.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
+    .{ .code = 0b0011000000000101, .mask = 0b0000111111110000, .fn_ = dmulul_Rm_Rn, .name = "dmulu.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4 },
     .{ .code = 0b0100000000010000, .mask = 0b0000111100000000, .fn_ = dt_Rn, .name = "dt Rn", .privileged = false },
     .{ .code = 0b0110000000001110, .mask = 0b0000111111110000, .fn_ = extsb_Rm_Rn, .name = "exts.b Rm,Rn", .privileged = false },
     .{ .code = 0b0110000000001111, .mask = 0b0000111111110000, .fn_ = extsw_Rm_Rn, .name = "exts.w Rm,Rn", .privileged = false },

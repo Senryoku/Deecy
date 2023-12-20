@@ -110,6 +110,8 @@ pub fn main() !void {
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
         _ = try bin_file.readAll(cpu.ram[0x10000..]);
+
+        cpu.init_boot();
         cpu.pc = 0xAC010000;
     } else {
         cpu.init_boot();
@@ -259,6 +261,11 @@ pub fn main() !void {
 
             for (0..breakpoints.items.len) |i| {
                 zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
+                zgui.sameLine(.{});
+                if (zgui.button("Remove", .{})) {
+                    _ = breakpoints.orderedRemove(i);
+                    break;
+                }
             }
             const static = struct {
                 var bp_addr: i32 = 0;
