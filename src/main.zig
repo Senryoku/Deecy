@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const common = @import("./common.zig");
+const termcolor = @import("./termcolor.zig");
 const sh4 = @import("./sh4.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
@@ -12,7 +13,7 @@ const zglfw = @import("zglfw");
 
 const assets_dir = "assets/";
 
-const Color = packed union {
+const Color16 = packed union {
     value: u16,
     arbg1555: packed struct(u16) {
         b: u5,
@@ -68,8 +69,22 @@ fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
 // FIXME
 const syscall = @import("syscall.zig");
 
+// First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
+var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
+
+// Returns the indice of the z-order curve for the given coordinates.
+fn zorder_curve(x: u32, y: u32) u32 {
+    return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
+}
+
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
+
+    // FIXME: Make this comptime?
+    moser_de_bruijin_sequence[0] = 0;
+    for (1..moser_de_bruijin_sequence.len) |idx| {
+        moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
+    }
 
     var cpu = try sh4.SH4.init(common.GeneralAllocator);
     defer cpu.deinit();
@@ -279,7 +294,7 @@ pub fn main() !void {
                 while (start < end) {
                     switch (FB_W_CTRL & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Color = .{
+                            const color: Color16 = .{
                                 .value = cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
@@ -290,7 +305,7 @@ pub fn main() !void {
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
-                            const color: Color = .{
+                            const color: Color16 = .{
                                 .value = cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
@@ -358,6 +373,7 @@ pub fn main() !void {
                     var format: i32 = 0x6;
                     var display_width: i32 = vram_width;
                     var scale: i32 = 1;
+                    var twiddle: bool = true;
                 };
 
                 const bytes_per_pixels: u32 = if (static.format == 0x6) 4 else 2;
@@ -388,46 +404,104 @@ pub fn main() !void {
                 }
                 _ = zgui.inputInt("Scale", .{ .v = &static.scale, .step = 1 });
                 static.scale = @max(1, @min(static.scale, 8));
+                _ = zgui.checkbox("Twiddle", .{ .v = &static.twiddle });
 
                 var start: i32 = static.start;
                 const end: i32 = start + @as(i32, @intCast(bytes_per_pixels * vram_width * vram_height));
                 var i: usize = 0;
-                while (start < end) {
-                    switch (static.format) {
-                        0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Color = .{
-                                .value = cpu.gpu.vram[@intCast(start)],
-                            };
-                            pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
-                            pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
-                            pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
-                            pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 4;
-                            i += 1;
-                        },
-                        0x1 => { // 565 RGB 16 bit
-                            const color: Color = .{
-                                .value = cpu.gpu.vram[@intCast(start)],
-                            };
-                            pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
-                            pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
-                            pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                            pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 4;
-                            i += 1;
-                        },
-                        // ARGB 32-Bits
-                        0x6 => {
-                            pixels[4 * i + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 3];
-                            pixels[4 * i + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 2];
-                            pixels[4 * i + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 1];
-                            pixels[4 * i + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 0];
-                            start += 4;
-                            i += 1;
-                        },
-                        else => {
-                            start = end;
-                        },
+
+                if (static.twiddle) {
+                    for (0..vram_height) |y| {
+                        for (0..vram_width) |x| {
+                            switch (static.format) {
+                                0x0, 0x3 => { // 0555 KRGB 16 bits
+                                    const color: Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    };
+                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
+                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
+                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                                    pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
+                                },
+                                0x1 => { // 565 RGB 16 bit
+                                    const color: Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    };
+                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
+                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
+                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
+                                    pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
+                                },
+                                0x2 => { // 4444 ARGB 16 bit
+                                    const color: Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    };
+                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
+                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
+                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
+                                    pixels[y * vram_width + x + 3] = @as(u8, @intCast(color.argb4444.a)) << 4;
+                                },
+                                0x6 => {
+                                    pixels[y * vram_width + x + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 3];
+                                    pixels[y * vram_width + x + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 2];
+                                    pixels[y * vram_width + x + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 1];
+                                    pixels[y * vram_width + x + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 0];
+                                },
+                                else => {
+                                    break;
+                                },
+                            }
+                        }
+                    }
+                } else {
+                    while (start < end) {
+                        switch (static.format) {
+                            0x0, 0x3 => { // 0555 KRGB 16 bits
+                                const color: Color16 = .{
+                                    .value = cpu.gpu.vram[@intCast(start)],
+                                };
+                                pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
+                                pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
+                                pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                                pixels[4 * i + 3] = 255; // FIXME: Not really.
+                                start += 4;
+                                i += 1;
+                            },
+                            0x1 => { // 565 RGB 16 bit
+                                const color: Color16 = .{
+                                    .value = cpu.gpu.vram[@intCast(start)],
+                                };
+                                pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
+                                pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
+                                pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
+                                pixels[4 * i + 3] = 255; // FIXME: Not really.
+                                start += 4;
+                                i += 1;
+                            },
+                            0x2 => { // 4444 ARGB 16 bit
+                                const color: Color16 = .{
+                                    .value = cpu.gpu.vram[@intCast(start)],
+                                };
+                                pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
+                                pixels[4 * i + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
+                                pixels[4 * i + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
+                                pixels[4 * i + 3] = @as(u8, @intCast(color.argb4444.a)) << 4;
+                                start += 4;
+                                i += 1;
+                            },
+                            // ARGB 32-Bits
+                            0x6 => {
+                                pixels[4 * i + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 3];
+                                pixels[4 * i + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 2];
+                                pixels[4 * i + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 1];
+                                pixels[4 * i + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 0];
+                                start += 4;
+                                i += 1;
+                            },
+                            else => {
+                                start = end;
+                            },
+                        }
                     }
                 }
 
