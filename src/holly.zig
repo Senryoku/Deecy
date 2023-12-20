@@ -354,7 +354,7 @@ const PolygonType = enum {
     PolygonType4,
 };
 
-const Polygon = union(PolygonType) {
+pub const Polygon = union(PolygonType) {
     PolygonType0: PolygonType0,
     PolygonType1: PolygonType1,
     PolygonType2: PolygonType2,
@@ -379,6 +379,37 @@ const ModifierVolume = packed struct(u256) {
     _ignored: u192,
 };
 
+// Packed Color, Non-Textured
+const VertexParameter_1 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    base_color: u32,
+    _ignored: u96,
+};
+// Packed Color, Textured 32bit UV
+const VertexParameter_2 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    u: f32,
+    v: f32,
+    base_color: u32,
+    offset_color: u32,
+};
+
+pub const VertexParameterType = enum {
+    Type1,
+    Type2,
+};
+
+pub const VertexParameter = union(VertexParameterType) {
+    Type1: VertexParameter_1,
+    Type2: VertexParameter_2,
+};
+
 pub const Holly = struct {
     vram: []u8 = undefined,
     registers: []u8 = undefined,
@@ -389,6 +420,7 @@ pub const Holly = struct {
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
     _ta_current_polygon: ?Polygon = null,
+    _ta_vertex_parameters: std.ArrayList(VertexParameter_1) = undefined, // FIXME: Move out.
 
     _scheduled_interrupts: std.ArrayList(struct { cycles: u32, int: MemoryRegisters.SB_ISTNRM }) = undefined,
 
@@ -398,11 +430,14 @@ pub const Holly = struct {
         self.vram = try self._allocator.alloc(u8, 8 * 1024 * 1024);
         self.registers = try self._allocator.alloc(u8, 0x2000);
 
+        self._ta_vertex_parameters = std.ArrayList(VertexParameter_1).init(self._allocator);
+
         self._scheduled_interrupts = try @TypeOf(self._scheduled_interrupts).initCapacity(self._allocator, 32);
     }
 
     pub fn deinit(self: *@This()) void {
         self._scheduled_interrupts.deinit();
+        self._ta_vertex_parameters.deinit();
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }
@@ -546,8 +581,9 @@ pub const Holly = struct {
                         self._get_register(u32, .TA_NEXT_OPB).* = self._get_register(u32, .TA_NEXT_OPB_INIT).*;
                         self._get_register(u32, .TA_ITP_CURRENT).* = self._get_register(u32, .TA_ISP_BASE).*;
                     }
-                    self._ta_list_type = null;
                     self._ta_command_buffer_index = 0;
+                    self._ta_list_type = null;
+                    self._ta_current_polygon = null;
                 }
             },
             @intFromEnum(HollyRegister.TA_LIST_CONT) => {
@@ -565,7 +601,7 @@ pub const Holly = struct {
 
     // Write to the Tile Accelerator
     pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
-        std.debug.print("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
+        // std.debug.print("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         if (addr >= 0x10000000 and addr < 0x10800000 or addr >= 0x12000000 and addr < 0x12800000) {
             // Commands
@@ -623,6 +659,7 @@ pub const Holly = struct {
                     }
                 }
                 self._ta_list_type = null;
+                self._ta_current_polygon = null;
             },
             .UserTileClip => {
                 @panic("Unimplemented UserTileClip");
@@ -646,15 +683,18 @@ pub const Holly = struct {
                             .PackedColor, .FloatingColor => {
                                 const polygon_type_0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).*;
                                 std.debug.print("    Polygon Type 0: {any}\n", .{polygon_type_0});
+                                self._ta_current_polygon = .{ .PolygonType0 = polygon_type_0 };
                             },
                             .IntensityMode1, .IntensityMode2 => {
                                 if (parameter_control_word.obj_control.offset == 0) {
                                     const polygon_type_1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).*;
                                     std.debug.print("    Polygon Type 1: {any}\n", .{polygon_type_1});
+                                    self._ta_current_polygon = .{ .PolygonType1 = polygon_type_1 };
                                 } else {
                                     if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
                                     const polygon_type_2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).*;
                                     std.debug.print("    Polygon Type 2: {any}\n", .{polygon_type_2});
+                                    self._ta_current_polygon = .{ .PolygonType2 = polygon_type_2 };
                                 }
                             },
                         }
@@ -663,11 +703,13 @@ pub const Holly = struct {
                             .PackedColor, .FloatingColor => {
                                 const polygon_type_3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).*;
                                 std.debug.print("    Polygon Type 3: {any}\n", .{polygon_type_3});
+                                self._ta_current_polygon = .{ .PolygonType3 = polygon_type_3 };
                             },
                             .IntensityMode1, .IntensityMode2 => {
                                 if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
                                 const polygon_type_4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).*;
                                 std.debug.print("    Polygon Type 4: {any}\n", .{polygon_type_4});
+                                self._ta_current_polygon = .{ .PolygonType4 = polygon_type_4 };
                             },
                         }
                     }
@@ -684,6 +726,13 @@ pub const Holly = struct {
                 if (self._ta_current_polygon == null) {
                     std.debug.print(termcolor.red("    No current polygon!\n"), .{});
                     @panic("No current polygon");
+                }
+                const vertex_parameter_1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).*;
+                std.debug.print("vertex_parameter_1: {any}\n", .{vertex_parameter_1});
+                self._ta_vertex_parameters.append(vertex_parameter_1) catch unreachable;
+                if (vertex_parameter_1.parameter_control_word.end_of_strip == 1) {
+                    std.debug.print("  End of Strip\n", .{});
+                    self._ta_vertex_parameters.shrinkRetainingCapacity(0);
                 }
             },
         }

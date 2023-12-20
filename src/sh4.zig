@@ -1071,7 +1071,7 @@ pub const SH4 = struct {
 
     fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
-        std.debug.print("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})\n", .{ virtual_addr, value, sq_addr });
+        // std.debug.print("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})\n", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
         self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
     }
@@ -1714,8 +1714,6 @@ test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
         div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 3, .m = 4, .d = 0b0100 } }); // div1 R4,R3
     }
     rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
-
-    std.debug.print("R1: {X:0>8}, Expected: {X:0>8}\n", .{ cpu.R(1).*, @as(u32, @truncate(dividend / divisor)) });
 
     try std.testing.expect(cpu.R(1).* == @as(u32, @truncate(dividend / divisor)));
 }
@@ -2361,7 +2359,7 @@ fn ocbwb_atRn(_: *SH4, _: Instr) void {
 fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     if (addr & 0xEC000000 == 0xE0000000) {
-        std.debug.print("pref @Rn: Transfer to External Memory from Store Queue\n", .{});
+        // std.debug.print("pref @Rn: Transfer to External Memory from Store Queue\n", .{});
         if (cpu.read_io_register(mmu.MMUCR, .MMUCR).at == 1) {
             std.debug.print(termcolor.yellow("  MMU ON: Not implemented\n"), .{});
             @panic("pref @Rn with MMU ON: Not implemented");
@@ -2370,7 +2368,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             std.debug.assert(sq_addr.spec == 0b111000);
             //               The full address also includes the sq bit.
             const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_io_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
-            std.debug.print("  Start Ext Addr: {X:0>8}; Addr: {any}\n", .{ ext_addr, sq_addr });
+            // std.debug.print("  Start Ext Addr: {X:0>8}; Addr: {any}\n", .{ ext_addr, sq_addr });
             inline for (0..8) |i| {
                 cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             }

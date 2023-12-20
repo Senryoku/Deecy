@@ -11,6 +11,8 @@ const zgui = @import("zgui");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
+const Renderer = @import("./Renderer.zig").Renderer;
+
 const assets_dir = "assets/";
 
 const Color16 = packed union {
@@ -206,6 +208,9 @@ pub fn main() !void {
 
     const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
     defer common.GeneralAllocator.free(pixels);
+
+    var renderer = Renderer.init(common.GeneralAllocator, gctx);
+    defer renderer.deinit();
 
     while (!window.shouldClose()) {
         zglfw.pollEvents();
@@ -566,6 +571,8 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
+        renderer.draw();
+
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
@@ -582,7 +589,10 @@ pub fn main() !void {
         defer commands.release();
 
         gctx.submit(&.{commands});
-        _ = gctx.present();
+
+        if (gctx.present() == .swap_chain_resized) {
+            renderer.on_resize();
+        }
     }
 }
 
