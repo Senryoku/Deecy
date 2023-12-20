@@ -1691,6 +1691,35 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
     try std.testing.expect(cpu.R(1).* == dividend / divisor);
 }
 
+test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    // Example from KallistiOS
+
+    const dividend: u64 = 0x1743D174;
+
+    const dividend_low: u32 = @truncate(dividend);
+    const dividend_high: u32 = @truncate(dividend >> 32);
+    const divisor: u32 = 0x0000000A;
+
+    cpu.R(1).* = dividend_low;
+    cpu.R(3).* = dividend_high;
+    cpu.R(4).* = divisor;
+
+    div0u(&cpu, .{ .value = 0b0000000000011001 });
+
+    for (0..32) |_| {
+        rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
+        div1(&cpu, .{ .nmd = .{ ._ = 0b0011, .n = 3, .m = 4, .d = 0b0100 } }); // div1 R4,R3
+    }
+    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
+
+    std.debug.print("R1: {X:0>8}, Expected: {X:0>8}\n", .{ cpu.R(1).*, @as(u32, @truncate(dividend / divisor)) });
+
+    try std.testing.expect(cpu.R(1).* == @as(u32, @truncate(dividend / divisor)));
+}
+
 // FIXME: These are not tested at all.
 fn dmulsl_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const r: u64 = @bitCast(@as(i64, cpu.R(opcode.nmd.n).*) * @as(i64, cpu.R(opcode.nmd.m).*));
@@ -1856,7 +1885,7 @@ fn xorImmR0(cpu: *SH4, opcode: Instr) void {
 }
 
 fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
-    const tmp = (cpu.R(opcode.nmd.n).* & 0x80000000) == 0;
+    const tmp = !((cpu.R(opcode.nmd.n).* & 0x80000000) == 0);
     cpu.R(opcode.nmd.n).* <<= 1;
     if (cpu.sr.t) {
         cpu.R(opcode.nmd.n).* |= 0x00000001;
@@ -1865,16 +1894,99 @@ fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
     }
     cpu.sr.t = tmp;
 }
+test "rotcl" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 0;
+    cpu.sr.t = false;
+    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0;
+    cpu.sr.t = true;
+    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 1);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0b01;
+    cpu.sr.t = false;
+    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b10);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0b01;
+    cpu.sr.t = true;
+    rotcl_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b11);
+    try std.testing.expect(!cpu.sr.t);
+}
+
 fn rotcr_Rn(cpu: *SH4, opcode: Instr) void {
-    const tmp = (cpu.R(opcode.nmd.n).* & 0x80000000) == 0;
+    const tmp = (cpu.R(opcode.nmd.n).* & 0x00000001) == 1;
     cpu.R(opcode.nmd.n).* >>= 1;
     if (cpu.sr.t) {
-        cpu.R(opcode.nmd.n).* |= 0x00000001;
+        cpu.R(opcode.nmd.n).* |= 0x80000000;
     } else {
-        cpu.R(opcode.nmd.n).* &= 0xFFFFFFFE;
+        cpu.R(opcode.nmd.n).* &= 0x7FFFFFFF;
     }
     cpu.sr.t = tmp;
 }
+
+test "rotcr" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 0;
+    cpu.sr.t = false;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0;
+    cpu.sr.t = true;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b1000_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0b01;
+    cpu.sr.t = false;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(0).* = 0b01;
+    cpu.sr.t = true;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b1000_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    cpu.sr.t = false;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b0100_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    cpu.sr.t = true;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b1100_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(!cpu.sr.t);
+
+    cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0001;
+    cpu.sr.t = false;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b0100_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(cpu.sr.t);
+
+    cpu.R(0).* = 0b1000_0000_0000_0000_0000_0000_0000_0001;
+    cpu.sr.t = true;
+    rotcr_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0b1100_0000_0000_0000_0000_0000_0000_0000);
+    try std.testing.expect(cpu.sr.t);
+}
+
 fn rotl_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
     cpu.R(opcode.nmd.n).* = std.math.rotl(u32, cpu.R(opcode.nmd.n).*, 1);
@@ -2608,10 +2720,10 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.sz == 0) {
-        cpu.fpul = @intFromFloat(cpu.FR(opcode.nmd.n).*);
+        cpu.fpul = std.math.lossyCast(u32, cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.fpul = @intFromFloat(cpu.DR(opcode.nmd.n >> 1).*);
+        cpu.fpul = std.math.lossyCast(u32, cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
 fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
