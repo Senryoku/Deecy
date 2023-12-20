@@ -501,7 +501,11 @@ pub const Holly = struct {
                 if (spg_status.*.scanline == spg_vblank.vbend) {
                     spg_status.*.vsync = 0;
                 }
-                if (spg_status.*.scanline == spg_load.vcount) {
+                // FIXME: spg_load.vcount is sometimes < spg_vblank.vbend, locking the system in constant VSync.
+                //        I don't know why yet, there's probably something I did not understand correcly,
+                //        but the important for now is that all the interrupts are fired and states are reached,
+                //        even if the timing is wrong.
+                if (spg_status.*.scanline == @max(spg_load.vcount, spg_vblank.vbend)) {
                     spg_status.*.scanline = 0;
                 }
             }

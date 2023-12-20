@@ -1689,6 +1689,7 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
     try std.testing.expect(cpu.R(1).* == dividend / divisor);
 }
 
+// FIXME: These are not tested at all.
 fn dmulsl_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const r: u64 = @bitCast(@as(i64, cpu.R(opcode.nmd.n).*) * @as(i64, cpu.R(opcode.nmd.m).*));
     cpu.mach = @truncate(r >> 32);
