@@ -488,6 +488,14 @@ pub fn main() !void {
         }
         zgui.end();
 
+        // FIXME: Just testing things, as always!
+        const enter = window.getKey(.enter);
+        if (enter == .press) {
+            cpu.maple.ports[0].set_inputs(.{ .a = 0 });
+        } else if (enter == .release) {
+            cpu.maple.ports[0].set_inputs(.{ .a = 1 });
+        }
+
         if (running) {
             const start = try std.time.Instant.now();
             while ((try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms) {

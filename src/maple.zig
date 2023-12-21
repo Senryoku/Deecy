@@ -3,6 +3,8 @@ const termcolor = @import("termcolor.zig");
 
 const SH4 = @import("sh4.zig").SH4;
 
+const zglfw = @import("zglfw");
+
 const PatternSelection = enum(u3) {
     Normal = 0b000,
     LightGun = 0b001,
@@ -105,7 +107,7 @@ const LocationWord = packed struct(u32) {
 // Not sure about the order in this, especially around the strings.
 const DeviceInfoPayload = extern struct {
     FunctionCodesMask: FunctionCodesMask align(1),
-    SubFunctionFunctionCodesMasks: [3]FunctionCodesMask align(1), // For sub-peripherals?
+    SubFunctionCodesMasks: [3]FunctionCodesMask align(1),
     RegionCode: u8 align(1) = 0,
     ConnectionDirectionCode: u8 align(1) = 0,
     DescriptionString: [30]u8 align(1) = .{0} ** 30,
@@ -113,34 +115,6 @@ const DeviceInfoPayload = extern struct {
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
     // Possible extension
-};
-
-// 0 for pressed, 1 for released
-const ControllerData = packed struct {
-    _0: u1 = 1,
-
-    b: u1,
-    a: u1,
-    start: u1,
-    up: u1,
-    down: u1,
-    left: u1,
-    right: u1,
-
-    _1: u1 = 1,
-
-    y: u1,
-    x: u1,
-
-    _2: u5 = 0b11111,
-
-    axis_1: u8, // Right analog trigger?
-    axis_2: u8, // Left analog trigger?
-    axis_3: u8, // Analog stick X?
-    axis_4: u8, // Analog stick Y?
-
-    _3: u8 = 0b10000000, // axis_5, not in standard controllers
-    _4: u8 = 0b10000000, // axis_6, not in standard controllers
 };
 
 const StandardControllerCapabilities: FunctionCodesMask = .{
@@ -165,13 +139,94 @@ const VMUCapabilities: FunctionCodesMask = .{
     .timer = 1,
 };
 
+const ControllerButtons = packed struct(u16) {
+    _0: u1 = 1,
+
+    b: u1 = 1,
+    a: u1 = 1,
+    start: u1 = 1,
+    up: u1 = 1,
+    down: u1 = 1,
+    left: u1 = 1,
+    right: u1 = 1,
+
+    _1: u1 = 1,
+
+    y: u1 = 1,
+    x: u1 = 1,
+
+    _2: u5 = 0b11111,
+};
+
+const Peripheral = struct {
+    capabilities: FunctionCodesMask = .{},
+    subcapabilities: [3]FunctionCodesMask = .{.{}} ** 3,
+};
+
 const MaplePort = struct {
-    connected: bool = false,
-    sub_peripheral: [3]bool = .{false} ** 3,
+    main: ?Peripheral = null,
+    subperipherals: [5]?Peripheral = .{null} ** 5,
+
+    // FIXME: Not every peripheral is a controller :)
+    buttons: ControllerButtons = .{},
+    // TODO: Add axis.
+    pub fn set_inputs(self: *@This(), buttons: ControllerButtons) void {
+        self.buttons = buttons;
+    }
+
+    pub fn handle_command(self: *@This(), cpu: *SH4, data: [*]u32) u32 {
+        const return_addr = data[0];
+        const ram_addr = return_addr - 0x0C000000;
+
+        const command: CommandWord = @bitCast(data[1]);
+
+        std.debug.print("    Command: {any}\n", .{command});
+
+        // Note: The sender address should also include the sub-peripheral bit when appropriate.
+        var sender_address = command.recipent_address;
+        for (0..5) |i| {
+            if (self.subperipherals[i] != null)
+                sender_address |= @as(u8, 1) << @intCast(i);
+        }
+
+        if (self.main == null) {
+            cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
+        } else {
+            const target = switch (command.recipent_address & 0b11111) {
+                0 => self.main.?,
+                else => self.subperipherals[@ctz(command.recipent_address)],
+            };
+            if (target == null) {
+                cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
+            } else {
+                switch (command.command) {
+                    .DeviceInfoRequest => {
+                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
+                        @as(*DeviceInfoPayload, @ptrCast(&cpu.ram[ram_addr + 4])).* = .{
+                            .FunctionCodesMask = target.?.capabilities,
+                            .SubFunctionCodesMasks = target.?.subcapabilities,
+                        };
+                    },
+                    .GetCondition => {
+                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 2 }));
+                        // TODO: Write some actual input data!
+                        cpu.write32(return_addr + 4, 0xFFFFFFFF & (@as(u32, @as(u16, @bitCast(self.buttons))) << 16));
+                        cpu.write32(return_addr + 8, 0xFFFFFFFF);
+                    },
+                    else => {
+                        std.debug.print(termcolor.yellow("[Maple] Unimplemented command: {}\n"), .{command.command});
+                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    },
+                }
+            }
+        }
+
+        return 2 + command.payload_length;
+    }
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{MaplePort{}} ** 4,
+    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = StandardControllerCapabilities }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
 
     pub fn init() MapleHost {
         return .{};
@@ -182,50 +237,26 @@ pub const MapleHost = struct {
     }
 
     pub fn transfer(self: *MapleHost, cpu: *SH4, data: [*]u32) void {
-        _ = self;
         var idx: u32 = 0;
 
         defer cpu.raise_normal_interrupt(.{ .EoD_Maple = 1 });
 
-        // A frame can have a maximum of 1024 words.
+        // A transfer can have a maximum of 1024 words.
         while (idx < 1024) {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            // TODO: Switch on port and send the command to the port rather than handling it here, when we actually support some peripherals.
-
-            const return_addr = data[idx];
-            const ram_addr = return_addr - 0x0C000000;
-            idx += 1;
-
-            const command: CommandWord = @bitCast(data[idx]);
-            idx += 1;
-
             std.debug.print("    Instruction: {any}\n", .{instr});
-            std.debug.print("    Command: {any}\n", .{command});
 
-            // Note: The sender address should also include the sub-peripheral bit when appropriate.
-
-            switch (command.command) {
-                .DeviceInfoRequest => {
-                    cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
-                    @as(*DeviceInfoPayload, @ptrCast(&cpu.ram[ram_addr + 4])).* = .{
-                        .FunctionCodesMask = StandardControllerCapabilities,
-                        .SubFunctionFunctionCodesMasks = .{ .{ .controller = 1 }, .{}, .{} },
-                    };
+            switch (instr.pattern) {
+                .Normal => {
+                    idx += self.ports[instr.port_select].handle_command(cpu, data[idx..]);
                 },
+                .NOP, .RESET => {},
                 else => {
-                    std.debug.print(termcolor.yellow("[Maple] Unimplemented command: {}\n"), .{command.command});
-                    cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
-                    //cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    std.debug.print(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D\n"), .{instr.pattern});
                 },
             }
-            std.debug.print("    Ret Addr: 0x{X:0>8}\n", .{return_addr});
-            std.debug.print("      {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ cpu.read8(return_addr + 0), cpu.read8(return_addr + 1), cpu.read8(return_addr + 2), cpu.read8(return_addr + 3) });
-            std.debug.print("      {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ cpu.read8(return_addr + 4), cpu.read8(return_addr + 5), cpu.read8(return_addr + 6), cpu.read8(return_addr + 7) });
-            std.debug.print("      {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ cpu.read8(return_addr + 8), cpu.read8(return_addr + 9), cpu.read8(return_addr + 10), cpu.read8(return_addr + 11) });
-
-            idx += command.payload_length;
 
             if (instr.end_flag == 1) {
                 return;
