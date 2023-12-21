@@ -2735,6 +2735,32 @@ fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
     const FVm = @Vector(4, f32){ cpu.FR(m + 0).*, cpu.FR(m + 1).*, cpu.FR(m + 2).*, cpu.FR(m + 3).* };
     cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
 }
+
+fn test_fipr(n: [4]f32, m: [4]f32) !void {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+    cpu.fpscr.pr = 0;
+
+    for (0..4) |i| {
+        cpu.FR(@intCast(i)).* = n[i];
+    }
+
+    for (0..4) |i| {
+        cpu.FR(@intCast(4 + i)).* = m[i];
+    }
+
+    fipr_FVm_FVn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0b0001, .m = undefined, .d = undefined } });
+
+    try std.testing.expect(cpu.FR(3).* == n[0] * m[0] + n[1] * m[1] + n[2] * m[2] + n[3] * m[3]);
+}
+
+test "fipr" {
+    try test_fipr(.{ 1, 2, 3, 4 }, .{ 4, 3, 2, 1 });
+    try test_fipr(.{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 });
+    try test_fipr(.{ 1.5, 2.5, 3.5, 4.5 }, .{ 4.5, 3.5, 2.5, 1.5 });
+    try test_fipr(.{ 1, 2, 3, 4 }, .{ 0, 0, 0, 0 });
+}
+
 fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
 
@@ -2746,9 +2772,53 @@ fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     const FVn = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
     inline for (0..4) |u| {
         const i: u4 = @intCast(u);
-        cpu.FR(n + i).* = cpu.XF(4 * i + 0).* * FVn[0] + cpu.XF(4 * i + 1).* * FVn[1] + cpu.XF(4 * i + 2).* * FVn[2] + cpu.XF(4 * i + 3).* * FVn[3];
+        cpu.FR(n + i).* = cpu.XF(i + 0).* * FVn[0] + cpu.XF(i + 4).* * FVn[1] + cpu.XF(i + 8).* * FVn[2] + cpu.XF(i + 12).* * FVn[3];
     }
 }
+
+// Column major matrix
+fn test_ftrv(v: [4]f32, m: [4 * 4]f32, r: [4]f32) !void {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+    cpu.fpscr.pr = 0;
+
+    for (0..4) |i| {
+        cpu.FR(@intCast(i)).* = v[i];
+    }
+    for (0..16) |i| {
+        cpu.XF(@intCast(i)).* = m[i];
+    }
+
+    ftrv_XMTRX_FVn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+
+    for (0..4) |i| {
+        try std.testing.expect(cpu.FR(@intCast(i)).* == r[i]);
+    }
+}
+
+test "ftrv XMTRX_FVn" {
+    try test_ftrv(.{ 1.0, 2.0, 3.0, 4.0 }, .{
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+    }, .{ 1.0, 2.0, 3.0, 4.0 });
+
+    try test_ftrv(.{ 1.0, 2.0, 3.0, 4.0 }, .{
+        2, 0, 0, 0,
+        0, 2, 0, 0,
+        0, 0, 2, 0,
+        0, 0, 0, 2,
+    }, .{ 2.0, 4.0, 6.0, 8.0 });
+
+    try test_ftrv(.{ 1.0, 2.0, 3.0, 4.0 }, .{
+        2, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+    }, .{ 2.0, 0.0, 0.0, 0.0 });
+}
+
 fn fsrra_FRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
     cpu.FR(opcode.nmd.n).* = 1.0 / @sqrt(cpu.FR(opcode.nmd.n).*);
