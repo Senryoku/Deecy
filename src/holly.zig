@@ -215,7 +215,7 @@ pub const ObjControl = packed struct(u16) {
     col_type: ColorType,
     volume: u1,
     shadow: u1,
-    _: u8,
+    _: u8 = 0,
 };
 
 pub const ParameterControlWord = packed struct(u32) {
@@ -270,6 +270,15 @@ const TSPInstructionWord = packed struct(u32) {
     src_select: u1,
     dst_alpha_instr: u3,
     src_alpha_instr: u3,
+};
+
+const GenericGlobalParameter = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
+    texture_control: u32,
+    // The rest varies depending on the polygon type
+    _ignored: u128,
 };
 
 // Packed/Floating Color
@@ -379,48 +388,350 @@ const ModifierVolume = packed struct(u256) {
     _ignored: u192,
 };
 
+const PackedColor = packed struct(u32) {
+    b: u8,
+    g: u8,
+    r: u8,
+    a: u8,
+};
+
+const BumpMapParameter = packed struct(u32) {
+    q: u8,
+    k3: u8,
+    k2: u8,
+    k1: u8,
+};
+
+const UV16 = packed struct(u32) {
+    v: u16, // Upper bits of a 32-bit float
+    u: u16,
+};
+
 // Packed Color, Non-Textured
+const VertexParameter_0 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    _ignored0: u64,
+    base_color: PackedColor,
+    _ignored1: u32,
+};
+// Non-Textured, Floating Color
 const VertexParameter_1 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     x: f32,
     y: f32,
     z: f32,
-    base_color: u32,
-    _ignored: u96,
+    a: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+};
+// Non-Textured, Intensity
+const VertexParameter_2 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    _ignored0: u64,
+    base_intensity: u32,
+    _ignored1: u32,
 };
 // Packed Color, Textured 32bit UV
-const VertexParameter_2 = packed struct(u256) {
+const VertexParameter_3 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     x: f32,
     y: f32,
     z: f32,
     u: f32,
     v: f32,
-    base_color: u32,
-    offset_color: u32,
+    base_color: PackedColor,
+    offset_color: PackedColor,
+};
+// Packed Color, Textured 16bit UV
+const VertexParameter_4 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    uv: UV16,
+    _ignored: u32,
+    base_color: PackedColor,
+    offset_color: PackedColor,
+};
+// Floating Color, Textured
+const VertexParameter_5 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    u: f32,
+    v: f32,
+    _ignored: u64,
+    base_a: f32,
+    base_r: f32,
+    base_g: f32,
+    base_b: f32,
+    offset_a: f32,
+    offset_r: f32,
+    offset_g: f32,
+    offset_b: f32,
+};
+// Floating Color, Textured 16bit UV
+const VertexParameter_6 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    uv: UV16,
+    _ignored: u96,
+    base_a: f32,
+    base_r: f32,
+    base_g: f32,
+    base_b: f32,
+    offset_a: f32,
+    offset_r: f32,
+    offset_g: f32,
+    offset_b: f32,
+};
+// Intensity, Textured 32bit UV
+const VertexParameter_7 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    u: f32,
+    v: f32,
+    base_intensity: u32,
+    offset_intensity: u32,
+};
+// Intensity, Textured 32bit UV
+const VertexParameter_8 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    uv: UV16,
+    _ignored: u32,
+    base_intensity: u32,
+    offset_intensity: u32,
+};
+// Non-Textured, Packed Color, with Two Volumes
+const VertexParameter_9 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    base_0: PackedColor,
+    base_1: PackedColor,
+    _ignored: u64,
+};
+// Non-Textured, Intensity, with Two Volumes
+const VertexParameter_10 = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    base_intensity_0: u32,
+    base_intensity_1: u32,
+    _ignored: u64,
+};
+// Textured, Packed Color, with Two Volumes
+const VertexParameter_11 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    u0: f32,
+    v0: f32,
+    base_color_0: PackedColor,
+    offset_color_0: PackedColor,
+    u1: f32,
+    v1: f32,
+    base_color_1: PackedColor,
+    offset_color_1: PackedColor,
+    _ignored: u128,
+};
+// Textured, Packed Color, 16bit UV, with Two Volumes
+const VertexParameter_12 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    uv_0: UV16,
+    _ignored_0: u32,
+    base_color_0: PackedColor,
+    offset_color_0: PackedColor,
+    uv_1: UV16,
+    _ignored_1: u32,
+    base_color_1: PackedColor,
+    offset_color_1: PackedColor,
+    _ignored_2: u128,
+};
+// Textured, Intensity, with Two Volumes
+const VertexParameter_13 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    u0: f32,
+    v0: f32,
+    base_intensity_0: u32,
+    offset_intensity_0: u32,
+    u1: f32,
+    v1: f32,
+    base_intensity_1: u32,
+    offset_intensity_1: u32,
+    _ignored_2: u128,
+};
+// Textured, Intensity, with Two Volumes
+const VertexParameter_14 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    x: f32,
+    y: f32,
+    z: f32,
+    uv_0: UV16,
+    _ignored_0: u32,
+    base_intensity_0: u32,
+    offset_intensity_0: u32,
+    uv_1: UV16,
+    _ignored_1: u32,
+    base_intensity_1: u32,
+    offset_intensity_1: u32,
+    _ignored_2: u128,
 };
 
 pub const VertexParameterType = enum {
+    Type0,
     Type1,
     Type2,
+    Type3,
+    Type4,
+    Type5,
+    Type6,
+    Type7,
+    Type8,
+    Type9,
+    Type10,
+    Type11,
+    Type12,
+    Type13,
+    Type14,
 };
 
 pub const VertexParameter = union(VertexParameterType) {
+    Type0: VertexParameter_0,
     Type1: VertexParameter_1,
     Type2: VertexParameter_2,
+    Type3: VertexParameter_3,
+    Type4: VertexParameter_4,
+    Type5: VertexParameter_5,
+    Type6: VertexParameter_6,
+    Type7: VertexParameter_7,
+    Type8: VertexParameter_8,
+    Type9: VertexParameter_9,
+    Type10: VertexParameter_10,
+    Type11: VertexParameter_11,
+    Type12: VertexParameter_12,
+    Type13: VertexParameter_13,
+    Type14: VertexParameter_14,
+};
+
+// Returns the size in words (4 bytes) of the vertex parameter
+pub fn vertex_parameter_size(format: VertexParameterType) u32 {
+    return switch (format) {
+        .Type0 => @sizeOf(VertexParameter_0) / 4,
+        .Type1 => @sizeOf(VertexParameter_1) / 4,
+        .Type2 => @sizeOf(VertexParameter_2) / 4,
+        .Type3 => @sizeOf(VertexParameter_3) / 4,
+        .Type4 => @sizeOf(VertexParameter_4) / 4,
+        .Type5 => @sizeOf(VertexParameter_5) / 4,
+        .Type6 => @sizeOf(VertexParameter_6) / 4,
+        .Type7 => @sizeOf(VertexParameter_7) / 4,
+        .Type8 => @sizeOf(VertexParameter_8) / 4,
+        .Type9 => @sizeOf(VertexParameter_9) / 4,
+        .Type10 => @sizeOf(VertexParameter_10) / 4,
+        .Type11 => @sizeOf(VertexParameter_11) / 4,
+        .Type12 => @sizeOf(VertexParameter_12) / 4,
+        .Type13 => @sizeOf(VertexParameter_13) / 4,
+        .Type14 => @sizeOf(VertexParameter_14) / 4,
+    };
+}
+
+fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParameterType {
+    // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset (Ignored) - Gouraud (Ignored) - 16bit UV
+    const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_0_0_1;
+    switch (masked) {
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .PackedColor, .volume = 0, .shadow = 0 })) => return .Type0,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .FloatingColor, .volume = 0, .shadow = 0 })) => return .Type1,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode1, .volume = 0, .shadow = 0 })) => return .Type2,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode2, .volume = 0, .shadow = 0 })) => return .Type2,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .PackedColor, .volume = 0, .shadow = 0 })) => return .Type3,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .PackedColor, .volume = 0, .shadow = 0 })) => return .Type4,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .FloatingColor, .volume = 0, .shadow = 0 })) => return .Type5,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .FloatingColor, .volume = 0, .shadow = 0 })) => return .Type6,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 0, .shadow = 0 })) => return .Type7,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 0, .shadow = 0 })) => return .Type7,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 0, .shadow = 0 })) => return .Type8,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 0, .shadow = 0 })) => return .Type8,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .PackedColor, .volume = 1, .shadow = 0 })) => return .Type9,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type10,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type10,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .PackedColor, .volume = 1, .shadow = 0 })) => return .Type11,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .PackedColor, .volume = 1, .shadow = 0 })) => return .Type12,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type13,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type13,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type14,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type14,
+        else => {
+            std.debug.print(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {}\n"), .{masked});
+            @panic("Unimplemented");
+        },
+    }
+}
+
+pub const DisplayList = struct {
+    polygons: std.ArrayList(Polygon) = undefined,
+    vertex_parameters: std.ArrayList(std.ArrayList(VertexParameter)) = undefined,
+
+    pub fn init(allocator: std.mem.Allocator) DisplayList {
+        return .{
+            .polygons = std.ArrayList(Polygon).init(allocator),
+            .vertex_parameters = std.ArrayList(std.ArrayList(VertexParameter)).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *DisplayList) void {
+        self.vertex_parameters.deinit();
+        self.polygons.deinit();
+    }
+
+    pub fn reset(self: *DisplayList) void {
+        for (self.vertex_parameters.items) |*vertex_parameters| {
+            vertex_parameters.deinit();
+        }
+        self.vertex_parameters.clearRetainingCapacity();
+        self.polygons.clearRetainingCapacity();
+    }
 };
 
 pub const Holly = struct {
     vram: []u8 = undefined,
     registers: []u8 = undefined,
 
+    render_start: bool = false, // Signals to start rendering. TODO: Find a better way to start rendering (and run the CPU on another thread I guess).
+
     _allocator: std.mem.Allocator = undefined,
 
     _ta_command_buffer: [16]u32 align(8) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
+
     _ta_current_polygon: ?Polygon = null,
-    _ta_vertex_parameters: std.ArrayList(VertexParameter_1) = undefined, // FIXME: Move out.
+    _ta_current_polygon_vertex_parameters: std.ArrayList(VertexParameter) = undefined, // FIXME: Move out.
+
+    ta_display_lists: [5]DisplayList = undefined,
 
     _scheduled_interrupts: std.ArrayList(struct { cycles: u32, int: MemoryRegisters.SB_ISTNRM }) = undefined,
 
@@ -430,14 +741,24 @@ pub const Holly = struct {
         self.vram = try self._allocator.alloc(u8, 8 * 1024 * 1024);
         self.registers = try self._allocator.alloc(u8, 0x2000);
 
-        self._ta_vertex_parameters = std.ArrayList(VertexParameter_1).init(self._allocator);
+        self._ta_current_polygon_vertex_parameters = std.ArrayList(VertexParameter).init(self._allocator);
+
+        for (0..self.ta_display_lists.len) |i| {
+            self.ta_display_lists[i] = DisplayList.init(self._allocator);
+        }
 
         self._scheduled_interrupts = try @TypeOf(self._scheduled_interrupts).initCapacity(self._allocator, 32);
     }
 
     pub fn deinit(self: *@This()) void {
         self._scheduled_interrupts.deinit();
-        self._ta_vertex_parameters.deinit();
+
+        for (&self.ta_display_lists) |*display_list| {
+            display_list.deinit();
+        }
+
+        self._ta_current_polygon_vertex_parameters.deinit();
+
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }
@@ -568,8 +889,10 @@ pub const Holly = struct {
                 return;
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
-                std.debug.print(termcolor.green("[Holly] TODO STARTRENDER: {X:0>8}\n"), .{v});
-                // FIXME: Obviouly, TODO
+                std.debug.print(termcolor.green("[Holly] STARTRENDER: {X:0>8}\n"), .{v});
+
+                self.render_start = true;
+
                 self.schedule_interrupt(200, .{ .RenderDoneTSP = 1 });
                 self.schedule_interrupt(400, .{ .RenderDoneISP = 1 });
                 self.schedule_interrupt(600, .{ .RenderDoneVideo = 1 });
@@ -667,14 +990,24 @@ pub const Holly = struct {
             .ObjectListSet => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
+                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
                 @panic("Unimplemented ObjectListSet");
             },
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
+                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
                 std.debug.assert(self._ta_list_type == parameter_control_word.list_type);
+
+                // Note: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
+                const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
+                global_parameter.*.isp_tsp_instruction.texture = global_parameter.*.parameter_control_word.obj_control.texture;
+                global_parameter.*.isp_tsp_instruction.offset = global_parameter.*.parameter_control_word.obj_control.offset;
+                global_parameter.*.isp_tsp_instruction.gouraud = global_parameter.*.parameter_control_word.obj_control.gouraud;
+                global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
+
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
                     std.debug.print(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume\n"), .{});
                 } else {
@@ -682,18 +1015,15 @@ pub const Holly = struct {
                         switch (parameter_control_word.obj_control.col_type) {
                             .PackedColor, .FloatingColor => {
                                 const polygon_type_0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).*;
-                                std.debug.print("    Polygon Type 0: {any}\n", .{polygon_type_0});
                                 self._ta_current_polygon = .{ .PolygonType0 = polygon_type_0 };
                             },
                             .IntensityMode1, .IntensityMode2 => {
                                 if (parameter_control_word.obj_control.offset == 0) {
                                     const polygon_type_1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).*;
-                                    std.debug.print("    Polygon Type 1: {any}\n", .{polygon_type_1});
                                     self._ta_current_polygon = .{ .PolygonType1 = polygon_type_1 };
                                 } else {
                                     if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
                                     const polygon_type_2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).*;
-                                    std.debug.print("    Polygon Type 2: {any}\n", .{polygon_type_2});
                                     self._ta_current_polygon = .{ .PolygonType2 = polygon_type_2 };
                                 }
                             },
@@ -702,13 +1032,11 @@ pub const Holly = struct {
                         switch (parameter_control_word.obj_control.col_type) {
                             .PackedColor, .FloatingColor => {
                                 const polygon_type_3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).*;
-                                std.debug.print("    Polygon Type 3: {any}\n", .{polygon_type_3});
                                 self._ta_current_polygon = .{ .PolygonType3 = polygon_type_3 };
                             },
                             .IntensityMode1, .IntensityMode2 => {
                                 if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
                                 const polygon_type_4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).*;
-                                std.debug.print("    Polygon Type 4: {any}\n", .{polygon_type_4});
                                 self._ta_current_polygon = .{ .PolygonType4 = polygon_type_4 };
                             },
                         }
@@ -718,21 +1046,75 @@ pub const Holly = struct {
             .SpriteList => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
+                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
                 @panic("Unimplemented SpriteList");
             },
             .VertexParameter => {
-                std.debug.print(termcolor.yellow("  Unimplemented VertexParameter\n"), .{});
                 if (self._ta_current_polygon == null) {
                     std.debug.print(termcolor.red("    No current polygon!\n"), .{});
                     @panic("No current polygon");
                 }
-                const vertex_parameter_1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).*;
-                std.debug.print("vertex_parameter_1: {any}\n", .{vertex_parameter_1});
-                self._ta_vertex_parameters.append(vertex_parameter_1) catch unreachable;
-                if (vertex_parameter_1.parameter_control_word.end_of_strip == 1) {
-                    std.debug.print("  End of Strip\n", .{});
-                    self._ta_vertex_parameters.shrinkRetainingCapacity(0);
+
+                const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
+                const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+
+                switch (format) {
+                    .Type0 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type1 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type2 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type3 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type4 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type5 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type6 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type7 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type8 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type9 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type10 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type11 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type12 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type13 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                    .Type14 => {
+                        self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    },
+                }
+
+                if (parameter_control_word.end_of_strip == 1) {
+                    std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
+                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
+                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
+
+                    self._ta_current_polygon = null;
+                    self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).init(self._allocator);
                 }
             },
         }

@@ -2724,6 +2724,7 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
         cpu.fpul = std.math.lossyCast(u32, cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
+
 fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
     // Computes the dot product of FVn and FVm and stores it into Fn+3.
     const n = opcode.nmd.n & 0b1100;

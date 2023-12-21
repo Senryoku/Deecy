@@ -108,6 +108,9 @@ pub fn main() !void {
     var cpu = try sh4.SH4.init(common.GeneralAllocator);
     defer cpu.deinit();
 
+    var gdrom = &syscall.gdrom; // FIXME
+    defer gdrom.disk.deinit();
+
     if (load_binary) {
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
@@ -118,12 +121,10 @@ pub fn main() !void {
     } else {
         cpu.init_boot();
 
-        var gdrom = &syscall.gdrom; // FIXME
         //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
         //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-        //try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-        try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
-        defer gdrom.disk.deinit();
+        try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+        //try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
@@ -135,7 +136,7 @@ pub fn main() !void {
     try zglfw.init();
     defer zglfw.terminate();
 
-    const window = zglfw.Window.create(1024, 800, "Katana", null) catch {
+    const window = zglfw.Window.create(640 * 2, 480 * 2, "Katana", null) catch {
         std.log.err("Failed to create window.", .{});
         return;
     };
@@ -244,8 +245,8 @@ pub fn main() !void {
 
             const range = 16; // In bytes.
             const pc = cpu.pc & 0x1FFFFFFF;
-            //            In RAM                                                                                    In BootROM
-            var addr = if (pc >= 0x0C000000) std.math.clamp(pc - range / 2, 0x0C000000, 0x0D000000 - range) else std.math.clamp(pc - range / 2, 0x00000000, 0x02000000 - range);
+            //              In RAM                                                                           In BootROM
+            var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
             const end_addr = addr + range;
             while (addr < end_addr) {
                 //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
@@ -556,7 +557,8 @@ pub fn main() !void {
         zgui.end();
 
         if (running) {
-            for (0..10000) |_| {
+            const start = try std.time.Instant.now();
+            while ((try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms) {
                 cpu.execute();
                 const breakpoint = for (breakpoints.items, 0..) |addr, index| {
                     if (addr & 0x1FFFFFFF == cpu.pc & 0x1FFFFFFF) break index;
@@ -571,7 +573,11 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
-        renderer.draw();
+        if (cpu.gpu.render_start) { // FIXME: Find a better way to start a render.
+            cpu.gpu.render_start = false;
+            try renderer.update(&cpu.gpu.ta_display_lists);
+        }
+        renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
