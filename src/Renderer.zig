@@ -7,6 +7,18 @@ const termcolor = @import("termcolor.zig");
 
 const Holly = @import("Holly.zig");
 
+// First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
+var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
+
+// Returns the indice of the z-order curve for the given coordinates.
+pub fn zorder_curve(x: u32, y: u32) u32 {
+    return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
+}
+
+pub fn to_tiddled_index(i: u32, h: u32) u32 {
+    return zorder_curve(i / h, i % h);
+}
+
 const Vertex = struct {
     x: f32,
     y: f32,
@@ -17,6 +29,9 @@ const Vertex = struct {
     a: f32,
     u: f32,
     v: f32,
+    tex: u32,
+    tex_size: [2]u16,
+    uv_offset: [2]f32 = .{ 0, 0 },
 };
 
 const Polygon = struct {
@@ -32,14 +47,21 @@ const Polygon = struct {
 // zig fmt: off
 const wgsl_vs =
 \\  @group(0) @binding(0) var<uniform> conversion_matrix: mat4x4<f32>;
+\\
 \\  struct VertexOut {
 \\      @builtin(position) position_clip: vec4<f32>,
 \\      @location(0) color: vec4<f32>,
+\\      @location(1) uv: vec2<f32>,
+\\      @location(2) @interpolate(flat) tex: u32,
 \\  }
+\\
 \\  @vertex fn main(
 \\      @location(0) position: vec3<f32>,
 \\      @location(1) color: vec4<f32>,
 \\      @location(2) uv: vec2<f32>,
+\\      @location(3) tex: u32,
+\\      @location(4) tex_size: u32,
+\\      @location(5) uv_offset: vec2<f32>, // TODO
 \\  ) -> VertexOut {
 \\      var output: VertexOut;
 \\      
@@ -63,19 +85,52 @@ const wgsl_vs =
 \\      // output.position_clip.y *= w;
 \\
 \\      output.color = color;
+\\      if(tex == 0xFFFFFFFF) {
+\\          output.uv = vec2<f32>(0, 0);
+\\      } else {
+\\          output.uv = uv / (1024.0 / f32(tex_size));
+\\      }
+\\      output.tex = tex;
+\\
 \\      return output;
 \\  }
 ;
 const wgsl_fs =
+\\  @group(0) @binding(1) var texture_array: texture_2d_array<f32>;
+\\  @group(0) @binding(2) var image_sampler: sampler;
+\\
 \\  @fragment fn main(
 \\      @location(0) color: vec4<f32>,
+\\      @location(1) uv: vec2<f32>,
+\\      @location(2) @interpolate(flat) tex: u32,
 \\  ) -> @location(0) vec4<f32> {
-\\      return color;
+\\      let tex_color = textureSample(texture_array, image_sampler, uv, tex);
+\\      if(tex != 0xFFFFFFFF) {
+\\          return tex_color;
+\\      } else {
+\\          return color;
+\\      }
 \\  }
 // zig fmt: on
 ;
 
+// TODO: Pack smaller textures into an Atlas.
+
+const TextureMetadata = struct {
+    const Unused: u32 = 0xFFFFFFFF;
+
+    control_word: Holly.TextureControlWord = .{},
+    index: u32 = Renderer.MaxTextures,
+    usage: u32 = Unused,
+    size: [2]u16 = .{ 0, 0 },
+    uv_offset: [2]f32 = .{ 0, 0 },
+};
+
 pub const Renderer = struct {
+    const MaxTextures: u32 = 256; // FIXME: Not sure what's a good value.
+
+    texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
+
     polygons: std.ArrayList(Holly.Polygon),
 
     pipeline: zgpu.RenderPipelineHandle,
@@ -83,6 +138,11 @@ pub const Renderer = struct {
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
+
+    texture_array: zgpu.TextureHandle,
+    texture_array_view: zgpu.TextureViewHandle,
+
+    sampler: zgpu.SamplerHandle,
 
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
@@ -93,8 +153,17 @@ pub const Renderer = struct {
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) Renderer {
+
+        // FIXME: Make this comptime?
+        moser_de_bruijin_sequence[0] = 0;
+        for (1..moser_de_bruijin_sequence.len) |idx| {
+            moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
+        }
+
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.samplerEntry(2, .{ .fragment = true }, .filtering),
         });
         defer gctx.releaseResource(bind_group_layout);
 
@@ -120,6 +189,9 @@ pub const Renderer = struct {
                 .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
                 .{ .format = .float32x4, .offset = @offsetOf(Vertex, "r"), .shader_location = 1 },
                 .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 2 },
+                .{ .format = .uint32, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
+                .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex_size"), .shader_location = 4 },
+                .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
             };
             const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
                 .array_stride = @sizeOf(Vertex),
@@ -154,34 +226,35 @@ pub const Renderer = struct {
             break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
+        const sampler = gctx.createSampler(.{});
+
+        const texture_array = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+            .size = .{
+                .width = 1024, // FIXME: Should I create pools for each texture sizes?
+                .height = 1024,
+                .depth_or_array_layers = Renderer.MaxTextures,
+            },
+            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const texture_array_view = gctx.createTextureView(texture_array, .{});
+
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * 4 * @sizeOf(f32) },
+            .{ .binding = 1, .texture_view_handle = texture_array_view },
+            .{ .binding = 2, .sampler_handle = sampler },
         });
 
-        // Create a vertex buffer.
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
             .size = 4096 * @sizeOf(Vertex), // FIXME: Arbitrary size for testing
         });
 
-        //const vertex_data = [_]Vertex{
-        //    .{ .x = 0.0, .y = 0.5, .z = 0.0, .u = 0.0, .v = 0.0 },
-        //    .{ .x = -0.5, .y = -0.5, .z = 0.0, .u = 0.0, .v = 0.0 },
-        //    .{ .x = 0.5, .y = -0.5, .z = 0.0, .u = 0.0, .v = 0.0 },
-        //
-        //};
-
-        const vertex_data = [_]Vertex{};
-        gctx.queue.writeBuffer(gctx.lookupResource(vertex_buffer).?, 0, Vertex, vertex_data[0..]);
-
-        // Create an index buffer.
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
             .size = 4096 * @sizeOf(u32), // FIXME: Arbitrary size for testing
         });
-        //const index_data = [_]u32{ 0, 1, 2 };
-        const index_data = [_]u32{};
-        gctx.queue.writeBuffer(gctx.lookupResource(index_buffer).?, 0, u32, index_data[0..]);
 
         // Create a depth texture and its 'view'.
         const depth = createDepthTexture(gctx);
@@ -193,10 +266,15 @@ pub const Renderer = struct {
             .bind_group = bind_group,
             .vertex_buffer = vertex_buffer,
             .index_buffer = index_buffer,
+
+            .texture_array = texture_array,
+            .texture_array_view = texture_array_view,
+            .sampler = sampler,
+
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
 
-            .index_count = index_data.len,
+            .index_count = 0,
 
             ._gctx = gctx,
             ._allocator = allocator,
@@ -224,15 +302,144 @@ pub const Renderer = struct {
         // Vertice 4 is computed based on other vertices (rectangular polygon).
     }
 
-    pub fn update(self: *Renderer, display_lists: *const [5]Holly.DisplayList) !void {
+    fn get_texture_index(self: *Renderer, control_word: Holly.TextureControlWord) u32 {
+        for (0..Renderer.MaxTextures) |i| {
+            if (self.texture_metadata[i].usage != TextureMetadata.Unused and self.texture_metadata[i].control_word.address == control_word.address) {
+                return @intCast(i);
+            }
+        }
+        return Renderer.MaxTextures;
+    }
+
+    fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u32 {
+        std.debug.print("[Upload] tsp_instruction: {any}\n", .{tsp_instruction});
+        std.debug.print("[Upload] texture_control_word: {any}\n", .{texture_control_word});
+
+        const u_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
+        const v_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
+
+        const twiddled = texture_control_word.scan_order == 0;
+        // FIXME: Handle twiddled textures.
+        std.debug.assert(texture_control_word.mip_mapped == 0);
+        std.debug.assert(texture_control_word.stride_select == 0); // Not implemented
+        std.debug.assert(texture_control_word.vq_compressed == 0); // Not implemented
+
+        var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
+        defer self._allocator.free(pixels);
+
+        const addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
+
+        switch (texture_control_word.pixel_format) {
+            .ARGB1555 => {
+                for (0..(@as(u32, u_size) * v_size)) |i| {
+                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), v_size) else i;
+                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.r) << 3;
+                    pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
+                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.b) << 3;
+                    pixels[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
+                }
+            },
+            .ARGB4444 => {
+                for (0..(@as(u32, u_size) * v_size)) |i| {
+                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), v_size) else i;
+                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.r) << 4;
+                    pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
+                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.b) << 4;
+                    pixels[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
+                }
+            },
+            else => {
+                std.debug.print(termcolor.red("[Holly] Unsupported pixel format {any}\n"), .{texture_control_word.pixel_format});
+                @panic("Unsupported pixel format");
+            },
+        }
+
+        // Search for an unused texture index.
+        for (0..Renderer.MaxTextures) |i| {
+            if (self.texture_metadata[i].usage == TextureMetadata.Unused) {
+                self.texture_metadata[i] = .{
+                    .control_word = texture_control_word,
+                    .index = @intCast(i),
+                    .usage = 0,
+                    .size = .{ u_size, v_size },
+                };
+                std.debug.print("[Upload] index: {d}, usize: {d}, vsize: {d}\n", .{ i, u_size, v_size });
+                self._gctx.queue.writeTexture(
+                    .{
+                        .texture = self._gctx.lookupResource(self.texture_array).?,
+                        .origin = .{ .z = @intCast(i) },
+                    },
+                    .{
+                        .bytes_per_row = u_size * 4,
+                        .rows_per_image = v_size,
+                    },
+                    .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                    u8,
+                    pixels,
+                );
+
+                // Write to VRAM at the texture address a signpost value to detect if it has been overwritten (and our GPU texture is thus outdated).
+                // FIXME: Make sure this won't cause synchronization issues (Lock?).
+                gpu.vram[texture_control_word.address + 0] = 0xc0;
+                gpu.vram[texture_control_word.address + 1] = 0xff;
+                gpu.vram[texture_control_word.address + 2] = 0xee;
+                gpu.vram[texture_control_word.address + 3] = 0x0f;
+
+                return @intCast(i);
+            }
+        }
+
+        @panic("Out of textures slot");
+    }
+
+    fn reset_texture_usage(self: *Renderer) void {
+        for (0..Renderer.MaxTextures) |i| {
+            if (self.texture_metadata[i].usage != TextureMetadata.Unused)
+                self.texture_metadata[i].usage = 0;
+        }
+    }
+
+    fn check_texture_usage(self: *Renderer, gpu: *Holly.Holly) void {
+        for (0..Renderer.MaxTextures) |i| {
+            if (self.texture_metadata[i].usage == 0) {
+                self.texture_metadata[i].usage = TextureMetadata.Unused;
+            } else if (self.texture_metadata[i].usage != TextureMetadata.Unused) {
+                if (gpu.vram[self.texture_metadata[i].control_word.address + 0] != 0xc0 or
+                    gpu.vram[self.texture_metadata[i].control_word.address + 1] != 0xff or
+                    gpu.vram[self.texture_metadata[i].control_word.address + 2] != 0xee or
+                    gpu.vram[self.texture_metadata[i].control_word.address + 3] != 0x0f)
+                {
+                    std.debug.print("[Renderer] Detected outdated texture #{d}. TODO!\n", .{i});
+                }
+            }
+        }
+    }
+
+    pub fn update(self: *Renderer, gpu: *Holly.Holly) !void {
         var vertices = std.ArrayList(Vertex).init(self._allocator);
         defer vertices.deinit();
         var indices = std.ArrayList(u32).init(self._allocator);
         defer indices.deinit();
 
-        for (display_lists.*) |display_list| {
+        self.reset_texture_usage();
+        defer self.check_texture_usage(gpu);
+
+        for (gpu.ta_display_lists) |display_list| {
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(vertices.items.len);
+
+                const global_parameter = @as(*const Holly.GenericGlobalParameter, @ptrCast(&display_list.polygons.items[idx])).*;
+
+                var tex_idx: u32 = 0;
+                if (global_parameter.parameter_control_word.obj_control.texture == 1) {
+                    tex_idx = self.get_texture_index(global_parameter.texture_control);
+                    if (tex_idx == Renderer.MaxTextures) {
+                        tex_idx = self.upload_texture(gpu, global_parameter.tsp_instruction, global_parameter.texture_control);
+                    }
+                    self.texture_metadata[tex_idx].usage += 1;
+                }
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
                     switch (vertex) {
@@ -247,6 +454,8 @@ pub const Renderer = struct {
                                 .a = @as(f32, @floatFromInt(v.base_color.a)) / 255.0,
                                 .u = 0.0,
                                 .v = 0.0,
+                                .tex = TextureMetadata.Unused,
+                                .tex_size = .{ 0, 0 },
                             });
                         },
                         .Type3 => |v| {
@@ -260,6 +469,8 @@ pub const Renderer = struct {
                                 .a = @as(f32, @floatFromInt(v.base_color.a)) / 255.0,
                                 .u = v.u,
                                 .v = v.v,
+                                .tex = tex_idx,
+                                .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },
                         else => {

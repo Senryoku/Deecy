@@ -7,11 +7,58 @@ const MemoryRegister = MemoryRegisters.MemoryRegister;
 
 const termcolor = @import("termcolor.zig");
 
-// Holly Video Chip
+pub const Color16 = packed union {
+    value: u16,
+    arbg1555: packed struct(u16) {
+        b: u5,
+        g: u5,
+        r: u5,
+        a: u1,
+    },
+    rgb565: packed struct(u16) {
+        b: u5,
+        g: u6,
+        r: u5,
+    },
+    argb4444: packed struct(u16) {
+        b: u4,
+        g: u4,
+        r: u4,
+        a: u4,
+    },
+};
 
-// Tile Accelerator and PowerVR2 core
+pub const YUV422 = packed struct(u32) {
+    v: u8,
+    y1: u8,
+    u: u8,
+    y0: u8,
+};
 
-const TileAccelerator = struct {};
+pub const RGBA = packed struct(u32) {
+    a: u8,
+    b: u8,
+    g: u8,
+    r: u8,
+};
+
+fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
+    const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
+    const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
+    const y0 = @as(f32, @floatFromInt(yuv.y0));
+    const y1 = @as(f32, @floatFromInt(yuv.y1));
+    return .{ .{
+        .r = @intFromFloat(std.math.clamp(y0 + (11 / 8) * v, 0, 255)),
+        .g = @intFromFloat(std.math.clamp(y0 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
+        .b = @intFromFloat(std.math.clamp(y0 + 1.25 * (11 / 8) * u, 0, 255)),
+        .a = 255,
+    }, .{
+        .r = @intFromFloat(std.math.clamp(y1 + (11 / 8) * v, 0, 255)),
+        .g = @intFromFloat(std.math.clamp(y1 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
+        .b = @intFromFloat(std.math.clamp(y1 + 1.25 * (11 / 8) * u, 0, 255)),
+        .a = 255,
+    } };
+}
 
 const HollyRegister = enum(u32) {
     ID = 0x005F8000,
@@ -229,7 +276,7 @@ pub const ParameterControlWord = packed struct(u32) {
 
 // Control Parameter Formats
 
-const UserTileClip = packed struct(u256) {
+pub const UserTileClip = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     _ignored: u96,
     user_clip_x_min: u32,
@@ -240,7 +287,7 @@ const UserTileClip = packed struct(u256) {
 
 // Global Parameter Formats
 
-const ISPTSPInstructionWord = packed struct(u32) {
+pub const ISPTSPInstructionWord = packed struct(u32) {
     _: u20,
     dcalc_ctrl: u1,
     cache_bypass: u1,
@@ -253,7 +300,7 @@ const ISPTSPInstructionWord = packed struct(u32) {
     depth_compare_mode: u3,
 };
 
-const TSPInstructionWord = packed struct(u32) {
+pub const TSPInstructionWord = packed struct(u32) {
     texture_v_size: u3,
     texture_u_size: u3,
     texture_shading_instruction: u2,
@@ -272,11 +319,40 @@ const TSPInstructionWord = packed struct(u32) {
     src_alpha_instr: u3,
 };
 
-const GenericGlobalParameter = packed struct(u256) {
+pub const TexturePixelFormat = enum(u3) {
+    ARGB1555 = 0,
+    RGB565 = 1,
+    ARGB4444 = 2,
+    YUV422 = 3,
+    BumpMap = 4,
+    Palette4BPP = 5,
+    Palette8BPP = 6,
+    Reserved = 7,
+};
+
+// RGB/YUV Texture or Bump Map
+pub const TextureControlWord = packed struct(u32) {
+    address: u21 = 0,
+    _: u4 = 0,
+    stride_select: u1 = 0,
+    scan_order: u1 = 0,
+    pixel_format: TexturePixelFormat = .Reserved,
+    vq_compressed: u1 = 0,
+    mip_mapped: u1 = 0,
+};
+pub const PaletteTextureControlWord = packed struct(u32) {
+    address: u21,
+    palette_selector: u6,
+    pixel_format: TexturePixelFormat,
+    vq_compressed: u1,
+    mip_mapped: u1,
+};
+
+pub const GenericGlobalParameter = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
-    texture_control: u32,
+    texture_control: TextureControlWord,
     // The rest varies depending on the polygon type
     _ignored: u128,
 };
@@ -286,7 +362,7 @@ const PolygonType0 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
-    texture_control: u32,
+    texture_control: TextureControlWord,
     _ignored: u64,
     data_size: u32,
     next_address: u32,
@@ -297,7 +373,7 @@ const PolygonType1 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
-    texture_control: u32,
+    texture_control: TextureControlWord,
     face_color_a: u32,
     face_color_r: u32,
     face_color_g: u32,
@@ -309,7 +385,7 @@ const PolygonType2 = packed struct(u512) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
-    texture_control: u32,
+    texture_control: TextureControlWord,
     _ignored: u64,
     data_size: u32,
     next_address: u32,
@@ -328,9 +404,9 @@ const PolygonType3 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction_0: TSPInstructionWord,
-    texture_control_0: u32,
+    texture_control_0: TextureControlWord,
     tsp_instruction_1: TSPInstructionWord,
-    texture_control_1: u32,
+    texture_control_1: TextureControlWord,
     data_size: u32,
     next_address: u32,
 };
@@ -340,9 +416,9 @@ const PolygonType4 = packed struct(u512) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction_0: TSPInstructionWord,
-    texture_control_0: u32,
+    texture_control_0: TextureControlWord,
     tsp_instruction_1: TSPInstructionWord,
-    texture_control_1: u32,
+    texture_control_1: TextureControlWord,
     data_size: u32,
     next_address: u32,
     face_color_a: u32,
@@ -375,7 +451,7 @@ const Sprite = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
-    texture_control: u32,
+    texture_control: TextureControlWord,
     base_color: u32,
     offset_color: u32,
     data_size: u32,
@@ -878,18 +954,18 @@ pub const Holly = struct {
                 std.debug.print("[Holly] TODO SOFTRESET: {X:0>8}\n", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
-                    std.debug.print("[Holly]   TODO: Tile Accelerator Soft Reset\n", .{});
+                    std.debug.print(termcolor.yellow("[Holly]   TODO: Tile Accelerator Soft Reset\n"), .{});
                 }
                 if (sr.PipelineSoftReset == 1) {
-                    std.debug.print("[Holly]   TODO: Pipeine Soft Reset\n", .{});
+                    std.debug.print(termcolor.yellow("[Holly]   TODO: Pipeine Soft Reset\n"), .{});
                 }
                 if (sr.SDRAMInterfaceSoftReset == 1) {
-                    std.debug.print("[Holly]   TODO: SDRAM Interface Soft Reset\n", .{});
+                    std.debug.print(termcolor.yellow("[Holly]   TODO: SDRAM Interface Soft Reset\n"), .{});
                 }
                 return;
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
-                std.debug.print(termcolor.green("[Holly] STARTRENDER: {X:0>8}\n"), .{v});
+                std.debug.print(termcolor.green("[Holly] STARTRENDER!\n"), .{});
 
                 self.render_start = true;
 
@@ -960,7 +1036,7 @@ pub const Holly = struct {
         std.debug.print("    Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
         switch (parameter_control_word.parameter_type) {
             .EndOfList => {
-                if (self._ta_list_type != null) { // Apprently this happpens?... Why would a game do this?
+                if (self._ta_list_type != null) { // Apprently this happens?... Why would a game do this?
                     // Fire corresponding interrupt.
                     // FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
                     switch (self._ta_list_type.?) {

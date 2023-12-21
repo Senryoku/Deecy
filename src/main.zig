@@ -6,78 +6,19 @@ const sh4 = @import("./sh4.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const GDI = @import("./GDI.zig").GDI;
+const Holly = @import("./holly.zig");
 
 const zgui = @import("zgui");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
-const Renderer = @import("./Renderer.zig").Renderer;
+const RendererModule = @import("./Renderer.zig");
+const Renderer = RendererModule.Renderer;
 
 const assets_dir = "assets/";
 
-const Color16 = packed union {
-    value: u16,
-    arbg1555: packed struct(u16) {
-        b: u5,
-        g: u5,
-        r: u5,
-        a: u1,
-    },
-    rgb565: packed struct(u16) {
-        b: u5,
-        g: u6,
-        r: u5,
-    },
-    argb4444: packed struct(u16) {
-        b: u4,
-        g: u4,
-        r: u4,
-        a: u4,
-    },
-};
-
-const YUV422 = packed struct(u32) {
-    v: u8,
-    y1: u8,
-    u: u8,
-    y0: u8,
-};
-
-const RGBA = packed struct(u32) {
-    a: u8,
-    b: u8,
-    g: u8,
-    r: u8,
-};
-
-fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
-    const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
-    const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
-    const y0 = @as(f32, @floatFromInt(yuv.y0));
-    const y1 = @as(f32, @floatFromInt(yuv.y1));
-    return .{ .{
-        .r = @intFromFloat(std.math.clamp(y0 + (11 / 8) * v, 0, 255)),
-        .g = @intFromFloat(std.math.clamp(y0 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
-        .b = @intFromFloat(std.math.clamp(y0 + 1.25 * (11 / 8) * u, 0, 255)),
-        .a = 255,
-    }, .{
-        .r = @intFromFloat(std.math.clamp(y1 + (11 / 8) * v, 0, 255)),
-        .g = @intFromFloat(std.math.clamp(y1 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
-        .b = @intFromFloat(std.math.clamp(y1 + 1.25 * (11 / 8) * u, 0, 255)),
-        .a = 255,
-    } };
-}
-
 // FIXME
 const syscall = @import("syscall.zig");
-
-// First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
-var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
-
-// Returns the indice of the z-order curve for the given coordinates.
-fn zorder_curve(x: u32, y: u32) u32 {
-    return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
-}
 
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
@@ -97,12 +38,6 @@ pub fn main() !void {
             load_binary = true;
             binary_path = v.?;
         }
-    }
-
-    // FIXME: Make this comptime?
-    moser_de_bruijin_sequence[0] = 0;
-    for (1..moser_de_bruijin_sequence.len) |idx| {
-        moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
     }
 
     var cpu = try sh4.SH4.init(common.GeneralAllocator);
@@ -212,6 +147,8 @@ pub fn main() !void {
 
     var renderer = Renderer.init(common.GeneralAllocator, gctx);
     defer renderer.deinit();
+
+    var renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = 0, .array_layer_count = 1 });
 
     while (!window.shouldClose()) {
         zglfw.pollEvents();
@@ -328,7 +265,7 @@ pub fn main() !void {
                 while (start < end) {
                     switch (FB_W_CTRL & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Color16 = .{
+                            const color: Holly.Color16 = .{
                                 .value = cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
@@ -339,7 +276,7 @@ pub fn main() !void {
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
-                            const color: Color16 = .{
+                            const color: Holly.Color16 = .{
                                 .value = cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
@@ -349,28 +286,6 @@ pub fn main() !void {
                             start += 4;
                             i += 1;
                         },
-
-                        //const yuv: YUV422 = @bitCast(cpu.read32(@intCast(start)));
-                        //const rgba = yuv_to_rgba(yuv);
-                        //pixels[4 * i + 0] = @as(u8, @intCast(rgba[0].r));
-                        //pixels[4 * i + 1] = @as(u8, @intCast(rgba[0].g));
-                        //pixels[4 * i + 2] = @as(u8, @intCast(rgba[0].b));
-                        //pixels[4 * i + 3] = 255;
-                        //pixels[4 * (i + 1) + 0] = @as(u8, @intCast(rgba[1].r));
-                        //pixels[4 * (i + 1) + 1] = @as(u8, @intCast(rgba[1].g));
-                        //pixels[4 * (i + 1) + 2] = @as(u8, @intCast(rgba[1].b));
-                        //pixels[4 * (i + 1) + 3] = 255;
-                        //start += 4;
-                        //i += 2;
-
-                        //const palette_data: u8 = @bitCast(cpu.read8(@intCast(start)));
-                        //pixels[4 * i + 0] = @as(u8, @intCast(palette_data));
-                        //pixels[4 * i + 1] = @as(u8, @intCast(palette_data));
-                        //pixels[4 * i + 2] = @as(u8, @intCast(palette_data));
-                        //pixels[4 * i + 3] = 255;
-                        //start += 1;
-                        //i += 1;
-
                         // ARGB 32-Bits
                         0x6 => {
                             pixels[4 * i + 0] = cpu.read8(@intCast(start + 3));
@@ -399,6 +314,23 @@ pub fn main() !void {
                 const tex_id = gctx.lookupResource(texture_view).?;
 
                 zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
+            }
+
+            if (zgui.collapsingHeader("Renderer Textures", .{})) {
+                const static = struct {
+                    var index: i32 = 0;
+                    var scale: f32 = 1;
+                };
+                if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
+                    gctx.releaseResource(renderer_texture_view);
+                    static.index = std.math.clamp(static.index, 0, 255);
+                    renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
+                }
+                if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
+                    static.scale = std.math.clamp(static.scale, 1.0, 8.0);
+                }
+                const tex_id = gctx.lookupResource(renderer_texture_view).?;
+                zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
             }
 
             if (zgui.collapsingHeader("VRAM", .{})) {
@@ -449,8 +381,8 @@ pub fn main() !void {
                         for (0..vram_width) |x| {
                             switch (static.format) {
                                 0x0, 0x3 => { // 0555 KRGB 16 bits
-                                    const color: Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    const color: Holly.Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
                                     };
                                     pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                                     pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
@@ -458,8 +390,8 @@ pub fn main() !void {
                                     pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
                                 },
                                 0x1 => { // 565 RGB 16 bit
-                                    const color: Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    const color: Holly.Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
                                     };
                                     pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                                     pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
@@ -467,8 +399,8 @@ pub fn main() !void {
                                     pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
                                 },
                                 0x2 => { // 4444 ARGB 16 bit
-                                    const color: Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * zorder_curve(@intCast(x), @intCast(y))]))).*,
+                                    const color: Holly.Color16 = .{
+                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
                                     };
                                     pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
                                     pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
@@ -476,10 +408,10 @@ pub fn main() !void {
                                     pixels[y * vram_width + x + 3] = @as(u8, @intCast(color.argb4444.a)) << 4;
                                 },
                                 0x6 => {
-                                    pixels[y * vram_width + x + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 3];
-                                    pixels[y * vram_width + x + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 2];
-                                    pixels[y * vram_width + x + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 1];
-                                    pixels[y * vram_width + x + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * zorder_curve(@intCast(x), @intCast(y)) + 0];
+                                    pixels[y * vram_width + x + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 3];
+                                    pixels[y * vram_width + x + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 2];
+                                    pixels[y * vram_width + x + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 1];
+                                    pixels[y * vram_width + x + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 0];
                                 },
                                 else => {
                                     break;
@@ -491,7 +423,7 @@ pub fn main() !void {
                     while (start < end) {
                         switch (static.format) {
                             0x0, 0x3 => { // 0555 KRGB 16 bits
-                                const color: Color16 = .{
+                                const color: Holly.Color16 = .{
                                     .value = cpu.gpu.vram[@intCast(start)],
                                 };
                                 pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
@@ -502,7 +434,7 @@ pub fn main() !void {
                                 i += 1;
                             },
                             0x1 => { // 565 RGB 16 bit
-                                const color: Color16 = .{
+                                const color: Holly.Color16 = .{
                                     .value = cpu.gpu.vram[@intCast(start)],
                                 };
                                 pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
@@ -513,7 +445,7 @@ pub fn main() !void {
                                 i += 1;
                             },
                             0x2 => { // 4444 ARGB 16 bit
-                                const color: Color16 = .{
+                                const color: Holly.Color16 = .{
                                     .value = cpu.gpu.vram[@intCast(start)],
                                 };
                                 pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
@@ -575,7 +507,7 @@ pub fn main() !void {
 
         if (cpu.gpu.render_start) { // FIXME: Find a better way to start a render.
             cpu.gpu.render_start = false;
-            try renderer.update(&cpu.gpu.ta_display_lists);
+            try renderer.update(&cpu.gpu);
         }
         renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
 
