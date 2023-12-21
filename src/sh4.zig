@@ -2764,15 +2764,14 @@ test "fipr" {
 fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
 
-    // Note: Very crude implementation (and even probably wrong.)
-    //       Doesn't handle exceptions.
-    // TODO: Vectorize?
+    // Note: Doesn't handle exceptions.
+    // TODO: Improve Vectorization?
 
     const n = opcode.nmd.n & 0b1100;
-    const FVn = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+    const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
     inline for (0..4) |u| {
         const i: u4 = @intCast(u);
-        cpu.FR(n + i).* = cpu.XF(i + 0).* * FVn[0] + cpu.XF(i + 4).* * FVn[1] + cpu.XF(i + 8).* * FVn[2] + cpu.XF(i + 12).* * FVn[3];
+        cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
     }
 }
 
