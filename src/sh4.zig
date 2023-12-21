@@ -7,6 +7,7 @@ const termcolor = @import("termcolor.zig");
 const mmu = @import("./mmu.zig");
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
+const P4MemoryRegister = MemoryRegisters.P4MemoryRegister;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 const syscall = @import("syscall.zig");
@@ -246,37 +247,37 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.io_register(mmu.PTEH, .PTEH).* = .{};
-        self.io_register(mmu.PTEL, .PTEL).* = .{};
-        self.io_register(u32, .TTB).* = 0;
-        self.io_register(u32, .TEA).* = 0;
-        self.io_register(u32, .MMUCR).* = 0;
+        self.p4_register(mmu.PTEH, .PTEH).* = .{};
+        self.p4_register(mmu.PTEL, .PTEL).* = .{};
+        self.p4_register(u32, .TTB).* = 0;
+        self.p4_register(u32, .TEA).* = 0;
+        self.p4_register(u32, .MMUCR).* = 0;
 
-        self.io_register(u32, ._FF000030).* = 0x040205C1;
+        self.p4_register(u32, ._FF000030).* = 0x040205C1;
 
-        self.io_register(u8, .BASRA).* = undefined;
-        self.io_register(u8, .BASRB).* = undefined;
-        self.io_register(u32, .CCR).* = 0;
+        self.p4_register(u8, .BASRA).* = undefined;
+        self.p4_register(u8, .BASRB).* = undefined;
+        self.p4_register(u32, .CCR).* = 0;
 
-        self.io_register(u32, .TRA).* = 0;
-        self.io_register(u32, .EXPEVT).* = 0;
-        self.io_register(u32, .INTEVT).* = 0;
+        self.p4_register(u32, .TRA).* = 0;
+        self.p4_register(u32, .EXPEVT).* = 0;
+        self.p4_register(u32, .INTEVT).* = 0;
 
-        self.io_register(u32, .QACR0).* = undefined;
-        self.io_register(u32, .QACR1).* = undefined;
-        self.io_register(u32, .BARA).* = undefined;
-        self.io_register(u32, .BAMRA).* = undefined;
+        self.p4_register(u32, .QACR0).* = undefined;
+        self.p4_register(u32, .QACR1).* = undefined;
+        self.p4_register(u32, .BARA).* = undefined;
+        self.p4_register(u32, .BAMRA).* = undefined;
 
-        self.io_register(u32, .MCR).* = 0xC0091224;
-        self.io_register(u16, .SDMR).* = 0x00FF;
-        self.io_register(u16, .RTCSR).* = 0xA510;
-        self.io_register(u16, .RTCNT).* = 0xA500;
-        self.io_register(u16, .RTCOR).* = 0xA55E;
-        self.io_register(u16, .RFCR).* = undefined;
+        self.p4_register(u32, .MCR).* = 0xC0091224;
+        self.p4_register(u16, .SDMR).* = 0x00FF;
+        self.p4_register(u16, .RTCSR).* = 0xA510;
+        self.p4_register(u16, .RTCNT).* = 0xA500;
+        self.p4_register(u16, .RTCOR).* = 0xA55E;
+        self.p4_register(u16, .RFCR).* = undefined;
 
-        self.io_register(u32, .BCR1).* = 0;
-        self.io_register(u32, .BCR2).* = 0x3FFC;
-        self.io_register(u32, .PCTRA).* = 0;
+        self.p4_register(u32, .BCR1).* = 0;
+        self.p4_register(u32, .BCR2).* = 0x3FFC;
+        self.p4_register(u32, .PCTRA).* = 0;
 
         self.gpu.reset();
 
@@ -305,19 +306,19 @@ pub const SH4 = struct {
         self.fpul = undefined;
         self.fp_banks = undefined;
 
-        self.io_register(mmu.PTEH, .PTEH).* = .{};
-        self.io_register(mmu.PTEL, .PTEL).* = .{};
-        self.io_register(u32, .TTB).* = 0;
-        self.io_register(u32, .TEA).* = 0;
-        self.io_register(u32, .MMUCR).* = 0;
+        self.p4_register(mmu.PTEH, .PTEH).* = .{};
+        self.p4_register(mmu.PTEL, .PTEL).* = .{};
+        self.p4_register(u32, .TTB).* = 0;
+        self.p4_register(u32, .TEA).* = 0;
+        self.p4_register(u32, .MMUCR).* = 0;
         // BASRA Held
         // BASRB Held
-        self.io_register(u32, .CCR).* = 0;
-        self.io_register(u32, .TRA).* = 0;
-        self.io_register(u32, .EXPEVT).* = 0x00000020;
+        self.p4_register(u32, .CCR).* = 0;
+        self.p4_register(u32, .TRA).* = 0;
+        self.p4_register(u32, .EXPEVT).* = 0x00000020;
         // INTEVT Held
-        self.io_register(u32, .QACR0).* = undefined;
-        self.io_register(u32, .QACR1).* = undefined;
+        self.p4_register(u32, .QACR0).* = undefined;
+        self.p4_register(u32, .QACR1).* = undefined;
         // BARA Held
         // BAMRA Held
 
@@ -468,15 +469,15 @@ pub const SH4 = struct {
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
-    pub fn read_io_register(self: @This(), comptime T: type, r: MemoryRegister) T {
+    pub fn read_p4_register(self: @This(), comptime T: type, r: P4MemoryRegister) T {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000]))).*;
     }
 
-    pub fn io_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
+    pub fn p4_register(self: *@This(), comptime T: type, r: P4MemoryRegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000])));
     }
 
-    pub fn io_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+    pub fn p4_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
         return @as(*T, @alignCast(@ptrCast(&self.area7[(addr & 0x1FFFFFFF) - 0x1C000000])));
     }
 
@@ -518,9 +519,7 @@ pub const SH4 = struct {
     }
 
     fn jump_to_interrupt(self: *@This()) void {
-        std.debug.print(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}\n", .{ self.vbr, self.read_io_register(u32, MemoryRegister.INTEVT) });
-        //if (self.read_io_register(u32, MemoryRegister.INTEVT) == 0x03A0)
-        //self.debug_trace = true;
+        std.debug.print(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}\n", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
 
         self.execution_state = .Running;
         self.spc = self.pc;
@@ -540,7 +539,7 @@ pub const SH4 = struct {
 
         const offset = 0x600; // TODO
         const UserBreak = false; // TODO
-        if (self.read_io_register(MemoryRegisters.BRCR, MemoryRegister.BRCR).ubde == 1 and UserBreak) {
+        if (self.read_p4_register(MemoryRegisters.BRCR, .BRCR).ubde == 1 and UserBreak) {
             self.pc = self.dbr;
         } else {
             self.pc = self.vbr + offset;
@@ -558,7 +557,7 @@ pub const SH4 = struct {
                 // Check it against the cpu interrupt mask
                 if (Interrupts.InterruptLevel[first_set] >= self.sr.imask) {
                     self.interrupt_requests &= ~(@as(u64, 1) << @truncate(first_set)); // Clear the request
-                    self.io_register(u32, MemoryRegister.INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
+                    self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
                     self.jump_to_interrupt();
                 }
             } else if (false) {
@@ -637,7 +636,7 @@ pub const SH4 = struct {
     }
 
     pub fn advance_timers(self: *@This(), cycles: u32) void {
-        const TSTR = self.read_io_register(u32, MemoryRegister.TSTR);
+        const TSTR = self.read_p4_register(u32, .TSTR);
 
         // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
         // (TCNT) for the corresponding channel starts counting. When TCNT underflows, the UNF flag is
@@ -645,15 +644,15 @@ pub const SH4 = struct {
         // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
         // into TCNT, and the count-down continues (auto-reload function).
         const timers = .{
-            .{ .counter = MemoryRegister.TCNT0, .control = MemoryRegister.TCR0, .constant = MemoryRegister.TCOR0, .interrupt = Interrupt.TUNI0 },
-            .{ .counter = MemoryRegister.TCNT1, .control = MemoryRegister.TCR1, .constant = MemoryRegister.TCOR1, .interrupt = Interrupt.TUNI1 },
-            .{ .counter = MemoryRegister.TCNT2, .control = MemoryRegister.TCR2, .constant = MemoryRegister.TCOR2, .interrupt = Interrupt.TUNI2 },
+            .{ .counter = P4MemoryRegister.TCNT0, .control = P4MemoryRegister.TCR0, .constant = P4MemoryRegister.TCOR0, .interrupt = Interrupt.TUNI0 },
+            .{ .counter = P4MemoryRegister.TCNT1, .control = P4MemoryRegister.TCR1, .constant = P4MemoryRegister.TCOR1, .interrupt = Interrupt.TUNI1 },
+            .{ .counter = P4MemoryRegister.TCNT2, .control = P4MemoryRegister.TCR2, .constant = P4MemoryRegister.TCOR2, .interrupt = Interrupt.TUNI2 },
         };
 
         inline for (0..3) |i| {
             if ((TSTR >> @intCast(i)) & 0x1 == 1) {
-                const tcnt = self.io_register(u32, timers[i].counter);
-                const tcr = self.io_register(MemoryRegisters.TCR, timers[i].control);
+                const tcnt = self.p4_register(u32, timers[i].counter);
+                const tcr = self.p4_register(MemoryRegisters.TCR, timers[i].control);
 
                 self.timer_cycle_counter[i] += cycles;
 
@@ -663,7 +662,7 @@ pub const SH4 = struct {
 
                     if (tcnt.* == 0) {
                         tcr.*.unf = 1; // Signals underflow
-                        tcnt.* = self.io_register(u32, timers[i].constant).*; // Reset counter
+                        tcnt.* = self.p4_register(u32, timers[i].constant).*; // Reset counter
                         if (tcr.*.unie == 1)
                             self.request_interrupt(timers[i].interrupt);
                     } else {
@@ -693,10 +692,10 @@ pub const SH4 = struct {
     }
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
-        const asid = self.read_io_register(mmu.PTEH, MemoryRegister.PTEH).asid;
+        const asid = self.read_p4_register(mmu.PTEH, MemoryRegister.PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        const shared_access = self.read_io_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
+        const shared_access = self.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
         var found: ?mmu.UTLBEntry = null;
         for (self.utlb_entries) |entry| {
             if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
@@ -714,7 +713,7 @@ pub const SH4 = struct {
 
     pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
         std.debug.assert(is_p0(virtual_addr) or is_p3(virtual_addr));
-        if (self.read_io_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
+        if (self.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
 
         const entry = try mmu_utlb_match(self, virtual_addr);
 
@@ -902,12 +901,12 @@ pub const SH4 = struct {
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
-                @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
                     return @as(*const u16, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* & 0xF;
                 },
-                @intFromEnum(MemoryRegister.RFCR) => {
+                @intFromEnum(P4MemoryRegister.RFCR) => {
                     // Hack: This is the Refresh Count Register, related to DRAM control.
                     //       If don't think its proper emulation is needed, but it's accessed by the bios,
                     //       probably for synchronization purposes. I assume returning a contant value to pass this check
@@ -916,13 +915,13 @@ pub const SH4 = struct {
                     return 0x0011;
                     // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                 },
-                @intFromEnum(MemoryRegister.PDTRA) => {
+                @intFromEnum(P4MemoryRegister.PDTRA) => {
                     // Note: I have absolutely no idea what's going on here.
                     //       This is directly taken from Flycast, which already got it from Chankast.
                     //       This is needed for the bios to work properly, without it, it will
                     //       go to sleep mode with all interrupts disabled early on.
-                    const tpctra: u32 = self.read_io_register(u32, MemoryRegister.PCTRA);
-                    const tpdtra: u32 = self.read_io_register(u32, MemoryRegister.PDTRA);
+                    const tpctra: u32 = self.read_p4_register(u32, .PCTRA);
+                    const tpdtra: u32 = self.read_p4_register(u32, .PDTRA);
 
                     var tfinal: u16 = 0;
                     if ((tpctra & 0xf) == 0x8) {
@@ -945,7 +944,7 @@ pub const SH4 = struct {
                 },
                 else => {
                     if (self.debug_trace)
-                        std.debug.print("  Read16 to hardware register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                        std.debug.print("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
                             @constCast(&self)._get_memory(addr),
                         ))).* });
                 },
@@ -973,7 +972,7 @@ pub const SH4 = struct {
             switch (virtual_addr) {
                 else => {
                     if (self.debug_trace)
-                        std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                        std.debug.print("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(&self)._get_memory(addr),
                         ))).* });
                 },
@@ -1011,7 +1010,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.debug.print("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                    std.debug.print("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1042,20 +1041,20 @@ pub const SH4 = struct {
 
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
-                @intFromEnum(MemoryRegister.RTCSR), @intFromEnum(MemoryRegister.RTCNT), @intFromEnum(MemoryRegister.RTCOR) => {
+                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
                     std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                     @as(*u16, @alignCast(@ptrCast(
                         self._get_memory(addr),
                     ))).* = 0b10100101_00000000 | (value & 0xFF);
                 },
-                @intFromEnum(MemoryRegister.RFCR) => {
+                @intFromEnum(P4MemoryRegister.RFCR) => {
                     std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                     @as(*u16, @alignCast(@ptrCast(
                         self._get_memory(addr),
                     ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
                 },
                 else => {
-                    std.debug.print("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                    std.debug.print("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1199,31 +1198,31 @@ pub const SH4 = struct {
 
     // FIXME: This should probably not be here.
     pub fn start_ch2_dma(self: *@This()) void {
-        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 1;
+        self.hw_register(u32, .SB_C2DST).* = 1;
 
-        const dst_addr = self.read_hw_register(u32, MemoryRegister.SB_C2DSTAT);
-        const len = self.read_hw_register(u32, MemoryRegister.SB_C2DLEN);
+        const dst_addr = self.read_hw_register(u32, .SB_C2DSTAT);
+        const len = self.read_hw_register(u32, .SB_C2DLEN);
 
-        std.debug.print("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)\n", .{ self.read_io_register(u32, MemoryRegister.SAR2), dst_addr, len });
+        std.debug.print("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)\n", .{ self.read_p4_register(u32, .SAR2), dst_addr, len });
 
         std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
-        self.io_register(u32, MemoryRegister.DAR2).* = dst_addr; // FIXME: Not sure this is correct
+        self.p4_register(u32, .DAR2).* = dst_addr; // FIXME: Not sure this is correct
 
-        const dmac_len = self.read_io_register(u32, MemoryRegister.DMATCR2);
+        const dmac_len = self.read_p4_register(u32, .DMATCR2);
         std.debug.assert(32 * dmac_len == len);
 
         self.start_dmac(2);
 
         // TODO: Schedule for later?
-        self.hw_register(u32, MemoryRegister.SB_C2DSTAT).* += len;
-        self.hw_register(u32, MemoryRegister.SB_C2DLEN).* = 0;
-        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 0;
+        self.hw_register(u32, .SB_C2DSTAT).* += len;
+        self.hw_register(u32, .SB_C2DLEN).* = 0;
+        self.hw_register(u32, .SB_C2DST).* = 0;
 
         self.raise_normal_interrupt(.{ .EoD_CH2 = 1 });
     }
 
     pub fn end_ch2_dma(self: *@This()) void {
-        self.hw_register(u32, MemoryRegister.SB_C2DST).* = 0;
+        self.hw_register(u32, .SB_C2DST).* = 0;
 
         // TODO: Actually cancel the DMA, right now they're instantaneous.
     }
@@ -1231,15 +1230,15 @@ pub const SH4 = struct {
     pub fn start_dmac(self: *@This(), channel: u32) void {
         std.debug.assert(channel == 2); // TODO: Implement others? It is needed?
 
-        const chcr = self.read_io_register(MemoryRegisters.CHCR, .CHCR2);
+        const chcr = self.read_p4_register(MemoryRegisters.CHCR, .CHCR2);
 
         std.debug.print(" CHCR: {any}\n", .{chcr});
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
 
-        const src_addr = self.read_io_register(u32, MemoryRegister.SAR2) & 0x1FFFFFFF;
-        const dst_addr = self.read_io_register(u32, MemoryRegister.DAR2) & 0x1FFFFFFF;
+        const src_addr = self.read_p4_register(u32, .SAR2) & 0x1FFFFFFF;
+        const dst_addr = self.read_p4_register(u32, .DAR2) & 0x1FFFFFFF;
         const transfer_size: u32 = switch (chcr.ts) {
             0 => 8, // Quadword size
             1 => 1, // Byte
@@ -1248,7 +1247,7 @@ pub const SH4 = struct {
             4 => 32, // 32-bytes block
             else => unreachable,
         };
-        const len = self.read_io_register(u32, MemoryRegister.DMATCR2);
+        const len = self.read_p4_register(u32, .DMATCR2);
         const byte_len = transfer_size * len;
 
         const dst_stride: i32 = switch (chcr.dm) {
@@ -1309,10 +1308,10 @@ pub const SH4 = struct {
         // TODO: Schedule for later?
         if (chcr.ie == 1)
             self.request_interrupt(Interrupts.Interrupt.DMTE2);
-        self.io_register(u32, .SAR2).* += len;
-        self.io_register(u32, .DAR2).* += len;
-        self.io_register(u32, .DMATCR2).* = 0;
-        self.io_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
+        self.p4_register(u32, .SAR2).* += len;
+        self.p4_register(u32, .DAR2).* += len;
+        self.p4_register(u32, .DMATCR2).* = 0;
+        self.p4_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
     }
 };
 
@@ -2384,14 +2383,14 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     if (addr & 0xEC000000 == 0xE0000000) {
         // std.debug.print("pref @Rn: Transfer to External Memory from Store Queue\n", .{});
-        if (cpu.read_io_register(mmu.MMUCR, .MMUCR).at == 1) {
+        if (cpu.read_p4_register(mmu.MMUCR, .MMUCR).at == 1) {
             std.debug.print(termcolor.yellow("  MMU ON: Not implemented\n"), .{});
             @panic("pref @Rn with MMU ON: Not implemented");
         } else {
             const sq_addr: StoreQueueAddr = @bitCast(addr);
             std.debug.assert(sq_addr.spec == 0b111000);
             //               The full address also includes the sq bit.
-            const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_io_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
+            const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
             // std.debug.print("  Start Ext Addr: {X:0>8}; Addr: {any}\n", .{ ext_addr, sq_addr });
             inline for (0..8) |i| {
                 cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
@@ -2424,9 +2423,9 @@ fn sett(cpu: *SH4, _: Instr) void {
     cpu.sr.t = true;
 }
 fn sleep(cpu: *SH4, _: Instr) void {
-    const standby_control_register = cpu.read_io_register(u8, MemoryRegister.STBCR);
+    const standby_control_register = cpu.read_p4_register(u8, .STBCR);
     if ((standby_control_register & 0b1000_0000) == 0b1000_0000) {
-        const standby_control_register_2 = cpu.read_io_register(u8, MemoryRegister.STBCR2);
+        const standby_control_register_2 = cpu.read_p4_register(u8, .STBCR2);
         if ((standby_control_register_2 & 0b1000_0000) == 0b1000_0000) {
             cpu.execution_state = .DeepSleep;
         } else {
@@ -3424,25 +3423,25 @@ test "boot" {
     cpu.execute(); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
     try std.testing.expect(cpu.R(0).* == 0x800A0E24);
     cpu.execute(); // mov.l R0, @(1, R3) - Write 0x800A0E24 to MCR
-    try std.testing.expect(cpu.io_register(u32, MemoryRegister.MCR).* == 0x800A0E24);
+    try std.testing.expect(cpu.p4_register(u32, MemoryRegister.MCR).* == 0x800A0E24);
 
     cpu.execute(); // mov.l @(7, R5), R2
     try std.testing.expect(cpu.R(2).* == 0xff940190);
     cpu.execute(); // mov.b R2, @R2
-    try std.testing.expect(cpu.io_register(u8, MemoryRegister.SDMR).* == 0x90);
+    try std.testing.expect(cpu.p4_register(u8, MemoryRegister.SDMR).* == 0x90);
 
     cpu.execute(); // mov 0xFFFFFFA4, R0
     cpu.execute(); // shll8 R0
     cpu.execute(); // mov.w R0, @(12, R3)
-    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RFCR).* == 0xA400);
+    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RFCR).* == 0xA400);
 
     cpu.execute(); // mov.w @(0, R5), R0
     cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCOR).* == 0xA504);
+    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCOR).* == 0xA504);
 
     cpu.execute(); // add H'0c, R0
     cpu.execute(); // mov.w R0, @(6, R3)
-    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCSR).* == 0xA510);
+    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCSR).* == 0xA510);
 
     // while((volatile uint16_t)reg[RFCR] <= 0x0010);
 
@@ -3454,15 +3453,15 @@ test "boot" {
 
     cpu.execute(); // mov.w @(1, R5), R0
     cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.io_register(u16, MemoryRegister.RTCOR).* == 0xa55e);
+    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCOR).* == 0xa55e);
 
     cpu.execute(); // mov.l @(6, R5), R0
     cpu.execute(); // mov.l R0, @(1, R3)
-    try std.testing.expect(cpu.io_register(u32, MemoryRegister.MCR).* == 0xc00a0e24);
+    try std.testing.expect(cpu.p4_register(u32, MemoryRegister.MCR).* == 0xc00a0e24);
 
     cpu.execute(); // mov.b R2, @R2
     cpu.execute(); // mov.l @(1, R5), R1
-    try std.testing.expect(cpu.io_register(u8, MemoryRegister.SDMR).* == 0x90);
+    try std.testing.expect(cpu.p4_register(u8, MemoryRegister.SDMR).* == 0x90);
 
     cpu.execute(); // mov 0x04, R0
     try std.testing.expect(cpu.R(0).* == 0x04);

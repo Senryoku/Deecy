@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const MemoryRegister = enum(u32) {
+pub const P4MemoryRegister = enum(u32) {
     // CCN
     PTEH = 0xFF000000,
     PTEL = 0xFF000004,
@@ -136,9 +136,10 @@ pub const MemoryRegister = enum(u32) {
     DMATCR3 = 0xFFA00038,
     CHCR3 = 0xFFA0003C,
     DMAOR = 0xFFA00040,
+};
 
-    // Dreamcast specific
-
+// Dreamcast specific
+pub const MemoryRegister = enum(u32) {
     ROMChecksum = 0x005F74E4,
 
     SB_C2DSTAT = 0x005F6800,
@@ -328,6 +329,10 @@ pub const MemoryRegister = enum(u32) {
 
 pub fn getRegisterName(addr: u32) []const u8 {
     return std.enums.tagName(MemoryRegister, @as(MemoryRegister, @enumFromInt(addr))) orelse "Unknown";
+}
+
+pub fn getP4RegisterName(addr: u32) []const u8 {
+    return std.enums.tagName(P4MemoryRegister, @as(P4MemoryRegister, @enumFromInt(addr))) orelse "Unknown";
 }
 
 pub const BRCR = packed struct(u16) {
