@@ -877,6 +877,8 @@ pub const Holly = struct {
             }
         }
 
+        // FIXME: Move all of this to its own SPG Module ?
+
         const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
         const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
@@ -920,6 +922,12 @@ pub const Holly = struct {
                 const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
 
                 self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
+
+                // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
+                // FIXME: This has nothing to do here.
+                if (cpu.read_hw_register(u32, .SB_MDEN) & 1 == 1 and cpu.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.*.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
+                    cpu.start_maple_dma();
+                }
 
                 if (spg_status.*.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
                     cpu.raise_normal_interrupt(.{ .VBlankIn = 1 });

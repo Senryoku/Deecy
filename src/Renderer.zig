@@ -179,10 +179,11 @@ pub const Renderer = struct {
 
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
-                //.blend = &wgpu.BlendState{
-                //    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
-                //    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                //},
+                .blend = &wgpu.BlendState{
+                    // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
+                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
+                },
             }};
 
             const vertex_attributes = [_]wgpu.VertexAttribute{
@@ -365,7 +366,6 @@ pub const Renderer = struct {
                     .usage = 0,
                     .size = .{ u_size, v_size },
                 };
-                std.debug.print("[Upload] index: {d}, usize: {d}, vsize: {d}\n", .{ i, u_size, v_size });
                 self._gctx.queue.writeTexture(
                     .{
                         .texture = self._gctx.lookupResource(self.texture_array).?,
@@ -411,7 +411,7 @@ pub const Renderer = struct {
                     gpu.vram[self.texture_metadata[i].control_word.address + 2] != 0xee or
                     gpu.vram[self.texture_metadata[i].control_word.address + 3] != 0x0f)
                 {
-                    std.debug.print("[Renderer] Detected outdated texture #{d}. TODO!\n", .{i});
+                    std.debug.print(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!\n"), .{i});
                 }
             }
         }
@@ -499,9 +499,6 @@ pub const Renderer = struct {
         }
 
         if (vertices.items.len > 0) {
-            //std.debug.print("Vertices: {any}\n", .{vertices.items});
-            //std.debug.print("Indices: {any}\n", .{indices.items});
-
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, vertices.items);
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, indices.items);
 

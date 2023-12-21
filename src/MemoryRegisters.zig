@@ -182,15 +182,15 @@ pub const MemoryRegister = enum(u32) {
     SB_G2DTEXT = 0x005F6954,
 
     // Maple-DMA Control Registers
-    SB_MDSTAR = 0x005F6C04,
-    SB_MDTSEL = 0x005F6C10,
-    SB_MDEN = 0x005F6C14,
-    SB_MDST = 0x005F6C18,
+    SB_MDSTAR = 0x005F6C04, // DMA Command Table Address
+    SB_MDTSEL = 0x005F6C10, // DMA Trigger Selection
+    SB_MDEN = 0x005F6C14, // DMA Enable
+    SB_MDST = 0x005F6C18, // DMA Start / Status
 
     // Maple Interface Block Control Registers
-    SB_MSYS = 0x005F6C80,
-    SB_MST = 0x005F6C84,
-    SB_MSHTCL = 0x005F6C88,
+    SB_MSYS = 0x005F6C80, // Maple System Control
+    SB_MST = 0x005F6C84, // Maple Status
+    SB_MSHTCL = 0x005F6C88, // Maple Status Hard Trigger Clear
 
     // Maple-DMA Secret Register
     SB_MDAPRO = 0x005F6C8C,

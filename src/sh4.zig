@@ -9,9 +9,11 @@ const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
+const syscall = @import("syscall.zig");
+
 const Holly = @import("Holly.zig").Holly;
 const AICA = @import("aica.zig").AICA;
-const syscall = @import("syscall.zig");
+const Maple = @import("maple.zig").MapleHost;
 
 const addr_t = u32;
 const byte_t = u8;
@@ -169,7 +171,9 @@ pub const SH4 = struct {
     area7: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
+    // FIXME: Move these outside
     gpu: Holly = .{},
+    maple: Maple = .{},
 
     _dummy: u32 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 
@@ -459,9 +463,6 @@ pub const SH4 = struct {
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
     }
 
-    pub fn load_IP_bin(self: *@This(), bin: []const u8) void {
-        @memcpy(self.ram[0x8000 .. 0x8000 + bin.len], bin);
-    }
     pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
         const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
@@ -594,9 +595,7 @@ pub const SH4 = struct {
     }
 
     fn check_sb_interrupts(self: *@This()) void {
-
         // FIXME: Not sure if this is the right place to check for those.
-        // FIXME: Also check external interrupts (SB_ISTEXT) and errors (SB_ISTERR)
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
@@ -817,6 +816,17 @@ pub const SH4 = struct {
                 return &self.hardware_registers[addr - 0x005F6800];
             }
 
+            if (addr < 0x00600800) {
+                const static = struct {
+                    var once = false;
+                };
+                if (!static.once) {
+                    static.once = true;
+                    std.debug.print(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
+                }
+                return @ptrCast(&self._dummy);
+            }
+
             if (addr >= 0x00700000 and addr <= 0x00707FE0) {
                 // G2 AICA Register
                 @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
@@ -833,7 +843,7 @@ pub const SH4 = struct {
                 return &aica.wave_memory[addr - 0x00800000];
             }
 
-            std.debug.print("  \u{001B}[33mUnimplemented _get_memory to Area 0: {X:0>8}\u{001B}[0m\n", .{addr});
+            std.debug.print(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
             return @ptrCast(&self._dummy);
         } else if (addr < 0x0800_0000) {
             return self.gpu._get_vram(addr);
@@ -1115,7 +1125,8 @@ pub const SH4 = struct {
                 },
                 @intFromEnum(MemoryRegister.SB_MDST) => {
                     if (value == 1) {
-                        std.debug.print(termcolor.yellow("  Unimplemented Maple-DMA initiation !!\n"), .{});
+                        self.start_maple_dma();
+                        return;
                     }
                 },
                 @intFromEnum(MemoryRegister.SB_ISTNRM) => {
@@ -1171,6 +1182,19 @@ pub const SH4 = struct {
         @as(*u64, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
+    }
+
+    pub fn start_maple_dma(self: *@This()) void {
+        if (self.hw_register(u32, .SB_MDEN).* == 1) {
+            // Note: This is useless since DMA in currently instantaneous, but just in case I need it later...
+            self.hw_register(u32, .SB_MDST).* = 1;
+            defer self.hw_register(u32, .SB_MDST).* = 0;
+
+            std.debug.print(termcolor.yellow("  Incomplete Maple-DMA initiation !!\n"), .{});
+            const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
+            std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
+            self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
+        }
     }
 
     // FIXME: This should probably not be here.
