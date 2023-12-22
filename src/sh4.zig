@@ -785,12 +785,12 @@ pub const SH4 = struct {
             // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
             const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
                 // FIXME: Handle exceptions
-                std.debug.print("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, addr });
+                std.log.err("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m\n", .{ e, addr });
                 unreachable;
             };
 
             if (physical_addr != addr)
-                std.debug.print("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ addr, physical_addr });
+                std.log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ addr, physical_addr });
         }
 
         if (addr < 0x04000000) {
@@ -803,7 +803,7 @@ pub const SH4 = struct {
             }
 
             if (addr < 0x005F6800) {
-                std.debug.print(termcolor.red("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                std.log.err(termcolor.red("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
                 unreachable;
             }
 
@@ -842,13 +842,13 @@ pub const SH4 = struct {
                 return &aica.wave_memory[addr - 0x00800000];
             }
 
-            std.debug.print(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+            std.log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
             return @ptrCast(&self._dummy);
         } else if (addr < 0x0800_0000) {
             return self.gpu._get_vram(addr);
         } else if (addr < 0x0C000000) {
             // Area 2 - Nothing
-            std.debug.print(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
+            std.log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
             unreachable;
         } else if (addr < 0x10000000) {
             // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
@@ -862,12 +862,12 @@ pub const SH4 = struct {
             };
             if (!static.once) {
                 static.once = true;
-                std.debug.print(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
+                std.log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
             }
             return &self.dummy_area5;
         } else if (addr < 0x1C000000) {
             // Area 6 - Nothing
-            std.debug.print(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
+            std.log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
             unreachable;
         } else {
             // Area 7 - Internal I/O registers (same as P4)
@@ -882,17 +882,15 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    if (self.debug_trace)
-                        std.debug.print("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
-                            @constCast(&self)._get_memory(addr),
-                        ))).* });
+                    std.log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
                 },
             }
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (self.debug_trace)
-                std.debug.print("  Read8 to hardware register @{X:0>8} {s} \n", .{ addr, MemoryRegisters.getRegisterName(addr) });
+            std.log.debug("  Read8 to hardware register @{X:0>8} {s} \n", .{ addr, MemoryRegisters.getRegisterName(addr) });
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -948,17 +946,15 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 else => {
-                    if (self.debug_trace)
-                        std.debug.print("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
-                            @constCast(&self)._get_memory(addr),
-                        ))).* });
+                    std.log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
                 },
             }
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (self.debug_trace)
-                std.debug.print("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+            std.log.debug("  Read16 to hardware register @{X:0>8} {s} \n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
         if (addr >= 0x00710000 and addr <= 0x00710008) {
@@ -976,19 +972,17 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    if (self.debug_trace)
-                        std.debug.print("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                            @constCast(&self)._get_memory(addr),
-                        ))).* });
+                    std.log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
                 },
             }
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (self.debug_trace)
-                std.debug.print("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                    @constCast(&self)._get_memory(addr),
-                ))).* });
+            std.log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                @constCast(&self)._get_memory(addr),
+            ))).* });
         }
 
         if (addr >= 0x00700000 and addr <= 0x00707FE0) {
