@@ -126,22 +126,6 @@ pub fn main() !void {
     });
     const texture_view = gctx.createTextureView(texture, .{});
 
-    var vram_texture = gctx.createTexture(.{
-        .usage = .{ .texture_binding = true, .copy_dst = true },
-        .size = .{
-            .width = vram_width,
-            .height = vram_height,
-            .depth_or_array_layers = 1,
-        },
-        .format = zgpu.imageInfoToTextureFormat(
-            4,
-            1,
-            false,
-        ),
-        .mip_level_count = 1,
-    });
-    var vram_texture_view = gctx.createTextureView(vram_texture, .{});
-
     const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
     defer common.GeneralAllocator.free(pixels);
 
@@ -157,10 +141,6 @@ pub fn main() !void {
             gctx.swapchain_descriptor.width,
             gctx.swapchain_descriptor.height,
         );
-
-        // Set the starting window position and size to custom values
-        zgui.setNextWindowPos(.{ .x = 20.0, .y = 20.0, .cond = .first_use_ever });
-        zgui.setNextWindowSize(.{ .w = -1.0, .h = -1.0, .cond = .first_use_ever });
 
         if (zgui.begin("CPU State", .{})) {
             zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ cpu.pc, cpu.spc });
@@ -216,8 +196,41 @@ pub fn main() !void {
             _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
             zgui.sameLine(.{});
             if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
-                try breakpoints.append(@intCast(static.bp_addr));
+                try breakpoints.append(@as(u32, @intCast(static.bp_addr)) & 0x1FFFFFFF);
             }
+        }
+        zgui.end();
+
+        if (zgui.begin("FPU", .{})) {
+            zgui.text("FPUL: {d: >8.2} | {d: >8.2} | {d: >8.2}", .{ @as(f32, @bitCast(cpu.fpul)), cpu.fpul, @as(i32, @bitCast(cpu.fpul)) });
+
+            zgui.spacing();
+
+            zgui.beginGroup();
+            for (0..8) |i| {
+                zgui.text("FR{d: <2}: {d: >12.2}  ", .{ i, cpu.FR(@truncate(i)).* });
+            }
+            zgui.endGroup();
+            zgui.sameLine(.{});
+            zgui.beginGroup();
+            for (8..16) |i| {
+                zgui.text("FR{d: <2}: {d: >12.2}", .{ i, cpu.FR(@truncate(i)).* });
+            }
+            zgui.endGroup();
+
+            zgui.spacing();
+
+            zgui.beginGroup();
+            for (0..8) |i| {
+                zgui.text("XF{d: <2}: {d: >12.2}  ", .{ i, cpu.XF(@truncate(i)).* });
+            }
+            zgui.endGroup();
+            zgui.sameLine(.{});
+            zgui.beginGroup();
+            for (8..16) |i| {
+                zgui.text("XF{d: <2}: {d: >12.2}", .{ i, cpu.XF(@truncate(i)).* });
+            }
+            zgui.endGroup();
         }
         zgui.end();
 
@@ -332,174 +345,39 @@ pub fn main() !void {
                 const tex_id = gctx.lookupResource(renderer_texture_view).?;
                 zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
             }
-
-            if (zgui.collapsingHeader("VRAM", .{})) {
-                const static = struct {
-                    var start: i32 = 0;
-                    var format: i32 = 0x6;
-                    var display_width: i32 = vram_width;
-                    var scale: i32 = 1;
-                    var twiddle: bool = true;
-                };
-
-                const bytes_per_pixels: u32 = if (static.format == 0x6) 4 else 2;
-
-                _ = zgui.inputInt("Start", .{ .v = &static.start, .step = @intCast(bytes_per_pixels * vram_width), .step_fast = @intCast(16 * bytes_per_pixels * vram_width), .flags = .{ .chars_hexadecimal = true } });
-                static.start = @max(0, @min(static.start, @as(i32, @intCast(cpu.gpu.vram.len)) - @as(i32, @intCast(bytes_per_pixels * vram_width * vram_height))));
-                _ = zgui.inputInt("Format", .{ .v = &static.format });
-                static.format = @max(0, @min(static.format, 0x9));
-                if (zgui.inputInt("Width", .{ .v = &static.display_width, .step = 1 })) {
-                    static.display_width = @max(8, @min(static.display_width, vram_width));
-                    gctx.releaseResource(vram_texture);
-                    vram_texture = gctx.createTexture(.{
-                        .usage = .{ .texture_binding = true, .copy_dst = true },
-                        .size = .{
-                            .width = @intCast(static.display_width),
-                            .height = vram_height,
-                            .depth_or_array_layers = 1,
-                        },
-                        .format = zgpu.imageInfoToTextureFormat(
-                            4,
-                            1,
-                            false,
-                        ),
-                        .mip_level_count = 1,
-                    });
-                    gctx.releaseResource(vram_texture_view);
-                    vram_texture_view = gctx.createTextureView(vram_texture, .{});
-                }
-                _ = zgui.inputInt("Scale", .{ .v = &static.scale, .step = 1 });
-                static.scale = @max(1, @min(static.scale, 8));
-                _ = zgui.checkbox("Twiddle", .{ .v = &static.twiddle });
-
-                var start: i32 = static.start;
-                const end: i32 = start + @as(i32, @intCast(bytes_per_pixels * vram_width * vram_height));
-                var i: usize = 0;
-
-                if (static.twiddle) {
-                    for (0..vram_height) |y| {
-                        for (0..vram_width) |x| {
-                            switch (static.format) {
-                                0x0, 0x3 => { // 0555 KRGB 16 bits
-                                    const color: Holly.Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
-                                    };
-                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
-                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
-                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
-                                    pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
-                                },
-                                0x1 => { // 565 RGB 16 bit
-                                    const color: Holly.Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
-                                    };
-                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
-                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
-                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                                    pixels[y * vram_width + x + 3] = 255; // FIXME: Not really.
-                                },
-                                0x2 => { // 4444 ARGB 16 bit
-                                    const color: Holly.Color16 = .{
-                                        .value = @as(*u16, @alignCast(@ptrCast(&cpu.gpu.vram[@as(u32, @intCast(start)) + 2 * RendererModule.zorder_curve(@intCast(x), @intCast(y))]))).*,
-                                    };
-                                    pixels[y * vram_width + x + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
-                                    pixels[y * vram_width + x + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
-                                    pixels[y * vram_width + x + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
-                                    pixels[y * vram_width + x + 3] = @as(u8, @intCast(color.argb4444.a)) << 4;
-                                },
-                                0x6 => {
-                                    pixels[y * vram_width + x + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 3];
-                                    pixels[y * vram_width + x + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 2];
-                                    pixels[y * vram_width + x + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 1];
-                                    pixels[y * vram_width + x + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 4 * RendererModule.zorder_curve(@intCast(x), @intCast(y)) + 0];
-                                },
-                                else => {
-                                    break;
-                                },
-                            }
-                        }
-                    }
-                } else {
-                    while (start < end) {
-                        switch (static.format) {
-                            0x0, 0x3 => { // 0555 KRGB 16 bits
-                                const color: Holly.Color16 = .{
-                                    .value = cpu.gpu.vram[@intCast(start)],
-                                };
-                                pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
-                                pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
-                                pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
-                                pixels[4 * i + 3] = 255; // FIXME: Not really.
-                                start += 4;
-                                i += 1;
-                            },
-                            0x1 => { // 565 RGB 16 bit
-                                const color: Holly.Color16 = .{
-                                    .value = cpu.gpu.vram[@intCast(start)],
-                                };
-                                pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
-                                pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
-                                pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                                pixels[4 * i + 3] = 255; // FIXME: Not really.
-                                start += 4;
-                                i += 1;
-                            },
-                            0x2 => { // 4444 ARGB 16 bit
-                                const color: Holly.Color16 = .{
-                                    .value = cpu.gpu.vram[@intCast(start)],
-                                };
-                                pixels[4 * i + 0] = @as(u8, @intCast(color.argb4444.r)) << 4;
-                                pixels[4 * i + 1] = @as(u8, @intCast(color.argb4444.g)) << 4;
-                                pixels[4 * i + 2] = @as(u8, @intCast(color.argb4444.b)) << 4;
-                                pixels[4 * i + 3] = @as(u8, @intCast(color.argb4444.a)) << 4;
-                                start += 4;
-                                i += 1;
-                            },
-                            // ARGB 32-Bits
-                            0x6 => {
-                                pixels[4 * i + 0] = cpu.gpu.vram[@as(u32, @intCast(start)) + 3];
-                                pixels[4 * i + 1] = cpu.gpu.vram[@as(u32, @intCast(start)) + 2];
-                                pixels[4 * i + 2] = cpu.gpu.vram[@as(u32, @intCast(start)) + 1];
-                                pixels[4 * i + 3] = cpu.gpu.vram[@as(u32, @intCast(start)) + 0];
-                                start += 4;
-                                i += 1;
-                            },
-                            else => {
-                                start = end;
-                            },
-                        }
-                    }
-                }
-
-                gctx.queue.writeTexture(
-                    .{ .texture = gctx.lookupResource(vram_texture).? },
-                    .{
-                        .bytes_per_row = @intCast(4 * static.display_width),
-                        .rows_per_image = vram_height,
-                    },
-                    .{ .width = @intCast(static.display_width), .height = @intCast(vram_height) },
-                    u8,
-                    pixels,
-                );
-                const tex_id = gctx.lookupResource(vram_texture_view).?;
-
-                zgui.image(tex_id, .{ .w = @floatFromInt(static.scale * static.display_width), .h = @floatFromInt(static.scale * vram_height) });
-            }
         }
         zgui.end();
 
         // FIXME: Just testing things, as always!
         const enter = window.getKey(.enter);
         if (enter == .press) {
-            cpu.maple.ports[0].set_inputs(.{ .a = 0 });
+            cpu.maple.ports[0].set_inputs(.{ .start = 0 });
         } else if (enter == .release) {
-            cpu.maple.ports[0].set_inputs(.{ .a = 1 });
+            cpu.maple.ports[0].set_inputs(.{ .start = 1 });
         }
 
         if (running) {
             const start = try std.time.Instant.now();
-            while ((try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms) {
+            // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
+            execution: while ((try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !cpu.gpu.render_start) {
                 cpu.execute();
+
+                // Crude outlier values checking
+                if (false) {
+                    if (std.math.lossyCast(f32, cpu.fpul) >= 4294966000.000) {
+                        std.debug.print("Weird: FPUL = {d}\n", .{std.math.lossyCast(f32, cpu.fpul)});
+                        running = false;
+                        break :execution;
+                    }
+                    for (0..16) |i| {
+                        if (cpu.FR(@intCast(i)).* >= 4294966000.000) {
+                            std.debug.print("Weird: FR({d}) = {d}\n", .{ i, cpu.FR(@intCast(i)).* });
+                            running = false;
+                            break :execution;
+                        }
+                    }
+                }
+
                 const breakpoint = for (breakpoints.items, 0..) |addr, index| {
                     if (addr & 0x1FFFFFFF == cpu.pc & 0x1FFFFFFF) break index;
                 } else null;

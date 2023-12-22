@@ -15,8 +15,8 @@ pub fn zorder_curve(x: u32, y: u32) u32 {
     return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
 }
 
-pub fn to_tiddled_index(i: u32, h: u32) u32 {
-    return zorder_curve(i / h, i % h);
+pub fn to_tiddled_index(i: u32, w: u32) u32 {
+    return zorder_curve(i % w, i / w);
 }
 
 const Vertex = struct {
@@ -45,74 +45,9 @@ const Polygon = struct {
 };
 
 // zig fmt: off
-const wgsl_vs =
-\\  @group(0) @binding(0) var<uniform> conversion_matrix: mat4x4<f32>;
-\\
-\\  struct VertexOut {
-\\      @builtin(position) position_clip: vec4<f32>,
-\\      @location(0) color: vec4<f32>,
-\\      @location(1) uv: vec2<f32>,
-\\      @location(2) @interpolate(flat) tex: u32,
-\\  }
-\\
-\\  @vertex fn main(
-\\      @location(0) position: vec3<f32>,
-\\      @location(1) color: vec4<f32>,
-\\      @location(2) uv: vec2<f32>,
-\\      @location(3) tex: u32,
-\\      @location(4) tex_size: u32,
-\\      @location(5) uv_offset: vec2<f32>, // TODO
-\\  ) -> VertexOut {
-\\      var output: VertexOut;
-\\      
-\\      // output.position_clip = vec4(position, 1.0) * conversion_matrix;
-\\      
-\\      // Positions are supplied in screen space (0..640, 0..480)
-\\      // Convert it to wgpu clip space (-1..1, -1..1)
-\\
-\\      let w = 1.0 / position.z;
-\\
-\\      let screen_size = vec2<f32>(640.0, 480.0); // TODO: Adjust depending on video mode.
-\\      
-\\      output.position_clip.x = position.x * 2.0 / screen_size.x - 1.0;
-\\      output.position_clip.y = position.y * -2.0 / screen_size.y + 1.0;
-\\      output.position_clip.z = 0.0; //position.z; // Core doesn't have a depth buffer
-\\      output.position_clip.w = 1.0;
-\\
-\\      // Should we undo the projection? Not if we set w to 1.0, I think.
-\\      // output.position_clip.w = w;
-\\      // output.position_clip.x *= w;
-\\      // output.position_clip.y *= w;
-\\
-\\      output.color = color;
-\\      if(tex == 0xFFFFFFFF) {
-\\          output.uv = vec2<f32>(0, 0);
-\\      } else {
-\\          output.uv = uv / (1024.0 / f32(tex_size));
-\\      }
-\\      output.tex = tex;
-\\
-\\      return output;
-\\  }
-;
-const wgsl_fs =
-\\  @group(0) @binding(1) var texture_array: texture_2d_array<f32>;
-\\  @group(0) @binding(2) var image_sampler: sampler;
-\\
-\\  @fragment fn main(
-\\      @location(0) color: vec4<f32>,
-\\      @location(1) uv: vec2<f32>,
-\\      @location(2) @interpolate(flat) tex: u32,
-\\  ) -> @location(0) vec4<f32> {
-\\      let tex_color = textureSample(texture_array, image_sampler, uv, tex);
-\\      if(tex != 0xFFFFFFFF) {
-\\          return tex_color;
-\\      } else {
-\\          return color;
-\\      }
-\\  }
+const wgsl_vs = @embedFile("./shaders/vs.wgsl");
+const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 // zig fmt: on
-;
 
 // TODO: Pack smaller textures into an Atlas.
 
@@ -333,7 +268,7 @@ pub const Renderer = struct {
         switch (texture_control_word.pixel_format) {
             .ARGB1555 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), v_size) else i;
+                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
                     pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.r) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
@@ -341,9 +276,19 @@ pub const Renderer = struct {
                     pixels[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
                 }
             },
+            .RGB565 => {
+                for (0..(@as(u32, u_size) * v_size)) |i| {
+                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
+                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.r) << 3;
+                    pixels[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
+                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.b) << 3;
+                    pixels[i * 4 + 3] = 255;
+                }
+            },
             .ARGB4444 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), v_size) else i;
+                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
                     pixels[i * 4 + 0] = @as(u8, pixel.argb4444.r) << 4;
                     pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
@@ -441,6 +386,14 @@ pub const Renderer = struct {
                     self.texture_metadata[tex_idx].usage += 1;
                 }
 
+                const clamp_uv = global_parameter.tsp_instruction.clamp_uv == 1;
+
+                const flip_u = global_parameter.tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
+                const flip_v = (global_parameter.tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
+                if (flip_u or flip_v) {
+                    std.debug.print(termcolor.yellow("[Renderer] TODO: Flip UV!\n"), .{});
+                }
+
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
                     switch (vertex) {
                         .Type0 => |v| {
@@ -473,8 +426,24 @@ pub const Renderer = struct {
                                 .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },
+                        // TODO: Intensity
+                        .Type7 => |v| {
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
+                                .g = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
+                                .b = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
+                                .a = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
+                                .u = v.u,
+                                .v = v.v,
+                                .tex = tex_idx,
+                                .tex_size = self.texture_metadata[tex_idx].size,
+                            });
+                        },
                         else => {
-                            std.debug.print(termcolor.red("[Holly] Unsupported vertex type {any}\n"), .{vertex});
+                            std.debug.print(termcolor.red("[Renderer] Unsupported vertex type {any}\n"), .{vertex});
                             @panic("Unsupported vertex type");
                         },
                     }
