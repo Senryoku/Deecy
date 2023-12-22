@@ -78,9 +78,13 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "src/interpreter_perf.zig" },
         .target = target,
-        .optimize = optimize,
+        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
-    b.installArtifact(interpreter_perf);
+    const run_perf_tests = b.addRunArtifact(interpreter_perf);
+    const perf_step = b.step("perf", "Run performance tests");
+    perf_step.dependOn(&run_perf_tests.step);
+
+    // ----- Tests ------
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.

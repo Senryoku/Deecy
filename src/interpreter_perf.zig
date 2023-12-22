@@ -19,10 +19,11 @@ pub fn main() !void {
     _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
     syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
 
+    const steps = 100_000_000;
     const start = try std.time.Instant.now();
-    for (0..100_000_000) |_| {
+    for (0..steps) |_| {
         cpu.execute();
     }
     const elapsed = (try std.time.Instant.now()).since(start);
-    std.debug.print("{} ms\n", .{elapsed / std.time.ns_per_ms});
+    std.debug.print("Ran {d} instructions in {} ms\n", .{ steps, elapsed / std.time.ns_per_ms });
 }

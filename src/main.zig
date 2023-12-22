@@ -26,8 +26,9 @@ pub const log_level: std.log.Level = .info;
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
 
-    var load_binary = false;
     var binary_path: ?[]const u8 = null;
+
+    var gdi_path: ?[]const u8 = null;
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -38,8 +39,15 @@ pub fn main() !void {
                 std.debug.print(termcolor.red("Expected path to binary file after -b.\n"), .{});
                 return;
             }
-            load_binary = true;
             binary_path = v.?;
+        }
+        if (std.mem.eql(u8, arg, "-g")) {
+            const v = args.next();
+            if (v == null) {
+                std.debug.print(termcolor.red("Expected path to GDI file after -g.\n"), .{});
+                return;
+            }
+            gdi_path = v.?;
         }
     }
 
@@ -49,21 +57,17 @@ pub fn main() !void {
     var gdrom = &syscall.gdrom; // FIXME
     defer gdrom.disk.deinit();
 
-    if (load_binary) {
+    if (binary_path != null) {
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
         _ = try bin_file.readAll(cpu.ram[0x10000..]);
 
         cpu.init_boot();
         cpu.pc = 0xAC010000;
-    } else {
+    } else if (gdi_path != null) {
         cpu.init_boot();
 
-        //try gdrom.disk.init("./bin/[GDI] Virtua Tennis (EU)/Virtua Tennis v1.001 (2000)(Sega)(PAL)(M4)[!].gdi", common.GeneralAllocator);
-        //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
-        try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-        //try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
-        //try gdrom.disk.init("./bin/Legacy of Kain - Soul Reaver (PAL)(FR)/Legacy of Kain - Soul Reaver v1.000 (1999)(Eidos)(PAL)(FR)[!].gdi", common.GeneralAllocator); // Seems to be waiting for the GDRom, which is not yet implemented :(
+        try gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
