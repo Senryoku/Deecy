@@ -1,16 +1,14 @@
 #
 
-## Plan
- - Skip bios by setting a equivalent state
- - Load IP.bin
- - Continue from there.
+## Notes
+ - Some games (i.e. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
 
 
 ## Some sources
  - http://www.shared-ptr.com/sh_insns.html
  - https://www.renesas.com/us/en/document/mas/sh-4-software-manual / h14th002d2.pdf
  - DreamcastDevBoxSystemArchitecture.pdf
- - https://mc.pp.se/dc/
+ - Dreamcast Programming by Marcus Comstedt : https://mc.pp.se/dc/
  - Boot ROM disassembly by Lars Olsson (https://lars-olsson.sizious.com/, originally https://www.ludd.ltu.se/~jlo/dc/)
  
  - Reicast https://github.com/skmp/reicast-emulator
