@@ -139,7 +139,8 @@ const VMUCapabilities: FunctionCodesMask = .{
     .timer = 1,
 };
 
-const ControllerButtons = packed struct(u16) {
+// NOTE: 0 = Pressed!
+pub const ControllerButtons = packed struct(u16) {
     _0: u1 = 1,
 
     b: u1 = 1,
@@ -169,9 +170,11 @@ const MaplePort = struct {
 
     // FIXME: Not every peripheral is a controller :)
     buttons: ControllerButtons = .{},
-    // TODO: Add axis.
-    pub fn set_inputs(self: *@This(), buttons: ControllerButtons) void {
-        self.buttons = buttons;
+    pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
+        self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) & @as(u16, @bitCast(buttons)));
+    }
+    pub fn release_buttons(self: *@This(), buttons: ControllerButtons) void {
+        self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
     pub fn handle_command(self: *@This(), cpu: *SH4, data: [*]u32) u32 {
@@ -180,7 +183,7 @@ const MaplePort = struct {
 
         const command: CommandWord = @bitCast(data[1]);
 
-        std.debug.print("    Command: {any}\n", .{command});
+        std.log.debug("    Command: {any}\n", .{command});
 
         // Note: The sender address should also include the sub-peripheral bit when appropriate.
         var sender_address = command.recipent_address;
@@ -210,11 +213,11 @@ const MaplePort = struct {
                     .GetCondition => {
                         cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 2 }));
                         // TODO: Write some actual input data!
-                        cpu.write32(return_addr + 4, 0xFFFFFFFF & (@as(u32, @as(u16, @bitCast(self.buttons))) << 16));
+                        cpu.write32(return_addr + 4, 0xFFFFFFFF & ~(@as(u32, ~@as(u16, @bitCast(self.buttons))) << 16));
                         cpu.write32(return_addr + 8, 0xFFFFFFFF);
                     },
                     else => {
-                        std.debug.print(termcolor.yellow("[Maple] Unimplemented command: {}\n"), .{command.command});
+                        std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}\n"), .{command.command});
                         cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }
@@ -226,7 +229,7 @@ const MaplePort = struct {
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = StandardControllerCapabilities }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
+    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = .{ .controller = 1 }, .subcapabilities = .{ StandardControllerCapabilities, .{}, .{} } }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
 
     pub fn init() MapleHost {
         return .{};
@@ -246,7 +249,7 @@ pub const MapleHost = struct {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            std.debug.print("    Instruction: {any}\n", .{instr});
+            std.log.debug("    Instruction: {any}\n", .{instr});
 
             switch (instr.pattern) {
                 .Normal => {
@@ -254,7 +257,7 @@ pub const MapleHost = struct {
                 },
                 .NOP, .RESET => {},
                 else => {
-                    std.debug.print(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D\n"), .{instr.pattern});
+                    std.log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D\n"), .{instr.pattern});
                 },
             }
 

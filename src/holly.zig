@@ -959,21 +959,21 @@ pub const Holly = struct {
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (addr) {
             @intFromEnum(HollyRegister.SOFTRESET) => {
-                std.debug.print("[Holly] TODO SOFTRESET: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO SOFTRESET: {X:0>8}\n", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
-                    std.debug.print(termcolor.yellow("[Holly]   TODO: Tile Accelerator Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: Tile Accelerator Soft Reset\n"), .{});
                 }
                 if (sr.PipelineSoftReset == 1) {
-                    std.debug.print(termcolor.yellow("[Holly]   TODO: Pipeine Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: Pipeine Soft Reset\n"), .{});
                 }
                 if (sr.SDRAMInterfaceSoftReset == 1) {
-                    std.debug.print(termcolor.yellow("[Holly]   TODO: SDRAM Interface Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: SDRAM Interface Soft Reset\n"), .{});
                 }
                 return;
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
-                std.debug.print(termcolor.green("[Holly] STARTRENDER!\n"), .{});
+                std.log.info(termcolor.green("[Holly] STARTRENDER!\n"), .{});
 
                 self.render_start = true;
 
@@ -983,7 +983,7 @@ pub const Holly = struct {
             },
             @intFromEnum(HollyRegister.TA_LIST_INIT) => {
                 if (v == 0x80000000) {
-                    std.debug.print("[Holly] TODO TA_LIST_INIT: {X:0>8}\n", .{v});
+                    std.log.debug("[Holly] TA_LIST_INIT: {X:0>8}\n", .{v});
                     if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
                         self._get_register(u32, .TA_NEXT_OPB).* = self._get_register(u32, .TA_NEXT_OPB_INIT).*;
                         self._get_register(u32, .TA_ITP_CURRENT).* = self._get_register(u32, .TA_ISP_BASE).*;
@@ -994,13 +994,13 @@ pub const Holly = struct {
                 }
             },
             @intFromEnum(HollyRegister.TA_LIST_CONT) => {
-                std.debug.print("[Holly] TODO TA_LIST_CONT: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO TA_LIST_CONT: {X:0>8}\n", .{v});
             },
             @intFromEnum(HollyRegister.SPG_CONTROL), @intFromEnum(HollyRegister.SPG_LOAD) => {
-                std.debug.print("[Holly] TODO SPG_CONTROL/SPG_LOAD: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO SPG_CONTROL/SPG_LOAD: {X:0>8}\n", .{v});
             },
             else => {
-                std.debug.print("[Holly] Write to Register: @{X:0>8} {s} = {X:0>8}\n", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
+                std.log.debug("[Holly] Write to Register: @{X:0>8} {s} = {X:0>8}\n", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
             },
         }
         self._get_register_from_addr(u32, addr).* = v;
@@ -1041,7 +1041,8 @@ pub const Holly = struct {
         if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 bytes or 16 bytes long
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
-        std.debug.print("    Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+        // std.debug.print("    Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+
         switch (parameter_control_word.parameter_type) {
             .EndOfList => {
                 if (self._ta_list_type != null) { // Apprently this happens?... Why would a game do this?
@@ -1193,7 +1194,7 @@ pub const Holly = struct {
                 }
 
                 if (parameter_control_word.end_of_strip == 1) {
-                    std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
+                    // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
 
@@ -1212,7 +1213,7 @@ pub const Holly = struct {
     }
 
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
-        std.debug.print("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})\n", .{ addr, value.len });
+        std.log.info("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})\n", .{ addr, value.len });
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
@@ -1230,13 +1231,13 @@ pub const Holly = struct {
         if (local_addr < 0x0080_0000) { // 64-bit access area
             return &self.vram[local_addr];
         } else if (local_addr < 0x0100_0000) { // Unused
-            std.debug.print(termcolor.red("  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
+            std.debug.print(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
             //return &self.vram[0];
         } else if (local_addr < 0x0180_0000) { // 32-bit access area
             return &self.vram[local_addr - 0x0100_0000];
         } else { // Unused
-            std.debug.print(termcolor.red("  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
+            std.debug.print(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
             //return &self.vram[0];
         }

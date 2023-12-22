@@ -519,7 +519,7 @@ pub const SH4 = struct {
     }
 
     fn jump_to_interrupt(self: *@This()) void {
-        std.debug.print(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}\n", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
+        std.log.debug(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}\n", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
 
         self.execution_state = .Running;
         self.spc = self.pc;
@@ -589,7 +589,7 @@ pub const SH4 = struct {
     }
 
     fn request_interrupt(self: *@This(), int: Interrupt) void {
-        std.debug.print(" (Interrupt request! {s})\n", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
+        std.log.debug(" (Interrupt request! {s})\n", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
     }
 
@@ -1015,7 +1015,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.debug.print("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    std.log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1025,7 +1025,7 @@ pub const SH4 = struct {
             // Hardware registers
             switch (addr) {
                 else => {
-                    std.debug.print("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    std.log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1059,7 +1059,7 @@ pub const SH4 = struct {
                     ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
                 },
                 else => {
-                    std.debug.print("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    std.log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1067,7 +1067,7 @@ pub const SH4 = struct {
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
                 else => {
-                    std.debug.print("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    std.log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1100,7 +1100,7 @@ pub const SH4 = struct {
             if (virtual_addr >= 0xFF000000) {
                 switch (virtual_addr) {
                     else => {
-                        std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                        std.log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                     },
                 }
             }
@@ -1135,12 +1135,12 @@ pub const SH4 = struct {
                 },
                 @intFromEnum(MemoryRegister.SB_ISTNRM) => {
                     // Interrupt can be cleared by writing "1" to the corresponding bit.
-                    self.hw_register(u32, MemoryRegister.SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                    self.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
                     return;
                 },
                 @intFromEnum(MemoryRegister.SB_ISTERR) => {
                     // Interrupt can be cleared by writing "1" to the corresponding bit.
-                    self.hw_register(u32, MemoryRegister.SB_ISTERR).* &= ~value;
+                    self.hw_register(u32, .SB_ISTERR).* &= ~value;
                     return;
                 },
                 @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
@@ -1156,7 +1156,7 @@ pub const SH4 = struct {
                     return;
                 },
                 else => {
-                    std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    std.log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1194,7 +1194,7 @@ pub const SH4 = struct {
             self.hw_register(u32, .SB_MDST).* = 1;
             defer self.hw_register(u32, .SB_MDST).* = 0;
 
-            std.debug.print(termcolor.yellow("  Incomplete Maple-DMA initiation !!\n"), .{});
+            std.log.info(termcolor.yellow("  Maple-DMA initiation!\n"), .{});
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
             self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
@@ -1208,7 +1208,7 @@ pub const SH4 = struct {
         const dst_addr = self.read_hw_register(u32, .SB_C2DSTAT);
         const len = self.read_hw_register(u32, .SB_C2DLEN);
 
-        std.debug.print("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)\n", .{ self.read_p4_register(u32, .SAR2), dst_addr, len });
+        std.log.info("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)\n", .{ self.read_p4_register(u32, .SAR2), dst_addr, len });
 
         std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
         self.p4_register(u32, .DAR2).* = dst_addr; // FIXME: Not sure this is correct
@@ -1237,7 +1237,8 @@ pub const SH4 = struct {
 
         const chcr = self.read_p4_register(MemoryRegisters.CHCR, .CHCR2);
 
-        std.debug.print(" CHCR: {any}\n", .{chcr});
+        std.log.debug(" CHCR: {any}\n", .{chcr});
+
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
@@ -3467,25 +3468,25 @@ test "boot" {
     cpu.execute(); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
     try std.testing.expect(cpu.R(0).* == 0x800A0E24);
     cpu.execute(); // mov.l R0, @(1, R3) - Write 0x800A0E24 to MCR
-    try std.testing.expect(cpu.p4_register(u32, MemoryRegister.MCR).* == 0x800A0E24);
+    try std.testing.expect(cpu.p4_register(u32, .MCR).* == 0x800A0E24);
 
     cpu.execute(); // mov.l @(7, R5), R2
     try std.testing.expect(cpu.R(2).* == 0xff940190);
     cpu.execute(); // mov.b R2, @R2
-    try std.testing.expect(cpu.p4_register(u8, MemoryRegister.SDMR).* == 0x90);
+    try std.testing.expect(cpu.p4_register(u8, .SDMR).* == 0x90);
 
     cpu.execute(); // mov 0xFFFFFFA4, R0
     cpu.execute(); // shll8 R0
     cpu.execute(); // mov.w R0, @(12, R3)
-    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RFCR).* == 0xA400);
+    try std.testing.expect(cpu.p4_register(u16, .RFCR).* == 0xA400);
 
     cpu.execute(); // mov.w @(0, R5), R0
     cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCOR).* == 0xA504);
+    try std.testing.expect(cpu.p4_register(u16, .RTCOR).* == 0xA504);
 
     cpu.execute(); // add H'0c, R0
     cpu.execute(); // mov.w R0, @(6, R3)
-    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCSR).* == 0xA510);
+    try std.testing.expect(cpu.p4_register(u16, .RTCSR).* == 0xA510);
 
     // while((volatile uint16_t)reg[RFCR] <= 0x0010);
 
@@ -3497,15 +3498,15 @@ test "boot" {
 
     cpu.execute(); // mov.w @(1, R5), R0
     cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.p4_register(u16, MemoryRegister.RTCOR).* == 0xa55e);
+    try std.testing.expect(cpu.p4_register(u16, .RTCOR).* == 0xa55e);
 
     cpu.execute(); // mov.l @(6, R5), R0
     cpu.execute(); // mov.l R0, @(1, R3)
-    try std.testing.expect(cpu.p4_register(u32, MemoryRegister.MCR).* == 0xc00a0e24);
+    try std.testing.expect(cpu.p4_register(u32, .MCR).* == 0xc00a0e24);
 
     cpu.execute(); // mov.b R2, @R2
     cpu.execute(); // mov.l @(1, R5), R1
-    try std.testing.expect(cpu.p4_register(u8, MemoryRegister.SDMR).* == 0x90);
+    try std.testing.expect(cpu.p4_register(u8, .SDMR).* == 0x90);
 
     cpu.execute(); // mov 0x04, R0
     try std.testing.expect(cpu.R(0).* == 0x04);

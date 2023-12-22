@@ -1,5 +1,5 @@
 
- @group(0) @binding(0) var<uniform> conversion_matrix: mat4x4<f32>;
+ @group(0) @binding(0) var<uniform> max_depth: vec4<f32>;
  
 struct VertexOut {
      @builtin(position) position_clip: vec4<f32>,
@@ -29,7 +29,7 @@ fn main(
     output.position_clip.x = position.x * 2.0 / screen_size.x - 1.0;
     output.position_clip.y = position.y * -2.0 / screen_size.y + 1.0;
 
-    output.position_clip.z = position.z;
+    output.position_clip.z = (1.0 - position.z); // / max_depth; // IDK, polygons are supposed to be sorted by the CPU or the TA
     output.position_clip.w = 1.0;
 
      // Should we undo the projection? Not if we set w to 1.0, I think.

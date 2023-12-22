@@ -7,6 +7,7 @@ const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const GDI = @import("./GDI.zig").GDI;
 const Holly = @import("./holly.zig");
+const MapleModule = @import("./maple.zig");
 
 const zgui = @import("zgui");
 const zgpu = @import("zgpu");
@@ -19,6 +20,8 @@ const assets_dir = "assets/";
 
 // FIXME
 const syscall = @import("syscall.zig");
+
+pub const log_level: std.log.Level = .info;
 
 pub fn main() !void {
     std.debug.print("\r  == Katana ==                             \n", .{});
@@ -60,6 +63,7 @@ pub fn main() !void {
         //try gdrom.disk.init("./bin/[GDI] ChuChu Rocket!/ChuChu Rocket! v1.007 (2000)(Sega)(NTSC)(US)(en-ja)[!].gdi", common.GeneralAllocator);
         try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
         //try gdrom.disk.init("./bin/GigaWing (USA)/GigaWing v1.000 (2000)(Capcom)(US)[!].gdi", common.GeneralAllocator);
+        //try gdrom.disk.init("./bin/Legacy of Kain - Soul Reaver (PAL)(FR)/Legacy of Kain - Soul Reaver v1.000 (1999)(Eidos)(PAL)(FR)[!].gdi", common.GeneralAllocator); // Seems to be waiting for the GDRom, which is not yet implemented :(
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
@@ -262,18 +266,26 @@ pub fn main() !void {
         }
         zgui.end();
 
-        if (zgui.begin("VRAM", .{})) {
-            const FB_W_CTRL: u32 = cpu.read32(0x005F8048);
-            const FB_W_SOF1: u32 = cpu.read32(0x005F8060);
-            const FB_W_SOF2: u32 = cpu.read32(0x005F8064);
+        if (zgui.begin("Holly", .{})) {
+            const ISP_BACKGND_D = cpu.gpu._get_register(u32, .ISP_BACKGND_D).*;
+            zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
+
+            const FB_W_CTRL: u32 = cpu.gpu._get_register(u32, .FB_W_CTRL).*;
+            const FB_W_SOF1: u32 = cpu.gpu._get_register(u32, .FB_W_SOF1).*;
+            const FB_W_SOF2: u32 = cpu.gpu._get_register(u32, .FB_W_SOF2).*;
             zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
             zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
 
             if (zgui.collapsingHeader("Framebuffer?", .{})) {
-                var start: u32 = 0x05200000;
+                const static = struct {
+                    var start_addr: i32 = 0x04200000;
+                };
+                _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = vram_width * vram_height, .flags = .{ .chars_hexadecimal = true } });
                 const bytes_per_pixels: u32 = if (FB_W_CTRL & 0b111 == 0x6) 4 else 2;
-                const end = start + bytes_per_pixels * vram_width * vram_height;
+                var start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
+                const end = std.math.clamp(start + bytes_per_pixels * vram_width * vram_height, 0x04000000, 0x04800000);
+                zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
                 var i: usize = 0;
                 while (start < end) {
                     switch (FB_W_CTRL & 0b111) {
@@ -285,7 +297,7 @@ pub fn main() !void {
                             pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
                             pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 4;
+                            start += 2;
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
@@ -296,7 +308,7 @@ pub fn main() !void {
                             pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
                             pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 4;
+                            start += 2;
                             i += 1;
                         },
                         // ARGB 32-Bits
@@ -310,6 +322,7 @@ pub fn main() !void {
                         },
                         else => {
                             start = end;
+                            zgui.text("Unsupported packed format: FB_W_CTRL: 0x{X:0>1}", .{FB_W_CTRL & 0b111});
                         },
                     }
                 }
@@ -349,11 +362,22 @@ pub fn main() !void {
         zgui.end();
 
         // FIXME: Just testing things, as always!
-        const enter = window.getKey(.enter);
-        if (enter == .press) {
-            cpu.maple.ports[0].set_inputs(.{ .start = 0 });
-        } else if (enter == .release) {
-            cpu.maple.ports[0].set_inputs(.{ .start = 1 });
+        const keybinds: [7]struct { zglfw.Key, MapleModule.ControllerButtons } = .{
+            .{ .enter, .{ .start = 0 } },
+            .{ .up, .{ .up = 0 } },
+            .{ .down, .{ .down = 0 } },
+            .{ .left, .{ .left = 0 } },
+            .{ .right, .{ .right = 0 } },
+            .{ .q, .{ .a = 0 } },
+            .{ .w, .{ .b = 0 } },
+        };
+        for (keybinds) |keybind| {
+            const key_status = window.getKey(keybind[0]);
+            if (key_status == .press) {
+                cpu.maple.ports[0].press_buttons(keybind[1]);
+            } else if (key_status == .release) {
+                cpu.maple.ports[0].release_buttons(keybind[1]);
+            }
         }
 
         if (running) {

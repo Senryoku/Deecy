@@ -97,13 +97,13 @@ pub const AICA = struct {
         const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
         const len = len_reg & 0x7FFFFFFF;
         const direction = cpu.read_hw_register(u32, .SB_ADDIR);
-        std.debug.print(" AICA G2-DMA Start!\n", .{});
-        std.debug.print("   AICA Address: 0x{X:0>8}\n", .{aica_addr});
-        std.debug.print("   Root Bus Address: 0x{X:0>8}\n", .{root_bus_addr});
-        std.debug.print("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
-        std.debug.print("   Direction: 0x{X:0>8}\n", .{direction});
-        std.debug.print("   Trigger Select: 0x{X:0>8}\n", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
-        std.debug.print("   Enable: 0x{X:0>8}\n", .{enabled});
+        std.log.info(" AICA G2-DMA Start!\n", .{});
+        std.log.debug("   AICA Address: 0x{X:0>8}\n", .{aica_addr});
+        std.log.debug("   Root Bus Address: 0x{X:0>8}\n", .{root_bus_addr});
+        std.log.debug("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
+        std.log.debug("   Direction: 0x{X:0>8}\n", .{direction});
+        std.log.debug("   Trigger Select: 0x{X:0>8}\n", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
+        std.log.debug("   Enable: 0x{X:0>8}\n", .{enabled});
 
         const physical_root_addr = cpu._get_memory(root_bus_addr);
         const physical_aica_addr = cpu._get_memory(aica_addr);

@@ -83,6 +83,7 @@ pub const Renderer = struct {
     depth_texture_view: zgpu.TextureViewHandle,
 
     index_count: u32,
+    max_depth: f32 = 1.0,
 
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
@@ -177,7 +178,7 @@ pub const Renderer = struct {
         const texture_array_view = gctx.createTextureView(texture_array, .{});
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * 4 * @sizeOf(f32) },
+            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(f32) },
             .{ .binding = 1, .texture_view_handle = texture_array_view },
             .{ .binding = 2, .sampler_handle = sampler },
         });
@@ -189,7 +190,7 @@ pub const Renderer = struct {
 
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = 4096 * @sizeOf(u32), // FIXME: Arbitrary size for testing
+            .size = 16384 * @sizeOf(u32), // FIXME: Arbitrary size for testing
         });
 
         // Create a depth texture and its 'view'.
@@ -394,6 +395,8 @@ pub const Renderer = struct {
                     std.debug.print(termcolor.yellow("[Renderer] TODO: Flip UV!\n"), .{});
                 }
 
+                self.max_depth = 0;
+
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
                     switch (vertex) {
                         .Type0 => |v| {
@@ -447,6 +450,8 @@ pub const Renderer = struct {
                             @panic("Unsupported vertex type");
                         },
                     }
+
+                    self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
                 }
 
                 try indices.append(start + 0);
@@ -525,18 +530,9 @@ pub const Renderer = struct {
 
                 pass.setPipeline(pipeline);
 
-                // We could use this matrix to convert our coordinates.
-                // TODO: Try it out when I already have a first working version.
-                const convert: [16]f32 = .{
-                    1.0, 0.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0, 0.0,
-                    0.0, 0.0, 1.0, 0.0,
-                    0.0, 0.0, 0.0, 1.0,
-                };
-
                 {
-                    const mem = gctx.uniformsAllocate([4 * 4]f32, 1);
-                    mem.slice[0] = convert;
+                    const mem = gctx.uniformsAllocate([4]f32, 1);
+                    mem.slice[0][0] = self.max_depth;
 
                     pass.setBindGroup(0, bind_group, &.{mem.offset});
                     pass.drawIndexed(self.index_count, 1, 0, 0, 0);
