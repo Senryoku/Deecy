@@ -414,6 +414,22 @@ pub const Renderer = struct {
                                 .tex_size = .{ 0, 0 },
                             });
                         },
+                        // Non-Textured, Floating Color
+                        .Type1 => |v| {
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = v.r,
+                                .g = v.g,
+                                .b = v.b,
+                                .a = v.a,
+                                .u = 0.0,
+                                .v = 0.0,
+                                .tex = TextureMetadata.Unused,
+                                .tex_size = .{ 0, 0 },
+                            });
+                        },
                         .Type3 => |v| {
                             try vertices.append(.{
                                 .x = v.x,
