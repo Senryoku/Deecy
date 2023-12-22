@@ -848,21 +848,26 @@ pub const SH4 = struct {
             return self.gpu._get_vram(addr);
         } else if (addr < 0x0C000000) {
             // Area 2 - Nothing
-            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 2: {X:0>8}\u{001B}[0m\n", .{addr});
+            std.debug.print(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
             unreachable;
         } else if (addr < 0x10000000) {
             // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
             return &self.ram[addr & 0x00FFFFFF];
-        } else if (addr < 0x14000000) {
-            // Area 4 - Tile accelerator command input
+        } else if (addr < 0x14000000) { // Area 4 - Tile accelerator command input
             @panic("Unexpected _get_memory to Area 4 - This should only be accessible via write32 or DMA.");
         } else if (addr < 0x18000000) {
             // Area 5 - Expansion (modem) port
-            std.debug.print("\u{001B}[33mUnimplemented _get_memory to Area 5: {X:0>8}\u{001B}[0m\n", .{addr});
+            const static = struct {
+                var once = false;
+            };
+            if (!static.once) {
+                static.once = true;
+                std.debug.print(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
+            }
             return &self.dummy_area5;
         } else if (addr < 0x1C000000) {
             // Area 6 - Nothing
-            std.debug.print("\u{001B}[31mInvalid _get_memory to Area 6: {X:0>8}\u{001B}[0m\n", .{addr});
+            std.debug.print(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
             unreachable;
         } else {
             // Area 7 - Internal I/O registers (same as P4)
