@@ -110,9 +110,9 @@ pub fn is_p4(addr: addr_t) bool {
 pub const Instr = packed union {
     value: u16,
     // Reminder: We're in little endian.
-    nmd: packed struct { d: u4, m: u4, n: u4, _: u4 },
-    nd8: packed struct { d: u8, n: u4, _: u4 },
-    d12: packed struct { d: u12, _: u4 },
+    nmd: packed struct { d: u4, m: u4, n: u4, _: u4 = undefined },
+    nd8: packed struct { d: u8, n: u4, _: u4 = undefined },
+    d12: packed struct { d: u12, _: u4 = undefined },
 };
 
 comptime {
@@ -1565,8 +1565,40 @@ fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
-    // FIXME: Not such about the signed arithmetic here.
     cpu.R(opcode.nd8.n).* = @bitCast(@as(i32, @bitCast(cpu.R(opcode.nd8.n).*)) + sign_extension_u8(opcode.nd8.d));
+}
+
+test "add imm rn" {
+    var cpu = try SH4.init(std.testing.allocator);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 0;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try std.testing.expect(cpu.R(0).* == 1);
+
+    cpu.R(0).* = 0;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
+
+    cpu.R(0).* = 0xFFFFFFFF;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try std.testing.expect(cpu.R(0).* == 0xFFFFFFFE);
+
+    cpu.R(0).* = 0xFFFFFFFF;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try std.testing.expect(cpu.R(0).* == 0);
+
+    cpu.R(0).* = 0x12345678;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
+    try std.testing.expect(cpu.R(0).* == 0x12345678);
+
+    cpu.R(0).* = 0x12345678;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    try std.testing.expect(cpu.R(0).* == 0x12345679);
+
+    cpu.R(0).* = 0x12345678;
+    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    try std.testing.expect(cpu.R(0).* == 0x12345677);
 }
 
 fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
