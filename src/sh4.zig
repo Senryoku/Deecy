@@ -1095,7 +1095,7 @@ pub const SH4 = struct {
             if (virtual_addr >= 0xFF000000) {
                 switch (virtual_addr) {
                     else => {
-                        std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), value });
+                        std.debug.print("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}\n", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                     },
                 }
             }
@@ -1814,6 +1814,10 @@ test "neg Rm,Rn" {
     cpu.R(0).* = @bitCast(@as(i32, -1337));
     neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
     try std.testing.expect(as_i32(cpu.R(1).*) == 1337);
+
+    cpu.R(0).* = 0x180;
+    neg_Rm_Rn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 1, .m = 0, .d = undefined } });
+    try std.testing.expect(as_i32(cpu.R(1).*) == -0x180);
 }
 
 fn negc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -2629,7 +2633,7 @@ test "fldi1_FRn" {
     std.debug.assert(@as(u32, @bitCast(cpu.FR(0).*)) == 0x3F800000);
 }
 
-fn fdls_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
+fn flds_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = @bitCast(cpu.FR(opcode.nmd.n).*);
 }
 
@@ -2729,22 +2733,25 @@ fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
-    // FIXME: There's a lot more to do here.
+    // FIXME: We're skipping a lot of error checking here.
+    // NOTE: Experimentation shows the FPUL is treated as signed, at least here. I don't know if this is ALWAYS the case, or not.
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @floatFromInt(cpu.fpul);
+        cpu.FR(opcode.nmd.n).* = @floatFromInt(as_i32(cpu.fpul));
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(cpu.fpul);
+        cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(as_i32(cpu.fpul));
     }
 }
 fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
-    // FIXME: There's a lot more to do here.
+    // FIXME: We're skipping a lot of error checking here.
+    // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
+    //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
     if (cpu.fpscr.sz == 0) {
-        cpu.fpul = std.math.lossyCast(u32, cpu.FR(opcode.nmd.n).*);
+        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.fpul = std.math.lossyCast(u32, cpu.DR(opcode.nmd.n >> 1).*);
+        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.DR(opcode.nmd.n >> 1).*));
     }
 }
 
@@ -3079,7 +3086,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
 
     .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = fldi0_FRn, .name = "fldi0 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = fldi1_FRn, .name = "fldi1 FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = fdls_FRn_FPUL, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
+    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = flds_FRn_FPUL, .name = "flds FRm,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = fsts_FPUL_FRn, .name = "fsts FPUL,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = fabs_FRn, .name = "fabs FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = fneg_FRn, .name = "fneg FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
