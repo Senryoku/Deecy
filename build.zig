@@ -72,6 +72,16 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
+    const interpreter_perf = b.addExecutable(.{
+        .name = "InterpreterPerf",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/interpreter_perf.zig" },
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(interpreter_perf);
+
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{

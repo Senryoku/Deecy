@@ -36,12 +36,12 @@ pub const AICA = struct {
     dma_countdown: u32 = 0,
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {
-        std.debug.print("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
+        std.log.debug("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
         return self.regs[(addr - AICARegisterStart) / 4];
     }
 
     pub fn write_register(self: *AICA, addr: u32, value: u32) void {
-        std.debug.print("Write to AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+        std.log.info("Write to AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
         self.regs[(addr - AICARegisterStart) / 4] = value;
     }
 
