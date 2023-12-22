@@ -793,86 +793,93 @@ pub const SH4 = struct {
                 std.log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}\n", .{ addr, physical_addr });
         }
 
-        if (addr < 0x04000000) {
-            // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-            if (addr < 0x00200000) {
-                return &self.boot[addr];
-            }
-            if (addr < 0x00200000 + 0x20000) {
-                return &self.flash[addr - 0x200000];
-            }
+        switch (addr) {
+            0x00000000...0x03FFFFFF => {
+                // Area 0 - Boot ROM, Flash ROM, Hardware Registers
+                if (addr < 0x00200000) {
+                    return &self.boot[addr];
+                }
+                if (addr < 0x00200000 + 0x20000) {
+                    return &self.flash[addr - 0x200000];
+                }
 
-            if (addr < 0x005F6800) {
-                std.log.err(termcolor.red("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                if (addr < 0x005F6800) {
+                    std.log.err(termcolor.red("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                    unreachable;
+                }
+
+                if (addr >= 0x005F8000 and addr < 0x005FA000) {
+                    return self.gpu._get_register_from_addr(u8, addr);
+                }
+
+                if (addr < 0x00600000) {
+                    return &self.hardware_registers[addr - 0x005F6800];
+                }
+
+                if (addr < 0x00600800) {
+                    const static = struct {
+                        var once = false;
+                    };
+                    if (!static.once) {
+                        static.once = true;
+                        std.debug.print(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
+                    }
+                    return @ptrCast(&self._dummy);
+                }
+
+                if (addr >= 0x00700000 and addr <= 0x00707FE0) {
+                    // G2 AICA Register
+                    @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
+                }
+
+                if (addr >= 0x00710000 and addr <= 0x00710008) {
+                    // G2 AICA RTC Registers
+                    @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
+                }
+
+                //                          is it 0x009FFFE0?
+                if (addr >= 0x00800000 and addr < 0x00A00000) {
+                    // G2 Wave Memory
+                    return &aica.wave_memory[addr - 0x00800000];
+                }
+
+                std.log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                return @ptrCast(&self._dummy);
+            },
+            0x04000000...0x07FFFFFF => {
+                return self.gpu._get_vram(addr);
+            },
+            0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
+                std.log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
                 unreachable;
-            }
-
-            if (addr >= 0x005F8000 and addr < 0x005FA000) {
-                return self.gpu._get_register_from_addr(u8, addr);
-            }
-
-            if (addr < 0x00600000) {
-                return &self.hardware_registers[addr - 0x005F6800];
-            }
-
-            if (addr < 0x00600800) {
+            },
+            0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
+                return &self.ram[addr & 0x00FFFFFF];
+            },
+            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+                @panic("Unexpected _get_memory to Area 4 - This should only be accessible via write32 or DMA.");
+            },
+            0x14000000...0x17FFFFFF => { // Area 5 - Expansion (modem) port
                 const static = struct {
                     var once = false;
                 };
                 if (!static.once) {
                     static.once = true;
-                    std.debug.print(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
+                    std.log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
                 }
-                return @ptrCast(&self._dummy);
-            }
-
-            if (addr >= 0x00700000 and addr <= 0x00707FE0) {
-                // G2 AICA Register
-                @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
-            }
-
-            if (addr >= 0x00710000 and addr <= 0x00710008) {
-                // G2 AICA RTC Registers
-                @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
-            }
-
-            //                          is it 0x009FFFE0?
-            if (addr >= 0x00800000 and addr < 0x00A00000) {
-                // G2 Wave Memory
-                return &aica.wave_memory[addr - 0x00800000];
-            }
-
-            std.log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
-            return @ptrCast(&self._dummy);
-        } else if (addr < 0x0800_0000) {
-            return self.gpu._get_vram(addr);
-        } else if (addr < 0x0C000000) {
-            // Area 2 - Nothing
-            std.log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
-            unreachable;
-        } else if (addr < 0x10000000) {
-            // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
-            return &self.ram[addr & 0x00FFFFFF];
-        } else if (addr < 0x14000000) { // Area 4 - Tile accelerator command input
-            @panic("Unexpected _get_memory to Area 4 - This should only be accessible via write32 or DMA.");
-        } else if (addr < 0x18000000) {
-            // Area 5 - Expansion (modem) port
-            const static = struct {
-                var once = false;
-            };
-            if (!static.once) {
-                static.once = true;
-                std.log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
-            }
-            return &self.dummy_area5;
-        } else if (addr < 0x1C000000) {
-            // Area 6 - Nothing
-            std.log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
-            unreachable;
-        } else {
-            // Area 7 - Internal I/O registers (same as P4)
-            std.debug.assert(self.sr.md == 1);
-            return &self.area7[addr - 0x1C000000];
+                return &self.dummy_area5;
+            },
+            0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
+                std.log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
+                unreachable;
+            },
+            0x1C000000...0x1FFFFFFF => { // Area 7 - Internal I/O registers (same as P4)
+                std.debug.assert(self.sr.md == 1);
+                return &self.area7[addr - 0x1C000000];
+            },
+            else => {
+                unreachable;
+            },
         }
     }
 
