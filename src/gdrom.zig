@@ -76,11 +76,11 @@ pub const GDROM = struct {
 
     pub fn mainloop(self: *@This(), cpu: *SH4) void {
         if (self.status != GDROMStatus.Busy) {
-            std.log.debug("  GDROM Mainloop - No command queued\n", .{});
+            std.log.debug("  GDROM Mainloop - No command queued", .{});
             return;
         }
 
-        std.log.info("  GDROM Mainloop - {s}\n", .{std.enums.tagName(GDROMCommand, self.command) orelse "Unknown"});
+        std.log.info("  GDROM Mainloop - {s}", .{std.enums.tagName(GDROMCommand, self.command) orelse "Unknown"});
 
         switch (self.command) {
             GDROMCommand.DMARead, GDROMCommand.PIORead => {
@@ -88,7 +88,7 @@ pub const GDROM = struct {
                 const size = self.params[1];
                 const dest = self.params[2] & 0x1FFFFFFF;
 
-                std.log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}\n", .{ @tagName(self.command), lba, size, dest });
+                std.log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.command), lba, size, dest });
                 const byte_size = 2048 * size;
                 const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
 
@@ -100,7 +100,7 @@ pub const GDROM = struct {
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.Init => {
-                std.log.warn("    GDROM Command Init : TODO (Reset some stuff?)\n", .{});
+                std.log.warn("    GDROM Command Init : TODO (Reset some stuff?)", .{});
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.GetVersion => {
@@ -114,7 +114,7 @@ pub const GDROM = struct {
             },
             GDROMCommand.ReqMode => {
                 const dest = self.params[0];
-                std.log.info("    GDROM ReqMode  dest=0x{X:0>8}\n", .{dest});
+                std.log.info("    GDROM ReqMode  dest=0x{X:0>8}", .{dest});
                 cpu.write32(dest + 0, 0); // Speed
                 cpu.write32(dest + 4, 0x00B4); // Standby
                 cpu.write32(dest + 8, 0x19); // Read Flags
@@ -123,20 +123,20 @@ pub const GDROM = struct {
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.SetMode => {
-                std.log.warn("    GDROM SetMode: TODO\n", .{});
+                std.log.warn("    GDROM SetMode: TODO", .{});
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.GetTOC2 => {
                 const area = self.params[0];
                 const dest = self.params[1];
-                std.log.warn(termcolor.yellow("    GDROM GetTOC2: area={d} dest=0x{X:0>8}, TODO!\n"), .{ area, dest });
+                std.log.warn(termcolor.yellow("    GDROM GetTOC2: area={d} dest=0x{X:0>8}, TODO!"), .{ area, dest });
                 if (area == 1) {
                     // High Density Area, doesn't have a TOC? (What's that thing at 0x110 in track 3?)
                 } else {}
                 self.status = GDROMStatus.Standby;
             },
             else => {
-                std.log.warn("    Unhandled GDROM command {X:0>8} {s}\n", .{ self.command, @tagName(self.command) });
+                std.log.warn("    Unhandled GDROM command {X:0>8} {s}", .{ self.command, @tagName(self.command) });
                 self.status = GDROMStatus.Standby;
             },
         }

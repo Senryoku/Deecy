@@ -24,7 +24,7 @@ const syscall = @import("syscall.zig");
 pub const log_level: std.log.Level = .info;
 
 pub fn main() !void {
-    std.debug.print("\r  == Katana ==                             \n", .{});
+    std.log.info("\r  == Katana ==                             ", .{});
 
     var binary_path: ?[]const u8 = null;
 
@@ -36,7 +36,7 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "-b")) {
             const v = args.next();
             if (v == null) {
-                std.debug.print(termcolor.red("Expected path to binary file after -b.\n"), .{});
+                std.log.err(termcolor.red("Expected path to binary file after -b."), .{});
                 return;
             }
             binary_path = v.?;
@@ -44,7 +44,7 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "-g")) {
             const v = args.next();
             if (v == null) {
-                std.debug.print(termcolor.red("Expected path to GDI file after -g.\n"), .{});
+                std.log.err(termcolor.red("Expected path to GDI file after -g."), .{});
                 return;
             }
             gdi_path = v.?;

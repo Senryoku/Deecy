@@ -228,10 +228,10 @@ test "gdi" {
 
     const root_directory_length = root_directory_entry.length;
     const root_directory_lba = root_directory_entry.location;
-    std.debug.print("root_directory_lda: {d}\n", .{root_directory_lba});
+
     const root_track = try gdi.get_corresponding_track(root_directory_lba);
     const root_directory_offset: u32 = (root_directory_lba - root_track.offset) * root_track.format + 0x10; // TODO internalize offset computation to the GDI class. Why +0x10? No idea.
-    std.debug.print("root_directory_offset: {X}\n", .{root_directory_offset});
+
     var curr_offset = root_directory_offset;
     for (0..root_directory_length) |_| {
         const dir_record = root_track.get_directory_record(curr_offset);

@@ -14,9 +14,9 @@ pub var gdrom: GDROM = .{};
 pub var FirstReadBINSectorSize: u32 = 0; // FIXME
 
 pub fn syscall(cpu: *SH4, opcode: Instr) void {
-    std.debug.print("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}\n", .{ cpu.pc, opcode.value });
+    std.log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ cpu.pc, opcode.value });
     for (0..15) |i| {
-        std.debug.print("  R{d}: {x}\n", .{ i, cpu.R(@intCast(i)).* });
+        std.log.err("  R{d}: {x}", .{ i, cpu.R(@intCast(i)).* });
     }
     @panic("Unimplemented SYSCALL");
 }
@@ -38,7 +38,7 @@ pub fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
             cpu.R(0).* = 0x8c000068;
         },
         else => {
-            std.debug.print("  syscall_sysinfo with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            std.log.err("  syscall_sysinfo with unhandled R7: R7={d}", .{cpu.R(7).*});
             @panic("syscall_sysinfo with unhandled R7");
         },
     }
@@ -50,7 +50,7 @@ pub fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
 pub fn syscall_romfont(cpu: *SH4, _: Instr) void {
     switch (cpu.R(7).*) {
         else => {
-            std.debug.print("  syscall_romfont with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            std.log.err("  syscall_romfont with unhandled R7: R7={d}", .{cpu.R(7).*});
             @panic("syscall_romfont with unhandled R7");
         },
     }
@@ -109,7 +109,7 @@ pub fn syscall_flashrom(cpu: *SH4, _: Instr) void {
             cpu.R(0).* = len;
         },
         else => {
-            std.debug.print("  syscall_flashrom with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            std.log.err("  syscall_flashrom with unhandled R7: R7={d}", .{cpu.R(7).*});
             @panic("syscall_flashrom with unhandled R7");
         },
     }
@@ -126,7 +126,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            std.log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).* });
+            std.log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ cpu.R(4).*, cpu.R(5).* });
 
             var params: [4]u32 = .{0} ** 4;
             const params_addr = cpu.R(5).*;
@@ -152,7 +152,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             for (0..4) |i| {
                 cpu.write32(@intCast(cpu.R(5).* + 4 * i), gdrom.result[i]);
             }
-            std.log.info("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}\n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(0).*, gdrom.result[0], gdrom.result[1], gdrom.result[2], gdrom.result[3] });
+            std.log.info("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(0).*, gdrom.result[0], gdrom.result[1], gdrom.result[2], gdrom.result[3] });
         },
         2 => {
             // GDROM_MAINLOOP
@@ -164,7 +164,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
         },
         3 => {
             // GDROM_INIT
-            std.log.info("  GDROM_INIT\n", .{});
+            std.log.info("  GDROM_INIT", .{});
             gdrom.init();
         },
         4 => {
@@ -175,19 +175,19 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
 
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
-            std.log.info("  GDROM_CHECK_DRIVE\n", .{});
+            std.log.info("  GDROM_CHECK_DRIVE", .{});
             cpu.write32(cpu.R(4).*, @intFromEnum(gdrom.status)); // GDROM status. 0x2 => Standby.
             cpu.write32(cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             cpu.R(0).* = 0;
         },
         5 => {
             // DMA END?
-            std.log.info("  GDROM_DMA_END (R7={d})\n", .{cpu.R(7).*});
+            std.log.info("  GDROM_DMA_END (R7={d})", .{cpu.R(7).*});
             cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
             cpu.R(0).* = 0;
         },
         else => {
-            std.log.err("  syscall_gdrom with unhandled R7: R7={d}\n", .{cpu.R(7).*});
+            std.log.err("  syscall_gdrom with unhandled R7: R7={d}", .{cpu.R(7).*});
             @panic("syscall_gdrom with unhandled R7");
         },
     }
@@ -198,7 +198,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
 pub fn syscall_misc(cpu: *SH4, _: Instr) void {
     // This comes pretty much directly from flycast, I don't think there's any official
     // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
-    std.debug.print("syscall_misc: R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+    std.log.debug("syscall_misc: R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
     switch (cpu.R(4).*) {
         0 => {
             // Normal Init
@@ -209,12 +209,12 @@ pub fn syscall_misc(cpu: *SH4, _: Instr) void {
         },
         1 => {
             // Return to BIOS?
-            std.debug.print("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} \n", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
-            std.debug.print("                              PC={X:0>8} PR={X:0>8} \n", .{ cpu.pc, cpu.pr });
+            std.log.err("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(6).*, cpu.R(7).* });
+            std.log.err("                              PC={X:0>8} PR={X:0>8} ", .{ cpu.pc, cpu.pr });
             @panic("Return to BIOS?");
         },
         else => {
-            std.debug.print("  syscall_misc with unhandled R4: R4={d}\n", .{cpu.R(4).*});
+            std.log.err("  syscall_misc with unhandled R4: R4={d}", .{cpu.R(4).*});
             @panic("syscall_misc with unhandled R4");
         },
     }

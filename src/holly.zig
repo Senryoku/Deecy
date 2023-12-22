@@ -761,7 +761,7 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParamet
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type14,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type14,
         else => {
-            std.debug.print(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {}\n"), .{masked});
+            std.debug.print(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {}"), .{masked});
             @panic("Unimplemented");
         },
     }
@@ -959,21 +959,21 @@ pub const Holly = struct {
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (addr) {
             @intFromEnum(HollyRegister.SOFTRESET) => {
-                std.log.warn("[Holly] TODO SOFTRESET: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO SOFTRESET: {X:0>8}", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
-                    std.log.warn(termcolor.yellow("[Holly]   TODO: Tile Accelerator Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: Tile Accelerator Soft Reset"), .{});
                 }
                 if (sr.PipelineSoftReset == 1) {
-                    std.log.warn(termcolor.yellow("[Holly]   TODO: Pipeine Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: Pipeine Soft Reset"), .{});
                 }
                 if (sr.SDRAMInterfaceSoftReset == 1) {
-                    std.log.warn(termcolor.yellow("[Holly]   TODO: SDRAM Interface Soft Reset\n"), .{});
+                    std.log.warn(termcolor.yellow("[Holly]   TODO: SDRAM Interface Soft Reset"), .{});
                 }
                 return;
             },
             @intFromEnum(HollyRegister.STARTRENDER) => {
-                std.log.info(termcolor.green("[Holly] STARTRENDER!\n"), .{});
+                std.log.info(termcolor.green("[Holly] STARTRENDER!"), .{});
 
                 self.render_start = true;
 
@@ -983,7 +983,7 @@ pub const Holly = struct {
             },
             @intFromEnum(HollyRegister.TA_LIST_INIT) => {
                 if (v == 0x80000000) {
-                    std.log.debug("[Holly] TA_LIST_INIT: {X:0>8}\n", .{v});
+                    std.log.debug("[Holly] TA_LIST_INIT: {X:0>8}", .{v});
                     if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
                         self._get_register(u32, .TA_NEXT_OPB).* = self._get_register(u32, .TA_NEXT_OPB_INIT).*;
                         self._get_register(u32, .TA_ITP_CURRENT).* = self._get_register(u32, .TA_ISP_BASE).*;
@@ -994,13 +994,13 @@ pub const Holly = struct {
                 }
             },
             @intFromEnum(HollyRegister.TA_LIST_CONT) => {
-                std.log.warn("[Holly] TODO TA_LIST_CONT: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO TA_LIST_CONT: {X:0>8}", .{v});
             },
             @intFromEnum(HollyRegister.SPG_CONTROL), @intFromEnum(HollyRegister.SPG_LOAD) => {
-                std.log.warn("[Holly] TODO SPG_CONTROL/SPG_LOAD: {X:0>8}\n", .{v});
+                std.log.warn("[Holly] TODO SPG_CONTROL/SPG_LOAD: {X:0>8}", .{v});
             },
             else => {
-                std.log.debug("[Holly] Write to Register: @{X:0>8} {s} = {X:0>8}\n", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
+                std.log.debug("[Holly] Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
             },
         }
         self._get_register_from_addr(u32, addr).* = v;
@@ -1017,11 +1017,11 @@ pub const Holly = struct {
             self.handle_command();
         } else if (addr >= 0x10800000 and addr < 0x11000000 or addr >= 0x12800000 and addr < 0x13000000) {
             // YUV Conv.
-            std.debug.print(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}\n"), .{ addr, v });
+            std.log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v });
         } else if (addr >= 0x11000000 and addr < 0x12000000 or addr >= 0x13000000 and addr < 0x14000000) {
             // Direct Texture Path
             if (addr & 0x00FFFFFF > 0x00800000) {
-                std.debug.print(termcolor.yellow("  Direct Texture Path write out of bounds? {X:0>8} = {X:0>8}\n"), .{ addr, v });
+                std.log.warn(termcolor.yellow("  Direct Texture Path write out of bounds? {X:0>8} = {X:0>8}"), .{ addr, v });
                 return;
             }
             @as(*u32, @alignCast(@ptrCast(&self.vram[addr & 0x00FFFFFF]))).* = v;
@@ -1094,7 +1094,7 @@ pub const Holly = struct {
                 global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
 
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
-                    std.debug.print(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume\n"), .{});
+                    std.log.err(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
                 } else {
                     if (parameter_control_word.obj_control.volume == 0) {
                         switch (parameter_control_word.obj_control.col_type) {
@@ -1137,7 +1137,7 @@ pub const Holly = struct {
             },
             .VertexParameter => {
                 if (self._ta_current_polygon == null) {
-                    std.debug.print(termcolor.red("    No current polygon!\n"), .{});
+                    std.log.err(termcolor.red("    No current polygon!"), .{});
                     @panic("No current polygon");
                 }
 
@@ -1213,7 +1213,7 @@ pub const Holly = struct {
     }
 
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
-        std.log.info("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})\n", .{ addr, value.len });
+        std.log.info("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
@@ -1231,13 +1231,13 @@ pub const Holly = struct {
         if (local_addr < 0x0080_0000) { // 64-bit access area
             return &self.vram[local_addr];
         } else if (local_addr < 0x0100_0000) { // Unused
-            std.debug.print(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
+            std.log.err(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
             //return &self.vram[0];
         } else if (local_addr < 0x0180_0000) { // 32-bit access area
             return &self.vram[local_addr - 0x0100_0000];
         } else { // Unused
-            std.debug.print(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}\n"), .{addr});
+            std.log.err(termcolor.red("[Holly]  Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
             //return &self.vram[0];
         }

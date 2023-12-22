@@ -249,8 +249,8 @@ pub const Renderer = struct {
     }
 
     fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u32 {
-        std.debug.print("[Upload] tsp_instruction: {any}\n", .{tsp_instruction});
-        std.debug.print("[Upload] texture_control_word: {any}\n", .{texture_control_word});
+        std.log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
+        std.log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
         const u_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
         const v_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
@@ -298,7 +298,7 @@ pub const Renderer = struct {
                 }
             },
             else => {
-                std.debug.print(termcolor.red("[Holly] Unsupported pixel format {any}\n"), .{texture_control_word.pixel_format});
+                std.log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
                 @panic("Unsupported pixel format");
             },
         }
@@ -357,7 +357,7 @@ pub const Renderer = struct {
                     gpu.vram[self.texture_metadata[i].control_word.address + 2] != 0xee or
                     gpu.vram[self.texture_metadata[i].control_word.address + 3] != 0x0f)
                 {
-                    std.debug.print(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!\n"), .{i});
+                    std.log.warn(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!"), .{i});
                 }
             }
         }
@@ -392,7 +392,7 @@ pub const Renderer = struct {
                 const flip_u = global_parameter.tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
                 const flip_v = (global_parameter.tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
                 if (flip_u or flip_v) {
-                    std.debug.print(termcolor.yellow("[Renderer] TODO: Flip UV!\n"), .{});
+                    std.log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
 
                 self.max_depth = 0;
@@ -462,7 +462,7 @@ pub const Renderer = struct {
                             });
                         },
                         else => {
-                            std.debug.print(termcolor.red("[Renderer] Unsupported vertex type {any}\n"), .{vertex});
+                            std.debug.print(termcolor.red("[Renderer] Unsupported vertex type {any}"), .{vertex});
                             @panic("Unsupported vertex type");
                         },
                     }

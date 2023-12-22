@@ -36,12 +36,12 @@ pub const AICA = struct {
     dma_countdown: u32 = 0,
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {
-        std.log.debug("Read from AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
+        std.log.debug("Read from AICA at 0x{X:0>8} = 0x{X:0>8}", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
         return self.regs[(addr - AICARegisterStart) / 4];
     }
 
     pub fn write_register(self: *AICA, addr: u32, value: u32) void {
-        std.log.info("Write to AICA at 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+        std.log.info("Write to AICA at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
         self.regs[(addr - AICARegisterStart) / 4] = value;
     }
 
@@ -97,13 +97,13 @@ pub const AICA = struct {
         const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
         const len = len_reg & 0x7FFFFFFF;
         const direction = cpu.read_hw_register(u32, .SB_ADDIR);
-        std.log.info(" AICA G2-DMA Start!\n", .{});
-        std.log.debug("   AICA Address: 0x{X:0>8}\n", .{aica_addr});
-        std.log.debug("   Root Bus Address: 0x{X:0>8}\n", .{root_bus_addr});
-        std.log.debug("   Length: 0x{X:0>8} (0x{X:0>8})\n", .{ len_reg, len });
-        std.log.debug("   Direction: 0x{X:0>8}\n", .{direction});
-        std.log.debug("   Trigger Select: 0x{X:0>8}\n", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
-        std.log.debug("   Enable: 0x{X:0>8}\n", .{enabled});
+        std.log.info(" AICA G2-DMA Start!", .{});
+        std.log.debug("   AICA Address: 0x{X:0>8}", .{aica_addr});
+        std.log.debug("   Root Bus Address: 0x{X:0>8}", .{root_bus_addr});
+        std.log.debug("   Length: 0x{X:0>8} (0x{X:0>8})", .{ len_reg, len });
+        std.log.debug("   Direction: 0x{X:0>8}", .{direction});
+        std.log.debug("   Trigger Select: 0x{X:0>8}", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
+        std.log.debug("   Enable: 0x{X:0>8}", .{enabled});
 
         const physical_root_addr = cpu._get_memory(root_bus_addr);
         const physical_aica_addr = cpu._get_memory(aica_addr);

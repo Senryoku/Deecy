@@ -183,7 +183,7 @@ const MaplePort = struct {
 
         const command: CommandWord = @bitCast(data[1]);
 
-        std.log.debug("    Command: {any}\n", .{command});
+        std.log.debug("    Command: {any}", .{command});
 
         // Note: The sender address should also include the sub-peripheral bit when appropriate.
         var sender_address = command.recipent_address;
@@ -217,7 +217,7 @@ const MaplePort = struct {
                         cpu.write32(return_addr + 8, 0xFFFFFFFF);
                     },
                     else => {
-                        std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}\n"), .{command.command});
+                        std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
                         cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }
@@ -249,7 +249,7 @@ pub const MapleHost = struct {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            std.log.debug("    Instruction: {any}\n", .{instr});
+            std.log.debug("    Instruction: {any}", .{instr});
 
             switch (instr.pattern) {
                 .Normal => {
@@ -257,7 +257,7 @@ pub const MapleHost = struct {
                 },
                 .NOP, .RESET => {},
                 else => {
-                    std.log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D\n"), .{instr.pattern});
+                    std.log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern});
                 },
             }
 
