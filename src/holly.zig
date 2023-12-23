@@ -392,10 +392,10 @@ const PolygonType1 = packed struct(u256) {
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
     texture_control: TextureControlWord,
-    face_color_a: u32,
-    face_color_r: u32,
-    face_color_g: u32,
-    face_color_b: u32,
+    face_color_a: f32,
+    face_color_r: f32,
+    face_color_g: f32,
+    face_color_b: f32,
 };
 
 // Intensity, use Offset Color
@@ -407,14 +407,14 @@ const PolygonType2 = packed struct(u512) {
     _ignored: u64,
     data_size: u32,
     next_address: u32,
-    face_color_a: u32,
-    face_color_r: u32,
-    face_color_g: u32,
-    face_color_b: u32,
-    face_offset_color_a: u32,
-    face_offset_color_r: u32,
-    face_offset_color_g: u32,
-    face_offset_color_b: u32,
+    face_color_a: f32,
+    face_color_r: f32,
+    face_color_g: f32,
+    face_color_b: f32,
+    face_offset_color_a: f32,
+    face_offset_color_r: f32,
+    face_offset_color_g: f32,
+    face_offset_color_b: f32,
 };
 
 // Packed Color, with Two Volumes
@@ -439,14 +439,14 @@ const PolygonType4 = packed struct(u512) {
     texture_control_1: TextureControlWord,
     data_size: u32,
     next_address: u32,
-    face_color_a: u32,
-    face_color_r: u32,
-    face_color_g: u32,
-    face_color_b: u32,
-    face_offset_color_a: u32,
-    face_offset_color_r: u32,
-    face_offset_color_g: u32,
-    face_offset_color_b: u32,
+    face_color_a: f32,
+    face_color_r: f32,
+    face_color_g: f32,
+    face_color_b: f32,
+    face_offset_color_a: f32,
+    face_offset_color_r: f32,
+    face_offset_color_g: f32,
+    face_offset_color_b: f32,
 };
 
 const PolygonType = enum {
@@ -529,7 +529,7 @@ const VertexParameter_2 = packed struct(u256) {
     y: f32,
     z: f32,
     _ignored0: u64,
-    base_intensity: u32,
+    base_intensity: f32, // FIXME: Is it really a float?
     _ignored1: u32,
 };
 // Packed Color, Textured 32bit UV
@@ -597,8 +597,8 @@ const VertexParameter_7 = packed struct(u256) {
     z: f32,
     u: f32,
     v: f32,
-    base_intensity: u32,
-    offset_intensity: u32,
+    base_intensity: f32,
+    offset_intensity: f32,
 };
 // Intensity, Textured 32bit UV
 const VertexParameter_8 = packed struct(u256) {
@@ -608,8 +608,8 @@ const VertexParameter_8 = packed struct(u256) {
     z: f32,
     uv: UV16,
     _ignored: u32,
-    base_intensity: u32,
-    offset_intensity: u32,
+    base_intensity: f32,
+    offset_intensity: f32,
 };
 // Non-Textured, Packed Color, with Two Volumes
 const VertexParameter_9 = packed struct(u256) {
@@ -627,8 +627,8 @@ const VertexParameter_10 = packed struct(u256) {
     x: f32,
     y: f32,
     z: f32,
-    base_intensity_0: u32,
-    base_intensity_1: u32,
+    base_intensity_0: f32,
+    base_intensity_1: f32,
     _ignored: u64,
 };
 // Textured, Packed Color, with Two Volumes
@@ -671,12 +671,12 @@ const VertexParameter_13 = packed struct(u512) {
     z: f32,
     u0: f32,
     v0: f32,
-    base_intensity_0: u32,
-    offset_intensity_0: u32,
+    base_intensity_0: f32,
+    offset_intensity_0: f32,
     u1: f32,
     v1: f32,
-    base_intensity_1: u32,
-    offset_intensity_1: u32,
+    base_intensity_1: f32,
+    offset_intensity_1: f32,
     _ignored_2: u128,
 };
 // Textured, Intensity, with Two Volumes
@@ -687,12 +687,12 @@ const VertexParameter_14 = packed struct(u512) {
     z: f32,
     uv_0: UV16,
     _ignored_0: u32,
-    base_intensity_0: u32,
-    offset_intensity_0: u32,
+    base_intensity_0: f32,
+    offset_intensity_0: f32,
     uv_1: UV16,
     _ignored_1: u32,
-    base_intensity_1: u32,
-    offset_intensity_1: u32,
+    base_intensity_1: f32,
+    offset_intensity_1: f32,
     _ignored_2: u128,
 };
 

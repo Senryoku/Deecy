@@ -126,7 +126,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            std.log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ cpu.R(4).*, cpu.R(5).* });
+            std.log.debug("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ cpu.R(4).*, cpu.R(5).* });
 
             var params: [4]u32 = .{0} ** 4;
             const params_addr = cpu.R(5).*;
@@ -152,7 +152,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             for (0..4) |i| {
                 cpu.write32(@intCast(cpu.R(5).* + 4 * i), gdrom.result[i]);
             }
-            std.log.info("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(0).*, gdrom.result[0], gdrom.result[1], gdrom.result[2], gdrom.result[3] });
+            std.log.debug("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{ cpu.R(4).*, cpu.R(5).*, cpu.R(0).*, gdrom.result[0], gdrom.result[1], gdrom.result[2], gdrom.result[3] });
         },
         2 => {
             // GDROM_MAINLOOP
@@ -164,7 +164,7 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
         },
         3 => {
             // GDROM_INIT
-            std.log.info("  GDROM_INIT", .{});
+            std.log.debug("  GDROM_INIT", .{});
             gdrom.init();
         },
         4 => {
@@ -175,14 +175,14 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
 
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
-            std.log.info("  GDROM_CHECK_DRIVE", .{});
+            std.log.debug("  GDROM_CHECK_DRIVE", .{});
             cpu.write32(cpu.R(4).*, @intFromEnum(gdrom.status)); // GDROM status. 0x2 => Standby.
             cpu.write32(cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             cpu.R(0).* = 0;
         },
         5 => {
             // DMA END?
-            std.log.info("  GDROM_DMA_END (R7={d})", .{cpu.R(7).*});
+            std.log.debug("  GDROM_DMA_END (R7={d})", .{cpu.R(7).*});
             cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
             cpu.R(0).* = 0;
         },

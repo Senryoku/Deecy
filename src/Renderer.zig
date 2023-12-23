@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const renderer_log = std.log.scoped(.renderer);
+
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 
@@ -18,6 +20,13 @@ pub fn zorder_curve(x: u32, y: u32) u32 {
 pub fn to_tiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
+
+const fRGBA = struct {
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+};
 
 const ShadingInstructions = packed struct(u16) {
     textured: u1 = 0,
@@ -249,8 +258,8 @@ pub const Renderer = struct {
     }
 
     fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u16 {
-        std.log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
-        std.log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
+        renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
+        renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
         const u_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
         const v_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
@@ -299,7 +308,7 @@ pub const Renderer = struct {
                 }
             },
             else => {
-                std.log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
+                renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
                 @panic("Unsupported pixel format");
             },
         }
@@ -358,7 +367,7 @@ pub const Renderer = struct {
                     gpu.vram[self.texture_metadata[i].control_word.address + 2] != 0xee or
                     gpu.vram[self.texture_metadata[i].control_word.address + 3] != 0x0f)
                 {
-                    std.log.warn(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!"), .{i});
+                    renderer_log.warn(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!"), .{i});
                 }
             }
         }
@@ -487,33 +496,63 @@ pub const Renderer = struct {
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(FirstVertex + vertices.items.len);
 
-                const global_parameter = @as(*const Holly.GenericGlobalParameter, @ptrCast(&display_list.polygons.items[idx])).*;
+                // Generic Parameters
+                var parameter_control_word: Holly.ParameterControlWord = undefined;
+                var isp_tsp_instruction: Holly.ISPTSPInstructionWord = undefined;
+                var tsp_instruction: Holly.TSPInstructionWord = undefined;
+                var texture_control: Holly.TextureControlWord = undefined;
+                // Specific to a polygon type
+                var face_color: fRGBA = undefined;
+
+                switch (display_list.polygons.items[idx]) {
+                    .PolygonType0 => |p| {
+                        parameter_control_word = p.parameter_control_word;
+                        isp_tsp_instruction = p.isp_tsp_instruction;
+                        tsp_instruction = p.tsp_instruction;
+                        texture_control = p.texture_control;
+                    },
+                    .PolygonType1 => |p| {
+                        parameter_control_word = p.parameter_control_word;
+                        isp_tsp_instruction = p.isp_tsp_instruction;
+                        tsp_instruction = p.tsp_instruction;
+                        texture_control = p.texture_control;
+                        face_color = .{
+                            .r = p.face_color_r,
+                            .g = p.face_color_g,
+                            .b = p.face_color_b,
+                            .a = p.face_color_a,
+                        };
+                    },
+                    else => {
+                        renderer_log.err("Unhandled polygon type: {any}", .{display_list.polygons.items[idx]});
+                    },
+                }
 
                 var tex_idx: u16 = 0;
-                if (global_parameter.parameter_control_word.obj_control.texture == 1) {
-                    const tmp_tex_idx = self.get_texture_index(global_parameter.texture_control);
+                if (parameter_control_word.obj_control.texture == 1) {
+                    const tmp_tex_idx = self.get_texture_index(texture_control);
                     if (tmp_tex_idx == null) {
-                        tex_idx = self.upload_texture(gpu, global_parameter.tsp_instruction, global_parameter.texture_control);
+                        tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
                     } else {
                         tex_idx = tmp_tex_idx.?;
                     }
                     self.texture_metadata[tex_idx].usage += 1;
                 }
 
-                const use_alpha = global_parameter.tsp_instruction.use_alpha == 1;
+                const use_alpha = tsp_instruction.use_alpha == 1;
 
-                const clamp_uv = global_parameter.tsp_instruction.clamp_uv == 1;
+                const clamp_uv = tsp_instruction.clamp_uv == 1;
 
-                const flip_u = global_parameter.tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
-                const flip_v = (global_parameter.tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
+                const flip_u = tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
+                const flip_v = (tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
                 if (flip_u or flip_v) {
-                    std.log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
+                    renderer_log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
 
                 const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
-                    .textured = global_parameter.isp_tsp_instruction.texture,
-                    .mode = global_parameter.tsp_instruction.texture_shading_instruction,
-                    .ignore_alpha = global_parameter.tsp_instruction.ignore_texture_alpha,
+                    .textured = isp_tsp_instruction.texture,
+                    .mode = tsp_instruction.texture_shading_instruction,
+                    .ignore_alpha = tsp_instruction.ignore_texture_alpha,
                 } };
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
@@ -564,10 +603,10 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
-                                .g = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
-                                .b = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_intensity)) / 255.0 else 1.0,
+                                .r = v.base_intensity * face_color.r,
+                                .g = v.base_intensity * face_color.b,
+                                .b = v.base_intensity * face_color.b,
+                                .a = if (use_alpha) face_color.a else 1.0,
                                 .u = v.u,
                                 .v = v.v,
                                 .tex = tex,
