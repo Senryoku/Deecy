@@ -14,7 +14,7 @@ fn main(
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) tex: u32,
-    @location(4) tex_size: u32,
+    @location(4) tex_size: vec2<u32>, // u16 doesn't exist in WGSL, apparently.
     @location(5) uv_offset: vec2<f32>, // TODO
 ) -> VertexOut {
     var output: VertexOut;
@@ -42,7 +42,7 @@ fn main(
     if tex == 0xFFFFFFFF {
         output.uv = vec2<f32>(0, 0);
     } else {
-        output.uv = uv / (1024.0 / f32(tex_size)); // Adjust for the actual texture size (We're storing everything in 1024x1024 texture for now.)
+        output.uv = vec2<f32>(tex_size) / 1024.0 * uv ; // Adjust for the actual texture size (We're storing everything in 1024x1024 texture for now.)
     }
     output.tex = tex;
     return output;

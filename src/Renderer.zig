@@ -63,6 +63,8 @@ const TextureMetadata = struct {
 
 pub const Renderer = struct {
     const MaxTextures: u32 = 256; // FIXME: Not sure what's a good value.
+    const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
+    const FirstIndex: u32 = 6; // The 6 first indices are reserved for the background.
 
     texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
 
@@ -77,7 +79,7 @@ pub const Renderer = struct {
     texture_array: zgpu.TextureHandle,
     texture_array_view: zgpu.TextureViewHandle,
 
-    sampler: zgpu.SamplerHandle,
+    sampler: zgpu.SamplerHandle, // TODO: Have a sample per texture? Or per texture type (we'd have to pass another index to the fragment shader)?
 
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
@@ -163,7 +165,10 @@ pub const Renderer = struct {
             break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
-        const sampler = gctx.createSampler(.{});
+        const sampler = gctx.createSampler(.{
+            //.mag_filter = .linear,
+            //.min_filter = .linear,
+        });
 
         const texture_array = gctx.createTexture(.{
             .usage = .{ .texture_binding = true, .copy_dst = true },
@@ -220,23 +225,6 @@ pub const Renderer = struct {
 
     pub fn deinit(self: *Renderer) void {
         self.polygons.deinit();
-    }
-
-    pub fn update_background(self: *Renderer) void {
-        _ = self;
-
-        // Not sure how I'll handle that yet.
-
-        // This won't be done here, but only the necessary data will be passed down here.
-
-        // 1. Get address in ISP_BACKGND_T
-        // 2. Get depth from ISP_BACKGND_D
-        // Data in VRAM @ISP_BACKGND_T:
-        //   ISP/TSP Instruction Word
-        //   TSP Instruction Word
-        //   Texture Control Word
-        //   [Vertices 1 to 3]
-        // Vertice 4 is computed based on other vertices (rectangular polygon).
     }
 
     fn get_texture_index(self: *Renderer, control_word: Holly.TextureControlWord) u32 {
@@ -363,6 +351,101 @@ pub const Renderer = struct {
         }
     }
 
+    // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
+    pub fn update_background(self: *Renderer, gpu: *Holly.Holly) void {
+        const tags = gpu._get_register(Holly.ISP_BACKGND_T, .ISP_BACKGND_T).*;
+        const param_base = gpu._get_register(u32, .PARAM_BASE).*;
+        const addr = param_base + 4 * tags.tag_address;
+        const isptsp_instruction = @as(*const Holly.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
+        const tsp_instruction = @as(*const Holly.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
+        const texture_control = @as(*const Holly.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
+
+        const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
+        self.max_depth = @max(self.max_depth, depth);
+
+        // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
+        const parameter_volume_mode = (gpu._get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
+        const skipped_vertex_byte_size = 4 * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
+        const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
+
+        var vertices: [4]Vertex = undefined;
+
+        var vertex_byte_size: u32 = 4 * (3 + 1);
+        var tex_idx = TextureMetadata.Unused;
+
+        // The unused fields seems to be absent.
+        if (isptsp_instruction.texture == 1) {
+            tex_idx = self.get_texture_index(texture_control);
+            if (tex_idx == Renderer.MaxTextures) {
+                tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
+            }
+            self.texture_metadata[tex_idx].usage += 1;
+
+            if (isptsp_instruction.uv_16bit == 1) {
+                vertex_byte_size += 4 * 1;
+            } else {
+                vertex_byte_size += 4 * 2;
+            }
+        }
+        if (isptsp_instruction.offset == 1) {
+            vertex_byte_size += 4 * 1;
+        }
+
+        for (0..3) |i| {
+            const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
+            var u: f32 = 0;
+            var v: f32 = 0;
+            var base_color: Holly.PackedColor = @bitCast(vp[3]);
+            var offset_color: Holly.PackedColor = @bitCast(vp[3]);
+            if (isptsp_instruction.texture == 1) {
+                if (isptsp_instruction.uv_16bit == 1) {
+                    u = @as(f32, @bitCast(vp[3] >> 16));
+                    v = @as(f32, @bitCast(vp[3] & 0xFFFF));
+                    base_color = @bitCast(vp[4]);
+                    offset_color = @bitCast(vp[5]);
+                } else {
+                    u = @bitCast(vp[3]);
+                    v = @bitCast(vp[4]);
+                    base_color = @bitCast(vp[5]);
+                    offset_color = @bitCast(vp[5]);
+                }
+            }
+            vertices[i] = Vertex{
+                .x = @bitCast(vp[0]),
+                .y = @bitCast(vp[1]),
+                .z = depth,
+                .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
+                .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
+                .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
+                .a = @as(f32, @floatFromInt(base_color.a)) / 255.0,
+                .u = u,
+                .v = v,
+                .tex = tex_idx,
+                .tex_size = .{ 0, 0 },
+            };
+        }
+        vertices[3] = Vertex{
+            .x = vertices[1].x,
+            .y = vertices[2].y,
+            .z = depth,
+            // NOTE: I have no idea how the color is computed, looking at the boot menu, this seems right.
+            .r = vertices[2].r,
+            .g = vertices[2].g,
+            .b = vertices[2].b,
+            .a = vertices[2].a,
+
+            .u = vertices[2].u,
+            .v = vertices[1].v,
+            .tex = tex_idx,
+            .tex_size = .{ 0, 0 },
+        };
+
+        const indices: [6]u32 = .{ 0, 1, 2, 2, 1, 3 };
+
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
+    }
+
     pub fn update(self: *Renderer, gpu: *Holly.Holly) !void {
         var vertices = std.ArrayList(Vertex).init(self._allocator);
         defer vertices.deinit();
@@ -372,9 +455,13 @@ pub const Renderer = struct {
         self.reset_texture_usage();
         defer self.check_texture_usage(gpu);
 
+        self.max_depth = 0;
+
+        update_background(self, gpu);
+
         for (gpu.ta_display_lists) |display_list| {
             for (0..display_list.polygons.items.len) |idx| {
-                const start: u32 = @intCast(vertices.items.len);
+                const start: u32 = @intCast(FirstVertex + vertices.items.len);
 
                 const global_parameter = @as(*const Holly.GenericGlobalParameter, @ptrCast(&display_list.polygons.items[idx])).*;
 
@@ -394,8 +481,6 @@ pub const Renderer = struct {
                 if (flip_u or flip_v) {
                     std.log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
-
-                self.max_depth = 0;
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
                     switch (vertex) {
@@ -489,8 +574,9 @@ pub const Renderer = struct {
         }
 
         if (vertices.items.len > 0) {
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, vertices.items);
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, indices.items);
+            // Offsets: The 4 first vertices and 6 first indices are used by the background.
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, vertices.items);
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, FirstIndex * @sizeOf(u32), u32, indices.items);
 
             self.index_count = @intCast(indices.items.len);
         }

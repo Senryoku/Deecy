@@ -21,7 +21,14 @@ const assets_dir = "assets/";
 // FIXME
 const syscall = @import("syscall.zig");
 
-pub const log_level: std.log.Level = .info;
+pub const std_options = struct {
+    pub const log_level = .info;
+
+    pub const log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .sh4, .level = .info },
+        .{ .scope = .holy, .level = .info },
+    };
+};
 
 pub fn main() !void {
     std.log.info("\r  == Katana ==                             ", .{});

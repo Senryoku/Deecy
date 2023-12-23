@@ -4,6 +4,8 @@ const std = @import("std");
 const common = @import("./common.zig");
 const termcolor = @import("termcolor.zig");
 
+const sh4_log = std.log.scoped(.sh4);
+
 const mmu = @import("./mmu.zig");
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
@@ -286,7 +288,7 @@ pub const SH4 = struct {
     }
 
     pub fn software_reset(self: *@This()) void {
-        std.log.warn("  SOFTWARE RESET!", .{});
+        sh4_log.warn("  SOFTWARE RESET!", .{});
 
         self.r_bank0 = undefined;
         self.r_bank1 = undefined;
@@ -519,7 +521,7 @@ pub const SH4 = struct {
     }
 
     fn jump_to_interrupt(self: *@This()) void {
-        std.log.debug(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
+        sh4_log.debug(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
 
         self.execution_state = .Running;
         self.spc = self.pc;
@@ -589,7 +591,7 @@ pub const SH4 = struct {
     }
 
     fn request_interrupt(self: *@This(), int: Interrupt) void {
-        std.log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
+        sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
     }
 
@@ -785,12 +787,12 @@ pub const SH4 = struct {
             // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
             const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
                 // FIXME: Handle exceptions
-                std.log.err("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m", .{ e, addr });
+                sh4_log.err("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m", .{ e, addr });
                 unreachable;
             };
 
             if (physical_addr != addr)
-                std.log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}", .{ addr, physical_addr });
+                sh4_log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}", .{ addr, physical_addr });
         }
 
         switch (addr) {
@@ -817,7 +819,7 @@ pub const SH4 = struct {
                         };
                         if (!static.once) {
                             static.once = true;
-                            std.log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
+                            sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
                         }
                         return @ptrCast(&self._dummy);
                     },
@@ -831,7 +833,7 @@ pub const SH4 = struct {
                         return &aica.wave_memory[addr - 0x00800000];
                     },
                     else => {
-                        std.log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
                         return @ptrCast(&self._dummy);
                     },
                 }
@@ -840,7 +842,7 @@ pub const SH4 = struct {
                 return self.gpu._get_vram(addr);
             },
             0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
-                std.log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
+                sh4_log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
                 unreachable;
             },
             0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
@@ -855,12 +857,12 @@ pub const SH4 = struct {
                 };
                 if (!static.once) {
                     static.once = true;
-                    std.log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
+                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
                 }
                 return &self.dummy_area5;
             },
             0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
-                std.log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
+                sh4_log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
                 unreachable;
             },
             0x1C000000...0x1FFFFFFF => { // Area 7 - Internal I/O registers (same as P4)
@@ -879,7 +881,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                    sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
@@ -887,7 +889,7 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            std.log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+            sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -911,7 +913,7 @@ pub const SH4 = struct {
                     //       If don't think its proper emulation is needed, but it's accessed by the bios,
                     //       probably for synchronization purposes. I assume returning a contant value to pass this check
                     //       is enough for now, as games shouldn't access that themselves.
-                    std.log.debug("[Note] Access to Refresh Count Register.", .{});
+                    sh4_log.debug("[Note] Access to Refresh Count Register.", .{});
                     return 0x0011;
                     // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                 },
@@ -943,7 +945,7 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 else => {
-                    std.log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                    sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
@@ -951,7 +953,7 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            std.log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+            sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
 
         if (addr >= 0x00710000 and addr <= 0x00710008) {
@@ -969,7 +971,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                    sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
@@ -977,7 +979,7 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            std.log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+            sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                 @constCast(&self)._get_memory(addr),
             ))).* });
         }
@@ -1006,7 +1008,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    std.log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1016,7 +1018,7 @@ pub const SH4 = struct {
             // Hardware registers
             switch (addr) {
                 else => {
-                    std.log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1050,7 +1052,7 @@ pub const SH4 = struct {
                     ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
                 },
                 else => {
-                    std.log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
         }
@@ -1058,7 +1060,7 @@ pub const SH4 = struct {
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
                 else => {
-                    std.log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1076,7 +1078,7 @@ pub const SH4 = struct {
 
     fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
-        std.log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
+        sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
         self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
     }
@@ -1091,7 +1093,7 @@ pub const SH4 = struct {
             if (virtual_addr >= 0xFF000000) {
                 switch (virtual_addr) {
                     else => {
-                        std.log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                     },
                 }
             }
@@ -1147,7 +1149,7 @@ pub const SH4 = struct {
                     return;
                 },
                 else => {
-                    std.log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
             }
         }
@@ -1185,7 +1187,7 @@ pub const SH4 = struct {
             self.hw_register(u32, .SB_MDST).* = 1;
             defer self.hw_register(u32, .SB_MDST).* = 0;
 
-            std.log.info(termcolor.yellow("  Maple-DMA initiation!\n"), .{});
+            sh4_log.info(termcolor.yellow("  Maple-DMA initiation!"), .{});
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
             self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
@@ -1199,7 +1201,7 @@ pub const SH4 = struct {
         const dst_addr = self.read_hw_register(u32, .SB_C2DSTAT);
         const len = self.read_hw_register(u32, .SB_C2DLEN);
 
-        std.log.info("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.read_p4_register(u32, .SAR2), dst_addr, len });
+        sh4_log.info("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.read_p4_register(u32, .SAR2), dst_addr, len });
 
         std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
         self.p4_register(u32, .DAR2).* = dst_addr; // FIXME: Not sure this is correct
@@ -1228,7 +1230,7 @@ pub const SH4 = struct {
 
         const chcr = self.read_p4_register(MemoryRegisters.CHCR, .CHCR2);
 
-        std.log.debug(" CHCR: {any}", .{chcr});
+        sh4_log.debug(" CHCR: {any}", .{chcr});
 
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
@@ -2377,7 +2379,7 @@ fn ocbi_atRn(_: *SH4, _: Instr) void {
     };
     if (static.once) {
         static.once = false;
-        std.log.warn("Note: ocbi @Rn not implemented", .{});
+        sh4_log.warn("Note: ocbi @Rn not implemented", .{});
     }
 }
 
@@ -2395,7 +2397,7 @@ fn ocbp_atRn(_: *SH4, _: Instr) void {
     };
     if (static.once) {
         static.once = false;
-        std.log.warn("Note: obcp @Rn not implemented", .{});
+        sh4_log.warn("Note: obcp @Rn not implemented", .{});
     }
 }
 
@@ -2405,7 +2407,7 @@ fn ocbwb_atRn(_: *SH4, _: Instr) void {
     };
     if (static.once) {
         static.once = false;
-        std.log.warn("Note: ocbwb @Rn not implemented", .{});
+        sh4_log.warn("Note: ocbwb @Rn not implemented", .{});
     }
 }
 
@@ -2416,7 +2418,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     if (addr & 0xEC000000 == 0xE0000000) {
         if (cpu.read_p4_register(mmu.MMUCR, .MMUCR).at == 1) {
-            std.log.err(termcolor.yellow("  MMU ON: Not implemented"), .{});
+            sh4_log.err(termcolor.yellow("  MMU ON: Not implemented"), .{});
             @panic("pref @Rn with MMU ON: Not implemented");
         } else {
             const sq_addr: StoreQueueAddr = @bitCast(addr);
@@ -2433,7 +2435,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         };
         if (static.once) {
             static.once = false;
-            std.log.warn("Note: pref @Rn not implemented", .{});
+            sh4_log.warn("Note: pref @Rn not implemented", .{});
         }
     }
 }
