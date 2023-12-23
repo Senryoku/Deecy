@@ -329,7 +329,7 @@ pub const SH4 = struct {
     }
 
     // Reset state to after bios.
-    pub fn init_boot(self: *@This()) void {
+    pub fn skip_bios(self: *@This()) void {
         self.R(0x0).* = 0xAC0005D8;
         self.R(0x1).* = 0x00000009;
         self.R(0x2).* = 0xAC00940C;
@@ -1492,7 +1492,7 @@ fn movw_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
 // The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
     const d = zero_extend(opcode.nmd.d) << 2;
-    cpu.write32(cpu.R(opcode.nmd.n).* + d, cpu.R(opcode.nmd.m).*);
+    cpu.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
@@ -1508,13 +1508,13 @@ fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.R(opcode.nmd.n).* + cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movw_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.R(opcode.nmd.n).* + cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.R(opcode.nmd.n).* + cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
@@ -3545,7 +3545,7 @@ test "IP.bin init boot" {
     var cpu = try SH4.init(std.testing.allocator);
     defer cpu.deinit();
 
-    cpu.init_boot();
+    cpu.skip_bios();
 
     // Example IP.bin file
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});

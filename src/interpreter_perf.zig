@@ -14,7 +14,7 @@ pub fn main() !void {
 
     var gdrom = &syscall.gdrom; // FIXME
     defer gdrom.disk.deinit();
-    cpu.init_boot();
+    cpu.skip_bios();
     try gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
     _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
     syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;

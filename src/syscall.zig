@@ -1,4 +1,5 @@
 const std = @import("std");
+const termcolor = @import("termcolor.zig");
 
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
@@ -184,6 +185,25 @@ pub fn syscall_gdrom(cpu: *SH4, _: Instr) void {
             // DMA END?
             std.log.debug("  GDROM_DMA_END (R7={d})", .{cpu.R(7).*});
             cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
+            cpu.R(0).* = 0;
+        },
+        9 => {
+            // GDROM_RESET
+            std.log.warn(termcolor.yellow("  GDROM_RESET (R7={d}) : Not implemented!"), .{cpu.R(7).*});
+        },
+        10 => {
+            // GDROM_SECTOR_MODE
+            std.log.warn(termcolor.yellow("  GDROM_SECTOR_MODE  (R7={d}) : Not implemented!"), .{cpu.R(7).*});
+            if (cpu.read32(cpu.R(4).*) == 0) { // Get/Set, if 0 the mode will be set, if 1 it will be queried.
+                const mode = cpu.read32(cpu.R(4).* + 8) == 0;
+                const sector_size_in_bytes = cpu.read32(cpu.R(4).* + 12) == 0;
+                _ = sector_size_in_bytes;
+                _ = mode;
+            } else {
+                cpu.write32(cpu.R(4).* + 4, 0x2000); // Constant
+                cpu.write32(cpu.R(4).* + 8, 0x0800); // Mode, 1024 = mode 1, 2048 = mode 2, 0 = auto detect
+                cpu.write32(cpu.R(4).* + 12, 0x0800); // Sector size in bytes (normally 2048)
+            }
             cpu.R(0).* = 0;
         },
         else => {

@@ -136,6 +136,8 @@ pub const P4MemoryRegister = enum(u32) {
     DMATCR3 = 0xFFA00038,
     CHCR3 = 0xFFA0003C,
     DMAOR = 0xFFA00040,
+
+    _,
 };
 
 // Dreamcast specific

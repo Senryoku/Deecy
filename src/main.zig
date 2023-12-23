@@ -39,6 +39,7 @@ pub fn main() !void {
     defer cpu.deinit();
 
     var binary_path: ?[]const u8 = null;
+    var ip_bin_path: ?[]const u8 = null;
 
     var gdi_path: ?[]const u8 = null;
 
@@ -61,6 +62,14 @@ pub fn main() !void {
             }
             gdi_path = v.?;
         }
+        if (std.mem.eql(u8, arg, "-i")) {
+            const v = args.next();
+            if (v == null) {
+                std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
+                return;
+            }
+            ip_bin_path = v.?;
+        }
         if (std.mem.eql(u8, arg, "-d")) {
             cpu.debug_trace = true;
         }
@@ -70,16 +79,22 @@ pub fn main() !void {
     defer gdrom.disk.deinit();
 
     if (binary_path != null) {
-        cpu.init_boot();
+        cpu.skip_bios();
 
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
         _ = try bin_file.readAll(cpu.ram[0x10000..]);
 
-        // Skip IP.bin
-        cpu.pc = 0xAC010000;
+        if (ip_bin_path != null) {
+            var ip_bin_file = try std.fs.cwd().openFile(ip_bin_path.?, .{});
+            defer ip_bin_file.close();
+            _ = try ip_bin_file.readAll(cpu.ram[0x8000..]);
+        } else {
+            // Skip IP.bin
+            cpu.pc = 0xAC010000;
+        }
     } else if (gdi_path != null) {
-        cpu.init_boot();
+        cpu.skip_bios();
 
         try gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
 
@@ -88,6 +103,11 @@ pub fn main() !void {
         _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
 
         syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
+    } else {
+        // Boot to menu
+        cpu.skip_bios();
+        // Skip IP.bin (Maybe we should bundle one to load here).
+        cpu.pc = 0xAC010000;
     }
 
     try zglfw.init();
