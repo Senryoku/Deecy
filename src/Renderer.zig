@@ -387,7 +387,7 @@ pub const Renderer = struct {
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
         const parameter_volume_mode = (gpu._get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
-        const skipped_vertex_byte_size = 4 * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
+        const skipped_vertex_byte_size: u32 = @as(u32, 4) * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
         var vertices: [4]Vertex = undefined;
@@ -492,7 +492,9 @@ pub const Renderer = struct {
 
         update_background(self, gpu);
 
-        for (gpu.ta_display_lists) |display_list| {
+        // TODO: Handle Modifier Volumes
+        inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |t| {
+            const display_list = gpu.ta_display_lists[@intFromEnum(t)];
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(FirstVertex + vertices.items.len);
 
@@ -597,7 +599,7 @@ pub const Renderer = struct {
                                 .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },
-                        //  Intensity
+                        // Intensity
                         .Type7 => |v| {
                             try vertices.append(.{
                                 .x = v.x,

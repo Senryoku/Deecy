@@ -1113,6 +1113,7 @@ pub const Holly = struct {
 
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
                     holly_log.err(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
+                    self._ta_current_polygon = null;
                 } else {
                     if (parameter_control_word.obj_control.volume == 0) {
                         switch (parameter_control_word.obj_control.col_type) {
@@ -1155,68 +1156,68 @@ pub const Holly = struct {
             },
             .VertexParameter => {
                 if (self._ta_current_polygon == null) {
-                    holly_log.err(termcolor.red("    No current polygon!"), .{});
+                    holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
                     @panic("No current polygon");
-                }
+                } else {
+                    const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
+                    const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                    if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
 
-                const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
-                const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+                    switch (format) {
+                        .Type0 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type1 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type2 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type3 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type4 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type5 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type6 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type7 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type8 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type9 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type10 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type11 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type12 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type13 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .Type14 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                    }
 
-                switch (format) {
-                    .Type0 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type1 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type2 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type3 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type4 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type5 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type6 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type7 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type8 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type9 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type10 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type11 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type12 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type13 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                    .Type14 => {
-                        self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                    },
-                }
+                    if (parameter_control_word.end_of_strip == 1) {
+                        // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
+                        self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
+                        self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
 
-                if (parameter_control_word.end_of_strip == 1) {
-                    // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
-                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
-                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
-
-                    self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).init(self._allocator);
+                        self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).init(self._allocator);
+                    }
                 }
             },
         }
