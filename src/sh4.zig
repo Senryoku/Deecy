@@ -1561,9 +1561,7 @@ fn swapw(cpu: *SH4, opcode: Instr) void {
 }
 
 fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
+    cpu.R(opcode.nmd.n).* = (cpu.R(opcode.nmd.m).* << 16) & 0xFFFF0000 | (cpu.R(opcode.nmd.m).* >> 16) & 0x0000FFFF;
 }
 
 fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
