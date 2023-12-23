@@ -1059,7 +1059,11 @@ pub const Holly = struct {
         if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 bytes or 16 bytes long
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
-        // std.debug.print("    Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+
+        holly_log.debug(" TA Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+        for (0..8) |i| {
+            holly_log.debug("      {X:0>8}\n", .{self._ta_command_buffer[i]});
+        }
 
         switch (parameter_control_word.parameter_type) {
             .EndOfList => {

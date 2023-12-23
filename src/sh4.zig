@@ -134,6 +134,8 @@ const ExecutionState = enum {
 };
 
 pub const SH4 = struct {
+    on_trapa: ?*const fn () void = null, // Debugging callback
+
     execution_state: ExecutionState = .Running,
 
     // General Registers
@@ -586,7 +588,7 @@ pub const SH4 = struct {
             self.pc += 2;
         } else {
             // FIXME: Not sure if this is a thing.
-            self.add_cycles(1000);
+            self.add_cycles(8);
         }
     }
 
@@ -1084,6 +1086,8 @@ pub const SH4 = struct {
     }
 
     pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        if (self.debug_trace)
+            std.debug.print("write32({X:0>8}, {X:0>8})", .{ virtual_addr, value });
         if (virtual_addr >= 0xE0000000) {
             // P4
             if (virtual_addr < 0xE4000000) {
@@ -1099,7 +1103,7 @@ pub const SH4 = struct {
             }
         }
 
-        const addr = virtual_addr & 0x01FFFFFFF;
+        const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
@@ -1175,10 +1179,9 @@ pub const SH4 = struct {
     }
 
     pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
-        const addr = virtual_addr & 0x01FFFFFFF;
-        @as(*u64, @alignCast(@ptrCast(
-            self._get_memory(addr),
-        ))).* = value;
+        // This isn't efficient, but avoids repeating all the logic of write32.
+        self.write32(virtual_addr, @truncate(value));
+        self.write32(virtual_addr + 4, @truncate(value >> 32));
     }
 
     pub fn start_maple_dma(self: *@This()) void {
@@ -1564,7 +1567,7 @@ fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nd8.n).* = @bitCast(@as(i32, @bitCast(cpu.R(opcode.nd8.n).*)) + sign_extension_u8(opcode.nd8.d));
+    cpu.R(opcode.nd8.n).* = @bitCast(@as(i32, @bitCast(cpu.R(opcode.nd8.n).*)) +% sign_extension_u8(opcode.nd8.d));
 }
 
 test "add imm rn" {
@@ -2425,6 +2428,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             std.debug.assert(sq_addr.spec == 0b111000);
             //               The full address also includes the sq bit.
             const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
+            std.log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
             inline for (0..8) |i| {
                 cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             }
@@ -2435,7 +2439,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         };
         if (static.once) {
             static.once = false;
-            sh4_log.warn("Note: pref @Rn not implemented", .{});
+            sh4_log.warn("Note: pref @Rn not implemented outside of store queue operation.", .{});
         }
     }
 }
@@ -2557,6 +2561,15 @@ fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
 fn stsl_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
+}
+
+fn trapa_imm(cpu: *SH4, opcode: Instr) void {
+    // Hijack this instruction for debugging purposes.
+    std.debug.print("TRAPA #0x{X}\n", .{opcode.nd8.d});
+
+    if (cpu.on_trapa != null) {
+        cpu.on_trapa.?();
+    }
 }
 
 fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -3085,7 +3098,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = stsl_MACL_at_Rn_dec, .name = "sts.l MACL,@-Rn", .privileged = false },
     .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = sts_PR_Rn, .name = "sts PR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
     .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = stsl_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
+    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = trapa_imm, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },

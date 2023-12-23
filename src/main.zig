@@ -32,6 +32,12 @@ pub const std_options = struct {
     };
 };
 
+var running = true;
+
+fn trapa_handler() void {
+    running = false;
+}
+
 pub fn main() !void {
     std.log.info("\r  == Katana ==                             ", .{});
 
@@ -146,9 +152,9 @@ pub fn main() !void {
 
     zgui.getStyle().scaleAllSizes(scale_factor);
 
-    var running = true;
     var breakpoints = std.ArrayList(u32).init(common.GeneralAllocator);
     defer breakpoints.deinit();
+    cpu.on_trapa = trapa_handler;
 
     const vram_width = 640;
     const vram_height = 400;
@@ -301,6 +307,17 @@ pub fn main() !void {
                 });
                 addr += 8;
             }
+
+            zgui.separator();
+
+            for (0..2) |sq| {
+                for (0..8) |i| {
+                    zgui.text("[SQ{d:0>1}] {X:0>8}", .{
+                        sq,
+                        cpu.store_queues[sq][i],
+                    });
+                }
+            }
         }
         zgui.end();
 
@@ -421,7 +438,7 @@ pub fn main() !void {
         if (running) {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
-            execution: while ((try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !cpu.gpu.render_start) {
+            while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !cpu.gpu.render_start) {
                 cpu.execute();
 
                 // Crude outlier values checking
@@ -429,13 +446,11 @@ pub fn main() !void {
                     if (std.math.lossyCast(f32, cpu.fpul) >= 4294966000.000) {
                         std.debug.print("Weird: FPUL = {d}\n", .{std.math.lossyCast(f32, cpu.fpul)});
                         running = false;
-                        break :execution;
                     }
                     for (0..16) |i| {
                         if (cpu.FR(@intCast(i)).* >= 4294966000.000) {
                             std.debug.print("Weird: FR({d}) = {d}\n", .{ i, cpu.FR(@intCast(i)).* });
                             running = false;
-                            break :execution;
                         }
                     }
                 }
@@ -445,7 +460,6 @@ pub fn main() !void {
                 } else null;
                 if (breakpoint != null) {
                     running = false;
-                    break;
                 }
             }
         }
