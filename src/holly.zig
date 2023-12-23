@@ -231,6 +231,26 @@ pub const ISP_BACKGND_T = packed struct(u32) {
     _: u3,
 };
 
+pub const FB_R_CTRL = packed struct(u32) {
+    enable: bool,
+    line_double: bool,
+    format: u2, // Named "depth" in the documentation
+    concat: u3,
+    _0: u1,
+    chroma_threshold: u8,
+    stripsize: u6,
+    strip_buf_en: bool,
+    vclk_div: u1,
+    _1: u8,
+};
+
+pub const FB_R_SIZE = packed struct(u32) {
+    x_size: u10, // Number of display pixels on each line - 1, in 32-bit units
+    y_size: u10, // Number of display lines - 1
+    modulus: u10, // Amount of data between each line, in 32-bit units
+    _: u2,
+};
+
 pub const ParameterType = enum(u3) {
     // Control Parameter
     EndOfList = 0,

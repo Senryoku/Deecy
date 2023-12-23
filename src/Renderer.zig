@@ -373,6 +373,23 @@ pub const Renderer = struct {
         }
     }
 
+    fn read_from_framebuffer(self: *Renderer, gpu: *Holly.Holly) void {
+        _ = self;
+        const FB_R_CTRL = gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
+        const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
+        _ = FB_R_SOF1;
+        const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
+        _ = FB_R_SOF2;
+        const FB_R_SIZE = gpu._get_register(Holly.FB_R_SIZE, .FB_R_SIZE).*;
+        _ = FB_R_SIZE;
+
+        // Enabled: We have to copy some data from VRAM.
+        if (FB_R_CTRL.enable) {
+            // FIXME: I don't know how to select the right field yet.
+            renderer_log.warn("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!", .{});
+        }
+    }
+
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
     pub fn update_background(self: *Renderer, gpu: *Holly.Holly) void {
         const tags = gpu._get_register(Holly.ISP_BACKGND_T, .ISP_BACKGND_T).*;
@@ -490,7 +507,9 @@ pub const Renderer = struct {
 
         self.max_depth = 1.0;
 
-        update_background(self, gpu);
+        self.update_background(gpu);
+
+        self.read_from_framebuffer(gpu); // FIXME: I don't think rendering needs to be enabled for this to work.
 
         // TODO: Handle Modifier Volumes
         inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |t| {

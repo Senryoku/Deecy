@@ -328,22 +328,31 @@ pub fn main() !void {
             const FB_W_CTRL: u32 = cpu.gpu._get_register(u32, .FB_W_CTRL).*;
             const FB_W_SOF1: u32 = cpu.gpu._get_register(u32, .FB_W_SOF1).*;
             const FB_W_SOF2: u32 = cpu.gpu._get_register(u32, .FB_W_SOF2).*;
+            const FB_R_CTRL: u32 = cpu.gpu._get_register(u32, .FB_R_CTRL).*;
+            const FB_R_SOF1: u32 = cpu.gpu._get_register(u32, .FB_R_SOF1).*;
+            const FB_R_SOF2: u32 = cpu.gpu._get_register(u32, .FB_R_SOF2).*;
             zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
             zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
+            zgui.text("FB_R_CTRL: 0x{X:0>8}", .{FB_R_CTRL});
+            zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
+            zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
 
             if (zgui.collapsingHeader("Framebuffer?", .{})) {
                 const static = struct {
                     var start_addr: i32 = 0x04200000;
+                    var format: i32 = 0x6;
                 };
-                _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = vram_width * vram_height, .flags = .{ .chars_hexadecimal = true } });
-                const bytes_per_pixels: u32 = if (FB_W_CTRL & 0b111 == 0x6) 4 else 2;
+                _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 0x8000, .flags = .{ .chars_hexadecimal = true } });
+                _ = zgui.inputInt("Format", .{ .v = &static.format, .step = 1, .flags = .{ .chars_hexadecimal = true } });
+                static.format = std.math.clamp(static.format, 0, 0x6);
+                const bytes_per_pixels: u32 = if (static.format & 0b111 == 0x6) 4 else 2;
                 var start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
                 const end = std.math.clamp(start + bytes_per_pixels * vram_width * vram_height, 0x04000000, 0x04800000);
                 zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
                 var i: usize = 0;
                 while (start < end) {
-                    switch (FB_W_CTRL & 0b111) {
+                    switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
                             const color: Holly.Color16 = .{
                                 .value = cpu.read16(@intCast(start)),
@@ -377,7 +386,7 @@ pub fn main() !void {
                         },
                         else => {
                             start = end;
-                            zgui.text("Unsupported packed format: FB_W_CTRL: 0x{X:0>1}", .{FB_W_CTRL & 0b111});
+                            zgui.text("Unsupported packed format: 0x{X:0>1}", .{static.format & 0b111});
                         },
                     }
                 }
