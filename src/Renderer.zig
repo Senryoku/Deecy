@@ -7,7 +7,7 @@ const wgpu = zgpu.wgpu;
 
 const termcolor = @import("termcolor.zig");
 
-const Holly = @import("Holly.zig");
+const HollyModule = @import("holly.zig");
 
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
 var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
@@ -30,7 +30,7 @@ const fRGBA = struct {
 
 const ShadingInstructions = packed struct(u16) {
     textured: u1 = 0,
-    mode: Holly.TextureShadingInstruction = .Decal,
+    mode: HollyModule.TextureShadingInstruction = .Decal,
     ignore_alpha: u1 = 0,
     _: u12 = 0,
 };
@@ -75,7 +75,7 @@ const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 const TextureMetadata = struct {
     const Unused: u32 = 0xFFFFFFFF;
 
-    control_word: Holly.TextureControlWord = .{},
+    control_word: HollyModule.TextureControlWord = .{},
     index: u16 = Renderer.MaxTextures,
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
@@ -89,7 +89,7 @@ pub const Renderer = struct {
 
     texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
 
-    polygons: std.ArrayList(Holly.Polygon),
+    polygons: std.ArrayList(HollyModule.Polygon),
 
     pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
@@ -223,7 +223,7 @@ pub const Renderer = struct {
         const depth = createDepthTexture(gctx);
 
         return .{
-            .polygons = std.ArrayList(Holly.Polygon).init(allocator),
+            .polygons = std.ArrayList(HollyModule.Polygon).init(allocator),
 
             .pipeline = pipeline,
             .bind_group = bind_group,
@@ -248,7 +248,7 @@ pub const Renderer = struct {
         self.polygons.deinit();
     }
 
-    fn get_texture_index(self: *Renderer, control_word: Holly.TextureControlWord) ?u16 {
+    fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?u16 {
         for (0..Renderer.MaxTextures) |i| {
             if (self.texture_metadata[i].usage != TextureMetadata.Unused and self.texture_metadata[i].control_word.address == control_word.address) {
                 return @intCast(i);
@@ -257,7 +257,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u16 {
+    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) u16 {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
@@ -280,7 +280,7 @@ pub const Renderer = struct {
             .ARGB1555 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
                     pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.r) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
                     pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.b) << 3;
@@ -290,7 +290,7 @@ pub const Renderer = struct {
             .RGB565 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
                     pixels[i * 4 + 0] = @as(u8, pixel.rgb565.r) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
                     pixels[i * 4 + 2] = @as(u8, pixel.rgb565.b) << 3;
@@ -300,7 +300,7 @@ pub const Renderer = struct {
             .ARGB4444 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: Holly.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
+                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
                     pixels[i * 4 + 0] = @as(u8, pixel.argb4444.r) << 4;
                     pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
                     pixels[i * 4 + 2] = @as(u8, pixel.argb4444.b) << 4;
@@ -357,7 +357,7 @@ pub const Renderer = struct {
         }
     }
 
-    fn check_texture_usage(self: *Renderer, gpu: *Holly.Holly) void {
+    fn check_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
         for (0..Renderer.MaxTextures) |i| {
             if (self.texture_metadata[i].usage == 0) {
                 self.texture_metadata[i].usage = TextureMetadata.Unused;
@@ -373,14 +373,14 @@ pub const Renderer = struct {
         }
     }
 
-    fn read_from_framebuffer(self: *Renderer, gpu: *Holly.Holly) void {
+    fn read_from_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
         _ = self;
-        const FB_R_CTRL = gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
+        const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
         _ = FB_R_SOF1;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         _ = FB_R_SOF2;
-        const FB_R_SIZE = gpu._get_register(Holly.FB_R_SIZE, .FB_R_SIZE).*;
+        const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
         _ = FB_R_SIZE;
 
         // Enabled: We have to copy some data from VRAM.
@@ -391,13 +391,13 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    pub fn update_background(self: *Renderer, gpu: *Holly.Holly) void {
-        const tags = gpu._get_register(Holly.ISP_BACKGND_T, .ISP_BACKGND_T).*;
+    pub fn update_background(self: *Renderer, gpu: *HollyModule.Holly) void {
+        const tags = gpu._get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
         const param_base = gpu._get_register(u32, .PARAM_BASE).*;
         const addr = param_base + 4 * tags.tag_address;
-        const isp_tsp_instruction = @as(*const Holly.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
-        const tsp_instruction = @as(*const Holly.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
-        const texture_control = @as(*const Holly.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
+        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
+        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
+        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
 
         const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
         self.max_depth = @max(self.max_depth, depth);
@@ -445,8 +445,8 @@ pub const Renderer = struct {
             const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
             var u: f32 = 0;
             var v: f32 = 0;
-            var base_color: Holly.PackedColor = @bitCast(vp[3]);
-            var offset_color: Holly.PackedColor = @bitCast(vp[3]); // TODO
+            var base_color: HollyModule.PackedColor = @bitCast(vp[3]);
+            var offset_color: HollyModule.PackedColor = @bitCast(vp[3]); // TODO
             if (isp_tsp_instruction.texture == 1) {
                 if (isp_tsp_instruction.uv_16bit == 1) {
                     u = @as(f32, @bitCast(vp[3] >> 16));
@@ -496,7 +496,7 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
     }
 
-    pub fn update(self: *Renderer, gpu: *Holly.Holly) !void {
+    pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
         var vertices = std.ArrayList(Vertex).init(self._allocator);
         defer vertices.deinit();
         var indices = std.ArrayList(u32).init(self._allocator);
@@ -512,16 +512,16 @@ pub const Renderer = struct {
         self.read_from_framebuffer(gpu); // FIXME: I don't think rendering needs to be enabled for this to work.
 
         // TODO: Handle Modifier Volumes
-        inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |t| {
+        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |t| {
             const display_list = gpu.ta_display_lists[@intFromEnum(t)];
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(FirstVertex + vertices.items.len);
 
                 // Generic Parameters
-                var parameter_control_word: Holly.ParameterControlWord = undefined;
-                var isp_tsp_instruction: Holly.ISPTSPInstructionWord = undefined;
-                var tsp_instruction: Holly.TSPInstructionWord = undefined;
-                var texture_control: Holly.TextureControlWord = undefined;
+                var parameter_control_word: HollyModule.ParameterControlWord = undefined;
+                var isp_tsp_instruction: HollyModule.ISPTSPInstructionWord = undefined;
+                var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
+                var texture_control: HollyModule.TextureControlWord = undefined;
                 // Specific to a polygon type
                 var face_color: fRGBA = undefined;
 

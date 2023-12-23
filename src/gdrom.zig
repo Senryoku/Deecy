@@ -5,6 +5,7 @@ const gdrom_log = std.log.scoped(.gdrom);
 
 const GDI = @import("gdi.zig").GDI;
 const SH4 = @import("sh4.zig").SH4;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
@@ -52,13 +53,17 @@ pub const GDROM = struct {
     _next_command_id: u32 = 1,
     _current_command_id: u32 = 0,
 
-    pub fn init(self: *@This()) void {
-        // No idea if this is needed.
+    pub fn init() GDROM {
+        var gdrom = GDROM{};
+        gdrom.reinit();
+        return gdrom;
+    }
+
+    pub fn reinit(self: *@This()) void {
         self.status = GDROMStatus.Standby;
         self.command = undefined;
         @memset(&self.params, 0);
         @memset(&self.result, 0);
-        self._next_command_id = 1;
     }
 
     pub fn send_command(self: *@This(), command_code: u32, params: [4]u32) u32 {
@@ -76,7 +81,7 @@ pub const GDROM = struct {
         return self._current_command_id;
     }
 
-    pub fn mainloop(self: *@This(), cpu: *SH4) void {
+    pub fn mainloop(self: *@This(), dc: *Dreamcast) void {
         if (self.status != GDROMStatus.Busy) {
             gdrom_log.debug("  GDROM Mainloop - No command queued", .{});
             return;
@@ -92,10 +97,10 @@ pub const GDROM = struct {
 
                 gdrom_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.command), lba, size, dest });
                 const byte_size = 2048 * size;
-                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(cpu._get_memory(dest)))[0..byte_size]);
+                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0..byte_size]);
 
-                cpu.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
-                cpu.raise_external_interrupt(.{ .GDRom = 1 });
+                dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+                dc.raise_external_interrupt(.{ .GDRom = 1 });
 
                 self.result = .{ 0, 0, read, 0 };
 
@@ -109,18 +114,18 @@ pub const GDROM = struct {
                 const dest = self.params[0];
                 const version = "GDC Version 1.10 1999-03-31";
                 for (0..version.len) |i| {
-                    cpu.write8(@intCast(dest + i), version[i]);
+                    dc.write8(@intCast(dest + i), version[i]);
                 }
-                cpu.write8(@intCast(dest + version.len), 0x2);
+                dc.write8(@intCast(dest + version.len), 0x2);
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.ReqMode => {
                 const dest = self.params[0];
                 gdrom_log.info("    GDROM ReqMode  dest=0x{X:0>8}", .{dest});
-                cpu.write32(dest + 0, 0); // Speed
-                cpu.write32(dest + 4, 0x00B4); // Standby
-                cpu.write32(dest + 8, 0x19); // Read Flags
-                cpu.write32(dest + 12, 0x08); // Read retry
+                dc.write32(dest + 0, 0); // Speed
+                dc.write32(dest + 4, 0x00B4); // Standby
+                dc.write32(dest + 8, 0x19); // Read Flags
+                dc.write32(dest + 12, 0x08); // Read retry
                 self.result = .{ 0, 0, 0xA, 0 };
                 self.status = GDROMStatus.Standby;
             },
