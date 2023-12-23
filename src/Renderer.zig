@@ -488,7 +488,7 @@ pub const Renderer = struct {
         self.reset_texture_usage();
         defer self.check_texture_usage(gpu);
 
-        self.max_depth = 0;
+        self.max_depth = 1.0;
 
         update_background(self, gpu);
 
@@ -621,7 +621,7 @@ pub const Renderer = struct {
                         },
                     }
 
-                    self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
+                    self.max_depth = @max(self.max_depth, vertices.getLast().z);
                 }
 
                 try indices.append(start + 0);
