@@ -2647,14 +2647,14 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* + cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }
 }
 fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.write32(cpu.R(0).* + cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }
