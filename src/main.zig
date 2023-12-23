@@ -35,6 +35,9 @@ pub const std_options = struct {
 pub fn main() !void {
     std.log.info("\r  == Katana ==                             ", .{});
 
+    var cpu = try sh4.SH4.init(common.GeneralAllocator);
+    defer cpu.deinit();
+
     var binary_path: ?[]const u8 = null;
 
     var gdi_path: ?[]const u8 = null;
@@ -58,20 +61,22 @@ pub fn main() !void {
             }
             gdi_path = v.?;
         }
+        if (std.mem.eql(u8, arg, "-d")) {
+            cpu.debug_trace = true;
+        }
     }
-
-    var cpu = try sh4.SH4.init(common.GeneralAllocator);
-    defer cpu.deinit();
 
     var gdrom = &syscall.gdrom; // FIXME
     defer gdrom.disk.deinit();
 
     if (binary_path != null) {
+        cpu.init_boot();
+
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
         _ = try bin_file.readAll(cpu.ram[0x10000..]);
 
-        cpu.init_boot();
+        // Skip IP.bin
         cpu.pc = 0xAC010000;
     } else if (gdi_path != null) {
         cpu.init_boot();
@@ -121,7 +126,7 @@ pub fn main() !void {
 
     zgui.getStyle().scaleAllSizes(scale_factor);
 
-    var running = false;
+    var running = true;
     var breakpoints = std.ArrayList(u32).init(common.GeneralAllocator);
     defer breakpoints.deinit();
 
