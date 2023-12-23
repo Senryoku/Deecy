@@ -762,6 +762,12 @@ pub const SH4 = struct {
         }
     }
 
+    fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
+        std.debug.print("PC: {X:0>8}\n", .{self.pc});
+        std.debug.panic(fmt, args);
+        @panic(fmt);
+    }
+
     // Area 0:
     // 0x00000000 - 0x001FFFFF Boot ROM
     // 0x00200000 - 0x0021FFFF Flash Memory
@@ -844,14 +850,13 @@ pub const SH4 = struct {
                 return self.gpu._get_vram(addr);
             },
             0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
-                sh4_log.err(termcolor.red("Invalid _get_memory to Area 2: {X:0>8}\n"), .{addr});
-                unreachable;
+                self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr});
             },
             0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
                 return &self.ram[addr & 0x00FFFFFF];
             },
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
-                @panic("Unexpected _get_memory to Area 4 - This should only be accessible via write32 or DMA.");
+                self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
             },
             0x14000000...0x17FFFFFF => { // Area 5 - Expansion (modem) port
                 const static = struct {
@@ -864,8 +869,7 @@ pub const SH4 = struct {
                 return &self.dummy_area5;
             },
             0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
-                sh4_log.err(termcolor.red("Invalid _get_memory to Area 6: {X:0>8}\n"), .{addr});
-                unreachable;
+                self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr});
             },
             0x1C000000...0x1FFFFFFF => { // Area 7 - Internal I/O registers (same as P4)
                 std.debug.assert(self.sr.md == 1);

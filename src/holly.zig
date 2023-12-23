@@ -1060,9 +1060,9 @@ pub const Holly = struct {
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
 
-        holly_log.debug(" TA Parameter Type: {any}\n", .{parameter_control_word.parameter_type});
+        holly_log.debug(" TA Parameter Type: {any}", .{parameter_control_word.parameter_type});
         for (0..8) |i| {
-            holly_log.debug("      {X:0>8}\n", .{self._ta_command_buffer[i]});
+            holly_log.debug("      {X:0>8}", .{self._ta_command_buffer[i]});
         }
 
         switch (parameter_control_word.parameter_type) {
@@ -1214,6 +1214,8 @@ pub const Holly = struct {
                             self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                         },
                     }
+
+                    //std.debug.print("vertex_parameters: {any}\n", .{self._ta_current_polygon_vertex_parameters.getLast()});
 
                     if (parameter_control_word.end_of_strip == 1) {
                         // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
