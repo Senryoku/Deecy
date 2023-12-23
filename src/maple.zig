@@ -57,9 +57,7 @@ const CommandWord = packed struct(u32) {
     payload_length: u8, // In 32-bit words.
 };
 
-// Note: I'm not sure of the order of fields here, the link being big endian (according to some sources, not all :D)...
-const FunctionCodesMask = packed struct(u32) {
-    // Input capabilities, should be its own thing but we'll see when we get there.
+const InputCapabilities = packed struct(u32) {
     c: u1 = 0,
     b: u1 = 0,
     a: u1 = 0,
@@ -83,7 +81,17 @@ const FunctionCodesMask = packed struct(u32) {
     analogHorizontal2: u1 = 0,
     analogVertical2: u1 = 0,
 
-    // Generic,
+    _: u10 = 0,
+};
+
+// Note: I'm not sure of the order of fields here...
+const FunctionCodesMask = packed struct(u32) {
+    _: u20 = 0,
+
+    vibration: u1 = 0,
+    mouse: u1 = 0,
+
+    _2: u2 = 0,
 
     controller: u1 = 0,
     storage: u1 = 0,
@@ -93,8 +101,6 @@ const FunctionCodesMask = packed struct(u32) {
     argun: u1 = 0,
     keyboard: u1 = 0,
     gun: u1 = 0,
-    vibration: u1 = 0,
-    mouse: u1 = 0,
 };
 
 const LocationWord = packed struct(u32) {
@@ -117,7 +123,7 @@ const DeviceInfoPayload = extern struct {
     // Possible extension
 };
 
-const StandardControllerCapabilities: FunctionCodesMask = .{
+const StandardControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
     .start = 1,
@@ -211,10 +217,12 @@ const MaplePort = struct {
                         };
                     },
                     .GetCondition => {
-                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 2 }));
+                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
                         // TODO: Write some actual input data!
-                        cpu.write32(return_addr + 4, 0xFFFFFFFF & ~(@as(u32, ~@as(u16, @bitCast(self.buttons))) << 16));
-                        cpu.write32(return_addr + 8, 0xFFFFFFFF);
+                        cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
+                        cpu.write16(return_addr + 8, @bitCast(self.buttons));
+                        cpu.write16(return_addr + 10, 0xFFFF);
+                        cpu.write32(return_addr + 12, 0xFFFFFFFF);
                     },
                     else => {
                         std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
@@ -229,7 +237,7 @@ const MaplePort = struct {
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = .{ .controller = 1 }, .subcapabilities = .{ StandardControllerCapabilities, .{}, .{} } }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
+    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = .{ .controller = 1 }, .subcapabilities = .{ @bitCast(StandardControllerCapabilities), .{}, .{} } }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
 
     pub fn init() MapleHost {
         return .{};

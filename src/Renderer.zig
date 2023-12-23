@@ -597,7 +597,7 @@ pub const Renderer = struct {
                                 .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },
-                        // TODO: Intensity
+                        //  Intensity
                         .Type7 => |v| {
                             try vertices.append(.{
                                 .x = v.x,
