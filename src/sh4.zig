@@ -819,7 +819,7 @@ pub const SH4 = struct {
                         };
                         if (!static.once) {
                             static.once = true;
-                            sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)\n"), .{addr});
+                            sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
                         }
                         return @ptrCast(&self._dummy);
                     },
@@ -833,7 +833,7 @@ pub const SH4 = struct {
                         return &aica.wave_memory[addr - 0x00800000];
                     },
                     else => {
-                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}\n"), .{addr});
+                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}"), .{addr});
                         return @ptrCast(&self._dummy);
                     },
                 }
@@ -857,7 +857,7 @@ pub const SH4 = struct {
                 };
                 if (!static.once) {
                     static.once = true;
-                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)\n"), .{addr});
+                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)"), .{addr});
                 }
                 return &self.dummy_area5;
             },

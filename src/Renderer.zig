@@ -19,6 +19,18 @@ pub fn to_tiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
 
+const ShadingInstructions = packed struct(u16) {
+    textured: u1 = 0,
+    mode: Holly.TextureShadingInstruction = .Decal,
+    ignore_alpha: u1 = 0,
+    _: u12 = 0,
+};
+
+const VertexTexture = struct {
+    index: u16,
+    shading: ShadingInstructions,
+};
+
 const Vertex = struct {
     x: f32,
     y: f32,
@@ -27,10 +39,10 @@ const Vertex = struct {
     g: f32,
     b: f32,
     a: f32,
-    u: f32,
-    v: f32,
-    tex: u32,
-    tex_size: [2]u16,
+    u: f32 = 0.0,
+    v: f32 = 0.0,
+    tex: VertexTexture,
+    tex_size: [2]u16 = .{ 1024, 1024 },
     uv_offset: [2]f32 = .{ 0, 0 },
 };
 
@@ -55,7 +67,7 @@ const TextureMetadata = struct {
     const Unused: u32 = 0xFFFFFFFF;
 
     control_word: Holly.TextureControlWord = .{},
-    index: u32 = Renderer.MaxTextures,
+    index: u16 = Renderer.MaxTextures,
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
@@ -128,7 +140,7 @@ pub const Renderer = struct {
                 .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
                 .{ .format = .float32x4, .offset = @offsetOf(Vertex, "r"), .shader_location = 1 },
                 .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 2 },
-                .{ .format = .uint32, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
+                .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
                 .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex_size"), .shader_location = 4 },
                 .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
             };
@@ -227,16 +239,16 @@ pub const Renderer = struct {
         self.polygons.deinit();
     }
 
-    fn get_texture_index(self: *Renderer, control_word: Holly.TextureControlWord) u32 {
+    fn get_texture_index(self: *Renderer, control_word: Holly.TextureControlWord) ?u16 {
         for (0..Renderer.MaxTextures) |i| {
             if (self.texture_metadata[i].usage != TextureMetadata.Unused and self.texture_metadata[i].control_word.address == control_word.address) {
                 return @intCast(i);
             }
         }
-        return Renderer.MaxTextures;
+        return null;
     }
 
-    fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u32 {
+    fn upload_texture(self: *Renderer, gpu: *Holly.Holly, tsp_instruction: Holly.TSPInstructionWord, texture_control_word: Holly.TextureControlWord) u16 {
         std.log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         std.log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
@@ -249,6 +261,7 @@ pub const Renderer = struct {
         std.debug.assert(texture_control_word.stride_select == 0); // Not implemented
         std.debug.assert(texture_control_word.vq_compressed == 0); // Not implemented
 
+        // FIXME: Allocate a scratch pad once and stick to it?
         var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
         defer self._allocator.free(pixels);
 
@@ -356,7 +369,7 @@ pub const Renderer = struct {
         const tags = gpu._get_register(Holly.ISP_BACKGND_T, .ISP_BACKGND_T).*;
         const param_base = gpu._get_register(u32, .PARAM_BASE).*;
         const addr = param_base + 4 * tags.tag_address;
-        const isptsp_instruction = @as(*const Holly.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
+        const isp_tsp_instruction = @as(*const Holly.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
         const tsp_instruction = @as(*const Holly.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
         const texture_control = @as(*const Holly.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
 
@@ -371,34 +384,45 @@ pub const Renderer = struct {
         var vertices: [4]Vertex = undefined;
 
         var vertex_byte_size: u32 = 4 * (3 + 1);
-        var tex_idx = TextureMetadata.Unused;
+        var tex_idx: u16 = 0;
 
         // The unused fields seems to be absent.
-        if (isptsp_instruction.texture == 1) {
-            tex_idx = self.get_texture_index(texture_control);
-            if (tex_idx == Renderer.MaxTextures) {
+        if (isp_tsp_instruction.texture == 1) {
+            const tmp_tex_idx = self.get_texture_index(texture_control);
+            if (tmp_tex_idx == null) {
                 tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
+            } else {
+                tex_idx = tmp_tex_idx.?;
             }
             self.texture_metadata[tex_idx].usage += 1;
 
-            if (isptsp_instruction.uv_16bit == 1) {
+            if (isp_tsp_instruction.uv_16bit == 1) {
                 vertex_byte_size += 4 * 1;
             } else {
                 vertex_byte_size += 4 * 2;
             }
         }
-        if (isptsp_instruction.offset == 1) {
+        if (isp_tsp_instruction.offset == 1) {
             vertex_byte_size += 4 * 1;
         }
+
+        const use_alpha = tsp_instruction.use_alpha == 1;
+
+        const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
+            .textured = isp_tsp_instruction.texture,
+            .mode = tsp_instruction.texture_shading_instruction,
+            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+        } };
+        const tex_size = self.texture_metadata[tex_idx].size;
 
         for (0..3) |i| {
             const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
             var u: f32 = 0;
             var v: f32 = 0;
             var base_color: Holly.PackedColor = @bitCast(vp[3]);
-            var offset_color: Holly.PackedColor = @bitCast(vp[3]);
-            if (isptsp_instruction.texture == 1) {
-                if (isptsp_instruction.uv_16bit == 1) {
+            var offset_color: Holly.PackedColor = @bitCast(vp[3]); // TODO
+            if (isp_tsp_instruction.texture == 1) {
+                if (isp_tsp_instruction.uv_16bit == 1) {
                     u = @as(f32, @bitCast(vp[3] >> 16));
                     v = @as(f32, @bitCast(vp[3] & 0xFFFF));
                     base_color = @bitCast(vp[4]);
@@ -417,11 +441,11 @@ pub const Renderer = struct {
                 .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
                 .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
                 .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
-                .a = @as(f32, @floatFromInt(base_color.a)) / 255.0,
+                .a = if (use_alpha) @as(f32, @floatFromInt(base_color.a)) / 255.0 else 1.0,
                 .u = u,
                 .v = v,
-                .tex = tex_idx,
-                .tex_size = .{ 0, 0 },
+                .tex = tex,
+                .tex_size = tex_size,
             };
         }
         vertices[3] = Vertex{
@@ -436,8 +460,8 @@ pub const Renderer = struct {
 
             .u = vertices[2].u,
             .v = vertices[1].v,
-            .tex = tex_idx,
-            .tex_size = .{ 0, 0 },
+            .tex = tex,
+            .tex_size = tex_size,
         };
 
         const indices: [6]u32 = .{ 0, 1, 2, 2, 1, 3 };
@@ -465,14 +489,18 @@ pub const Renderer = struct {
 
                 const global_parameter = @as(*const Holly.GenericGlobalParameter, @ptrCast(&display_list.polygons.items[idx])).*;
 
-                var tex_idx: u32 = 0;
+                var tex_idx: u16 = 0;
                 if (global_parameter.parameter_control_word.obj_control.texture == 1) {
-                    tex_idx = self.get_texture_index(global_parameter.texture_control);
-                    if (tex_idx == Renderer.MaxTextures) {
+                    const tmp_tex_idx = self.get_texture_index(global_parameter.texture_control);
+                    if (tmp_tex_idx == null) {
                         tex_idx = self.upload_texture(gpu, global_parameter.tsp_instruction, global_parameter.texture_control);
+                    } else {
+                        tex_idx = tmp_tex_idx.?;
                     }
                     self.texture_metadata[tex_idx].usage += 1;
                 }
+
+                const use_alpha = global_parameter.tsp_instruction.use_alpha == 1;
 
                 const clamp_uv = global_parameter.tsp_instruction.clamp_uv == 1;
 
@@ -481,6 +509,12 @@ pub const Renderer = struct {
                 if (flip_u or flip_v) {
                     std.log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
+
+                const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
+                    .textured = global_parameter.isp_tsp_instruction.texture,
+                    .mode = global_parameter.tsp_instruction.texture_shading_instruction,
+                    .ignore_alpha = global_parameter.tsp_instruction.ignore_texture_alpha,
+                } };
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
                     switch (vertex) {
@@ -492,11 +526,8 @@ pub const Renderer = struct {
                                 .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
                                 .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
-                                .a = @as(f32, @floatFromInt(v.base_color.a)) / 255.0,
-                                .u = 0.0,
-                                .v = 0.0,
-                                .tex = TextureMetadata.Unused,
-                                .tex_size = .{ 0, 0 },
+                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                .tex = tex,
                             });
                         },
                         // Non-Textured, Floating Color
@@ -508,11 +539,8 @@ pub const Renderer = struct {
                                 .r = v.r,
                                 .g = v.g,
                                 .b = v.b,
-                                .a = v.a,
-                                .u = 0.0,
-                                .v = 0.0,
-                                .tex = TextureMetadata.Unused,
-                                .tex_size = .{ 0, 0 },
+                                .a = if (use_alpha) v.a else 1.0,
+                                .tex = tex,
                             });
                         },
                         .Type3 => |v| {
@@ -523,10 +551,10 @@ pub const Renderer = struct {
                                 .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
                                 .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
-                                .a = @as(f32, @floatFromInt(v.base_color.a)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
                                 .u = v.u,
                                 .v = v.v,
-                                .tex = tex_idx,
+                                .tex = tex,
                                 .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },
@@ -539,10 +567,10 @@ pub const Renderer = struct {
                                 .r = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
                                 .g = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
                                 .b = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
-                                .a = @as(f32, @floatFromInt(v.base_intensity)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_intensity)) / 255.0 else 1.0,
                                 .u = v.u,
                                 .v = v.v,
-                                .tex = tex_idx,
+                                .tex = tex,
                                 .tex_size = self.texture_metadata[tex_idx].size,
                             });
                         },

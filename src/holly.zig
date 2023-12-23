@@ -311,10 +311,17 @@ pub const ISPTSPInstructionWord = packed struct(u32) {
     depth_compare_mode: u3,
 };
 
+pub const TextureShadingInstruction = enum(u2) {
+    Decal = 0,
+    Modulate = 1,
+    DecalAlpha = 2,
+    ModulateAlpha = 3,
+};
+
 pub const TSPInstructionWord = packed struct(u32) {
     texture_v_size: u3,
     texture_u_size: u3,
-    texture_shading_instruction: u2,
+    texture_shading_instruction: TextureShadingInstruction,
     mapmap_d_adjust: u4,
     supersample_texture: u1,
     filter_mode: u2,
