@@ -1,7 +1,7 @@
 #
 
 ## Notes
- - Some games (i.e. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
+ - Some games (e.g. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
 
 
 ## Some sources
