@@ -216,7 +216,7 @@ pub fn main() !void {
             const end_addr = addr + range;
             while (addr < end_addr) {
                 //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == dc.cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[dc.read16(@intCast(addr))]].name });
-                const disassembly = try sh4.disassemble(.{ .value = dc.read16(@intCast(addr)) }, common.GeneralAllocator);
+                const disassembly = try sh4.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
                 zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
                 addr += 2;
             }
@@ -297,14 +297,14 @@ pub fn main() !void {
             while (addr < end_addr) {
                 zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
                     addr,
-                    dc.read8(@intCast(addr)),
-                    dc.read8(@intCast(addr + 1)),
-                    dc.read8(@intCast(addr + 2)),
-                    dc.read8(@intCast(addr + 3)),
-                    dc.read8(@intCast(addr + 4)),
-                    dc.read8(@intCast(addr + 5)),
-                    dc.read8(@intCast(addr + 6)),
-                    dc.read8(@intCast(addr + 7)),
+                    dc.cpu.read8(@intCast(addr)),
+                    dc.cpu.read8(@intCast(addr + 1)),
+                    dc.cpu.read8(@intCast(addr + 2)),
+                    dc.cpu.read8(@intCast(addr + 3)),
+                    dc.cpu.read8(@intCast(addr + 4)),
+                    dc.cpu.read8(@intCast(addr + 5)),
+                    dc.cpu.read8(@intCast(addr + 6)),
+                    dc.cpu.read8(@intCast(addr + 7)),
                 });
                 addr += 8;
             }
@@ -356,7 +356,7 @@ pub fn main() !void {
                     switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
                             const color: Holly.Color16 = .{
-                                .value = dc.read16(@intCast(start)),
+                                .value = dc.cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
@@ -367,7 +367,7 @@ pub fn main() !void {
                         },
                         0x1 => { // 565 RGB 16 bit
                             const color: Holly.Color16 = .{
-                                .value = dc.read16(@intCast(start)),
+                                .value = dc.cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
@@ -378,10 +378,10 @@ pub fn main() !void {
                         },
                         // ARGB 32-Bits
                         0x6 => {
-                            pixels[4 * i + 0] = dc.read8(@intCast(start + 3));
-                            pixels[4 * i + 1] = dc.read8(@intCast(start + 2));
-                            pixels[4 * i + 2] = dc.read8(@intCast(start + 1));
-                            pixels[4 * i + 3] = dc.read8(@intCast(start + 0));
+                            pixels[4 * i + 0] = dc.cpu.read8(@intCast(start + 3));
+                            pixels[4 * i + 1] = dc.cpu.read8(@intCast(start + 2));
+                            pixels[4 * i + 2] = dc.cpu.read8(@intCast(start + 1));
+                            pixels[4 * i + 3] = dc.cpu.read8(@intCast(start + 0));
                             start += 4;
                             i += 1;
                         },

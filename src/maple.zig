@@ -199,34 +199,34 @@ const MaplePort = struct {
         }
 
         if (self.main == null) {
-            dc.write32(return_addr, 0xFFFFFFFF); // "No connection"
+            dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
         } else {
             const target = switch (command.recipent_address & 0b11111) {
                 0 => self.main.?,
                 else => self.subperipherals[@ctz(command.recipent_address)],
             };
             if (target == null) {
-                dc.write32(return_addr, 0xFFFFFFFF); // "No connection"
+                dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
             } else {
                 switch (command.command) {
                     .DeviceInfoRequest => {
-                        dc.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
                         @as(*DeviceInfoPayload, @ptrCast(&dc.ram[ram_addr + 4])).* = .{
                             .FunctionCodesMask = target.?.capabilities,
                             .SubFunctionCodesMasks = target.?.subcapabilities,
                         };
                     },
                     .GetCondition => {
-                        dc.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
                         // TODO: Write some actual input data!
-                        dc.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
-                        dc.write16(return_addr + 8, @bitCast(self.buttons));
-                        dc.write16(return_addr + 10, 0xFFFF);
-                        dc.write32(return_addr + 12, 0xFFFFFFFF);
+                        dc.cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
+                        dc.cpu.write16(return_addr + 8, @bitCast(self.buttons));
+                        dc.cpu.write16(return_addr + 10, 0xFFFF);
+                        dc.cpu.write32(return_addr + 12, 0xFFFFFFFF);
                     },
                     else => {
                         std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
-                        dc.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }
             }

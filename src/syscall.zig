@@ -9,7 +9,7 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 pub var FirstReadBINSectorSize: u32 = 0; // FIXME
 
 pub fn syscall(dc: *Dreamcast) void {
-    std.log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ dc.cpu.pc, dc.read16(dc.cpu.pc) });
+    std.log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ dc.cpu.pc, dc.cpu.read16(dc.cpu.pc) });
     for (0..15) |i| {
         std.log.err("  R{d}: {x}", .{ i, dc.cpu.R(@intCast(i)).* });
     }
@@ -66,24 +66,24 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             const dest = dc.cpu.R(5).*;
             switch (dc.cpu.R(4).*) {
                 0 => {
-                    dc.write32(dest, 0x1A000);
-                    dc.write32(dest + 4, 8 * 1024);
+                    dc.cpu.write32(dest, 0x1A000);
+                    dc.cpu.write32(dest + 4, 8 * 1024);
                 },
                 1 => {
-                    dc.write32(dest, 0x18000);
-                    dc.write32(dest + 4, 8 * 1024);
+                    dc.cpu.write32(dest, 0x18000);
+                    dc.cpu.write32(dest + 4, 8 * 1024);
                 },
                 2 => {
-                    dc.write32(dest, 0x1C000);
-                    dc.write32(dest + 4, 16 * 1024);
+                    dc.cpu.write32(dest, 0x1C000);
+                    dc.cpu.write32(dest + 4, 16 * 1024);
                 },
                 3 => {
-                    dc.write32(dest, 0x10000);
-                    dc.write32(dest + 4, 32 * 1024);
+                    dc.cpu.write32(dest, 0x10000);
+                    dc.cpu.write32(dest + 4, 32 * 1024);
                 },
                 4 => {
-                    dc.write32(dest, 0x00000);
-                    dc.write32(dest + 4, 64 * 1024);
+                    dc.cpu.write32(dest, 0x00000);
+                    dc.cpu.write32(dest + 4, 64 * 1024);
                 },
                 else => {
                     dc.cpu.R(0).* = @bitCast(@as(i32, @intCast(-1)));
@@ -127,7 +127,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             const params_addr = dc.cpu.R(5).*;
             if (params_addr != 0) {
                 for (0..4) |i| {
-                    params[i] = dc.read32(@intCast(params_addr + 4 * i));
+                    params[i] = dc.cpu.read32(@intCast(params_addr + 4 * i));
                 }
             }
 
@@ -145,7 +145,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             //         -1 - request has failed (examine extended status information for cause of failure)
             dc.cpu.R(0).* = dc.gdrom.check_command(dc.cpu.R(4).*);
             for (0..4) |i| {
-                dc.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.result[i]);
+                dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.result[i]);
             }
             std.log.debug("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(0).*, dc.gdrom.result[0], dc.gdrom.result[1], dc.gdrom.result[2], dc.gdrom.result[3] });
         },
@@ -171,14 +171,14 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
             std.log.debug("  GDROM_CHECK_DRIVE", .{});
-            dc.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.status)); // GDROM status. 0x2 => Standby.
-            dc.write32(dc.cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
+            dc.cpu.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.status)); // GDROM status. 0x2 => Standby.
+            dc.cpu.write32(dc.cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             dc.cpu.R(0).* = 0;
         },
         5 => {
             // DMA END?
             std.log.debug("  GDROM_DMA_END (R7={d})", .{dc.cpu.R(7).*});
-            dc.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
+            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
             dc.cpu.R(0).* = 0;
         },
         9 => {
@@ -188,15 +188,15 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
         10 => {
             // GDROM_SECTOR_MODE
             std.log.warn(termcolor.yellow("  GDROM_SECTOR_MODE  (R7={d}) : Not implemented!"), .{dc.cpu.R(7).*});
-            if (dc.read32(dc.cpu.R(4).*) == 0) { // Get/Set, if 0 the mode will be set, if 1 it will be queried.
-                const mode = dc.read32(dc.cpu.R(4).* + 8) == 0;
-                const sector_size_in_bytes = dc.read32(dc.cpu.R(4).* + 12) == 0;
+            if (dc.cpu.read32(dc.cpu.R(4).*) == 0) { // Get/Set, if 0 the mode will be set, if 1 it will be queried.
+                const mode = dc.cpu.read32(dc.cpu.R(4).* + 8) == 0;
+                const sector_size_in_bytes = dc.cpu.read32(dc.cpu.R(4).* + 12) == 0;
                 _ = sector_size_in_bytes;
                 _ = mode;
             } else {
-                dc.write32(dc.cpu.R(4).* + 4, 0x2000); // Constant
-                dc.write32(dc.cpu.R(4).* + 8, 0x0800); // Mode, 1024 = mode 1, 2048 = mode 2, 0 = auto detect
-                dc.write32(dc.cpu.R(4).* + 12, 0x0800); // Sector size in bytes (normally 2048)
+                dc.cpu.write32(dc.cpu.R(4).* + 4, 0x2000); // Constant
+                dc.cpu.write32(dc.cpu.R(4).* + 8, 0x0800); // Mode, 1024 = mode 1, 2048 = mode 2, 0 = auto detect
+                dc.cpu.write32(dc.cpu.R(4).* + 12, 0x0800); // Sector size in bytes (normally 2048)
             }
             dc.cpu.R(0).* = 0;
         },
@@ -216,8 +216,8 @@ pub fn syscall_misc(dc: *Dreamcast) void {
     switch (dc.cpu.R(4).*) {
         0 => {
             // Normal Init
-            dc.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
-            dc.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
+            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
+            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
             dc.cpu.R(0).* = 0x00C0BEBC;
             dc.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC;
         },

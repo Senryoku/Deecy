@@ -122,8 +122,8 @@ pub const AICA = struct {
         aica_log.debug("   Trigger Select: 0x{X:0>8}", .{dc.read_hw_register(u32, .SB_ADTSEL)});
         aica_log.debug("   Enable: 0x{X:0>8}", .{enabled});
 
-        const physical_root_addr = dc._get_memory(root_bus_addr);
-        const physical_aica_addr = dc._get_memory(aica_addr);
+        const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
+        const physical_aica_addr = dc.cpu._get_memory(aica_addr);
 
         // TODO: This might raise some exceptions, if the addresses are wrong.
 

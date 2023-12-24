@@ -475,7 +475,7 @@ pub const SH4 = struct {
     }
 
     pub fn _execute(self: *@This(), addr: addr_t) void {
-        const opcode = self._dc.?.read16(addr);
+        const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
@@ -609,7 +609,7 @@ pub const SH4 = struct {
             std.debug.assert(chcr.ts == 0b100); // We'll copy 32-bytes blocks
             // Polygon Path
             if (dst_addr >= 0x10000000 and dst_addr < 0x10800000 or dst_addr >= 0x12000000 and dst_addr < 0x12800000) {
-                var src: [*]u32 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
+                var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(src_addr)));
                 for (0..len) |_| {
                     self._dc.?.gpu.write_ta_fifo_polygon_path(src[0..8]);
                     src += 8;
@@ -621,19 +621,19 @@ pub const SH4 = struct {
             }
             // Direct Texture Path
             if (dst_addr >= 0x11000000 and dst_addr < 0x12000000 or dst_addr >= 0x13000000 and dst_addr < 0x14000000) {
-                self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)))[0..byte_len]);
+                self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._get_memory(src_addr)))[0..byte_len]);
             }
         } else if (is_memcpy_safe) {
             std.debug.assert(dst_stride == src_stride);
             // FIXME: When can we safely memset?
-            const src = @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)));
-            const dst = @as([*]u8, @ptrCast(self._dc.?._get_memory(dst_addr)));
+            const src = @as([*]u8, @ptrCast(self._get_memory(src_addr)));
+            const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)));
             @memcpy(dst[0..byte_len], src[0..byte_len]);
         } else {
             var curr_dst: i32 = @intCast(dst_addr);
             var curr_src: i32 = @intCast(src_addr);
             for (0..byte_len / 4) |_| {
-                self._dc.?.write32(@intCast(curr_dst), self._dc.?.read32(@intCast(curr_src)));
+                self.write32(@intCast(curr_dst), self.read32(@intCast(curr_src)));
                 curr_dst += 4 * dst_stride;
                 curr_src += 4 * src_stride;
             }
@@ -646,6 +646,403 @@ pub const SH4 = struct {
         self.p4_register(u32, .DAR2).* += len;
         self.p4_register(u32, .DMATCR2).* = 0;
         self.p4_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
+    }
+
+    fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
+        std.debug.print("PC: {X:0>8}\n", .{self.pc});
+        std.debug.panic(fmt, args);
+        @panic(fmt);
+    }
+
+    pub fn _get_memory(self: *@This(), addr: addr_t) *u8 {
+        std.debug.assert(addr == addr & 0x1FFFFFFF);
+
+        if (false) {
+            // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
+            const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
+                // FIXME: Handle exceptions
+                sh4_log.err("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m", .{ e, addr });
+                unreachable;
+            };
+
+            if (physical_addr != addr)
+                sh4_log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}", .{ addr, physical_addr });
+        }
+
+        switch (addr) {
+            0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
+                switch (addr) {
+                    0x00000000...0x001FFFFF => {
+                        return &self._dc.?.boot[addr];
+                    },
+                    0x00200000...0x0021FFFF => {
+                        return &self._dc.?.flash[addr - 0x200000];
+                    },
+                    0x005F6800...0x005F7FFF => {
+                        return &self._dc.?.hardware_registers[addr - 0x005F6800];
+                    },
+                    0x005F8000...0x005F9FFF => {
+                        return self._dc.?.gpu._get_register_from_addr(u8, addr);
+                    },
+                    0x005FA000...0x005FFFFF => {
+                        return &self._dc.?.hardware_registers[addr - 0x005F6800];
+                    },
+                    0x00600000...0x006007FF => {
+                        const static = struct {
+                            var once = false;
+                        };
+                        if (!static.once) {
+                            static.once = true;
+                            sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
+                        }
+                        return @ptrCast(&self._dc.?._dummy);
+                    },
+                    0x00700000...0x00707FE0 => { // G2 AICA Register
+                        @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
+                    },
+                    0x00710000...0x00710008 => { // G2 AICA RTC Registers
+                        @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
+                    },
+                    0x00800000...0x009FFFFF => { // G2 Wave Memory
+                        return &self._dc.?.aica.wave_memory[addr - 0x00800000];
+                    },
+                    else => {
+                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}"), .{addr});
+                        return @ptrCast(&self._dc.?._dummy);
+                    },
+                }
+            },
+            0x04000000...0x07FFFFFF => {
+                return self._dc.?.gpu._get_vram(addr);
+            },
+            0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
+                self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr});
+            },
+            0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
+                return &self._dc.?.ram[addr & 0x00FFFFFF];
+            },
+            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+                self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
+            },
+            0x14000000...0x17FFFFFF => { // Area 5 - Expansion (modem) port
+                const static = struct {
+                    var once = false;
+                };
+                if (!static.once) {
+                    static.once = true;
+                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)"), .{addr});
+                }
+                return @ptrCast(&self._dc.?._dummy);
+            },
+            0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
+                self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr});
+            },
+            0x1C000000...0x1FFFFFFF => { // Area 7 - Internal I/O registers (same as P4)
+                std.debug.assert(self.sr.md == 1);
+                return self.p4_register_addr(u8, addr);
+            },
+            else => {
+                unreachable;
+            },
+        }
+    }
+
+    pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
+                },
+            }
+        }
+
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+        }
+
+        return @as(*const u8, @alignCast(@ptrCast(
+            @constCast(&self)._get_memory(addr),
+        ))).*;
+    }
+
+    pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
+        // SH4 Hardware registers
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
+                    return @as(*const u16, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* & 0xF;
+                },
+                @intFromEnum(P4MemoryRegister.RFCR) => {
+                    // Hack: This is the Refresh Count Register, related to DRAM control.
+                    //       If don't think its proper emulation is needed, but it's accessed by the bios,
+                    //       probably for synchronization purposes. I assume returning a contant value to pass this check
+                    //       is enough for now, as games shouldn't access that themselves.
+                    sh4_log.debug("[Note] Access to Refresh Count Register.", .{});
+                    return 0x0011;
+                    // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
+                },
+                @intFromEnum(P4MemoryRegister.PDTRA) => {
+                    // Note: I have absolutely no idea what's going on here.
+                    //       This is directly taken from Flycast, which already got it from Chankast.
+                    //       This is needed for the bios to work properly, without it, it will
+                    //       go to sleep mode with all interrupts disabled early on.
+                    const tpctra: u32 = self.read_p4_register(u32, .PCTRA);
+                    const tpdtra: u32 = self.read_p4_register(u32, .PDTRA);
+
+                    var tfinal: u16 = 0;
+                    if ((tpctra & 0xf) == 0x8) {
+                        tfinal = 3;
+                    } else if ((tpctra & 0xf) == 0xB) {
+                        tfinal = 3;
+                    } else {
+                        tfinal = 0;
+                    }
+
+                    if ((tpctra & 0xf) == 0xB and (tpdtra & 0xf) == 2) {
+                        tfinal = 0;
+                    } else if ((tpctra & 0xf) == 0xC and (tpdtra & 0xf) == 2) {
+                        tfinal = 3;
+                    }
+
+                    tfinal |= @intFromEnum(self._dc.?.cable_type) << 8;
+
+                    return tfinal;
+                },
+                else => {
+                    sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
+                },
+            }
+        }
+
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+        }
+
+        if (addr >= 0x00710000 and addr <= 0x00710008) {
+            return @truncate(self._dc.?.aica.read_rtc_register(addr));
+        }
+
+        return @as(*const u16, @alignCast(@ptrCast(
+            @constCast(&self)._get_memory(addr),
+        ))).*;
+    }
+
+    pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                        @constCast(&self)._get_memory(addr),
+                    ))).* });
+                },
+            }
+        }
+
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                @constCast(&self)._get_memory(addr),
+            ))).* });
+        }
+
+        if (addr >= 0x00700000 and addr <= 0x00707FE0) {
+            return self._dc.?.aica.read_register(addr);
+        }
+
+        if (addr >= 0x00710000 and addr <= 0x00710008) {
+            return self._dc.?.aica.read_rtc_register(addr);
+        }
+
+        return @as(*const u32, @alignCast(@ptrCast(
+            @constCast(&self)._get_memory(addr),
+        ))).*;
+    }
+
+    pub fn read64(self: @This(), virtual_addr: addr_t) u64 {
+        const addr = virtual_addr & 0x1FFFFFFF;
+        return @as(*const u64, @alignCast(@ptrCast(
+            @constCast(&self)._get_memory(addr),
+        ))).*;
+    }
+
+    pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                else => {
+                    sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                },
+            }
+        }
+
+        const addr = virtual_addr & 0x1FFFFFFF;
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            // Hardware registers
+            switch (addr) {
+                else => {
+                    sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                },
+            }
+        }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            @panic("write8 to GPU register not implemented");
+        }
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            @panic("write8 to TA not implemented");
+        }
+
+        @as(*u8, @alignCast(@ptrCast(
+            self._get_memory(addr),
+        ))).* = value;
+    }
+
+    pub fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        const addr = virtual_addr & 0x1FFFFFFF;
+
+        if (virtual_addr >= 0xFF000000) {
+            switch (virtual_addr) {
+                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
+                    std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
+                    @as(*u16, @alignCast(@ptrCast(
+                        self._get_memory(addr),
+                    ))).* = 0b10100101_00000000 | (value & 0xFF);
+                },
+                @intFromEnum(P4MemoryRegister.RFCR) => {
+                    std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
+                    @as(*u16, @alignCast(@ptrCast(
+                        self._get_memory(addr),
+                    ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
+                },
+                else => {
+                    sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                },
+            }
+        }
+
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            switch (addr) {
+                else => {
+                    sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                },
+            }
+        }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            @panic("write16 to GPU register not implemented");
+        }
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            @panic("write16 to TA not implemented");
+        }
+
+        @as(*u16, @alignCast(@ptrCast(
+            self._get_memory(addr),
+        ))).* = value;
+    }
+
+    pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        if (virtual_addr >= 0xE0000000) {
+            // P4
+            if (virtual_addr < 0xE4000000) {
+                self.store_queue_write(virtual_addr, value);
+                return;
+            }
+            if (virtual_addr >= 0xFF000000) {
+                switch (virtual_addr) {
+                    else => {
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    },
+                }
+            }
+        }
+
+        const addr = virtual_addr & 0x1FFFFFFF;
+        if (addr >= 0x005F6800 and addr < 0x005F8000) {
+            // Hardware registers
+            switch (addr) {
+                @intFromEnum(MemoryRegister.SB_SFRES) => {
+                    // SB_SFRES, Software Reset
+                    if (value == 0x00007611) {
+                        self.software_reset();
+                    }
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_ADST) => {
+                    if (value == 1) {
+                        self._dc.?.aica.start_dma(self._dc.?);
+                    }
+                },
+                @intFromEnum(MemoryRegister.SB_MDAPRO) => {
+                    // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                    // Check "Security code"
+                    if (value & 0xFFFF0000 != 0x61550000) return;
+                },
+                @intFromEnum(MemoryRegister.SB_MDST) => {
+                    if (value == 1) {
+                        self._dc.?.start_maple_dma();
+                        return;
+                    }
+                },
+                @intFromEnum(MemoryRegister.SB_ISTNRM) => {
+                    // Interrupt can be cleared by writing "1" to the corresponding bit.
+                    self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_ISTERR) => {
+                    // Interrupt can be cleared by writing "1" to the corresponding bit.
+                    self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
+                    self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+                    return;
+                },
+                @intFromEnum(MemoryRegister.SB_C2DST) => {
+                    if (value == 1) {
+                        self._dc.?.start_ch2_dma();
+                    } else {
+                        self._dc.?.end_ch2_dma();
+                    }
+                    return;
+                },
+                else => {
+                    sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                },
+            }
+        }
+        if (addr >= 0x005F8000 and addr < 0x005FA000) {
+            return self._dc.?.gpu.write_register(addr, value);
+        }
+
+        if (addr >= 0x00700000 and addr < 0x00710000) {
+            return self._dc.?.aica.write_register(addr, value);
+        }
+
+        if (addr >= 0x00710000 and addr < 0x00710008) {
+            return self._dc.?.aica.write_rtc_register(addr, value);
+        }
+
+        if (addr >= 0x10000000 and addr < 0x14000000) {
+            return self._dc.?.gpu.write_ta(addr, value);
+        }
+
+        @as(*u32, @alignCast(@ptrCast(
+            self._get_memory(addr),
+        ))).* = value;
+    }
+
+    pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+        // This isn't efficient, but avoids repeating all the logic of write32.
+        self.write32(virtual_addr, @truncate(value));
+        self.write32(virtual_addr + 4, @truncate(value >> 32));
     }
 };
 
@@ -717,7 +1114,7 @@ fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
 fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 1;
-    cpu.R(n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.pc + 4 + d)));
+    cpu.R(n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.pc + 4 + d)));
 }
 
 // The 8-bit displacement is multiplied by four after zero-extension, and so the relative distance from the operand is in the range up to PC + 4 + 1020 bytes.
@@ -725,35 +1122,35 @@ fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
 fn movl_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 2;
-    cpu.R(n).* = cpu._dc.?.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
+    cpu.R(n).* = cpu.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
 }
 
 fn movb_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movw_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movl_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movw_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movl_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 1;
     }
@@ -761,14 +1158,14 @@ fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 2;
     }
 }
 
 fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 4;
     }
@@ -776,12 +1173,12 @@ fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 
 fn movb_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 1;
-    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 2;
-    cpu._dc.?.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
     // TODO: Possible Exceptions
     // Data TLB multiple-hit exception
     // Data TLB miss exception
@@ -792,84 +1189,84 @@ fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
 
 fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
 }
 
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
 }
 
 fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(0).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_at_disp_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // The 4-bit displacement is only zero-extended, so a range up to +15 bytes can be specified.
 fn movb_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
+    cpu.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
 }
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 fn movw_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
+    cpu.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
 }
 
 // Transfers the source operand to the destination.
 // The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
     const d = zero_extend(opcode.nmd.d) << 2;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
+    cpu.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
+    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
 }
 
 fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movw_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.gbr + opcode.nd8.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + opcode.nd8.d)));
 }
 fn movw_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.gbr + (opcode.nd8.d << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (opcode.nd8.d << 1))));
 }
 fn movl_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu._dc.?.read32(cpu.gbr + (opcode.nd8.d << 2));
+    cpu.R(0).* = cpu.read32(cpu.gbr + (opcode.nd8.d << 2));
 }
 
 fn movb_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
+    cpu.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
 fn movw_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
+    cpu.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
 }
 fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.?.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
+    cpu.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
 }
 
 fn movt_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1255,9 +1652,9 @@ fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
 fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
     // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
-    const tmp = cpu._dc.?.read8(cpu.R(opcode.nmd.n).*);
+    const tmp = cpu.read8(cpu.R(opcode.nmd.n).*);
     cpu.sr.t = (tmp == 0);
-    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
+    cpu.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
 }
 fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
@@ -1584,42 +1981,42 @@ fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
 fn ldcl_at_Rn_inc_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.sr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
+    cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.gbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
+    cpu.gbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) void {
     cpu.vbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_VBR(cpu: *SH4, opcode: Instr) void {
-    cpu.vbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
+    cpu.vbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_SSR(cpu: *SH4, opcode: Instr) void {
     cpu.ssr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_SSR(cpu: *SH4, opcode: Instr) void {
-    cpu.ssr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
+    cpu.ssr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_SPC(cpu: *SH4, opcode: Instr) void {
     cpu.spc = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_SPC(cpu: *SH4, opcode: Instr) void {
-    cpu.spc = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
+    cpu.spc = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_DBR(cpu: *SH4, opcode: Instr) void {
-    cpu.dbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
+    cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
@@ -1631,9 +2028,9 @@ fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
 }
 fn ldcl_at_Rn_inc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.rb == 0) {
-        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
     } else {
-        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
     }
     cpu.R(opcode.nmd.n).* += 4;
 }
@@ -1641,21 +2038,21 @@ fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_at_Rn_inc_MACH(cpu: *SH4, opcode: Instr) void {
-    cpu.mach = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+    cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rn_MACL(cpu: *SH4, opcode: Instr) void {
     cpu.macl = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_at_Rn_inc_MACL(cpu: *SH4, opcode: Instr) void {
-    cpu.macl = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+    cpu.macl = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rn_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
-    cpu.pr = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+    cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1665,7 +2062,7 @@ fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an
     // R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
 
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
 }
 fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
@@ -1674,12 +2071,12 @@ fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
 fn ldsl_at_Rn_inc_FPSCR(cpu: *SH4, opcode: Instr) void {
-    cpu.fpscr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
+    cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn stsl_FPSCR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+    cpu.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
 }
 fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.R(opcode.nmd.n).*;
@@ -1688,12 +2085,12 @@ fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
 fn ldsl_at_Rn_inc_FPUL(cpu: *SH4, opcode: Instr) void {
-    cpu.fpul = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
+    cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
@@ -1760,7 +2157,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
             std.log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
             inline for (0..8) |i| {
-                cpu._dc.?.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+                cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             }
         }
     } else {
@@ -1809,7 +2206,7 @@ fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stcl_SR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
+    cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
 }
 fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.tbr;
@@ -1819,42 +2216,42 @@ fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stcl_GBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
 }
 fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.vbr;
 }
 fn stcl_VBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
 }
 fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.sgr;
 }
 fn stcl_SGR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
 }
 fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.ssr;
 }
 fn stcl_SSR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
 }
 fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.spc;
 }
 fn stcl_SPC_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
 }
 fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.dbr;
 }
 fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.rb == 0) {
@@ -1866,9 +2263,9 @@ fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
 fn stcl_Rm_BANK_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     if (cpu.sr.rb == 0) {
-        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
+        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
     } else {
-        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
+        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
     }
 }
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1876,21 +2273,21 @@ fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stsl_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
 fn stsl_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
 fn stsl_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
 
 fn trapa_imm(cpu: *SH4, opcode: Instr) void {
@@ -1923,36 +2320,36 @@ fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
     }
 }
 fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
-            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
         } else {
-            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
         }
     }
 }
 fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
         cpu.R(opcode.nmd.m).* += 4;
     } else { // Double-precision
         if (opcode.nmd.n & 0x1 == 0) {
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
         cpu.R(opcode.nmd.m).* += 8;
     }
@@ -1961,28 +2358,28 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.R(opcode.nmd.n).* -= 4;
-        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else { // Double-precision
         cpu.R(opcode.nmd.n).* -= 8;
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d	DRm,@-Rn
-            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
         } else {
             // fmov.d	XDm,@-Rn
-            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
         }
     }
 }
 fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }
 }
 fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu._dc.?.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }

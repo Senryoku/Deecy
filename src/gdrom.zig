@@ -97,7 +97,7 @@ pub const GDROM = struct {
 
                 gdrom_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.command), lba, size, dest });
                 const byte_size = 2048 * size;
-                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0..byte_size]);
+                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0..byte_size]);
 
                 dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 dc.raise_external_interrupt(.{ .GDRom = 1 });
@@ -114,18 +114,18 @@ pub const GDROM = struct {
                 const dest = self.params[0];
                 const version = "GDC Version 1.10 1999-03-31";
                 for (0..version.len) |i| {
-                    dc.write8(@intCast(dest + i), version[i]);
+                    dc.cpu.write8(@intCast(dest + i), version[i]);
                 }
-                dc.write8(@intCast(dest + version.len), 0x2);
+                dc.cpu.write8(@intCast(dest + version.len), 0x2);
                 self.status = GDROMStatus.Standby;
             },
             GDROMCommand.ReqMode => {
                 const dest = self.params[0];
                 gdrom_log.info("    GDROM ReqMode  dest=0x{X:0>8}", .{dest});
-                dc.write32(dest + 0, 0); // Speed
-                dc.write32(dest + 4, 0x00B4); // Standby
-                dc.write32(dest + 8, 0x19); // Read Flags
-                dc.write32(dest + 12, 0x08); // Read retry
+                dc.cpu.write32(dest + 0, 0); // Speed
+                dc.cpu.write32(dest + 4, 0x00B4); // Standby
+                dc.cpu.write32(dest + 8, 0x19); // Read Flags
+                dc.cpu.write32(dest + 12, 0x08); // Read retry
                 self.result = .{ 0, 0, 0xA, 0 };
                 self.status = GDROMStatus.Standby;
             },
