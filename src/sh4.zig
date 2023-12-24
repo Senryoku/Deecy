@@ -106,6 +106,7 @@ const ExecutionState = enum {
 
 pub const SH4 = struct {
     on_trapa: ?*const fn () void = null, // Debugging callback
+
     debug_trace: bool = false,
 
     execution_state: ExecutionState = .Running,
@@ -544,13 +545,17 @@ pub const SH4 = struct {
 
         const opcode = self.read16(physical_addr);
         const instr = Instr{ .value = opcode };
-        if (self.debug_trace)
+        const desc = Opcodes[JumpTable[opcode]];
+
+        if (comptime (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
-        Opcodes[JumpTable[opcode]].fn_(self, instr);
-        if (self.debug_trace)
+
+        desc.fn_(self, instr);
+
+        if (comptime (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
-        self.add_cycles(Opcodes[JumpTable[opcode]].issue_cycles);
+        self.add_cycles(desc.issue_cycles);
     }
 
     pub fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {

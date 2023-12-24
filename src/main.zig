@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const common = @import("./common.zig");
 const termcolor = @import("./termcolor.zig");
@@ -229,7 +230,11 @@ pub fn main() !void {
                 dc.tick();
             }
 
-            _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
+            if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
+            } else {
+                zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in ReleaseFast builds!", .{});
+            }
 
             for (0..breakpoints.items.len) |i| {
                 zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
