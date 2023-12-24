@@ -386,7 +386,7 @@ pub const Renderer = struct {
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
             // FIXME: I don't know how to select the right field yet.
-            renderer_log.warn("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!", .{});
+            renderer_log.warn(termcolor.yellow("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!"), .{});
         }
     }
 
