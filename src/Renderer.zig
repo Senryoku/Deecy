@@ -100,6 +100,9 @@ pub const Renderer = struct {
     texture_array: zgpu.TextureHandle,
     texture_array_view: zgpu.TextureViewHandle,
 
+    framebuffer_texture: zgpu.TextureHandle,
+    framebuffer_texture_view: zgpu.TextureViewHandle,
+
     sampler: zgpu.SamplerHandle, // TODO: Have a sample per texture? Or per texture type (we'd have to pass another index to the fragment shader)?
 
     depth_texture: zgpu.TextureHandle,
@@ -203,6 +206,18 @@ pub const Renderer = struct {
         });
         const texture_array_view = gctx.createTextureView(texture_array, .{});
 
+        const framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+            .size = .{
+                .width = 640,
+                .height = 480,
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
+
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(f32) },
             .{ .binding = 1, .texture_view_handle = texture_array_view },
@@ -232,6 +247,10 @@ pub const Renderer = struct {
 
             .texture_array = texture_array,
             .texture_array_view = texture_array_view,
+
+            .framebuffer_texture = framebuffer_texture,
+            .framebuffer_texture_view = framebuffer_texture_view,
+
             .sampler = sampler,
 
             .depth_texture = depth.texture,
@@ -374,19 +393,83 @@ pub const Renderer = struct {
     }
 
     fn read_from_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
-        _ = self;
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
+        const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
         _ = FB_R_SOF1;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         _ = FB_R_SOF2;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
-        _ = FB_R_SIZE;
 
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
             // FIXME: I don't know how to select the right field yet.
             renderer_log.warn(termcolor.yellow("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!"), .{});
+            renderer_log.info("  FB_R_CTRL: {any}", .{FB_R_CTRL});
+            renderer_log.info("  FB_C_SOF: {X:0>8}", .{FB_C_SOF});
+            renderer_log.info("  FB_R_SIZE: {any}", .{FB_R_SIZE});
+
+            const addr: u32 = 4 * FB_C_SOF;
+            const u_size: u32 = FB_R_SIZE.x_size;
+            const v_size: u32 = FB_R_SIZE.y_size;
+
+            var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
+            defer self._allocator.free(pixels);
+
+            switch (FB_R_CTRL.format) {
+                0x0 => { // 0555 RGB 16 bit
+                    for (0..(@as(u32, u_size) * v_size)) |i| {
+                        const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * i]))).* };
+                        pixels[i * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) + FB_R_CTRL.concat;
+                        pixels[i * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) + FB_R_CTRL.concat;
+                        pixels[i * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) + FB_R_CTRL.concat;
+                        pixels[i * 4 + 3] = 255; // FIXME: TESTING
+                    }
+                },
+                0x1 => { // 565 RGB
+                    for (0..(@as(u32, u_size) * v_size)) |i| {
+                        const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * i]))).* };
+                        pixels[i * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) + FB_R_CTRL.concat;
+                        pixels[i * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) + FB_R_CTRL.concat & 0b11;
+                        pixels[i * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) + FB_R_CTRL.concat;
+                        pixels[i * 4 + 3] = 255;
+                    }
+                },
+                // 0x2 => { // 888 RGB 24 bit packed
+                0x3 => { // 0888 RGB 32 bit
+                    for (0..(@as(u32, u_size) * v_size)) |i| {
+                        const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[addr + 4 * i])))[0..4].*;
+                        pixels[i * 4 + 0] = pixel[1];
+                        pixels[i * 4 + 1] = pixel[2];
+                        pixels[i * 4 + 2] = pixel[3];
+                        pixels[i * 4 + 3] = 255;
+                    }
+                },
+                else => {
+                    renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{FB_R_CTRL.format});
+                    @panic("Unsupported pixel format");
+                },
+            }
+
+            self._gctx.queue.writeTexture(
+                .{
+                    .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
+                    .origin = .{},
+                },
+                .{
+                    .bytes_per_row = u_size * 4,
+                    .rows_per_image = v_size,
+                },
+                .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                u8,
+                pixels,
+            );
+
+            // Write flag value to detect updates
+            gpu.vram[addr + 0] = 0xc0;
+            gpu.vram[addr + 1] = 0xff;
+            gpu.vram[addr + 2] = 0xee;
+            gpu.vram[addr + 3] = 0x0f;
         }
     }
 
