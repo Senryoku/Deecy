@@ -265,7 +265,7 @@ pub const SH4 = struct {
     }
 
     // Reset state to after bios.
-    pub fn skip_bios(self: *@This()) void {
+    pub fn state_after_boot_rom(self: *@This()) void {
         self.R(0x0).* = 0xAC0005D8;
         self.R(0x1).* = 0x00000009;
         self.R(0x2).* = 0xAC00940C;

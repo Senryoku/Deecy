@@ -112,7 +112,7 @@ pub fn main() !void {
         syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
         // Boot to menu
-        dc.cpu.skip_bios();
+        dc.skip_bios();
         // Skip IP.bin (Maybe we should bundle one to load here).
         dc.cpu.pc = 0xAC010000;
     }

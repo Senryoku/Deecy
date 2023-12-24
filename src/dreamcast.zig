@@ -101,7 +101,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn skip_bios(self: *@This()) void {
-        self.cpu.skip_bios();
+        self.cpu.state_after_boot_rom();
 
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
 
@@ -111,7 +111,7 @@ pub const Dreamcast = struct {
         }
         // Copy a portion of the boot ROM to RAM.
         self.write32(0xA05F74E4, 0x001FFFFF);
-        // @memcpy(self.ram[0x00000100 .. 0x100 + 0x0007FFC0], self.boot[0x00000100 .. 0x100 + 0x0007FFC0]);
+
         @memcpy(self.ram[0x00000100..0x00004000], self.boot[0x00000100..0x00004000]);
         @memcpy(self.ram[0x00008000..0x00200000], self.boot[0x00008000..0x00200000]);
 
