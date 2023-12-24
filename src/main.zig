@@ -5,6 +5,7 @@ const termcolor = @import("./termcolor.zig");
 const sh4 = @import("./sh4.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
+const Dreamcast = @import("./dreamcast.zig").Dreamcast;
 const GDI = @import("./GDI.zig").GDI;
 const Holly = @import("./holly.zig");
 const MapleModule = @import("./maple.zig");
@@ -13,7 +14,7 @@ const zgui = @import("zgui");
 const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
 
-const RendererModule = @import("./Renderer.zig");
+const RendererModule = @import("renderer.zig");
 const Renderer = RendererModule.Renderer;
 
 const assets_dir = "assets/";
@@ -32,7 +33,7 @@ pub const std_options = struct {
     };
 };
 
-var running = true;
+var running = false;
 
 fn trapa_handler() void {
     running = false;
@@ -41,8 +42,11 @@ fn trapa_handler() void {
 pub fn main() !void {
     std.log.info("\r  == Katana ==                             ", .{});
 
-    var cpu = try sh4.SH4.init(common.GeneralAllocator);
-    defer cpu.deinit();
+    var dc = try Dreamcast.create(common.GeneralAllocator);
+    defer {
+        dc.deinit();
+        common.GeneralAllocator.destroy(dc);
+    }
 
     var binary_path: ?[]const u8 = null;
     var ip_bin_path: ?[]const u8 = null;
@@ -77,43 +81,40 @@ pub fn main() !void {
             ip_bin_path = v.?;
         }
         if (std.mem.eql(u8, arg, "-d")) {
-            cpu.debug_trace = true;
+            dc.cpu.debug_trace = true;
         }
     }
 
-    var gdrom = &syscall.gdrom; // FIXME
-    defer gdrom.disk.deinit();
-
     if (binary_path != null) {
-        cpu.skip_bios();
+        dc.skip_bios();
 
         var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
         defer bin_file.close();
-        _ = try bin_file.readAll(cpu.ram[0x10000..]);
+        _ = try bin_file.readAll(dc.ram[0x10000..]);
 
         if (ip_bin_path != null) {
             var ip_bin_file = try std.fs.cwd().openFile(ip_bin_path.?, .{});
             defer ip_bin_file.close();
-            _ = try ip_bin_file.readAll(cpu.ram[0x8000..]);
+            _ = try ip_bin_file.readAll(dc.ram[0x8000..]);
         } else {
             // Skip IP.bin
-            cpu.pc = 0xAC010000;
+            dc.cpu.pc = 0xAC010000;
         }
     } else if (gdi_path != null) {
-        cpu.skip_bios();
+        dc.skip_bios();
 
-        try gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
+        try dc.gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
-        _ = gdrom.disk.load_sectors(45150, 16 * 2048, cpu.ram[0x00008000..]);
+        _ = dc.gdrom.disk.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
 
-        syscall.FirstReadBINSectorSize = (try gdrom.disk.load_file("1ST_READ.BIN;1", cpu.ram[0x00010000..]) + 2047) / 2048;
+        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
         // Boot to menu
-        cpu.skip_bios();
+        dc.skip_bios();
         // Skip IP.bin (Maybe we should bundle one to load here).
-        cpu.pc = 0xAC010000;
+        dc.cpu.pc = 0xAC010000;
     }
 
     try zglfw.init();
@@ -154,7 +155,7 @@ pub fn main() !void {
 
     var breakpoints = std.ArrayList(u32).init(common.GeneralAllocator);
     defer breakpoints.deinit();
-    cpu.on_trapa = trapa_handler;
+    dc.cpu.on_trapa = trapa_handler;
 
     const vram_width = 640;
     const vram_height = 400;
@@ -191,31 +192,31 @@ pub fn main() !void {
         );
 
         if (zgui.begin("CPU State", .{})) {
-            zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ cpu.pc, cpu.spc });
-            zgui.text("PR: 0x{X:0>8}", .{cpu.pr});
-            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ cpu.sr.t, cpu.sr.s, cpu.sr.imask });
-            zgui.text("GBR: 0x{X:0>8}", .{cpu.gbr});
-            zgui.text("VBR: 0x{X:0>8}", .{cpu.vbr});
+            zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
+            zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
+            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
+            zgui.text("GBR: 0x{X:0>8}", .{dc.cpu.gbr});
+            zgui.text("VBR: 0x{X:0>8}", .{dc.cpu.vbr});
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, cpu.R(@truncate(i)).* });
+                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, cpu.R(@truncate(i)).* });
+                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
             }
             zgui.endGroup();
 
             const range = 16; // In bytes.
-            const pc = cpu.pc & 0x1FFFFFFF;
+            const pc = dc.cpu.pc & 0x1FFFFFFF;
             //              In RAM                                                                           In BootROM
             var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
             const end_addr = addr + range;
             while (addr < end_addr) {
-                //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[cpu.read16(@intCast(addr))]].name });
-                const disassembly = try sh4.disassemble(.{ .value = cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
+                //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == dc.cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[dc.read16(@intCast(addr))]].name });
+                const disassembly = try sh4.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
                 zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
                 addr += 2;
             }
@@ -225,10 +226,10 @@ pub fn main() !void {
             }
 
             if (zgui.button("Step", .{ .w = 200.0 })) {
-                cpu.execute();
+                dc.tick();
             }
 
-            _ = zgui.checkbox("Debug trace", .{ .v = &cpu.debug_trace });
+            _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
 
             for (0..breakpoints.items.len) |i| {
                 zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
@@ -250,19 +251,19 @@ pub fn main() !void {
         zgui.end();
 
         if (zgui.begin("FPU", .{})) {
-            zgui.text("FPUL: {d: >8.2} | {d: >8.2} | {d: >8.2}", .{ @as(f32, @bitCast(cpu.fpul)), cpu.fpul, @as(i32, @bitCast(cpu.fpul)) });
+            zgui.text("FPUL: {d: >8.2} | {d: >8.2} | {d: >8.2}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
 
             zgui.spacing();
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}  ", .{ i, cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}", .{ i, cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.2}", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
 
@@ -270,13 +271,13 @@ pub fn main() !void {
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}  ", .{ i, cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}", .{ i, cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.2}", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
         }
@@ -296,14 +297,14 @@ pub fn main() !void {
             while (addr < end_addr) {
                 zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
                     addr,
-                    cpu.read8(@intCast(addr)),
-                    cpu.read8(@intCast(addr + 1)),
-                    cpu.read8(@intCast(addr + 2)),
-                    cpu.read8(@intCast(addr + 3)),
-                    cpu.read8(@intCast(addr + 4)),
-                    cpu.read8(@intCast(addr + 5)),
-                    cpu.read8(@intCast(addr + 6)),
-                    cpu.read8(@intCast(addr + 7)),
+                    dc.cpu.read8(@intCast(addr)),
+                    dc.cpu.read8(@intCast(addr + 1)),
+                    dc.cpu.read8(@intCast(addr + 2)),
+                    dc.cpu.read8(@intCast(addr + 3)),
+                    dc.cpu.read8(@intCast(addr + 4)),
+                    dc.cpu.read8(@intCast(addr + 5)),
+                    dc.cpu.read8(@intCast(addr + 6)),
+                    dc.cpu.read8(@intCast(addr + 7)),
                 });
                 addr += 8;
             }
@@ -314,7 +315,7 @@ pub fn main() !void {
                 for (0..8) |i| {
                     zgui.text("[SQ{d:0>1}] {X:0>8}", .{
                         sq,
-                        cpu.store_queues[sq][i],
+                        dc.cpu.store_queues[sq][i],
                     });
                 }
             }
@@ -322,15 +323,15 @@ pub fn main() !void {
         zgui.end();
 
         if (zgui.begin("Holly", .{})) {
-            const ISP_BACKGND_D = cpu.gpu._get_register(u32, .ISP_BACKGND_D).*;
+            const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
             zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
 
-            const FB_W_CTRL: u32 = cpu.gpu._get_register(u32, .FB_W_CTRL).*;
-            const FB_W_SOF1: u32 = cpu.gpu._get_register(u32, .FB_W_SOF1).*;
-            const FB_W_SOF2: u32 = cpu.gpu._get_register(u32, .FB_W_SOF2).*;
-            const FB_R_CTRL: u32 = cpu.gpu._get_register(u32, .FB_R_CTRL).*;
-            const FB_R_SOF1: u32 = cpu.gpu._get_register(u32, .FB_R_SOF1).*;
-            const FB_R_SOF2: u32 = cpu.gpu._get_register(u32, .FB_R_SOF2).*;
+            const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;
+            const FB_W_SOF1: u32 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
+            const FB_W_SOF2: u32 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
+            const FB_R_CTRL: u32 = dc.gpu._get_register(u32, .FB_R_CTRL).*;
+            const FB_R_SOF1: u32 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
+            const FB_R_SOF2: u32 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
             zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
             zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
@@ -355,7 +356,7 @@ pub fn main() !void {
                     switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
                             const color: Holly.Color16 = .{
-                                .value = cpu.read16(@intCast(start)),
+                                .value = dc.cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
@@ -366,7 +367,7 @@ pub fn main() !void {
                         },
                         0x1 => { // 565 RGB 16 bit
                             const color: Holly.Color16 = .{
-                                .value = cpu.read16(@intCast(start)),
+                                .value = dc.cpu.read16(@intCast(start)),
                             };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
@@ -377,10 +378,10 @@ pub fn main() !void {
                         },
                         // ARGB 32-Bits
                         0x6 => {
-                            pixels[4 * i + 0] = cpu.read8(@intCast(start + 3));
-                            pixels[4 * i + 1] = cpu.read8(@intCast(start + 2));
-                            pixels[4 * i + 2] = cpu.read8(@intCast(start + 1));
-                            pixels[4 * i + 3] = cpu.read8(@intCast(start + 0));
+                            pixels[4 * i + 0] = dc.cpu.read8(@intCast(start + 3));
+                            pixels[4 * i + 1] = dc.cpu.read8(@intCast(start + 2));
+                            pixels[4 * i + 2] = dc.cpu.read8(@intCast(start + 1));
+                            pixels[4 * i + 3] = dc.cpu.read8(@intCast(start + 0));
                             start += 4;
                             i += 1;
                         },
@@ -438,34 +439,34 @@ pub fn main() !void {
         for (keybinds) |keybind| {
             const key_status = window.getKey(keybind[0]);
             if (key_status == .press) {
-                cpu.maple.ports[0].press_buttons(keybind[1]);
+                dc.maple.ports[0].press_buttons(keybind[1]);
             } else if (key_status == .release) {
-                cpu.maple.ports[0].release_buttons(keybind[1]);
+                dc.maple.ports[0].release_buttons(keybind[1]);
             }
         }
 
         if (running) {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
-            while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !cpu.gpu.render_start) {
-                cpu.execute();
+            while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
+                dc.tick();
 
                 // Crude outlier values checking
                 if (false) {
-                    if (std.math.lossyCast(f32, cpu.fpul) >= 4294966000.000) {
-                        std.debug.print("Weird: FPUL = {d}\n", .{std.math.lossyCast(f32, cpu.fpul)});
+                    if (std.math.lossyCast(f32, dc.cpu.fpul) >= 4294966000.000) {
+                        std.debug.print("Weird: FPUL = {d}\n", .{std.math.lossyCast(f32, dc.cpu.fpul)});
                         running = false;
                     }
                     for (0..16) |i| {
-                        if (cpu.FR(@intCast(i)).* >= 4294966000.000) {
-                            std.debug.print("Weird: FR({d}) = {d}\n", .{ i, cpu.FR(@intCast(i)).* });
+                        if (dc.cpu.FR(@intCast(i)).* >= 4294966000.000) {
+                            std.debug.print("Weird: FR({d}) = {d}\n", .{ i, dc.cpu.FR(@intCast(i)).* });
                             running = false;
                         }
                     }
                 }
 
                 const breakpoint = for (breakpoints.items, 0..) |addr, index| {
-                    if (addr & 0x1FFFFFFF == cpu.pc & 0x1FFFFFFF) break index;
+                    if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
                     running = false;
@@ -476,9 +477,9 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
-        if (cpu.gpu.render_start) { // FIXME: Find a better way to start a render.
-            cpu.gpu.render_start = false;
-            try renderer.update(&cpu.gpu);
+        if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
+            dc.gpu.render_start = false;
+            try renderer.update(&dc.gpu);
         }
         renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
 
@@ -507,4 +508,5 @@ pub fn main() !void {
 
 test "all tests" {
     _ = sh4;
+    _ = Dreamcast;
 }

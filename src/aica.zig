@@ -2,7 +2,7 @@ const std = @import("std");
 
 const aica_log = std.log.scoped(.aica);
 
-const SH4 = @import("sh4.zig").SH4;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // Yamaha AICA Audio Chip
 
@@ -30,12 +30,27 @@ pub const SB_ADSUSP = packed struct(u32) {
 const AICARegisterStart = 0x00700000;
 
 pub const AICA = struct {
-    regs: [0x8000 / 4]u32 = undefined, // All registers are 32-bit afaik
-    wave_memory: [0x200000]u8 = undefined,
+    regs: []u32 = undefined, // All registers are 32-bit afaik
+    wave_memory: []u8 = undefined,
 
     rtc_write_enabled: bool = false,
 
     dma_countdown: u32 = 0,
+
+    _allocator: std.mem.Allocator = undefined,
+
+    pub fn init(allocator: std.mem.Allocator) !AICA {
+        return .{
+            .regs = try allocator.alloc(u32, 0x8000 / 4),
+            .wave_memory = try allocator.alloc(u8, 0x200000),
+            ._allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *AICA) void {
+        self._allocator.free(self.regs);
+        self._allocator.free(self.wave_memory);
+    }
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {
         aica_log.debug("Read from AICA at 0x{X:0>8} = 0x{X:0>8}", .{ addr, self.regs[(addr - AICARegisterStart) / 4] });
@@ -49,6 +64,7 @@ pub const AICA = struct {
 
     pub fn read_rtc_register(self: *const AICA, addr: u32) u32 {
         _ = self;
+        std.debug.assert(addr >= 0x00710000);
         switch (addr - 0x00710000) {
             0x00 => {
                 return (@as(u32, @intCast(std.time.timestamp())) >> 16) & 0x0000FFFFF;
@@ -80,35 +96,35 @@ pub const AICA = struct {
         }
     }
 
-    pub fn update(self: *AICA, cpu: *SH4, cycles: u32) void {
+    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) void {
         if (self.dma_countdown > 0) {
             if (self.dma_countdown <= cycles) {
-                self.end_dma(cpu);
+                self.end_dma(dc);
             } else {
                 self.dma_countdown -= cycles;
             }
         }
     }
 
-    pub fn start_dma(self: *AICA, cpu: *SH4) void {
-        const enabled = cpu.read_hw_register(u32, .SB_ADEN);
+    pub fn start_dma(self: *AICA, dc: *Dreamcast) void {
+        const enabled = dc.read_hw_register(u32, .SB_ADEN);
         if (enabled == 0) return;
 
-        const aica_addr = cpu.read_hw_register(u32, .SB_ADSTAG);
-        const root_bus_addr = cpu.read_hw_register(u32, .SB_ADSTAR);
-        const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
+        const aica_addr = dc.read_hw_register(u32, .SB_ADSTAG);
+        const root_bus_addr = dc.read_hw_register(u32, .SB_ADSTAR);
+        const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
         const len = len_reg & 0x7FFFFFFF;
-        const direction = cpu.read_hw_register(u32, .SB_ADDIR);
+        const direction = dc.read_hw_register(u32, .SB_ADDIR);
         aica_log.info(" AICA G2-DMA Start!", .{});
         aica_log.debug("   AICA Address: 0x{X:0>8}", .{aica_addr});
         aica_log.debug("   Root Bus Address: 0x{X:0>8}", .{root_bus_addr});
         aica_log.debug("   Length: 0x{X:0>8} (0x{X:0>8})", .{ len_reg, len });
         aica_log.debug("   Direction: 0x{X:0>8}", .{direction});
-        aica_log.debug("   Trigger Select: 0x{X:0>8}", .{cpu.read_hw_register(u32, .SB_ADTSEL)});
+        aica_log.debug("   Trigger Select: 0x{X:0>8}", .{dc.read_hw_register(u32, .SB_ADTSEL)});
         aica_log.debug("   Enable: 0x{X:0>8}", .{enabled});
 
-        const physical_root_addr = cpu._get_memory(root_bus_addr);
-        const physical_aica_addr = cpu._get_memory(aica_addr);
+        const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
+        const physical_aica_addr = dc.cpu._get_memory(aica_addr);
 
         // TODO: This might raise some exceptions, if the addresses are wrong.
 
@@ -125,15 +141,15 @@ pub const AICA = struct {
         }
 
         // Signals the DMA is in progress
-        cpu.hw_register(u32, .SB_ADST).* = 1;
-        cpu.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
+        dc.hw_register(u32, .SB_ADST).* = 1;
+        dc.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
 
         // Schedule the end of the transfer interrupt
         self.dma_countdown = 10 * len; // FIXME: Compute the actual cycle count.
     }
 
-    fn end_dma(self: *AICA, cpu: *SH4) void {
-        const suspended = cpu.read_hw_register(u32, .SB_ADSUSP);
+    fn end_dma(self: *AICA, dc: *Dreamcast) void {
+        const suspended = dc.read_hw_register(u32, .SB_ADSUSP);
         if ((suspended & 1) == 1) {
             // The DMA is suspended, wait.
             // FIXME: This is probably not how it's supposed to work.
@@ -142,22 +158,22 @@ pub const AICA = struct {
 
         self.dma_countdown = 0;
 
-        const len_reg = cpu.read_hw_register(u32, .SB_ADLEN);
+        const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
         const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End//Restart
         const len = len_reg & 0x7FFFFFFF;
         // When a transfer ends, the DMA enable register is set to "0".
         if (dma_end)
-            cpu.hw_register(u32, .SB_ADEN).* = 0;
+            dc.hw_register(u32, .SB_ADEN).* = 0;
 
-        cpu.hw_register(u32, .SB_ADSTAR).* += len;
-        cpu.hw_register(u32, .SB_ADSTAG).* += len;
-        cpu.hw_register(u32, .SB_ADLEN).* = 0;
-        cpu.hw_register(u32, .SB_ADST).* = 0;
+        dc.hw_register(u32, .SB_ADSTAR).* += len;
+        dc.hw_register(u32, .SB_ADSTAG).* += len;
+        dc.hw_register(u32, .SB_ADLEN).* = 0;
+        dc.hw_register(u32, .SB_ADST).* = 0;
 
         // Set "DMA Suspend or DMA Stop" bit in SB_ADSUSP
-        cpu.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
+        dc.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
 
-        cpu.raise_normal_interrupt(.{ .EoD_AICA = 1 });
-        cpu.raise_external_interrupt(.{ .AICA = 1 });
+        dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
+        dc.raise_external_interrupt(.{ .AICA = 1 });
     }
 };

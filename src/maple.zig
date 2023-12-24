@@ -1,7 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor.zig");
 
-const SH4 = @import("sh4.zig").SH4;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const zglfw = @import("zglfw");
 
@@ -183,7 +183,7 @@ const MaplePort = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
-    pub fn handle_command(self: *@This(), cpu: *SH4, data: [*]u32) u32 {
+    pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
         const ram_addr = return_addr - 0x0C000000;
 
@@ -199,34 +199,34 @@ const MaplePort = struct {
         }
 
         if (self.main == null) {
-            cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
+            dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
         } else {
             const target = switch (command.recipent_address & 0b11111) {
                 0 => self.main.?,
                 else => self.subperipherals[@ctz(command.recipent_address)],
             };
             if (target == null) {
-                cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
+                dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
             } else {
                 switch (command.command) {
                     .DeviceInfoRequest => {
-                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
-                        @as(*DeviceInfoPayload, @ptrCast(&cpu.ram[ram_addr + 4])).* = .{
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
+                        @as(*DeviceInfoPayload, @ptrCast(&dc.ram[ram_addr + 4])).* = .{
                             .FunctionCodesMask = target.?.capabilities,
                             .SubFunctionCodesMasks = target.?.subcapabilities,
                         };
                     },
                     .GetCondition => {
-                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
                         // TODO: Write some actual input data!
-                        cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
-                        cpu.write16(return_addr + 8, @bitCast(self.buttons));
-                        cpu.write16(return_addr + 10, 0xFFFF);
-                        cpu.write32(return_addr + 12, 0xFFFFFFFF);
+                        dc.cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
+                        dc.cpu.write16(return_addr + 8, @bitCast(self.buttons));
+                        dc.cpu.write16(return_addr + 10, 0xFFFF);
+                        dc.cpu.write32(return_addr + 12, 0xFFFFFFFF);
                     },
                     else => {
                         std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
-                        cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }
             }
@@ -247,10 +247,10 @@ pub const MapleHost = struct {
         _ = self;
     }
 
-    pub fn transfer(self: *MapleHost, cpu: *SH4, data: [*]u32) void {
+    pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
         var idx: u32 = 0;
 
-        defer cpu.raise_normal_interrupt(.{ .EoD_Maple = 1 });
+        defer dc.raise_normal_interrupt(.{ .EoD_Maple = 1 });
 
         // A transfer can have a maximum of 1024 words.
         while (idx < 1024) {
@@ -261,7 +261,7 @@ pub const MapleHost = struct {
 
             switch (instr.pattern) {
                 .Normal => {
-                    idx += self.ports[instr.port_select].handle_command(cpu, data[idx..]);
+                    idx += self.ports[instr.port_select].handle_command(dc, data[idx..]);
                 },
                 .NOP, .RESET => {},
                 else => {

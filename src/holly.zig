@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const SH4 = @import("sh4.zig").SH4;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const holly_log = std.log.scoped(.holly);
 
@@ -830,6 +830,11 @@ pub const DisplayList = struct {
     }
 };
 
+const ScheduledInterrupt = struct {
+    cycles: u32,
+    int: MemoryRegisters.SB_ISTNRM,
+};
+
 pub const Holly = struct {
     vram: []u8 = undefined,
     registers: []u8 = undefined,
@@ -847,21 +852,20 @@ pub const Holly = struct {
 
     ta_display_lists: [5]DisplayList = undefined,
 
-    _scheduled_interrupts: std.ArrayList(struct { cycles: u32, int: MemoryRegisters.SB_ISTNRM }) = undefined,
+    _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined,
 
-    pub fn init(self: *@This(), allocator: std.mem.Allocator) !void {
-        self._allocator = allocator;
-
-        self.vram = try self._allocator.alloc(u8, 8 * 1024 * 1024);
-        self.registers = try self._allocator.alloc(u8, 0x2000);
-
-        self._ta_current_polygon_vertex_parameters = std.ArrayList(VertexParameter).init(self._allocator);
-
-        for (0..self.ta_display_lists.len) |i| {
-            self.ta_display_lists[i] = DisplayList.init(self._allocator);
+    pub fn init(allocator: std.mem.Allocator) !Holly {
+        var holly = @This(){
+            ._allocator = allocator,
+            .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
+            .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
+            ._ta_current_polygon_vertex_parameters = std.ArrayList(VertexParameter).init(allocator),
+            ._scheduled_interrupts = try std.ArrayList(ScheduledInterrupt).initCapacity(allocator, 32),
+        };
+        for (0..holly.ta_display_lists.len) |i| {
+            holly.ta_display_lists[i] = DisplayList.init(allocator);
         }
-
-        self._scheduled_interrupts = try @TypeOf(self._scheduled_interrupts).initCapacity(self._allocator, 32);
+        return holly;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -895,7 +899,7 @@ pub const Holly = struct {
         self._get_register(u32, .TA_LIST_CONT).* = 0;
     }
 
-    pub fn update(self: *@This(), cpu: *SH4, cycles: u32) void {
+    pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         // TODO!
         const static = struct {
             var _tmp_cycles: u64 = 0;
@@ -907,7 +911,7 @@ pub const Holly = struct {
         var idx: u32 = 0;
         while (idx < self._scheduled_interrupts.items.len) {
             if (self._scheduled_interrupts.items[idx].cycles < cycles) {
-                cpu.raise_normal_interrupt(self._scheduled_interrupts.items[idx].int);
+                dc.raise_normal_interrupt(self._scheduled_interrupts.items[idx].int);
                 _ = self._scheduled_interrupts.swapRemove(idx);
             } else {
                 self._scheduled_interrupts.items[idx].cycles -= cycles;
@@ -938,16 +942,16 @@ pub const Holly = struct {
                     0 => {
                         // Output when the display line is the value indicated by line_comp_val.
                         if (spg_status.*.scanline == spg_hblank_int.line_comp_val)
-                            cpu.raise_normal_interrupt(.{ .HBlankIn = 1 });
+                            dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     1 => {
                         // Output every line_comp_val lines.
                         if (spg_status.*.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
-                            cpu.raise_normal_interrupt(.{ .HBlankIn = 1 });
+                            dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     2 => {
                         // Output every line.
-                        cpu.raise_normal_interrupt(.{ .HBlankIn = 1 });
+                        dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     else => {},
                 }
@@ -963,15 +967,15 @@ pub const Holly = struct {
 
                 // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
                 // FIXME: This has nothing to do here.
-                if (cpu.read_hw_register(u32, .SB_MDEN) & 1 == 1 and cpu.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.*.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
-                    cpu.start_maple_dma();
+                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.*.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
+                    dc.start_maple_dma();
                 }
 
                 if (spg_status.*.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
-                    cpu.raise_normal_interrupt(.{ .VBlankIn = 1 });
+                    dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
                 }
                 if (spg_status.*.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
-                    cpu.raise_normal_interrupt(.{ .VBlankOut = 1 });
+                    dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
                 }
                 if (spg_status.*.scanline == spg_vblank.vbstart) {
                     spg_status.*.vsync = 1;
@@ -1262,15 +1266,16 @@ pub const Holly = struct {
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
-    pub fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.registers[(@intFromEnum(r) & 0x1FFFFFFF) - HollyRegisterStart])));
+    pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
+        return self._get_register_from_addr(T, @intFromEnum(r));
     }
 
-    pub fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.registers[(addr & 0x1FFFFFFF) - HollyRegisterStart])));
+    pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
+        std.debug.assert(addr >= HollyRegisterStart and addr < HollyRegisterStart + self.registers.len);
+        return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
     }
 
-    pub fn _get_vram(self: *@This(), addr: u32) *u8 {
+    pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {
         // VRAM - 8MB, Mirrored at 0x06000000
         const local_addr = addr - (if (addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
         if (local_addr < 0x0080_0000) { // 64-bit access area
@@ -1278,13 +1283,11 @@ pub const Holly = struct {
         } else if (local_addr < 0x0100_0000) { // Unused
             holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
-            //return &self.vram[0];
         } else if (local_addr < 0x0180_0000) { // 32-bit access area
             return &self.vram[local_addr - 0x0100_0000];
         } else { // Unused
             holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
-            //return &self.vram[0];
         }
     }
 };
