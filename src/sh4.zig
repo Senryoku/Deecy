@@ -688,13 +688,13 @@ pub const SH4 = struct {
                         return &self._dc.?.flash[addr - 0x200000];
                     },
                     0x005F6800...0x005F7FFF => {
-                        return &self._dc.?.hardware_registers[addr - 0x005F6800];
+                        return self._dc.?.hw_register_addr(u8, addr);
                     },
                     0x005F8000...0x005F9FFF => {
                         return self._dc.?.gpu._get_register_from_addr(u8, addr);
                     },
                     0x005FA000...0x005FFFFF => {
-                        return &self._dc.?.hardware_registers[addr - 0x005F6800];
+                        return self._dc.?.hw_register_addr(u8, addr);
                     },
                     0x00600000...0x006007FF => {
                         const static = struct {
