@@ -658,7 +658,7 @@ pub const SH4 = struct {
     //       the proper functions, but it was also worse performance wise (although a little less
     //       that calling directly to DC).
 
-    pub fn _get_memory(self: *@This(), addr: addr_t) *u8 {
+    pub inline fn _get_memory(self: *@This(), addr: addr_t) *u8 {
         std.debug.assert(addr == addr & 0x1FFFFFFF);
 
         if (false) {
@@ -752,7 +752,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn read8(self: @This(), virtual_addr: addr_t) u8 {
+    pub inline fn read8(self: @This(), virtual_addr: addr_t) u8 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0xFF000000) {
@@ -777,7 +777,7 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn read16(self: @This(), virtual_addr: addr_t) u16 {
+    pub inline fn read16(self: @This(), virtual_addr: addr_t) u16 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         // SH4 Hardware registers
@@ -847,7 +847,7 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn read32(self: @This(), virtual_addr: addr_t) u32 {
+    pub inline fn read32(self: @This(), virtual_addr: addr_t) u32 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0xFF000000) {
@@ -881,14 +881,14 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn read64(self: @This(), virtual_addr: addr_t) u64 {
+    pub inline fn read64(self: @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
         return @as(*const u64, @alignCast(@ptrCast(
             @constCast(&self)._get_memory(addr),
         ))).*;
     }
 
-    pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+    pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 // SDMR2/SDMR3
@@ -927,7 +927,7 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
-    pub fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+    pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0xFF000000) {
@@ -973,7 +973,7 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
-    pub fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+    pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
         if (virtual_addr >= 0xE0000000) {
             // P4
             if (virtual_addr < 0xE4000000) {
@@ -1068,7 +1068,7 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
-    pub fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+    pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
         // This isn't efficient, but avoids repeating all the logic of write32.
         self.write32(virtual_addr, @truncate(value));
         self.write32(virtual_addr + 4, @truncate(value >> 32));
