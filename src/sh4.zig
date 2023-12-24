@@ -137,8 +137,6 @@ pub const SH4 = struct {
         qf: [4]f128,
     } = undefined,
 
-    utlb_entries: [64]mmu.UTLBEntry = undefined,
-
     store_queues: [2][8]u32 align(4) = undefined,
     p4_registers: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
 
@@ -486,73 +484,6 @@ pub const SH4 = struct {
         self.add_cycles(Opcodes[JumpTable[opcode]].issue_cycles);
     }
 
-    pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
-        const asid = self.dc.read_p4_register(mmu.PTEH, MemoryRegister.PTEH).asid;
-        const vpn: u22 = @truncate(virtual_addr >> 10);
-
-        const shared_access = self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
-        var found: ?mmu.UTLBEntry = null;
-        for (self.utlb_entries) |entry| {
-            if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
-                (entry.asid == asid)))
-            {
-                if (found != null)
-                    return error.DataTLBMutipleHitExpection;
-                found = entry;
-            }
-        }
-        if (found == null)
-            return error.DataTLBMissExpection;
-        return found.?;
-    }
-
-    pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
-        std.debug.assert(virtual_addr & 0xE0000000 == 0 or virtual_addr & 0xE0000000 == 0x60000000);
-        if (self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
-
-        const entry = try mmu_utlb_match(self, virtual_addr);
-
-        //try self.check_memory_protection(entry, write);
-
-        const ppn = @as(u32, @intCast(entry.ppn));
-        switch (entry.sz) {
-            0b00 => { // 1-Kbyte page
-                return ppn << 10 | (virtual_addr & 0b11_1111_1111);
-            },
-            0b01 => { // 4-Kbyte page
-                return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
-            },
-            0b10 => { //64-Kbyte page
-                return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
-            },
-            0b11 => { // 1-Mbyte page
-                return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
-            },
-        }
-    }
-
-    pub fn mmu_translate_itbl(self: @This(), virtual_addr: addr_t) !u32 {
-        _ = virtual_addr;
-        _ = self;
-        unreachable;
-    }
-
-    pub fn check_memory_protection(self: @This(), entry: mmu.UTLBEntry, write: bool) !void {
-        if (self.sr.md == 0) {
-            switch (entry.pr) {
-                0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
-                0b10 => if (write and entry.w) return error.DataTLBProtectionViolationExpection,
-                0b11 => if (write and entry.w and entry.d == 0) return error.InitalPageWriteException,
-                else => {},
-            }
-        } else {
-            // switch (entry.pr) {
-            //    0b01, 0b11 => if(write and entry.d) return error.InitalPageWriteException,
-            //    0b00, 0b01 => if(write) return error.DataTLBProtectionViolationExpection,
-            // }
-        }
-    }
-
     pub fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
         sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
@@ -653,6 +584,15 @@ pub const SH4 = struct {
         std.debug.panic(fmt, args);
         @panic(fmt);
     }
+
+    // Memory access/mapping functions
+    // NOTE: These would make a lot more sense in the Dreamcast struct, however since this is
+    //       by far the hostest part, it looks like avoiding the extra indirection helps a lot
+    //       with performance. I don't really understand it since it will end up doing it anyway
+    //       most of the time.
+    //       I tried having some small functions just for the P4 registers that will delegate to
+    //       the proper functions, but it was also worse performance wise (although a little less
+    //       that calling directly to DC).
 
     pub fn _get_memory(self: *@This(), addr: addr_t) *u8 {
         std.debug.assert(addr == addr & 0x1FFFFFFF);
@@ -1043,6 +983,76 @@ pub const SH4 = struct {
         // This isn't efficient, but avoids repeating all the logic of write32.
         self.write32(virtual_addr, @truncate(value));
         self.write32(virtual_addr + 4, @truncate(value >> 32));
+    }
+
+    // MMU Stub functions
+    // NOTE: This is dead code, the MMU is not emulated and utlb_entries are not in this struct anymore (reducing the size of the struct helps a lot with performance).
+
+    pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
+        const asid = self.dc.read_p4_register(mmu.PTEH, MemoryRegister.PTEH).asid;
+        const vpn: u22 = @truncate(virtual_addr >> 10);
+
+        const shared_access = self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
+        var found: ?mmu.UTLBEntry = null;
+        for (self.utlb_entries) |entry| {
+            if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
+                (entry.asid == asid)))
+            {
+                if (found != null)
+                    return error.DataTLBMutipleHitExpection;
+                found = entry;
+            }
+        }
+        if (found == null)
+            return error.DataTLBMissExpection;
+        return found.?;
+    }
+
+    pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
+        std.debug.assert(virtual_addr & 0xE0000000 == 0 or virtual_addr & 0xE0000000 == 0x60000000);
+        if (self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
+
+        const entry = try mmu_utlb_match(self, virtual_addr);
+
+        //try self.check_memory_protection(entry, write);
+
+        const ppn = @as(u32, @intCast(entry.ppn));
+        switch (entry.sz) {
+            0b00 => { // 1-Kbyte page
+                return ppn << 10 | (virtual_addr & 0b11_1111_1111);
+            },
+            0b01 => { // 4-Kbyte page
+                return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
+            },
+            0b10 => { //64-Kbyte page
+                return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
+            },
+            0b11 => { // 1-Mbyte page
+                return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
+            },
+        }
+    }
+
+    pub fn mmu_translate_itbl(self: @This(), virtual_addr: addr_t) !u32 {
+        _ = virtual_addr;
+        _ = self;
+        unreachable;
+    }
+
+    pub fn check_memory_protection(self: @This(), entry: mmu.UTLBEntry, write: bool) !void {
+        if (self.sr.md == 0) {
+            switch (entry.pr) {
+                0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
+                0b10 => if (write and entry.w) return error.DataTLBProtectionViolationExpection,
+                0b11 => if (write and entry.w and entry.d == 0) return error.InitalPageWriteException,
+                else => {},
+            }
+        } else {
+            // switch (entry.pr) {
+            //    0b01, 0b11 => if(write and entry.d) return error.InitalPageWriteException,
+            //    0b00, 0b01 => if(write) return error.DataTLBProtectionViolationExpection,
+            // }
+        }
     }
 };
 
