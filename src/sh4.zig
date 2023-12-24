@@ -664,7 +664,7 @@ pub const SH4 = struct {
     //       that calling directly to DC).
 
     pub inline fn _get_memory(self: *@This(), addr: addr_t) *u8 {
-        std.debug.assert(addr == addr & 0x1FFFFFFF);
+        std.debug.assert(addr <= 0x1FFFFFFF);
 
         if (false) {
             // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.

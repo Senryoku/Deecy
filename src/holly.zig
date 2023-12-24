@@ -1266,15 +1266,16 @@ pub const Holly = struct {
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
-    pub fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.registers[(@intFromEnum(r) & 0x1FFFFFFF) - HollyRegisterStart])));
+    pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
+        return self._get_register_from_addr(T, @intFromEnum(r));
     }
 
-    pub fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.registers[(addr & 0x1FFFFFFF) - HollyRegisterStart])));
+    pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
+        std.debug.assert(addr >= HollyRegisterStart and addr < HollyRegisterStart + self.registers.len);
+        return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
     }
 
-    pub fn _get_vram(self: *@This(), addr: u32) *u8 {
+    pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {
         // VRAM - 8MB, Mirrored at 0x06000000
         const local_addr = addr - (if (addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
         if (local_addr < 0x0080_0000) { // 64-bit access area
@@ -1282,13 +1283,11 @@ pub const Holly = struct {
         } else if (local_addr < 0x0100_0000) { // Unused
             holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
-            //return &self.vram[0];
         } else if (local_addr < 0x0180_0000) { // 32-bit access area
             return &self.vram[local_addr - 0x0100_0000];
         } else { // Unused
             holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
             @panic("Out of bounds access to Area 1 (VRAM)");
-            //return &self.vram[0];
         }
     }
 };
