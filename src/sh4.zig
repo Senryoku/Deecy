@@ -154,8 +154,13 @@ pub const SH4 = struct {
 
         sh4._allocator = allocator;
 
-        // FIXME: Huge waste of memory.
-        sh4.p4_registers = try sh4._allocator.alloc(u8, 64 * 1024 * 1024);
+        // P4 registers are remapped on this smaller range. See p4_register_addr.
+        //   Addresses starts with FF/1F, this can be ignored.
+        //   Then, there are 5 bits that separate registers into different functions.
+        //   Within each function, only the lower 6 bits of the address are relevant,
+        //   the rest is always 0. By shifting the 5 'function' bits, we can easily
+        //   and cheaply remap it to a way smaller memory range.
+        sh4.p4_registers = try sh4._allocator.alloc(u8, 0xC00);
 
         init_jump_table();
 
@@ -296,16 +301,17 @@ pub const SH4 = struct {
         self.fpscr = @bitCast(@as(u32, 0x00040001));
     }
 
-    pub fn read_p4_register(self: @This(), comptime T: type, r: P4MemoryRegister) T {
-        return @as(*T, @alignCast(@ptrCast(&self.p4_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000]))).*;
+    pub inline fn read_p4_register(self: @This(), comptime T: type, r: P4MemoryRegister) T {
+        return @constCast(&self).p4_register_addr(T, @intFromEnum(r)).*;
     }
 
-    pub fn p4_register(self: *@This(), comptime T: type, r: P4MemoryRegister) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.p4_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x1C000000])));
+    pub inline fn p4_register(self: *@This(), comptime T: type, r: P4MemoryRegister) *T {
+        return self.p4_register_addr(T, @intFromEnum(r));
     }
 
-    pub fn p4_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.p4_registers[(addr & 0x1FFFFFFF) - 0x1C000000])));
+    pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+        const real_addr = ((0b0000_0000_1111_1000_0000_0000_0000_0000 & addr) >> 13) | (addr & 0b0011_1111);
+        return @as(*T, @alignCast(@ptrCast(&self.p4_registers[real_addr])));
     }
 
     pub inline fn R(self: *@This(), r: u4) *u32 {
