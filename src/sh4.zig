@@ -537,7 +537,12 @@ pub const SH4 = struct {
     }
 
     pub inline fn _execute(self: *@This(), addr: addr_t) void {
-        const opcode = self.read16(addr);
+        // Guiding the compiler a bit. Yes, that helps a lot :)
+        // Instruction should be in Boot ROM, or RAM.
+        const physical_addr = addr & 0x1FFFFFFF;
+        std.debug.assert(physical_addr >= 0x00000000 and physical_addr <= 0x00020000 or physical_addr >= 0x0C000000 and physical_addr <= 0x0D000000);
+
+        const opcode = self.read16(physical_addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
