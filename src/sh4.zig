@@ -482,7 +482,7 @@ pub const SH4 = struct {
         self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
     }
 
-    fn timer_prescaler(value: u3) u32 {
+    inline fn timer_prescaler(value: u3) u32 {
         switch (value) {
             0 => return 4,
             1 => return 16,
@@ -493,7 +493,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn advance_timers(self: *@This(), cycles: u32) void {
+    pub inline fn advance_timers(self: *@This(), cycles: u32) void {
         const TSTR = self.read_p4_register(u32, .TSTR);
 
         // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
@@ -531,12 +531,12 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn add_cycles(self: *@This(), cycles: u32) void {
+    pub inline fn add_cycles(self: *@This(), cycles: u32) void {
         self.advance_timers(cycles);
         self._pending_cycles += cycles;
     }
 
-    pub fn _execute(self: *@This(), addr: addr_t) void {
+    pub inline fn _execute(self: *@This(), addr: addr_t) void {
         const opcode = self.read16(addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)

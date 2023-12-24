@@ -208,10 +208,10 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
     }
 
-    pub fn hw_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
+    pub inline fn hw_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x005F6800])));
     }
-    pub fn read_hw_register(self: @This(), comptime T: type, r: MemoryRegister) T {
+    pub inline fn read_hw_register(self: @This(), comptime T: type, r: MemoryRegister) T {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[(@intFromEnum(r) & 0x1FFFFFFF) - 0x005F6800]))).*;
     }
 
