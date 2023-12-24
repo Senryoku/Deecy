@@ -33,7 +33,7 @@ pub const std_options = struct {
     };
 };
 
-var running = true;
+var running = false;
 
 fn trapa_handler() void {
     running = false;
@@ -508,4 +508,5 @@ pub fn main() !void {
 
 test "all tests" {
     _ = sh4;
+    _ = Dreamcast;
 }

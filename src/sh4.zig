@@ -82,8 +82,8 @@ const StoreQueueAddr = packed struct(u32) {
 pub const Instr = packed union {
     value: u16,
     // Reminder: We're in little endian.
-    nmd: packed struct { d: u4, m: u4, n: u4, _: u4 = undefined },
-    nd8: packed struct { d: u8, n: u4, _: u4 = undefined },
+    nmd: packed struct { d: u4 = undefined, m: u4 = undefined, n: u4 = undefined, _: u4 = undefined },
+    nd8: packed struct { d: u8, n: u4 = undefined, _: u4 = undefined },
     d12: packed struct { d: u12, _: u4 = undefined },
 };
 
@@ -147,10 +147,11 @@ pub const SH4 = struct {
     timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
 
     _allocator: std.mem.Allocator = undefined,
-    _dc: *Dreamcast = undefined,
+    _dc: ?*Dreamcast = null,
     _pending_cycles: u32 = 0,
 
-    pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !SH4 {
+    // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
+    pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         var sh4: SH4 = .{ ._dc = dc };
 
         sh4._allocator = allocator;
@@ -295,11 +296,6 @@ pub const SH4 = struct {
 
         self.sr = @bitCast(@as(u32, 0x400000F1));
         self.fpscr = @bitCast(@as(u32, 0x00040001));
-    }
-
-    pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
-        const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
-        @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
     pub fn read_p4_register(self: @This(), comptime T: type, r: P4MemoryRegister) T {
@@ -479,7 +475,7 @@ pub const SH4 = struct {
     }
 
     pub fn _execute(self: *@This(), addr: addr_t) void {
-        const opcode = self._dc.read16(addr);
+        const opcode = self._dc.?.read16(addr);
         const instr = Instr{ .value = opcode };
         if (self.debug_trace)
             std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
@@ -613,31 +609,31 @@ pub const SH4 = struct {
             std.debug.assert(chcr.ts == 0b100); // We'll copy 32-bytes blocks
             // Polygon Path
             if (dst_addr >= 0x10000000 and dst_addr < 0x10800000 or dst_addr >= 0x12000000 and dst_addr < 0x12800000) {
-                var src: [*]u32 = @alignCast(@ptrCast(self._dc._get_memory(src_addr)));
+                var src: [*]u32 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
                 for (0..len) |_| {
-                    self._dc.gpu.write_ta_fifo_polygon_path(src[0..8]);
+                    self._dc.?.gpu.write_ta_fifo_polygon_path(src[0..8]);
                     src += 8;
                 }
             }
             // YUV Converter Path
             if (dst_addr >= 0x10800000 and dst_addr < 0x11000000 or dst_addr >= 0x12800000 and dst_addr < 0x13000000) {
-                self._dc.gpu.ta_fifo_yuv_converter_path();
+                self._dc.?.gpu.ta_fifo_yuv_converter_path();
             }
             // Direct Texture Path
             if (dst_addr >= 0x11000000 and dst_addr < 0x12000000 or dst_addr >= 0x13000000 and dst_addr < 0x14000000) {
-                self._dc.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._dc._get_memory(src_addr)))[0..byte_len]);
+                self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)))[0..byte_len]);
             }
         } else if (is_memcpy_safe) {
             std.debug.assert(dst_stride == src_stride);
             // FIXME: When can we safely memset?
-            const src = @as([*]u8, @ptrCast(self._dc._get_memory(src_addr)));
-            const dst = @as([*]u8, @ptrCast(self._dc._get_memory(dst_addr)));
+            const src = @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)));
+            const dst = @as([*]u8, @ptrCast(self._dc.?._get_memory(dst_addr)));
             @memcpy(dst[0..byte_len], src[0..byte_len]);
         } else {
             var curr_dst: i32 = @intCast(dst_addr);
             var curr_src: i32 = @intCast(src_addr);
             for (0..byte_len / 4) |_| {
-                self._dc.write32(@intCast(curr_dst), self._dc.read32(@intCast(curr_src)));
+                self._dc.?.write32(@intCast(curr_dst), self._dc.?.read32(@intCast(curr_src)));
                 curr_dst += 4 * dst_stride;
                 curr_src += 4 * src_stride;
             }
@@ -721,7 +717,7 @@ fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
 fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 1;
-    cpu.R(n).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.pc + 4 + d)));
+    cpu.R(n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.pc + 4 + d)));
 }
 
 // The 8-bit displacement is multiplied by four after zero-extension, and so the relative distance from the operand is in the range up to PC + 4 + 1020 bytes.
@@ -729,35 +725,35 @@ fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
 fn movl_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 2;
-    cpu.R(n).* = cpu._dc.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
+    cpu.R(n).* = cpu._dc.?.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
 }
 
 fn movb_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movw_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).*)));
 }
 
 fn movl_at_rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movw_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movl_rm_at_rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 1;
     }
@@ -765,14 +761,14 @@ fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 2;
     }
 }
 
 fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).*);
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 4;
     }
@@ -780,12 +776,12 @@ fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 
 fn movb_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 1;
-    cpu._dc.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 2;
-    cpu._dc.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
     // TODO: Possible Exceptions
     // Data TLB multiple-hit exception
     // Data TLB miss exception
@@ -796,84 +792,84 @@ fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
 
 fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
 }
 
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 fn movw_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
 }
 
 fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu._dc.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(0).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_at_disp_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // The 4-bit displacement is only zero-extended, so a range up to +15 bytes can be specified.
 fn movb_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
+    cpu._dc.?.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
 }
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 fn movw_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
+    cpu._dc.?.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
 }
 
 // Transfers the source operand to the destination.
 // The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
     const d = zero_extend(opcode.nmd.d) << 2;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
 }
 
 fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu._dc.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
+    cpu.R(opcode.nmd.n).* = cpu._dc.?.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
 }
 
 fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movw_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.read8(cpu.gbr + opcode.nd8.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu._dc.?.read8(cpu.gbr + opcode.nd8.d)));
 }
 fn movw_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.read16(cpu.gbr + (opcode.nd8.d << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu._dc.?.read16(cpu.gbr + (opcode.nd8.d << 1))));
 }
 fn movl_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu._dc.read32(cpu.gbr + (opcode.nd8.d << 2));
+    cpu.R(0).* = cpu._dc.?.read32(cpu.gbr + (opcode.nd8.d << 2));
 }
 
 fn movb_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
+    cpu._dc.?.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
 fn movw_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
+    cpu._dc.?.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
 }
 fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu._dc.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
+    cpu._dc.?.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
 }
 
 fn movt_Rn(cpu: *SH4, opcode: Instr) void {
@@ -905,7 +901,7 @@ fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "add imm rn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     cpu.R(0).* = 0;
@@ -1045,7 +1041,7 @@ fn div1(cpu: *SH4, opcode: Instr) void {
 }
 
 test "div1" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     cpu.R(0).* = 0b00111110111110001001111010110000;
@@ -1061,7 +1057,7 @@ test "div1" {
 }
 
 test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     const dividend = 0b00111110111110001001111010110000;
@@ -1083,7 +1079,7 @@ test "div1 r1 (32 bits) / r0 (16 bits) = r1 (16 bits)" {
 }
 
 test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     // Example from KallistiOS
@@ -1164,7 +1160,7 @@ fn neg_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "neg Rm,Rn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     cpu.R(0).* = 1;
@@ -1197,7 +1193,7 @@ fn negc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "negc Rm,Rn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     // Examples from the manual
@@ -1259,9 +1255,9 @@ fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
 fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
     // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
-    const tmp = cpu._dc.read8(cpu.R(opcode.nmd.n).*);
+    const tmp = cpu._dc.?.read8(cpu.R(opcode.nmd.n).*);
     cpu.sr.t = (tmp == 0);
-    cpu._dc.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
+    cpu._dc.?.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
 }
 fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
@@ -1288,7 +1284,7 @@ fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = tmp;
 }
 test "rotcl" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     cpu.R(0).* = 0;
@@ -1328,7 +1324,7 @@ fn rotcr_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "rotcr" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
 
     cpu.R(0).* = 0;
@@ -1588,42 +1584,42 @@ fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
     cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
 }
 fn ldcl_at_Rn_inc_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.sr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
+    cpu.sr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.gbr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*));
+    cpu.gbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) void {
     cpu.vbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_VBR(cpu: *SH4, opcode: Instr) void {
-    cpu.vbr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*));
+    cpu.vbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_SSR(cpu: *SH4, opcode: Instr) void {
     cpu.ssr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_SSR(cpu: *SH4, opcode: Instr) void {
-    cpu.ssr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*));
+    cpu.ssr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_SPC(cpu: *SH4, opcode: Instr) void {
     cpu.spc = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_SPC(cpu: *SH4, opcode: Instr) void {
-    cpu.spc = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*));
+    cpu.spc = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_DBR(cpu: *SH4, opcode: Instr) void {
-    cpu.dbr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*));
+    cpu.dbr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
@@ -1635,9 +1631,9 @@ fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
 }
 fn ldcl_at_Rn_inc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.rb == 0) {
-        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     } else {
-        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     }
     cpu.R(opcode.nmd.n).* += 4;
 }
@@ -1645,21 +1641,21 @@ fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_at_Rn_inc_MACH(cpu: *SH4, opcode: Instr) void {
-    cpu.mach = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+    cpu.mach = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rn_MACL(cpu: *SH4, opcode: Instr) void {
     cpu.macl = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_at_Rn_inc_MACL(cpu: *SH4, opcode: Instr) void {
-    cpu.macl = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+    cpu.macl = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rn_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.R(opcode.nmd.n).*;
 }
 fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
-    cpu.pr = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+    cpu.pr = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1669,7 +1665,7 @@ fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an
     // R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
 
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
 }
 fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
     cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
@@ -1678,12 +1674,12 @@ fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
 fn ldsl_at_Rn_inc_FPSCR(cpu: *SH4, opcode: Instr) void {
-    cpu.fpscr = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
+    cpu.fpscr = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn stsl_FPSCR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
 }
 fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.R(opcode.nmd.n).*;
@@ -1692,12 +1688,12 @@ fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
 fn ldsl_at_Rn_inc_FPUL(cpu: *SH4, opcode: Instr) void {
-    cpu.fpul = cpu._dc.read32(cpu.R(opcode.nmd.n).*);
+    cpu.fpul = cpu._dc.?.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
@@ -1764,7 +1760,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
             std.log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
             inline for (0..8) |i| {
-                cpu._dc.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+                cpu._dc.?.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             }
         }
     } else {
@@ -1813,7 +1809,7 @@ fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stcl_SR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
 }
 fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.tbr;
@@ -1823,42 +1819,42 @@ fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stcl_GBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
 }
 fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.vbr;
 }
 fn stcl_VBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
 }
 fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.sgr;
 }
 fn stcl_SGR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
 }
 fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.ssr;
 }
 fn stcl_SSR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
 }
 fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.spc;
 }
 fn stcl_SPC_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
 }
 fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.dbr;
 }
 fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.sr.rb == 0) {
@@ -1870,9 +1866,9 @@ fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
 fn stcl_Rm_BANK_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     if (cpu.sr.rb == 0) {
-        cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
+        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
     } else {
-        cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
+        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
     }
 }
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1880,21 +1876,21 @@ fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
 }
 fn stsl_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
 fn stsl_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
 fn stsl_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu._dc.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
+    cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
 
 fn trapa_imm(cpu: *SH4, opcode: Instr) void {
@@ -1927,36 +1923,36 @@ fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.read64(cpu.R(opcode.nmd.m).*));
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
         } else {
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.read64(cpu.R(opcode.nmd.m).*));
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
         }
     }
 }
 fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu._dc.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
-            cpu._dc.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
         } else {
-            cpu._dc.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
         }
     }
 }
 fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(opcode.nmd.m).*));
         cpu.R(opcode.nmd.m).* += 4;
     } else { // Double-precision
         if (opcode.nmd.n & 0x1 == 0) {
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.read64(cpu.R(opcode.nmd.m).*));
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
         } else {
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.read64(cpu.R(opcode.nmd.m).*));
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu._dc.?.read64(cpu.R(opcode.nmd.m).*));
         }
         cpu.R(opcode.nmd.m).* += 8;
     }
@@ -1965,28 +1961,28 @@ fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.R(opcode.nmd.n).* -= 4;
-        cpu._dc.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu._dc.?.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else { // Double-precision
         cpu.R(opcode.nmd.n).* -= 8;
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d	DRm,@-Rn
-            cpu._dc.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
         } else {
             // fmov.d	XDm,@-Rn
-            cpu._dc.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu._dc.?.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
         }
     }
 }
 fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu._dc.?.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }
 }
 fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu._dc.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu._dc.?.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         @panic("Unimplemented");
     }
@@ -2002,7 +1998,7 @@ fn fldi1_FRn(cpu: *SH4, opcode: Instr) void {
 }
 
 test "fldi1_FRn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.fpscr.pr = 0;
     fldi1_FRn(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
@@ -2144,7 +2140,7 @@ fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn test_fipr(n: [4]f32, m: [4]f32) !void {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.fpscr.pr = 0;
 
@@ -2184,7 +2180,7 @@ fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
 
 // Column major matrix
 fn test_ftrv(v: [4]f32, m: [4 * 4]f32, r: [4]f32) !void {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.fpscr.pr = 0;
 
@@ -2253,27 +2249,27 @@ const OpcodeDescription = struct {
 };
 
 fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
-    syscall.syscall_sysinfo(cpu._dc);
+    syscall.syscall_sysinfo(cpu._dc.?);
 }
 
 fn syscall_romfont(cpu: *SH4, _: Instr) void {
-    syscall.syscall_romfont(cpu._dc);
+    syscall.syscall_romfont(cpu._dc.?);
 }
 
 fn syscall_flashrom(cpu: *SH4, _: Instr) void {
-    syscall.syscall_flashrom(cpu._dc);
+    syscall.syscall_flashrom(cpu._dc.?);
 }
 
 fn syscall_gdrom(cpu: *SH4, _: Instr) void {
-    syscall.syscall_gdrom(cpu._dc);
+    syscall.syscall_gdrom(cpu._dc.?);
 }
 
 fn syscall_misc(cpu: *SH4, _: Instr) void {
-    syscall.syscall_misc(cpu._dc);
+    syscall.syscall_misc(cpu._dc.?);
 }
 
 fn syscall_unknown(cpu: *SH4, _: Instr) void {
-    syscall.syscall(cpu._dc);
+    syscall.syscall(cpu._dc.?);
 }
 
 pub const Opcodes: [217]OpcodeDescription = .{
@@ -2672,288 +2668,55 @@ test "Instruction Decoding" {
     try test_decoding(.{ .value = 0b0000_0000_0000_1011 }, "rts");
 }
 
-fn write_and_execute(cpu: *SH4, code: u16) void {
-    cpu._dc.write16(cpu.pc, code);
-    cpu.execute();
-}
-
 test "mov #imm,Rn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    write_and_execute(&cpu, 0b1110_0000_00000000);
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
     try std.testing.expect(cpu.R(0).* == 0);
-    write_and_execute(&cpu, 0b1110_0000_11111111);
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
-    write_and_execute(&cpu, 0b1110_0001_00000001);
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } });
     try std.testing.expect(cpu.R(1).* == 1);
-    write_and_execute(&cpu, 0b1110_0010_00000010);
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 2, .d = 2 } });
     try std.testing.expect(cpu.R(2).* == 2);
-    write_and_execute(&cpu, 0b1110_0011_00000011);
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 3 } });
     try std.testing.expect(cpu.R(3).* == 3);
 
-    write_and_execute(&cpu, 0b1110_1111_00000000); // mov #0,R15
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 0 } }); // mov #0,R15
     try std.testing.expect(cpu.R(15).* == 0);
-    write_and_execute(&cpu, 0b1110_1111_00000001); // mov #1,R15
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 1 } }); // mov #1,R15
     try std.testing.expect(cpu.R(15).* == 1);
 }
 
 test "mov Rm,Rn" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    write_and_execute(&cpu, 0b1110_0000_00000000); // mov #0,R0
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } }); // mov #0,R0
     try std.testing.expect(cpu.R(0).* == 0);
-    write_and_execute(&cpu, 0b1110_0001_00000001); // mov #1,R1
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } }); // mov #1,R1
     try std.testing.expect(cpu.R(1).* == 1);
-    write_and_execute(&cpu, 0b0110_0000_0001_0011); // mov R1,R0
+    mov_rm_rn(&cpu, .{ .nmd = .{ .n = 0, .m = 1 } }); // mov R1,R0
     try std.testing.expect(cpu.R(0).* == 1);
 }
 
 test "ldc Rn,SR" {
-    var cpu = try SH4.init(std.testing.allocator);
+    var cpu = try SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    write_and_execute(&cpu, 0b1110_0000_00000011); // mov #3,R0
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 3 } }); // mov #3,R0
     try std.testing.expect(cpu.R(0).* == 0b000000011);
-    write_and_execute(&cpu, 0b0100_0000_00001110); // ldc R0,SR
+    ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 0 } }); // ldc R0,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 
     cpu.sr = .{}; // Reset SR
 
-    write_and_execute(&cpu, 0b1110_1111_00000011); // mov #3,R15
+    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
     try std.testing.expect(cpu.R(15).* == 0b00000011);
-    write_and_execute(&cpu, 0b0100_1111_00001110); // ldc R15,SR
+    ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 15 } }); // ldc R15,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
-}
-
-test "boot" {
-    var cpu = try SH4.init(std.testing.allocator);
-    defer cpu.deinit();
-
-    cpu.execute(); // mov 0x0F,R3
-    try std.testing.expect(cpu.R(3).* == 0xFFFFFFFF);
-    cpu.execute(); // shll16 R3
-    try std.testing.expect(cpu.R(3).* == 0xFFFF0000);
-    cpu.execute(); // swap.w R4,R3
-    try std.testing.expect(cpu.R(4).* == 0x0000FFFF);
-    cpu.execute(); // shll8 R3
-    try std.testing.expect(cpu.R(3).* == 0xFF000000);
-    cpu.execute(); // shlr2 R4
-    try std.testing.expect(cpu.R(4).* == 0x00003FFF);
-    cpu.execute(); // shlr2 R4
-    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
-    // Reads EXPEVT (0xFF000024), 0x00000000 on power up, 0x00000020 on reset.
-    cpu.execute(); // mov.l @(9, R3),R0
-    try std.testing.expect(cpu._dc.read32(cpu.R(3).* + (9 << 2)) == cpu.R(0).*);
-    cpu.execute(); // xor R4,R0
-    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
-    try std.testing.expect(cpu.R(4).* == 0x00000FFF);
-    {
-        const prev_mach = cpu.mach;
-        cpu.execute(); // mulu.w R4,R0
-        try std.testing.expect(cpu.mach == prev_mach);
-        try std.testing.expect(cpu.macl == 0);
-    }
-    cpu.execute(); // sts R0,MACL
-    try std.testing.expect(cpu.R(0).* == 0);
-    cpu.execute(); // tst R0,R0
-    try std.testing.expect(cpu.sr.t);
-    cpu.execute(); // bf 0x8C010108
-    try std.testing.expect(cpu.pc == 0xA0000018);
-    cpu.execute(); // mov.l R0,@(4,R3) - Write 0x0 to MMUCR @ 0xFF000010
-    try std.testing.expect(cpu.R(0).* == cpu._dc.read32(0xFF000000 + (4 << 2)));
-    cpu.execute(); // mov 0x9,R1
-    try std.testing.expect(cpu.R(1).* == 0x9);
-    cpu.execute(); // shll8 R1
-    try std.testing.expect(cpu.R(1).* == 0x9 << 8);
-    cpu.execute(); // add 0x29,R1
-    try std.testing.expect(cpu.R(1).* == (0x9 << 8) + 0x29);
-    cpu.execute(); // mov.l R1, @(7, R3) - Write 0x929 to CCR @ 0xFF00001C
-    try std.testing.expect(cpu.R(1).* == cpu._dc.read32(0xFF000000 + (0x7 << 2)));
-    cpu.execute(); // shar R3
-    try std.testing.expect(cpu.R(3).* == 0xFF800000);
-    try std.testing.expect(!cpu.sr.t);
-    cpu.execute(); // mov 0x01, R0
-    try std.testing.expect(cpu.R(0).* == 0x01);
-    cpu.execute(); // mov.w R0, @(2, R3) - Write 0x01 to BCR2 @ 0xFF800004
-    try std.testing.expect(cpu.R(0).* == cpu._dc.read16(0xFF800000 + (0x2 << 1)));
-    cpu.execute(); // mov 0xFFFFFFC3, R0
-    try std.testing.expect(cpu.R(0).* == 0xFFFFFFC3);
-    cpu.execute(); // shll16 R0
-    try std.testing.expect(cpu.R(0).* == 0xFFC30000);
-    cpu.execute(); // or 0xCD, R0
-    try std.testing.expect(cpu.R(0).* == 0xFFC300CD);
-    cpu.execute(); // shll8 R0
-    try std.testing.expect(cpu.R(0).* == 0xC300CD00);
-    cpu.execute(); // or 0xB0, R0
-    try std.testing.expect(cpu.R(0).* == 0xC300CDB0);
-    cpu.execute(); // shlr R0
-    try std.testing.expect(cpu.R(0).* == 0xC300CDB0 >> 1);
-    try std.testing.expect(!cpu.sr.t);
-    cpu.execute(); // mov.l R0, @(3, R3) - Write 0x01 to WCR2 @ 0xFF80000C
-    try std.testing.expect(cpu.R(0).* == cpu._dc.read32(0xFF800000 + (0x3 << 2)));
-    cpu.execute(); // mov 0x01, R5
-    try std.testing.expect(cpu.R(5).* == 0x01);
-    cpu.execute(); // rotr R5
-    try std.testing.expect(cpu.R(5).* == 0x80000000);
-    try std.testing.expect(cpu.sr.t);
-    cpu.execute(); // add 0x60, R5
-    try std.testing.expect(cpu.R(5).* == 0x80000060);
-    cpu.execute(); // mov R5, R6
-    try std.testing.expect(cpu.R(5).* == cpu.R(6).*);
-    cpu.execute(); // add 0x20, R6
-    try std.testing.expect(cpu.R(6).* == 0x80000080);
-    cpu.execute(); // tst 0x00, R0 - Always tue, right?
-    try std.testing.expect(cpu.sr.t);
-    cpu.execute(); // pref @R5
-    // TODO
-    cpu.execute(); // jmp @R6
-    try std.testing.expect(cpu.pc == cpu.R(6).*);
-
-    cpu.execute(); // mov.l @(0x2,R5),R0 - Read 0x80000068 (0xA3020008) to R0
-    try std.testing.expect(0xA3020008 == cpu.R(0).*);
-    try std.testing.expect(cpu._dc.read32(cpu.R(5).* + (0x2 << 2)) == cpu.R(0).*);
-
-    cpu.execute(); // mov.l R0, @(0, R3) - Write 0xA3020008 to BRC1 @ 0xFF800000
-    try std.testing.expect(cpu._dc.read32(0xFF800000) == 0xA3020008);
-    cpu.execute(); // mov.l @(4,R5),R0
-    try std.testing.expect(cpu._dc.read32(cpu.R(5).* + (0x4 << 2)) == cpu.R(0).*);
-    cpu.execute(); // mov.l R0, @(2, R3) - Write 0x01110111 to WCR1 @ 0xFF800008
-    try std.testing.expect(cpu._dc.read32(0xFF800008) == 0x01110111);
-    cpu.execute(); // add 0x10, R3
-    try std.testing.expect(cpu.R(3).* == 0xFF800010);
-    cpu.execute(); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
-    try std.testing.expect(cpu.R(0).* == 0x800A0E24);
-    cpu.execute(); // mov.l R0, @(1, R3) - Write 0x800A0E24 to MCR
-    try std.testing.expect(cpu.p4_register(u32, .MCR).* == 0x800A0E24);
-
-    cpu.execute(); // mov.l @(7, R5), R2
-    try std.testing.expect(cpu.R(2).* == 0xff940190);
-    cpu.execute(); // mov.b R2, @R2
-    try std.testing.expect(cpu.p4_register(u8, .SDMR).* == 0x90);
-
-    cpu.execute(); // mov 0xFFFFFFA4, R0
-    cpu.execute(); // shll8 R0
-    cpu.execute(); // mov.w R0, @(12, R3)
-    try std.testing.expect(cpu.p4_register(u16, .RFCR).* == 0xA400);
-
-    cpu.execute(); // mov.w @(0, R5), R0
-    cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.p4_register(u16, .RTCOR).* == 0xA504);
-
-    cpu.execute(); // add H'0c, R0
-    cpu.execute(); // mov.w R0, @(6, R3)
-    try std.testing.expect(cpu.p4_register(u16, .RTCSR).* == 0xA510);
-
-    // while((volatile uint16_t)reg[RFCR] <= 0x0010);
-
-    cpu.execute(); // mov 0x10, R6
-    cpu.execute(); // mov.w @(12, R3), R0 - Load RFCR (Refresh Count Register) to R0
-    try std.testing.expect(cpu.R(0).* == 0x11); // Note: Refresh Count Register not implemented, this check passes because we always return 0x11.
-    cpu.execute(); // cmp/hi R6, R0
-    cpu.execute(); // bf 0x8C0100A2
-
-    cpu.execute(); // mov.w @(1, R5), R0
-    cpu.execute(); // mov.w R0, @(10, R3)
-    try std.testing.expect(cpu.p4_register(u16, .RTCOR).* == 0xa55e);
-
-    cpu.execute(); // mov.l @(6, R5), R0
-    cpu.execute(); // mov.l R0, @(1, R3)
-    try std.testing.expect(cpu.p4_register(u32, .MCR).* == 0xc00a0e24);
-
-    cpu.execute(); // mov.b R2, @R2
-    cpu.execute(); // mov.l @(1, R5), R1
-    try std.testing.expect(cpu.p4_register(u8, .SDMR).* == 0x90);
-
-    cpu.execute(); // mov 0x04, R0
-    try std.testing.expect(cpu.R(0).* == 0x04);
-    cpu.execute(); // swap.b R0, R0
-    try std.testing.expect(cpu.R(0).* == 0x0400);
-    cpu.execute(); // mov.w R0, @R1
-    try std.testing.expect(cpu._dc.read16(0xA05F7480) == 0x400); // SB_G1RRC
-
-    cpu.execute(); // mov.l @(3, R5), R3
-    cpu.execute(); // mova 0x8C0100E0, R0
-
-    for (0..16) |_| {
-        try std.testing.expect(cpu.pc == 0x800000BE);
-        cpu.execute(); // dt R6
-        cpu.execute(); // mov.w @R0+, R1
-        cpu.execute(); // mov.w R1, @-R3
-        cpu.execute(); // bf 0x8C0100BE
-    }
-
-    cpu.execute(); // mov.l @R3, R1
-    cpu.execute(); // jmp @R3
-    try std.testing.expect(cpu.pc == 0x8C0000E0);
-
-    cpu.execute(); //
-
-    cpu.execute(); //
-}
-
-test "IP.bin" {
-    var cpu = try SH4.init(std.testing.allocator);
-    defer cpu.deinit();
-
-    // Example IP.bin file
-    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    defer IPbin_file.close();
-    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
-    defer std.testing.allocator.free(IPbin);
-    cpu.load_at(0x8C008000, IPbin);
-
-    for (0..10000000) |_| {
-        cpu.execute();
-    }
-}
-
-test "IP.bin init boot" {
-    var cpu = try SH4.init(std.testing.allocator);
-    defer cpu.deinit();
-
-    cpu.skip_bios();
-
-    // Example IP.bin file
-    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
-    defer IPbin_file.close();
-    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
-    defer std.testing.allocator.free(IPbin);
-    cpu.load_at(0x8C008000, IPbin);
-
-    for (0..10000000) |_| {
-        cpu.execute();
-    }
-}
-
-// Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
-fn load_and_test_binary(comptime filename: []const u8) !void {
-    var cpu = try SH4.init(std.testing.allocator);
-    defer cpu.deinit();
-
-    const bin_file = try std.fs.cwd().openFile("./test/bin/" ++ filename, .{});
-    defer bin_file.close();
-    const bin = try bin_file.readToEndAlloc(std.testing.allocator, 0x10000);
-    defer std.testing.allocator.free(bin);
-    cpu.load_at(0x8C080000, bin);
-
-    cpu.pc = 0x8C080000;
-    cpu.R(14).* = 1;
-
-    var prev = cpu.pc;
-    while (cpu.R(14).* != 0) {
-        cpu.execute();
-        try std.testing.expect(cpu.pc != prev); // Crude check for infinite loops, there might be legitiple reason to do this (loops with process in delay slot?), but we'll just choose not to and be fine :))
-        prev = cpu.pc;
-    }
-    try std.testing.expect(cpu.R(14).* == 0);
-}
-
-test "Binaries" {
-    try load_and_test_binary("0.bin");
-    try load_and_test_binary("stack_0.bin");
 }

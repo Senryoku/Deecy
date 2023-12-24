@@ -72,6 +72,8 @@ pub const Dreamcast = struct {
         const flash_bytes_read = try flash_file.readAll(dc.flash);
         std.debug.assert(flash_bytes_read == 0x20000);
 
+        dc.reset();
+
         return dc;
     }
 
@@ -91,6 +93,11 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_ISTNRM).* = 0;
+    }
+
+    pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
+        const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
+        @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
     pub fn skip_bios(self: *@This()) void {
@@ -703,3 +710,243 @@ pub const Dreamcast = struct {
         // TODO: Actually cancel the DMA, right now they're instantaneous.
     }
 };
+
+test "boot" {
+    var dc = try Dreamcast.create(common.GeneralAllocator);
+    defer {
+        dc.deinit();
+        common.GeneralAllocator.destroy(dc);
+    }
+
+    dc.tick(); // mov 0x0F,R3
+    try std.testing.expect(dc.cpu.R(3).* == 0xFFFFFFFF);
+    dc.tick(); // shll16 R3
+    try std.testing.expect(dc.cpu.R(3).* == 0xFFFF0000);
+    dc.tick(); // swap.w R4,R3
+    try std.testing.expect(dc.cpu.R(4).* == 0x0000FFFF);
+    dc.tick(); // shll8 R3
+    try std.testing.expect(dc.cpu.R(3).* == 0xFF000000);
+    dc.tick(); // shlr2 R4
+    try std.testing.expect(dc.cpu.R(4).* == 0x00003FFF);
+    dc.tick(); // shlr2 R4
+    try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
+    // Reads EXPEVT (0xFF000024), 0x00000000 on power up, 0x00000020 on reset.
+    dc.tick(); // mov.l @(9, R3),R0
+    try std.testing.expect(dc.read32(dc.cpu.R(3).* + (9 << 2)) == dc.cpu.R(0).*);
+    dc.tick(); // xor R4,R0
+    try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
+    try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
+    {
+        const prev_mach = dc.cpu.mach;
+        dc.tick(); // mulu.w R4,R0
+        try std.testing.expect(dc.cpu.mach == prev_mach);
+        try std.testing.expect(dc.cpu.macl == 0);
+    }
+    dc.tick(); // sts R0,MACL
+    try std.testing.expect(dc.cpu.R(0).* == 0);
+    dc.tick(); // tst R0,R0
+    try std.testing.expect(dc.cpu.sr.t);
+    dc.tick(); // bf 0x8C010108
+    try std.testing.expect(dc.cpu.pc == 0xA0000018);
+    dc.tick(); // mov.l R0,@(4,R3) - Write 0x0 to MMUCR @ 0xFF000010
+    try std.testing.expect(dc.cpu.R(0).* == dc.read32(0xFF000000 + (4 << 2)));
+    dc.tick(); // mov 0x9,R1
+    try std.testing.expect(dc.cpu.R(1).* == 0x9);
+    dc.tick(); // shll8 R1
+    try std.testing.expect(dc.cpu.R(1).* == 0x9 << 8);
+    dc.tick(); // add 0x29,R1
+    try std.testing.expect(dc.cpu.R(1).* == (0x9 << 8) + 0x29);
+    dc.tick(); // mov.l R1, @(7, R3) - Write 0x929 to CCR @ 0xFF00001C
+    try std.testing.expect(dc.cpu.R(1).* == dc.read32(0xFF000000 + (0x7 << 2)));
+    dc.tick(); // shar R3
+    try std.testing.expect(dc.cpu.R(3).* == 0xFF800000);
+    try std.testing.expect(!dc.cpu.sr.t);
+    dc.tick(); // mov 0x01, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0x01);
+    dc.tick(); // mov.w R0, @(2, R3) - Write 0x01 to BCR2 @ 0xFF800004
+    try std.testing.expect(dc.cpu.R(0).* == dc.read16(0xFF800000 + (0x2 << 1)));
+    dc.tick(); // mov 0xFFFFFFC3, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xFFFFFFC3);
+    dc.tick(); // shll16 R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xFFC30000);
+    dc.tick(); // or 0xCD, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xFFC300CD);
+    dc.tick(); // shll8 R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xC300CD00);
+    dc.tick(); // or 0xB0, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xC300CDB0);
+    dc.tick(); // shlr R0
+    try std.testing.expect(dc.cpu.R(0).* == 0xC300CDB0 >> 1);
+    try std.testing.expect(!dc.cpu.sr.t);
+    dc.tick(); // mov.l R0, @(3, R3) - Write 0x01 to WCR2 @ 0xFF80000C
+    try std.testing.expect(dc.cpu.R(0).* == dc.read32(0xFF800000 + (0x3 << 2)));
+    dc.tick(); // mov 0x01, R5
+    try std.testing.expect(dc.cpu.R(5).* == 0x01);
+    dc.tick(); // rotr R5
+    try std.testing.expect(dc.cpu.R(5).* == 0x80000000);
+    try std.testing.expect(dc.cpu.sr.t);
+    dc.tick(); // add 0x60, R5
+    try std.testing.expect(dc.cpu.R(5).* == 0x80000060);
+    dc.tick(); // mov R5, R6
+    try std.testing.expect(dc.cpu.R(5).* == dc.cpu.R(6).*);
+    dc.tick(); // add 0x20, R6
+    try std.testing.expect(dc.cpu.R(6).* == 0x80000080);
+    dc.tick(); // tst 0x00, R0 - Always tue, right?
+    try std.testing.expect(dc.cpu.sr.t);
+    dc.tick(); // pref @R5
+    // TODO
+    dc.tick(); // jmp @R6
+    try std.testing.expect(dc.cpu.pc == dc.cpu.R(6).*);
+
+    dc.tick(); // mov.l @(0x2,R5),R0 - Read 0x80000068 (0xA3020008) to R0
+    try std.testing.expect(0xA3020008 == dc.cpu.R(0).*);
+    try std.testing.expect(dc.read32(dc.cpu.R(5).* + (0x2 << 2)) == dc.cpu.R(0).*);
+
+    dc.tick(); // mov.l R0, @(0, R3) - Write 0xA3020008 to BRC1 @ 0xFF800000
+    try std.testing.expect(dc.read32(0xFF800000) == 0xA3020008);
+    dc.tick(); // mov.l @(4,R5),R0
+    try std.testing.expect(dc.read32(dc.cpu.R(5).* + (0x4 << 2)) == dc.cpu.R(0).*);
+    dc.tick(); // mov.l R0, @(2, R3) - Write 0x01110111 to WCR1 @ 0xFF800008
+    try std.testing.expect(dc.read32(0xFF800008) == 0x01110111);
+    dc.tick(); // add 0x10, R3
+    try std.testing.expect(dc.cpu.R(3).* == 0xFF800010);
+    dc.tick(); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
+    try std.testing.expect(dc.cpu.R(0).* == 0x800A0E24);
+    dc.tick(); // mov.l R0, @(1, R3) - Write 0x800A0E24 to MCR
+    try std.testing.expect(dc.cpu.p4_register(u32, .MCR).* == 0x800A0E24);
+
+    dc.tick(); // mov.l @(7, R5), R2
+    try std.testing.expect(dc.cpu.R(2).* == 0xff940190);
+    dc.tick(); // mov.b R2, @R2
+    try std.testing.expect(dc.cpu.p4_register(u8, .SDMR).* == 0x90);
+
+    dc.tick(); // mov 0xFFFFFFA4, R0
+    dc.tick(); // shll8 R0
+    dc.tick(); // mov.w R0, @(12, R3)
+    try std.testing.expect(dc.cpu.p4_register(u16, .RFCR).* == 0xA400);
+
+    dc.tick(); // mov.w @(0, R5), R0
+    dc.tick(); // mov.w R0, @(10, R3)
+    try std.testing.expect(dc.cpu.p4_register(u16, .RTCOR).* == 0xA504);
+
+    dc.tick(); // add H'0c, R0
+    dc.tick(); // mov.w R0, @(6, R3)
+    try std.testing.expect(dc.cpu.p4_register(u16, .RTCSR).* == 0xA510);
+
+    // while((volatile uint16_t)reg[RFCR] <= 0x0010);
+
+    dc.tick(); // mov 0x10, R6
+    dc.tick(); // mov.w @(12, R3), R0 - Load RFCR (Refresh Count Register) to R0
+    try std.testing.expect(dc.cpu.R(0).* == 0x11); // Note: Refresh Count Register not implemented, this check passes because we always return 0x11.
+    dc.tick(); // cmp/hi R6, R0
+    dc.tick(); // bf 0x8C0100A2
+
+    dc.tick(); // mov.w @(1, R5), R0
+    dc.tick(); // mov.w R0, @(10, R3)
+    try std.testing.expect(dc.cpu.p4_register(u16, .RTCOR).* == 0xa55e);
+
+    dc.tick(); // mov.l @(6, R5), R0
+    dc.tick(); // mov.l R0, @(1, R3)
+    try std.testing.expect(dc.cpu.p4_register(u32, .MCR).* == 0xc00a0e24);
+
+    dc.tick(); // mov.b R2, @R2
+    dc.tick(); // mov.l @(1, R5), R1
+    try std.testing.expect(dc.cpu.p4_register(u8, .SDMR).* == 0x90);
+
+    dc.tick(); // mov 0x04, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0x04);
+    dc.tick(); // swap.b R0, R0
+    try std.testing.expect(dc.cpu.R(0).* == 0x0400);
+    dc.tick(); // mov.w R0, @R1
+    try std.testing.expect(dc.read16(0xA05F7480) == 0x400); // SB_G1RRC
+
+    dc.tick(); // mov.l @(3, R5), R3
+    dc.tick(); // mova 0x8C0100E0, R0
+
+    for (0..16) |_| {
+        try std.testing.expect(dc.cpu.pc == 0x800000BE);
+        dc.tick(); // dt R6
+        dc.tick(); // mov.w @R0+, R1
+        dc.tick(); // mov.w R1, @-R3
+        dc.tick(); // bf 0x8C0100BE
+    }
+
+    dc.tick(); // mov.l @R3, R1
+    dc.tick(); // jmp @R3
+    try std.testing.expect(dc.cpu.pc == 0x8C0000E0);
+
+    dc.tick(); //
+
+    dc.tick(); //
+}
+
+test "IP.bin" {
+    var dc = try Dreamcast.create(common.GeneralAllocator);
+    defer {
+        dc.deinit();
+        common.GeneralAllocator.destroy(dc);
+    }
+
+    // Example IP.bin file
+    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
+    defer IPbin_file.close();
+    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(IPbin);
+    dc.load_at(0x8C008000, IPbin);
+
+    for (0..10000000) |_| {
+        dc.tick();
+    }
+}
+
+test "IP.bin init boot" {
+    var dc = try Dreamcast.create(common.GeneralAllocator);
+    defer {
+        dc.deinit();
+        common.GeneralAllocator.destroy(dc);
+    }
+
+    dc.skip_bios();
+
+    // Example IP.bin file
+    const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});
+    defer IPbin_file.close();
+    const IPbin = try IPbin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(IPbin);
+    dc.load_at(0x8C008000, IPbin);
+
+    for (0..10000000) |_| {
+        dc.tick();
+    }
+}
+
+// Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
+fn load_and_test_binary(comptime filename: []const u8) !void {
+    var dc = try Dreamcast.create(common.GeneralAllocator);
+    defer {
+        dc.deinit();
+        common.GeneralAllocator.destroy(dc);
+    }
+
+    const bin_file = try std.fs.cwd().openFile("./test/bin/" ++ filename, .{});
+    defer bin_file.close();
+    const bin = try bin_file.readToEndAlloc(std.testing.allocator, 0x10000);
+    defer std.testing.allocator.free(bin);
+    dc.load_at(0x8C080000, bin);
+
+    dc.cpu.pc = 0x8C080000;
+    dc.cpu.R(14).* = 1;
+
+    var prev = dc.cpu.pc;
+    while (dc.cpu.R(14).* != 0) {
+        dc.tick();
+        try std.testing.expect(dc.cpu.pc != prev); // Crude check for infinite loops, there might be legitiple reason to do this (loops with process in delay slot?), but we'll just choose not to and be fine :))
+        prev = dc.cpu.pc;
+    }
+    try std.testing.expect(dc.cpu.R(14).* == 0);
+}
+
+test "Binaries" {
+    try load_and_test_binary("0.bin");
+    try load_and_test_binary("stack_0.bin");
+}
