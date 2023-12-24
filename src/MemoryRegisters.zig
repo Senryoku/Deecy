@@ -337,6 +337,32 @@ pub fn getP4RegisterName(addr: u32) []const u8 {
     return std.enums.tagName(P4MemoryRegister, @as(P4MemoryRegister, @enumFromInt(addr))) orelse "Unknown";
 }
 
+pub const CCR = packed struct(u32) {
+    oce: u1,
+    wt: u1,
+    cb: u1,
+    oci: u1,
+
+    _0: u1,
+
+    ora: u1,
+
+    _1: u1,
+
+    oix: u1,
+    ice: u1,
+
+    _2: u2,
+
+    ici: u1,
+
+    _3: u3,
+
+    iix: u1,
+
+    _4: u16,
+};
+
 pub const BRCR = packed struct(u16) {
     ubde: u1 = 0,
 

@@ -1,6 +1,7 @@
 // Hitachi SH-4
 
 const std = @import("std");
+const builtin = @import("builtin");
 const common = @import("./common.zig");
 const termcolor = @import("termcolor.zig");
 
@@ -138,7 +139,8 @@ pub const SH4 = struct {
     } = undefined,
 
     store_queues: [2][8]u32 align(4) = undefined,
-    p4_registers: []u8 align(4) = undefined, // FIXME: This is a huge waste of memory.
+    _operand_cache: []u8 align(4) = undefined,
+    p4_registers: []u8 align(4) = undefined,
 
     interrupt_requests: u64 = 0,
 
@@ -154,13 +156,19 @@ pub const SH4 = struct {
 
         sh4._allocator = allocator;
 
+        // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
+        sh4._operand_cache = try sh4._allocator.alloc(u8, 0x2000);
+
         // P4 registers are remapped on this smaller range. See p4_register_addr.
         //   Addresses starts with FF/1F, this can be ignored.
         //   Then, there are 5 bits that separate registers into different functions.
-        //   Within each function, only the lower 6 bits of the address are relevant,
+        //   Within each function, only the lower 7 bits of the address are relevant,
         //   the rest is always 0. By shifting the 5 'function' bits, we can easily
         //   and cheaply remap it to a way smaller memory range.
-        sh4.p4_registers = try sh4._allocator.alloc(u8, 0xC00);
+        //   The one exception is the virtual register SDMR (SDMR2/SDMR3), which is
+        //   handled by read8 (but not emulated).
+        //   Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
+        sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
 
         init_jump_table();
 
@@ -170,6 +178,7 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self._allocator.free(self._operand_cache);
         self._allocator.free(self.p4_registers);
     }
 
@@ -215,7 +224,8 @@ pub const SH4 = struct {
         self.p4_register(u32, .BAMRA).* = undefined;
 
         self.p4_register(u32, .MCR).* = 0xC0091224;
-        self.p4_register(u16, .SDMR).* = 0x00FF;
+        // Not emulated, not readable, and mess with our P4 remapping.
+        //self.p4_register(u16, .SDMR).* = 0x00FF;
         self.p4_register(u16, .RTCSR).* = 0xA510;
         self.p4_register(u16, .RTCNT).* = 0xA500;
         self.p4_register(u16, .RTCOR).* = 0xA55E;
@@ -301,8 +311,53 @@ pub const SH4 = struct {
         self.fpscr = @bitCast(@as(u32, 0x00040001));
     }
 
-    pub inline fn read_p4_register(self: @This(), comptime T: type, r: P4MemoryRegister) T {
-        return @constCast(&self).p4_register_addr(T, @intFromEnum(r)).*;
+    inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+        return @constCast(self).operand_cache(T, virtual_addr).*;
+    }
+    inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
+        // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
+        std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).ora == 1);
+        std.debug.assert(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF);
+
+        // NOTE: The operand cache as RAM (8K) is split into two 4K areas and the correct addressing changes depending on the CCR.OIX bit.
+        //       I suspect most games will either stick to a single 4K area, or use one of the contiguous ranges.
+        //       (For example 0x7C001000-0x7C002FFF for CCR.OIX == 0, or the unique 0x7DFFF000-0x7E000FFF for CCR.OIX == 1)
+        //       Assuming this gives us a really nice performance boost for games that use the operand cache in this way.
+        if (comptime true) {
+            // These are seemingly not automatically optimized away, not sure why.
+            if (comptime builtin.mode == .Debug) {
+                // We can't easily assert for the CCR.OIX == 0 case since there are many contiguous ranges, and in practice most adresses can be
+                // used in a contiguous manner. Only the first and last 4K area cannot.
+                // Ranges like 0x7C003000-0x7C004FFF (Area 2 then Area 1) are not contiguous, but won't repeat, so they **might** be fine?...
+                std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 1 or (virtual_addr >= 0x7C001000 and virtual_addr <= 0x7FFFF000));
+                // This checks the only contiguous range when CCR.OIX = 1.
+                std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 0 or (virtual_addr >= 0x7DFFF000 and virtual_addr <= 0x7E000FFF));
+            }
+
+            return @alignCast(@ptrCast(&self._operand_cache[virtual_addr & 0x3FFF]));
+        } else {
+            // Correct addressing, in case we end up needing it.
+            if (self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 0) {
+                // 0x7C00_0000 - 0x7C00_0FFF : RAM Area 1
+                // 0x7C00_1000 - 0x7C00_1FFF : RAM Area 1
+                // 0x7C00_2000 - 0x7C00_2FFF : RAM Area 2
+                // 0x7C00_2000 - 0x7C00_2FFF : RAM Area 2
+                // 0x7C00_3000 - 0x7C00_3FFF : RAM Area 1
+                // 0x7C00_3000 - 0x7C00_3FFF : RAM Area 1
+                // [...]
+                const index = ((virtual_addr & 0x0000_2000) >> 1) | (virtual_addr & 0x0FFF);
+                return @alignCast(@ptrCast(&self._operand_cache[index]));
+            } else {
+                // RAM Area 1 Mirroring from 0x7C00_0000 to 0x7DFF_FFFF
+                // RAM Area 2 Mirroring from 0x7E00_0000 to 0x7FFF_FFFF
+                const index = ((virtual_addr & 0x03000000) >> 16) | (virtual_addr & 0x3FFF);
+                return @alignCast(@ptrCast(&self._operand_cache[index]));
+            }
+        }
+    }
+
+    pub inline fn read_p4_register(self: *const @This(), comptime T: type, r: P4MemoryRegister) T {
+        return @constCast(self).p4_register_addr(T, @intFromEnum(r)).*;
     }
 
     pub inline fn p4_register(self: *@This(), comptime T: type, r: P4MemoryRegister) *T {
@@ -310,7 +365,10 @@ pub const SH4 = struct {
     }
 
     pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
-        const real_addr = ((0b0000_0000_1111_1000_0000_0000_0000_0000 & addr) >> 13) | (addr & 0b0011_1111);
+        std.debug.assert(addr & 0xFF000000 == 0xFF000000 or addr & 0xFF000000 == 0x1F000000);
+        std.debug.assert(addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0);
+
+        const real_addr = ((0b0000_0000_1111_1000_0000_0000_0000_0000 & addr) >> 12) | (addr & 0b0111_1111);
         return @as(*T, @alignCast(@ptrCast(&self.p4_registers[real_addr])));
     }
 
@@ -683,7 +741,8 @@ pub const SH4 = struct {
             0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
                 self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr});
             },
-            0x1C000000...0x1FFFFFFF => { // Area 7 - Internal I/O registers (same as P4)
+            // Area 7 - Internal I/O registers (same as P4)
+            0x1F000000...0x1FFFFFFF => {
                 std.debug.assert(self.sr.md == 1);
                 return self.p4_register_addr(u8, addr);
             },
@@ -708,6 +767,9 @@ pub const SH4 = struct {
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            return self.read_operand_cache(u8, virtual_addr);
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -773,9 +835,11 @@ pub const SH4 = struct {
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
         }
-
         if (addr >= 0x00710000 and addr <= 0x00710008) {
             return @truncate(self._dc.?.aica.read_rtc_register(addr));
+        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            return self.read_operand_cache(u16, virtual_addr);
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
@@ -805,9 +869,11 @@ pub const SH4 = struct {
         if (addr >= 0x00700000 and addr <= 0x00707FE0) {
             return self._dc.?.aica.read_register(addr);
         }
-
         if (addr >= 0x00710000 and addr <= 0x00710008) {
             return self._dc.?.aica.read_rtc_register(addr);
+        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            return self.read_operand_cache(u32, virtual_addr);
         }
 
         return @as(*const u32, @alignCast(@ptrCast(
@@ -825,10 +891,19 @@ pub const SH4 = struct {
     pub fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
+                // SDMR2/SDMR3
+                0xFF900000...0xFF90FFFF, 0xFF940000...0xFF94FFFF => {
+                    // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
+                    return;
+                },
                 else => {
                     sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
+        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            self.operand_cache(u8, virtual_addr).* = value;
+            return;
         }
 
         const addr = virtual_addr & 0x1FFFFFFF;
@@ -874,6 +949,10 @@ pub const SH4 = struct {
                 },
             }
         }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            self.operand_cache(u16, virtual_addr).* = value;
+            return;
+        }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
@@ -908,6 +987,10 @@ pub const SH4 = struct {
                     },
                 }
             }
+        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            self.operand_cache(u32, virtual_addr).* = value;
+            return;
         }
 
         const addr = virtual_addr & 0x1FFFFFFF;
