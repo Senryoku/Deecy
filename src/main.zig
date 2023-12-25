@@ -361,7 +361,7 @@ pub fn main() !void {
                 static.width = std.math.clamp(static.width, 8, vram_width);
                 const width: u32 = @intCast(static.width);
                 const bytes_per_pixels: u32 = if (static.format & 0b111 == 0x6) 4 else 2;
-                var start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
+                const start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
                 const end = std.math.clamp(start + bytes_per_pixels * width * vram_height, 0x04000000, 0x04800000);
                 zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
                 var i: u32 = 0;
@@ -372,9 +372,7 @@ pub fn main() !void {
                     if (addr >= 0x04800000 - bytes_per_pixels) break;
                     switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Holly.Color16 = .{
-                                .value = dc.cpu.read16(addr),
-                            };
+                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
@@ -382,13 +380,11 @@ pub fn main() !void {
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
-                            const color: Holly.Color16 = .{
-                                .value = dc.cpu.read16(@intCast(addr)),
-                            };
+                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                            pixels[4 * i + 3] = 255; // FIXME: Not really.
+                            pixels[4 * i + 3] = 255;
                             i += 1;
                         },
                         // ARGB 32-Bits
@@ -400,7 +396,7 @@ pub fn main() !void {
                             i += 1;
                         },
                         else => {
-                            start = end;
+                            current_addr = end;
                             zgui.text("Unsupported packed format: 0x{X:0>1}", .{static.format & 0b111});
                         },
                     }
@@ -500,6 +496,7 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
+        renderer.update_framebuffer(&dc.gpu);
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);

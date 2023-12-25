@@ -899,6 +899,9 @@ pub const Holly = struct {
 
         self._get_register(u32, .TA_LIST_CONT).* = 0;
 
+        // FIXME: Not sure.
+        self._get_register(u32, .FB_R_CTRL).* = 0;
+
         // FIXME: Not sure about this. This is the default value specified in the DC documentation.
         //        But I'm not even sure games access it.
         self._get_register(u32, .FB_C_SOF).* = 0;

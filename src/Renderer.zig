@@ -449,7 +449,7 @@ pub const Renderer = struct {
         }
     }
 
-    fn read_from_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
+    pub fn update_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
         const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
         _ = FB_C_SOF; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
@@ -461,57 +461,61 @@ pub const Renderer = struct {
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
             const addr: u32 = FB_R_SOF1;
-            // Texture is up-to-date.
-            // FIXME: Should we check all tiles?
-            if (gpu.vram[addr + 0] == 0xc0 and
-                gpu.vram[addr + 1] == 0xff and
-                gpu.vram[addr + 2] == 0xee and
-                gpu.vram[addr + 3] == 0x0f) return;
+            // TODO: Find a way to avoid unecessary uploads?
 
             // FIXME: Handle interlaced mode? Or not?
-            renderer_log.warn(termcolor.yellow("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!"), .{});
+            renderer_log.info("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
             renderer_log.info("  FB_R_CTRL: {any}", .{FB_R_CTRL});
             renderer_log.info("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
             renderer_log.info("  FB_R_SIZE: {any}", .{FB_R_SIZE});
 
-            const u_size: u32 = FB_R_SIZE.x_size + 1;
+            // FIXME: Don't why it's half the framebuffer width.
+            const u_size: u32 = 2 * (FB_R_SIZE.x_size + 1);
             const v_size: u32 = FB_R_SIZE.y_size + 1;
 
-            var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
-            defer self._allocator.free(pixels);
+            const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
+                0, 1 => 2,
+                2 => 3,
+                3 => 4,
+            };
 
-            const bytes_per_pixels: u32 = if (FB_R_CTRL.format > 0x1) 4 else 2;
+            // FIXME: Use scratch pad or something.
+            var pixels = self._allocator.alloc(u8, 4 * u_size * v_size) catch unreachable;
+            defer self._allocator.free(pixels);
 
             for (0..v_size) |y| {
                 for (0..u_size) |x| {
                     const pixel_idx = u_size * y + x;
-                    const pixel_addr = addr + bytes_per_pixels * (y * (u_size + FB_R_SIZE.modulus + x));
+                    const pixel_addr = addr + bytes_per_pixels * (y * (u_size + FB_R_SIZE.modulus - 1) + x);
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) + FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) + FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
                         0x1 => { // 565 RGB
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) + FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) + FB_R_CTRL.concat & 0b11;
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) + FB_R_CTRL.concat;
+                            // FIXME: I think there's something wrong with FB_R_CTRL.concat here.
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | FB_R_CTRL.concat & 0b11;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
-                        // 0x2 => { // 888 RGB 24 bit packed
+                        0x2 => { // 888 RGB 24 bit packed
+                            const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..3].*;
+                            pixels[pixel_idx * 4 + 0] = pixel[0];
+                            pixels[pixel_idx * 4 + 1] = pixel[1];
+                            pixels[pixel_idx * 4 + 2] = pixel[2];
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
                         0x3 => { // 0888 RGB 32 bit
                             const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
                             pixels[pixel_idx * 4 + 0] = pixel[1];
                             pixels[pixel_idx * 4 + 1] = pixel[2];
                             pixels[pixel_idx * 4 + 2] = pixel[3];
                             pixels[pixel_idx * 4 + 3] = 255;
-                        },
-                        else => {
-                            renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{FB_R_CTRL.format});
-                            @panic("Unsupported pixel format");
                         },
                     }
                 }
@@ -523,19 +527,13 @@ pub const Renderer = struct {
                     .origin = .{},
                 },
                 .{
-                    .bytes_per_row = u_size * 4,
+                    .bytes_per_row = 4 * u_size,
                     .rows_per_image = v_size,
                 },
                 .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
                 u8,
                 pixels,
             );
-
-            // Write flag value to detect updates
-            gpu.vram[addr + 0] = 0xc0;
-            gpu.vram[addr + 1] = 0xff;
-            gpu.vram[addr + 2] = 0xee;
-            gpu.vram[addr + 3] = 0x0f;
         }
     }
 
@@ -665,8 +663,6 @@ pub const Renderer = struct {
         self.max_depth = 1.0;
 
         self.update_background(gpu);
-
-        self.read_from_framebuffer(gpu); // FIXME: I don't think rendering needs to be enabled for this to work.
 
         self.passes.clearRetainingCapacity();
 
@@ -869,6 +865,8 @@ pub const Renderer = struct {
 
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
+
+        // TODO: Draw framebuffer.
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
