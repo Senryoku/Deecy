@@ -35,8 +35,10 @@ const ShadingInstructions = packed struct(u16) {
     _: u12 = 0,
 };
 
-const VertexTexture = struct {
-    index: u16,
+const TextureIndex = u16;
+
+const VertexTextureInfo = struct {
+    index: TextureIndex,
     shading: ShadingInstructions,
 };
 
@@ -50,7 +52,7 @@ const Vertex = struct {
     a: f32,
     u: f32 = 0.0,
     v: f32 = 0.0,
-    tex: VertexTexture,
+    tex: VertexTextureInfo,
     tex_size: [2]u16 = .{ 1024, 1024 },
     uv_offset: [2]f32 = .{ 0, 0 },
 };
@@ -76,7 +78,7 @@ const TextureMetadata = struct {
     const Unused: u32 = 0xFFFFFFFF;
 
     control_word: HollyModule.TextureControlWord = .{},
-    index: u16 = Renderer.MaxTextures,
+    index: TextureIndex = Renderer.MaxTextures,
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
@@ -177,7 +179,7 @@ pub const Renderer = struct {
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
                     .depth_write_enabled = true,
-                    .depth_compare = .less,
+                    .depth_compare = .less_equal,
                 },
                 .fragment = &wgpu.FragmentState{
                     .module = fs_module,
@@ -267,7 +269,7 @@ pub const Renderer = struct {
         self.polygons.deinit();
     }
 
-    fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?u16 {
+    fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (0..Renderer.MaxTextures) |i| {
             if (self.texture_metadata[i].usage != TextureMetadata.Unused and self.texture_metadata[i].control_word.address == control_word.address) {
                 return @intCast(i);
@@ -276,7 +278,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) u16 {
+    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
@@ -394,61 +396,70 @@ pub const Renderer = struct {
 
     fn read_from_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
-        const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
+        const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
+        _ = FB_C_SOF; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
-        _ = FB_R_SOF1;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         _ = FB_R_SOF2;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
 
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
+            const addr: u32 = FB_R_SOF1;
+            // Texture is up-to-date.
+            // FIXME: Should we check all tiles?
+            if (gpu.vram[addr + 0] == 0xc0 and
+                gpu.vram[addr + 1] == 0xff and
+                gpu.vram[addr + 2] == 0xee and
+                gpu.vram[addr + 3] == 0x0f) return;
+
             // FIXME: I don't know how to select the right field yet.
             renderer_log.warn(termcolor.yellow("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!"), .{});
             renderer_log.info("  FB_R_CTRL: {any}", .{FB_R_CTRL});
-            renderer_log.info("  FB_C_SOF: {X:0>8}", .{FB_C_SOF});
+            renderer_log.info("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
             renderer_log.info("  FB_R_SIZE: {any}", .{FB_R_SIZE});
 
-            const addr: u32 = 4 * FB_C_SOF;
-            const u_size: u32 = FB_R_SIZE.x_size;
-            const v_size: u32 = FB_R_SIZE.y_size;
+            const u_size: u32 = FB_R_SIZE.x_size + 1;
+            const v_size: u32 = FB_R_SIZE.y_size + 1;
 
             var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
             defer self._allocator.free(pixels);
 
-            switch (FB_R_CTRL.format) {
-                0x0 => { // 0555 RGB 16 bit
-                    for (0..(@as(u32, u_size) * v_size)) |i| {
-                        const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * i]))).* };
-                        pixels[i * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) + FB_R_CTRL.concat;
-                        pixels[i * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) + FB_R_CTRL.concat;
-                        pixels[i * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) + FB_R_CTRL.concat;
-                        pixels[i * 4 + 3] = 255; // FIXME: TESTING
+            const bytes_per_pixels: u32 = if (FB_R_CTRL.format > 0x1) 4 else 2;
+
+            for (0..v_size) |y| {
+                for (0..u_size) |x| {
+                    const pixel_idx = u_size * y + x;
+                    const pixel_addr = addr + bytes_per_pixels * (y * (u_size + FB_R_SIZE.modulus + x));
+                    switch (FB_R_CTRL.format) {
+                        0x0 => { // 0555 RGB 16 bit
+                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        0x1 => { // 565 RGB
+                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) + FB_R_CTRL.concat & 0b11;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) + FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        // 0x2 => { // 888 RGB 24 bit packed
+                        0x3 => { // 0888 RGB 32 bit
+                            const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
+                            pixels[pixel_idx * 4 + 0] = pixel[1];
+                            pixels[pixel_idx * 4 + 1] = pixel[2];
+                            pixels[pixel_idx * 4 + 2] = pixel[3];
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        else => {
+                            renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{FB_R_CTRL.format});
+                            @panic("Unsupported pixel format");
+                        },
                     }
-                },
-                0x1 => { // 565 RGB
-                    for (0..(@as(u32, u_size) * v_size)) |i| {
-                        const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * i]))).* };
-                        pixels[i * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) + FB_R_CTRL.concat;
-                        pixels[i * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) + FB_R_CTRL.concat & 0b11;
-                        pixels[i * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) + FB_R_CTRL.concat;
-                        pixels[i * 4 + 3] = 255;
-                    }
-                },
-                // 0x2 => { // 888 RGB 24 bit packed
-                0x3 => { // 0888 RGB 32 bit
-                    for (0..(@as(u32, u_size) * v_size)) |i| {
-                        const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[addr + 4 * i])))[0..4].*;
-                        pixels[i * 4 + 0] = pixel[1];
-                        pixels[i * 4 + 1] = pixel[2];
-                        pixels[i * 4 + 2] = pixel[3];
-                        pixels[i * 4 + 3] = 255;
-                    }
-                },
-                else => {
-                    renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{FB_R_CTRL.format});
-                    @panic("Unsupported pixel format");
-                },
+                }
             }
 
             self._gctx.queue.writeTexture(
@@ -482,8 +493,11 @@ pub const Renderer = struct {
         const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
         const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
 
+        // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
+        //        which doesn't make sense. The vertices z position looks more inline with what
+        //        I understand of render pipeline.
         const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
-        self.max_depth = @max(self.max_depth, depth);
+        _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
         const parameter_volume_mode = (gpu._get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
@@ -493,7 +507,7 @@ pub const Renderer = struct {
         var vertices: [4]Vertex = undefined;
 
         var vertex_byte_size: u32 = 4 * (3 + 1);
-        var tex_idx: u16 = 0;
+        var tex_idx: TextureIndex = 0;
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
@@ -517,11 +531,14 @@ pub const Renderer = struct {
 
         const use_alpha = tsp_instruction.use_alpha == 1;
 
-        const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
-            .textured = isp_tsp_instruction.texture,
-            .mode = tsp_instruction.texture_shading_instruction,
-            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-        } };
+        const tex = VertexTextureInfo{
+            .index = tex_idx,
+            .shading = ShadingInstructions{
+                .textured = isp_tsp_instruction.texture,
+                .mode = tsp_instruction.texture_shading_instruction,
+                .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+            },
+        };
         const tex_size = self.texture_metadata[tex_idx].size;
 
         for (0..3) |i| {
@@ -546,7 +563,7 @@ pub const Renderer = struct {
             vertices[i] = Vertex{
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
-                .z = depth,
+                .z = @bitCast(vp[2]),
                 .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
                 .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
                 .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
@@ -556,11 +573,13 @@ pub const Renderer = struct {
                 .tex = tex,
                 .tex_size = tex_size,
             };
+            // FIXME: We should probably render the background in a separate pass with depth test disabled.
+            self.max_depth = @max(self.max_depth, 1 / vertices[i].z);
         }
         vertices[3] = Vertex{
             .x = vertices[1].x,
             .y = vertices[2].y,
-            .z = depth,
+            .z = vertices[2].z,
             // NOTE: I have no idea how the color is computed, looking at the boot menu, this seems right.
             .r = vertices[2].r,
             .g = vertices[2].g,
@@ -572,6 +591,8 @@ pub const Renderer = struct {
             .tex = tex,
             .tex_size = tex_size,
         };
+
+        //std.debug.print("Background vertices: {any}\n", .{vertices});
 
         const indices: [6]u32 = .{ 0, 1, 2, 2, 1, 3 };
 
@@ -596,6 +617,8 @@ pub const Renderer = struct {
 
         // TODO: Handle Modifier Volumes
         inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |t| {
+            // Parameters specific to a polygon type
+            var face_color: fRGBA = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             const display_list = gpu.ta_display_lists[@intFromEnum(t)];
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(FirstVertex + vertices.items.len);
@@ -605,8 +628,6 @@ pub const Renderer = struct {
                 var isp_tsp_instruction: HollyModule.ISPTSPInstructionWord = undefined;
                 var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
                 var texture_control: HollyModule.TextureControlWord = undefined;
-                // Specific to a polygon type
-                var face_color: fRGBA = undefined;
 
                 switch (display_list.polygons.items[idx]) {
                     .PolygonType0 => |p| {
@@ -620,20 +641,22 @@ pub const Renderer = struct {
                         isp_tsp_instruction = p.isp_tsp_instruction;
                         tsp_instruction = p.tsp_instruction;
                         texture_control = p.texture_control;
-                        face_color = .{
-                            .r = p.face_color_r,
-                            .g = p.face_color_g,
-                            .b = p.face_color_b,
-                            .a = p.face_color_a,
-                        };
+                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
+                            face_color = .{
+                                .r = p.face_color_r,
+                                .g = p.face_color_g,
+                                .b = p.face_color_b,
+                                .a = p.face_color_a,
+                            };
                     },
                     else => {
                         renderer_log.err("Unhandled polygon type: {any}", .{display_list.polygons.items[idx]});
                     },
                 }
 
-                var tex_idx: u16 = 0;
-                if (parameter_control_word.obj_control.texture == 1) {
+                var tex_idx: TextureIndex = 0;
+                const textured = parameter_control_word.obj_control.texture == 1;
+                if (textured) {
                     const tmp_tex_idx = self.get_texture_index(texture_control);
                     if (tmp_tex_idx == null) {
                         tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
@@ -653,15 +676,27 @@ pub const Renderer = struct {
                     renderer_log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
 
-                const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
-                    .textured = isp_tsp_instruction.texture,
-                    .mode = tsp_instruction.texture_shading_instruction,
-                    .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                } };
+                const tex = VertexTextureInfo{
+                    .index = tex_idx,
+                    .shading = ShadingInstructions{
+                        .textured = parameter_control_word.obj_control.texture,
+                        .mode = tsp_instruction.texture_shading_instruction,
+                        .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+                    },
+                };
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
+                    // std.debug.print("Vertex: {any}\n", .{vertex});
                     switch (vertex) {
+                        // Packed Color, Non-Textured
                         .Type0 => |v| {
+                            // std.debug.print("  ObjControl: {any}\n", .{v.parameter_control_word.obj_control});
+                            // std.debug.print("  ISPTSP: {any}\n", .{isp_tsp_instruction});
+                            // std.debug.print("  TSP: {any}\n", .{tsp_instruction});
+
+                            // Sanity checks.
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(!textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -675,6 +710,8 @@ pub const Renderer = struct {
                         },
                         // Non-Textured, Floating Color
                         .Type1 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
+                            std.debug.assert(!textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -686,7 +723,10 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Packed Color, Textured 32bit UV
                         .Type3 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -723,7 +763,7 @@ pub const Renderer = struct {
                         },
                     }
 
-                    self.max_depth = @max(self.max_depth, vertices.getLast().z);
+                    self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
                 }
 
                 try indices.append(start + 0);

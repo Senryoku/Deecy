@@ -128,7 +128,7 @@ pub fn main() !void {
     defer window.destroy();
 
     const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
-        .present_mode = .mailbox,
+        //.present_mode = .mailbox,
     });
     defer gctx.destroy(common.GeneralAllocator);
 
@@ -421,8 +421,12 @@ pub fn main() !void {
 
                 zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
             }
+        }
+        zgui.end();
 
-            if (zgui.collapsingHeader("Renderer Textures", .{})) {
+        if (zgui.begin("Renderer", .{})) {
+            zgui.text("Max Depth: {d: >4.2}", .{renderer.max_depth});
+            if (zgui.collapsingHeader("Textures", .{})) {
                 const static = struct {
                     var index: i32 = 0;
                     var scale: f32 = 1;
@@ -437,10 +441,10 @@ pub fn main() !void {
                 }
                 const tex_id = gctx.lookupResource(renderer_texture_view).?;
                 zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
-
-                zgui.text("Framebuffer Texture", .{});
+            }
+            if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
                 const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
-                zgui.image(fb_tex_id, .{ .w = static.scale * 640, .h = static.scale * 480 });
+                zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
             }
         }
         zgui.end();
