@@ -2587,7 +2587,7 @@ fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n).* = @sqrt(cpu.DR(opcode.nmd.n).*);
+        cpu.DR(opcode.nmd.n >> 1).* = @sqrt(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
 fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
