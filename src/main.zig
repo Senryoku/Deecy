@@ -256,19 +256,19 @@ pub fn main() !void {
         zgui.end();
 
         if (zgui.begin("FPU", .{})) {
-            zgui.text("FPUL: {d: >8.2} | {d: >8.2} | {d: >8.2}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
+            zgui.text("FPUL: {d: >8.4} | {d: >8.4} | {d: >8.4}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
 
             zgui.spacing();
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}", .{ i, dc.cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.4}", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
 
@@ -276,13 +276,13 @@ pub fn main() !void {
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}", .{ i, dc.cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.4}", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
         }
