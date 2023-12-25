@@ -220,7 +220,8 @@ pub const Renderer = struct {
                 .primitive = wgpu.PrimitiveState{
                     .front_face = .ccw,
                     .cull_mode = .none,
-                    .topology = .triangle_list,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
                 },
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
@@ -264,7 +265,8 @@ pub const Renderer = struct {
                 .primitive = wgpu.PrimitiveState{
                     .front_face = .ccw,
                     .cull_mode = .none,
-                    .topology = .triangle_list,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
                 },
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
@@ -765,7 +767,7 @@ pub const Renderer = struct {
             .tex_size = tex_size,
         };
 
-        const indices: [6]u32 = .{ 0, 1, 2, 2, 1, 3 };
+        const indices = [_]u32{ 0, 1, 2, 3 };
 
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
@@ -939,21 +941,11 @@ pub const Renderer = struct {
                     self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
                 }
 
-                try indices.append(start + 0);
-                try indices.append(start + 1);
-                try indices.append(start + 2);
                 // Triangle Strips
-                for (0..display_list.vertex_parameters.items[idx].items.len - 3) |i| {
-                    if (i % 2 == 0) {
-                        try indices.append(@intCast(start + i + 1));
-                        try indices.append(@intCast(start + i + 3));
-                        try indices.append(@intCast(start + i + 2));
-                    } else {
-                        try indices.append(@intCast(start + i + 1));
-                        try indices.append(@intCast(start + i + 2));
-                        try indices.append(@intCast(start + i + 3));
-                    }
+                for (0..display_list.vertex_parameters.items[idx].items.len) |i| {
+                    try indices.append(@intCast(start + i));
                 }
+                try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
             }
 
             if (vertices.items.len > start_vertex) {
