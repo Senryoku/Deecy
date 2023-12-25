@@ -67,10 +67,10 @@ const Polygon = struct {
     }
 };
 
-// zig fmt: off
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/fs.wgsl");
-// zig fmt: on
+const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
+const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
 // TODO: Pack smaller textures into an Atlas.
 
@@ -99,11 +99,18 @@ pub const Renderer = struct {
 
     texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
 
-    polygons: std.ArrayList(HollyModule.Polygon),
+    framebuffer_resize_bind_group: zgpu.BindGroupHandle,
+
+    blit_pipeline: zgpu.RenderPipelineHandle,
+    blit_bind_group: zgpu.BindGroupHandle,
+    blit_vertex_buffer: zgpu.BufferHandle,
+    blit_index_buffer: zgpu.BufferHandle,
 
     opaque_pipeline: zgpu.RenderPipelineHandle,
     translucent_pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
+
+    polygons: std.ArrayList(HollyModule.Polygon),
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
@@ -111,8 +118,12 @@ pub const Renderer = struct {
     texture_array: zgpu.TextureHandle,
     texture_array_view: zgpu.TextureViewHandle,
 
+    // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
     framebuffer_texture_view: zgpu.TextureViewHandle,
+    // Framebuffer at window resolution to draw on
+    resized_framebuffer_texture: zgpu.TextureHandle,
+    resized_framebuffer_texture_view: zgpu.TextureViewHandle,
 
     sampler: zgpu.SamplerHandle, // TODO: Have a sample per texture? Or per texture type (we'd have to pass another index to the fragment shader)?
 
@@ -134,12 +145,29 @@ pub const Renderer = struct {
             moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
         }
 
-        const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
-            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.samplerEntry(2, .{ .fragment = true }, .filtering),
+        const framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+            .size = .{
+                .width = 640,
+                .height = 480,
+                .depth_or_array_layers = 1,
+            },
+            .format = gctx.swapchain_descriptor.format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
-        defer gctx.releaseResource(bind_group_layout);
+        const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
+
+        const resized_framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .render_attachment = true },
+            .size = .{
+                .width = gctx.swapchain_descriptor.width,
+                .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
+                .depth_or_array_layers = 1,
+            },
+            .format = gctx.swapchain_descriptor.format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
 
         const vertex_attributes = [_]wgpu.VertexAttribute{
             .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
@@ -155,6 +183,12 @@ pub const Renderer = struct {
             .attributes = &vertex_attributes,
         }};
 
+        const bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.samplerEntry(2, .{ .fragment = true }, .filtering),
+        });
+        defer gctx.releaseResource(bind_group_layout);
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
         defer gctx.releaseResource(pipeline_layout);
 
@@ -166,7 +200,7 @@ pub const Renderer = struct {
             defer fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = gctx.swapchain_descriptor.format,
                 .blend = &wgpu.BlendState{
                     // FIXME: Opaque.
                     .color = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
@@ -209,7 +243,7 @@ pub const Renderer = struct {
             defer fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = gctx.swapchain_descriptor.format,
                 .blend = &wgpu.BlendState{
                     // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
                     .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
@@ -245,9 +279,92 @@ pub const Renderer = struct {
             break :transluscent_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
+        const blit_bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+        });
+        defer gctx.releaseResource(blit_bind_group_layout);
+        const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
+        defer gctx.releaseResource(blit_pipeline_layout);
+
+        const blit_pipeline = blit_pl: {
+            const vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
+            defer vs_module.release();
+
+            const fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
+            defer fs_module.release();
+
+            const color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+            }};
+
+            const blit_vertex_attributes = [_]wgpu.VertexAttribute{
+                .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
+                .{ .format = .float32x2, .offset = 2 * @sizeOf(f32), .shader_location = 1 },
+            };
+            const blit_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+                .array_stride = 4 * @sizeOf(f32),
+                .attribute_count = blit_vertex_attributes.len,
+                .attributes = &blit_vertex_attributes,
+            }};
+
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = vs_module,
+                    .entry_point = "main",
+                    .buffer_count = blit_vertex_buffers.len,
+                    .buffers = &blit_vertex_buffers,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint16,
+                },
+                .depth_stencil = null,
+                .fragment = &wgpu.FragmentState{
+                    .module = fs_module,
+                    .entry_point = "main",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+            };
+            break :blit_pl gctx.createRenderPipeline(blit_pipeline_layout, pipeline_descriptor);
+        };
+
+        const blit_vertex_data = [_]f32{
+            // x    y     u    v
+            -1.0, 1.0,  0.0, 0.0,
+            1.0,  1.0,  1.0, 0.0,
+            1.0,  -1.0, 1.0, 1.0,
+            -1.0, -1.0, 0.0, 1.0,
+        };
+        const blit_vertex_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = blit_vertex_data.len * 4 * @sizeOf(f32),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(blit_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+
+        // Create an index buffer.
+        const blit_index_data = [_]u16{ 0, 3, 1, 2 };
+        const blit_index_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .index = true },
+            .size = blit_index_data.len * @sizeOf(u16),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u16, blit_index_data[0..]);
+
         const sampler = gctx.createSampler(.{
             //.mag_filter = .linear,
             //.min_filter = .linear,
+        });
+
+        const framebuffer_resize_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = framebuffer_texture_view },
+            .{ .binding = 1, .sampler_handle = sampler },
+        });
+        const blit_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = resized_framebuffer_texture_view },
+            .{ .binding = 1, .sampler_handle = sampler },
         });
 
         const texture_array = gctx.createTexture(.{
@@ -257,22 +374,10 @@ pub const Renderer = struct {
                 .height = 1024,
                 .depth_or_array_layers = Renderer.MaxTextures,
             },
-            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
+            .format = gctx.swapchain_descriptor.format,
             .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
         const texture_array_view = gctx.createTextureView(texture_array, .{});
-
-        const framebuffer_texture = gctx.createTexture(.{
-            .usage = .{ .texture_binding = true, .copy_dst = true },
-            .size = .{
-                .width = 640,
-                .height = 480,
-                .depth_or_array_layers = 1,
-            },
-            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
-            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
-        });
-        const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(f32) },
@@ -296,6 +401,18 @@ pub const Renderer = struct {
         return .{
             .polygons = std.ArrayList(HollyModule.Polygon).init(allocator),
 
+            .blit_pipeline = blit_pipeline,
+            .blit_bind_group = blit_bind_group,
+            .blit_vertex_buffer = blit_vertex_buffer,
+            .blit_index_buffer = blit_index_buffer,
+
+            .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
+
+            .framebuffer_texture = framebuffer_texture,
+            .framebuffer_texture_view = framebuffer_texture_view,
+            .resized_framebuffer_texture = resized_framebuffer_texture,
+            .resized_framebuffer_texture_view = resized_framebuffer_texture_view,
+
             .opaque_pipeline = opaque_pipeline,
             .translucent_pipeline = translucent_pipeline,
 
@@ -305,9 +422,6 @@ pub const Renderer = struct {
 
             .texture_array = texture_array,
             .texture_array_view = texture_array_view,
-
-            .framebuffer_texture = framebuffer_texture,
-            .framebuffer_texture_view = framebuffer_texture_view,
 
             .sampler = sampler,
 
@@ -464,13 +578,14 @@ pub const Renderer = struct {
             // TODO: Find a way to avoid unecessary uploads?
 
             // FIXME: Handle interlaced mode? Or not?
-            renderer_log.info("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
-            renderer_log.info("  FB_R_CTRL: {any}", .{FB_R_CTRL});
-            renderer_log.info("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
-            renderer_log.info("  FB_R_SIZE: {any}", .{FB_R_SIZE});
+            renderer_log.debug("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
+            renderer_log.debug("  FB_R_CTRL: {any}", .{FB_R_CTRL});
+            renderer_log.debug("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
+            renderer_log.debug("  FB_R_SIZE: {any}", .{FB_R_SIZE});
 
-            // FIXME: Don't why it's half the framebuffer width.
-            const u_size: u32 = 2 * (FB_R_SIZE.x_size + 1);
+            // FIXME: In the minifont KOS example, this is half the framebuffer width, and clearly wrong.
+            //        Doubling/Forcing it to 640 seems to make it work as intended, but I don't undersand why.
+            const u_size: u32 = FB_R_SIZE.x_size + 1;
             const v_size: u32 = FB_R_SIZE.y_size + 1;
 
             const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
@@ -866,21 +981,50 @@ pub const Renderer = struct {
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
 
-        // TODO: Draw framebuffer.
-
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
 
-            pass: {
-                const vb_info = gctx.lookupResourceInfo(self.vertex_buffer) orelse break :pass;
-                const ib_info = gctx.lookupResourceInfo(self.index_buffer) orelse break :pass;
-                const bind_group = gctx.lookupResource(self.bind_group) orelse break :pass;
-                const depth_view = gctx.lookupResource(self.depth_texture_view) orelse break :pass;
+            // Convert Framebuffer from native 640*480 to window resolution
+            {
+                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = back_buffer_view,
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
                     .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
+
+                const pass = encoder.beginRenderPass(render_pass_info);
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+            }
+
+            {
+                const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
+                const bind_group = gctx.lookupResource(self.bind_group).?;
+                const depth_view = gctx.lookupResource(self.depth_texture_view).?;
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .load_op = .load,
                     .store_op = .store,
                 }};
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
@@ -906,11 +1050,11 @@ pub const Renderer = struct {
                 for (self.passes.items) |pass_metadata| {
                     switch (pass_metadata.pass_type) {
                         .Opaque, .PunchThrough => {
-                            const pipeline = gctx.lookupResource(self.opaque_pipeline) orelse break :pass;
+                            const pipeline = gctx.lookupResource(self.opaque_pipeline).?;
                             pass.setPipeline(pipeline);
                         },
                         .Translucent => {
-                            const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :pass;
+                            const pipeline = gctx.lookupResource(self.translucent_pipeline).?;
                             pass.setPipeline(pipeline);
                         },
                         else => {
@@ -927,6 +1071,38 @@ pub const Renderer = struct {
                     }
                 }
             }
+
+            // Blit to screen
+            {
+                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = back_buffer_view,
+                    .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
+
+                const pass = encoder.beginRenderPass(render_pass_info);
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, blit_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+            }
+
             {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = back_buffer_view,

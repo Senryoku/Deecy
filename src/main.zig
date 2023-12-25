@@ -442,6 +442,10 @@ pub fn main() !void {
                 const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
                 zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
             }
+            if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
+                const fb_tex_id = gctx.lookupResource(renderer.resized_framebuffer_texture_view).?;
+                zgui.image(fb_tex_id, .{ .w = @floatFromInt(gctx.swapchain_descriptor.width), .h = @floatFromInt(gctx.swapchain_descriptor.height) });
+            }
         }
         zgui.end();
 
