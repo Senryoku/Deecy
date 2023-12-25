@@ -138,6 +138,8 @@ pub const Renderer = struct {
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) Renderer {
+        // Write to texture all rely on that.
+        std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
 
         // FIXME: Make this comptime?
         moser_de_bruijin_sequence[0] = 0;
@@ -152,7 +154,7 @@ pub const Renderer = struct {
                 .height = 480,
                 .depth_or_array_layers = 1,
             },
-            .format = gctx.swapchain_descriptor.format,
+            .format = zgpu.GraphicsContext.swapchain_format,
             .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
@@ -164,7 +166,7 @@ pub const Renderer = struct {
                 .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
                 .depth_or_array_layers = 1,
             },
-            .format = gctx.swapchain_descriptor.format,
+            .format = zgpu.GraphicsContext.swapchain_format,
             .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
         const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
@@ -200,7 +202,7 @@ pub const Renderer = struct {
             defer fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = gctx.swapchain_descriptor.format,
+                .format = zgpu.GraphicsContext.swapchain_format,
                 .blend = &wgpu.BlendState{
                     // FIXME: Opaque.
                     .color = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
@@ -243,7 +245,7 @@ pub const Renderer = struct {
             defer fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = gctx.swapchain_descriptor.format,
+                .format = zgpu.GraphicsContext.swapchain_format,
                 .blend = &wgpu.BlendState{
                     // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
                     .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
@@ -374,7 +376,7 @@ pub const Renderer = struct {
                 .height = 1024,
                 .depth_or_array_layers = Renderer.MaxTextures,
             },
-            .format = gctx.swapchain_descriptor.format,
+            .format = zgpu.GraphicsContext.swapchain_format,
             .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
         const texture_array_view = gctx.createTextureView(texture_array, .{});
@@ -436,7 +438,9 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
+        self.passes.deinit();
         self.polygons.deinit();
+        // FIXME: I have a lot of resources to destroy.
     }
 
     fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?TextureIndex {
@@ -471,9 +475,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.r) << 3;
+                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.b) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
-                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.b) << 3;
+                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.r) << 3;
                     pixels[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
                 }
             },
@@ -481,9 +485,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.r) << 3;
+                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.b) << 3;
+                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
                     pixels[i * 4 + 3] = 255;
                 }
             },
@@ -491,9 +495,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.r) << 4;
+                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
                     pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.b) << 4;
+                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
                     pixels[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
                 }
             },
@@ -605,28 +609,29 @@ pub const Renderer = struct {
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
                         0x1 => { // 565 RGB
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
                             // FIXME: I think there's something wrong with FB_R_CTRL.concat here.
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | FB_R_CTRL.concat & 0b11;
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
                         0x2 => { // 888 RGB 24 bit packed
                             const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..3].*;
-                            pixels[pixel_idx * 4 + 0] = pixel[0];
+                            pixels[pixel_idx * 4 + 0] = pixel[2];
                             pixels[pixel_idx * 4 + 1] = pixel[1];
-                            pixels[pixel_idx * 4 + 2] = pixel[2];
+                            pixels[pixel_idx * 4 + 2] = pixel[0];
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
                         0x3 => { // 0888 RGB 32 bit
                             const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
+                            // FIXME: This feels backward (remember, our textures are BGRA format)... But it's the best result in can get for the splash screen for now.
                             pixels[pixel_idx * 4 + 0] = pixel[1];
                             pixels[pixel_idx * 4 + 1] = pixel[2];
                             pixels[pixel_idx * 4 + 2] = pixel[3];
