@@ -113,12 +113,11 @@ pub const SH4 = struct {
     execution_state: ExecutionState = .Running,
 
     // General Registers
-    r_bank0: [8]u32 = undefined, // R0-R7_BANK0
-    r_bank1: [8]u32 = undefined, // R0-R7_BANK1
-    r_8_15: [8]u32 = undefined,
+    r: [16]u32 = undefined, // R0-R15
+    r_bank: [8]u32 = undefined, // R0-R7_BANK
 
     // Control Registers
-    sr: SR = .{},
+    sr: SR = .{}, // NOTE: Don't set directly, see set_sr.
     gbr: u32 = undefined,
     ssr: u32 = undefined,
     spc: u32 = undefined,
@@ -187,11 +186,10 @@ pub const SH4 = struct {
     }
 
     pub fn reset(self: *@This()) void {
-        self.r_bank0 = undefined;
-        self.r_bank1 = undefined;
-        self.r_8_15 = undefined;
+        self.r = undefined;
+        self.r_bank = undefined;
         self.R(0xF).* = 0x8C00F400;
-        self.sr = .{};
+        self.set_sr(.{});
         self.gbr = undefined;
         self.ssr = undefined;
         self.spc = undefined;
@@ -243,10 +241,9 @@ pub const SH4 = struct {
     pub fn software_reset(self: *@This()) void {
         sh4_log.warn("  SOFTWARE RESET!", .{});
 
-        self.r_bank0 = undefined;
-        self.r_bank1 = undefined;
-        self.r_8_15 = undefined;
-        self.sr = .{};
+        self.r = undefined;
+        self.r_bank = undefined;
+        self.set_sr(.{});
         self.gbr = undefined;
         self.ssr = undefined;
         self.spc = undefined;
@@ -283,6 +280,9 @@ pub const SH4 = struct {
 
     // Reset state to after bios.
     pub fn state_after_boot_rom(self: *@This()) void {
+        self.set_sr(@bitCast(@as(u32, 0x400000F1)));
+        self.fpscr = @bitCast(@as(u32, 0x00040001));
+
         self.R(0x0).* = 0xAC0005D8;
         self.R(0x1).* = 0x00000009;
         self.R(0x2).* = 0xAC00940C;
@@ -310,9 +310,13 @@ pub const SH4 = struct {
         self.fpul = 0x00000000;
 
         self.pc = 0xAC008300; // Start address of IP.bin Licence screen
+    }
 
-        self.sr = @bitCast(@as(u32, 0x400000F1));
-        self.fpscr = @bitCast(@as(u32, 0x00040001));
+    inline fn set_sr(self: *@This(), value: SR) void {
+        if (value.rb != self.sr.rb) {
+            std.mem.swap([8]u32, self.r[0..8], &self.r_bank);
+        }
+        self.sr = @bitCast(@as(u32, @bitCast(value)) & 0x700083F3);
     }
 
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
@@ -377,11 +381,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn R(self: *@This(), r: u4) *u32 {
-        if (r >= 8) return &self.r_8_15[r - 8];
-        // Note: Rather than checking all the time, we could swap only once
-        //       when SR is updated.
-        if (self.sr.md == 1 and self.sr.rb == 1) return &self.r_bank1[r];
-        return &self.r_bank0[r];
+        return &self.r[r];
     }
 
     pub inline fn FR(self: *@This(), r: u4) *f32 {
@@ -412,18 +412,25 @@ pub const SH4 = struct {
         self.execution_state = .Running;
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
-        self.sr.bl = true;
-        self.sr.md = 1;
-        self.sr.rb = 1;
+
+        var new_sr = self.sr;
+        new_sr.bl = true;
+        new_sr.md = 1;
+        new_sr.rb = 1;
+        self.set_sr(new_sr);
+
         self.pc = self.vbr + 0x600;
     }
 
     fn jump_to_exception(self: *@This()) void {
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
-        self.sr.bl = true;
-        self.sr.md = 1;
-        self.sr.rb = 1;
+
+        var new_sr = self.sr;
+        new_sr.bl = true;
+        new_sr.md = 1;
+        new_sr.rb = 1;
+        self.set_sr(new_sr);
 
         const offset = 0x600; // TODO
         const UserBreak = false; // TODO
@@ -2099,10 +2106,10 @@ fn clrt(cpu: *SH4, _: Instr) void {
 }
 
 fn ldc_Rn_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.sr = @bitCast(cpu.R(opcode.nmd.n).* & 0x700083F3);
+    cpu.set_sr(@bitCast(cpu.R(opcode.nmd.n).*));
 }
 fn ldcl_at_Rn_inc_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.sr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x700083F3);
+    cpu.set_sr(@bitCast(cpu.read32(cpu.R(opcode.nmd.n).*)));
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
@@ -2141,18 +2148,10 @@ fn ldcl_at_Rn_inc_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
-    if (cpu.sr.rb == 0) {
-        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
-    } else {
-        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
-    }
+    cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
 }
 fn ldcl_at_Rn_inc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
-    if (cpu.sr.rb == 0) {
-        cpu.r_bank1[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
-    } else {
-        cpu.r_bank0[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
-    }
+    cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) void {
@@ -2294,7 +2293,7 @@ fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 // Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.
 fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
-    cpu.sr = @bitCast(cpu.ssr);
+    cpu.set_sr(@bitCast(cpu.ssr));
     cpu.pc = cpu.spc;
     cpu.pc -= 2; // Execute will add 2
     execute_delay_slot(cpu, delay_slot);
@@ -2375,19 +2374,11 @@ fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.sr.rb == 0) {
-        cpu.R(opcode.nmd.n).* = cpu.r_bank1[opcode.nmd.m & 0b0111];
-    } else {
-        cpu.R(opcode.nmd.n).* = cpu.r_bank0[opcode.nmd.m & 0b0111];
-    }
+    cpu.R(opcode.nmd.n).* = cpu.r_bank[opcode.nmd.m & 0b0111];
 }
 fn stcl_Rm_BANK_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    if (cpu.sr.rb == 0) {
-        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank1[opcode.nmd.m & 0b0111]);
-    } else {
-        cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank0[opcode.nmd.m & 0b0111]);
-    }
+    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank[opcode.nmd.m & 0b0111]);
 }
 fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
@@ -3231,7 +3222,7 @@ test "ldc Rn,SR" {
     ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 0 } }); // ldc R0,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 
-    cpu.sr = .{}; // Reset SR
+    cpu.set_sr(.{});
 
     mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
     try std.testing.expect(cpu.R(15).* == 0b00000011);
