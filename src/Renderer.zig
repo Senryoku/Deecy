@@ -267,8 +267,7 @@ pub const Renderer = struct {
                 },
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
-                    .depth_write_enabled = true,
-                    .depth_compare = .less_equal,
+                    .depth_write_enabled = false,
                 },
                 .fragment = &wgpu.FragmentState{
                     .module = fs_module,
