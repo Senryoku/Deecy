@@ -35,8 +35,10 @@ const ShadingInstructions = packed struct(u16) {
     _: u12 = 0,
 };
 
-const VertexTexture = struct {
-    index: u16,
+const TextureIndex = u16;
+
+const VertexTextureInfo = struct {
+    index: TextureIndex,
     shading: ShadingInstructions,
 };
 
@@ -50,7 +52,7 @@ const Vertex = struct {
     a: f32,
     u: f32 = 0.0,
     v: f32 = 0.0,
-    tex: VertexTexture,
+    tex: VertexTextureInfo,
     tex_size: [2]u16 = .{ 1024, 1024 },
     uv_offset: [2]f32 = .{ 0, 0 },
 };
@@ -65,10 +67,10 @@ const Polygon = struct {
     }
 };
 
-// zig fmt: off
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/fs.wgsl");
-// zig fmt: on
+const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
+const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
 // TODO: Pack smaller textures into an Atlas.
 
@@ -76,10 +78,18 @@ const TextureMetadata = struct {
     const Unused: u32 = 0xFFFFFFFF;
 
     control_word: HollyModule.TextureControlWord = .{},
-    index: u16 = Renderer.MaxTextures,
+    index: TextureIndex = Renderer.MaxTextures,
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
+};
+
+const PassMetadata = struct {
+    pass_type: HollyModule.ListType,
+    start_vertex: u32,
+    vertex_count: u32,
+    start_index: u32,
+    index_count: u32,
 };
 
 pub const Renderer = struct {
@@ -89,10 +99,18 @@ pub const Renderer = struct {
 
     texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
 
-    polygons: std.ArrayList(HollyModule.Polygon),
+    framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
-    pipeline: zgpu.RenderPipelineHandle,
+    blit_pipeline: zgpu.RenderPipelineHandle,
+    blit_bind_group: zgpu.BindGroupHandle,
+    blit_vertex_buffer: zgpu.BufferHandle,
+    blit_index_buffer: zgpu.BufferHandle,
+
+    opaque_pipeline: zgpu.RenderPipelineHandle,
+    translucent_pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
+
+    polygons: std.ArrayList(HollyModule.Polygon),
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
@@ -100,18 +118,28 @@ pub const Renderer = struct {
     texture_array: zgpu.TextureHandle,
     texture_array_view: zgpu.TextureViewHandle,
 
+    // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
+    framebuffer_texture: zgpu.TextureHandle,
+    framebuffer_texture_view: zgpu.TextureViewHandle,
+    // Framebuffer at window resolution to draw on
+    resized_framebuffer_texture: zgpu.TextureHandle,
+    resized_framebuffer_texture_view: zgpu.TextureViewHandle,
+
     sampler: zgpu.SamplerHandle, // TODO: Have a sample per texture? Or per texture type (we'd have to pass another index to the fragment shader)?
 
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
 
-    index_count: u32,
+    passes: std.ArrayList(PassMetadata),
+
     max_depth: f32 = 1.0,
 
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) Renderer {
+        // Write to texture all rely on that.
+        std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
 
         // FIXME: Make this comptime?
         moser_de_bruijin_sequence[0] = 0;
@@ -119,17 +147,54 @@ pub const Renderer = struct {
             moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
         }
 
+        const framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .copy_dst = true },
+            .size = .{
+                .width = 640,
+                .height = 480,
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
+
+        const resized_framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .render_attachment = true },
+            .size = .{
+                .width = gctx.swapchain_descriptor.width,
+                .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
+
+        const vertex_attributes = [_]wgpu.VertexAttribute{
+            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "r"), .shader_location = 1 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 2 },
+            .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
+            .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex_size"), .shader_location = 4 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
+        };
+        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+            .array_stride = @sizeOf(Vertex),
+            .attribute_count = vertex_attributes.len,
+            .attributes = &vertex_attributes,
+        }};
+
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
             zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.samplerEntry(2, .{ .fragment = true }, .filtering),
         });
         defer gctx.releaseResource(bind_group_layout);
-
         const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
         defer gctx.releaseResource(pipeline_layout);
 
-        const pipeline = pipline: {
+        const opaque_pipeline = opaque_pl: {
             const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
             defer vs_module.release();
 
@@ -139,24 +204,10 @@ pub const Renderer = struct {
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
                 .blend = &wgpu.BlendState{
-                    // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
-                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
+                    // FIXME: Opaque.
+                    .color = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
                     .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
                 },
-            }};
-
-            const vertex_attributes = [_]wgpu.VertexAttribute{
-                .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-                .{ .format = .float32x4, .offset = @offsetOf(Vertex, "r"), .shader_location = 1 },
-                .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 2 },
-                .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
-                .{ .format = .uint16x2, .offset = @offsetOf(Vertex, "tex_size"), .shader_location = 4 },
-                .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
-            };
-            const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-                .array_stride = @sizeOf(Vertex),
-                .attribute_count = vertex_attributes.len,
-                .attributes = &vertex_attributes,
             }};
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
@@ -169,12 +220,13 @@ pub const Renderer = struct {
                 .primitive = wgpu.PrimitiveState{
                     .front_face = .ccw,
                     .cull_mode = .none,
-                    .topology = .triangle_list,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
                 },
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
                     .depth_write_enabled = true,
-                    .depth_compare = .less,
+                    .depth_compare = .less_equal,
                 },
                 .fragment = &wgpu.FragmentState{
                     .module = fs_module,
@@ -183,12 +235,140 @@ pub const Renderer = struct {
                     .targets = &color_targets,
                 },
             };
-            break :pipline gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+            break :opaque_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
+
+        const translucent_pipeline = transluscent_pl: {
+            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+            defer vs_module.release();
+
+            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
+            defer fs_module.release();
+
+            const color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
+                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
+                    // FIXME: And this is probably just wrong.
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
+                },
+            }};
+
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = vs_module,
+                    .entry_point = "main",
+                    .buffer_count = vertex_buffers.len,
+                    .buffers = &vertex_buffers,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
+                },
+                .depth_stencil = &wgpu.DepthStencilState{
+                    .format = .depth32_float,
+                    .depth_write_enabled = true,
+                    .depth_compare = .less_equal,
+                },
+                .fragment = &wgpu.FragmentState{
+                    .module = fs_module,
+                    .entry_point = "main",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+            };
+            break :transluscent_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+        };
+
+        const blit_bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+        });
+        defer gctx.releaseResource(blit_bind_group_layout);
+        const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
+        defer gctx.releaseResource(blit_pipeline_layout);
+
+        const blit_pipeline = blit_pl: {
+            const vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
+            defer vs_module.release();
+
+            const fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
+            defer fs_module.release();
+
+            const color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+            }};
+
+            const blit_vertex_attributes = [_]wgpu.VertexAttribute{
+                .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
+                .{ .format = .float32x2, .offset = 2 * @sizeOf(f32), .shader_location = 1 },
+            };
+            const blit_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+                .array_stride = 4 * @sizeOf(f32),
+                .attribute_count = blit_vertex_attributes.len,
+                .attributes = &blit_vertex_attributes,
+            }};
+
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = vs_module,
+                    .entry_point = "main",
+                    .buffer_count = blit_vertex_buffers.len,
+                    .buffers = &blit_vertex_buffers,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint16,
+                },
+                .depth_stencil = null,
+                .fragment = &wgpu.FragmentState{
+                    .module = fs_module,
+                    .entry_point = "main",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+            };
+            break :blit_pl gctx.createRenderPipeline(blit_pipeline_layout, pipeline_descriptor);
+        };
+
+        const blit_vertex_data = [_]f32{
+            // x    y     u    v
+            -1.0, 1.0,  0.0, 0.0,
+            1.0,  1.0,  1.0, 0.0,
+            1.0,  -1.0, 1.0, 1.0,
+            -1.0, -1.0, 0.0, 1.0,
+        };
+        const blit_vertex_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = blit_vertex_data.len * 4 * @sizeOf(f32),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(blit_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+
+        // Create an index buffer.
+        const blit_index_data = [_]u16{ 0, 3, 1, 2 };
+        const blit_index_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .index = true },
+            .size = blit_index_data.len * @sizeOf(u16),
+        });
+        gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u16, blit_index_data[0..]);
 
         const sampler = gctx.createSampler(.{
             //.mag_filter = .linear,
             //.min_filter = .linear,
+        });
+
+        const framebuffer_resize_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = framebuffer_texture_view },
+            .{ .binding = 1, .sampler_handle = sampler },
+        });
+        const blit_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = resized_framebuffer_texture_view },
+            .{ .binding = 1, .sampler_handle = sampler },
         });
 
         const texture_array = gctx.createTexture(.{
@@ -198,7 +378,7 @@ pub const Renderer = struct {
                 .height = 1024,
                 .depth_or_array_layers = Renderer.MaxTextures,
             },
-            .format = zgpu.imageInfoToTextureFormat(4, 1, false),
+            .format = zgpu.GraphicsContext.swapchain_format,
             .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
         });
         const texture_array_view = gctx.createTextureView(texture_array, .{});
@@ -225,19 +405,34 @@ pub const Renderer = struct {
         return .{
             .polygons = std.ArrayList(HollyModule.Polygon).init(allocator),
 
-            .pipeline = pipeline,
+            .blit_pipeline = blit_pipeline,
+            .blit_bind_group = blit_bind_group,
+            .blit_vertex_buffer = blit_vertex_buffer,
+            .blit_index_buffer = blit_index_buffer,
+
+            .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
+
+            .framebuffer_texture = framebuffer_texture,
+            .framebuffer_texture_view = framebuffer_texture_view,
+            .resized_framebuffer_texture = resized_framebuffer_texture,
+            .resized_framebuffer_texture_view = resized_framebuffer_texture_view,
+
+            .opaque_pipeline = opaque_pipeline,
+            .translucent_pipeline = translucent_pipeline,
+
             .bind_group = bind_group,
             .vertex_buffer = vertex_buffer,
             .index_buffer = index_buffer,
 
             .texture_array = texture_array,
             .texture_array_view = texture_array_view,
+
             .sampler = sampler,
 
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
 
-            .index_count = 0,
+            .passes = std.ArrayList(PassMetadata).init(allocator),
 
             ._gctx = gctx,
             ._allocator = allocator,
@@ -245,10 +440,12 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
+        self.passes.deinit();
         self.polygons.deinit();
+        // FIXME: I have a lot of resources to destroy.
     }
 
-    fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?u16 {
+    fn get_texture_index(self: *Renderer, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (0..Renderer.MaxTextures) |i| {
             if (self.texture_metadata[i].usage != TextureMetadata.Unused and self.texture_metadata[i].control_word.address == control_word.address) {
                 return @intCast(i);
@@ -257,7 +454,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) u16 {
+    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
@@ -265,7 +462,6 @@ pub const Renderer = struct {
         const v_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
 
         const twiddled = texture_control_word.scan_order == 0;
-        // FIXME: Handle twiddled textures.
         std.debug.assert(texture_control_word.mip_mapped == 0);
         std.debug.assert(texture_control_word.stride_select == 0); // Not implemented
         std.debug.assert(texture_control_word.vq_compressed == 0); // Not implemented
@@ -281,9 +477,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.r) << 3;
+                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.b) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
-                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.b) << 3;
+                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.r) << 3;
                     pixels[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
                 }
             },
@@ -291,9 +487,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.r) << 3;
+                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
                     pixels[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.b) << 3;
+                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
                     pixels[i * 4 + 3] = 255;
                 }
             },
@@ -301,9 +497,9 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.r) << 4;
+                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
                     pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.b) << 4;
+                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
                     pixels[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
                 }
             },
@@ -373,20 +569,93 @@ pub const Renderer = struct {
         }
     }
 
-    fn read_from_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
-        _ = self;
+    pub fn update_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
+        const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
+        _ = FB_C_SOF; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
-        _ = FB_R_SOF1;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         _ = FB_R_SOF2;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
-        _ = FB_R_SIZE;
 
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
-            // FIXME: I don't know how to select the right field yet.
-            renderer_log.warn(termcolor.yellow("Reading from framebuffer (from the PoV of the Holly Core) enabled: TODO!"), .{});
+            const addr: u32 = FB_R_SOF1;
+            // TODO: Find a way to avoid unecessary uploads?
+
+            // FIXME: Handle interlaced mode? Or not?
+            renderer_log.debug("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
+            renderer_log.debug("  FB_R_CTRL: {any}", .{FB_R_CTRL});
+            renderer_log.debug("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
+            renderer_log.debug("  FB_R_SIZE: {any}", .{FB_R_SIZE});
+
+            // FIXME: In the minifont KOS example, this is half the framebuffer width, and clearly wrong.
+            //        Doubling/Forcing it to 640 seems to make it work as intended, but I don't undersand why.
+            const u_size: u32 = FB_R_SIZE.x_size + 1;
+            const v_size: u32 = FB_R_SIZE.y_size + 1;
+
+            const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
+                0, 1 => 2,
+                2 => 3,
+                3 => 4,
+            };
+
+            // FIXME: Use scratch pad or something.
+            var pixels = self._allocator.alloc(u8, 4 * u_size * v_size) catch unreachable;
+            defer self._allocator.free(pixels);
+
+            for (0..v_size) |y| {
+                for (0..u_size) |x| {
+                    const pixel_idx = u_size * y + x;
+                    const pixel_addr = addr + bytes_per_pixels * (y * (u_size + FB_R_SIZE.modulus - 1) + x);
+                    switch (FB_R_CTRL.format) {
+                        0x0 => { // 0555 RGB 16 bit
+                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        0x1 => { // 565 RGB
+                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            // FIXME: I think there's something wrong with FB_R_CTRL.concat here.
+                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | FB_R_CTRL.concat & 0b11;
+                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        0x2 => { // 888 RGB 24 bit packed
+                            const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..3].*;
+                            pixels[pixel_idx * 4 + 0] = pixel[2];
+                            pixels[pixel_idx * 4 + 1] = pixel[1];
+                            pixels[pixel_idx * 4 + 2] = pixel[0];
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                        0x3 => { // 0888 RGB 32 bit
+                            const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
+                            // FIXME: This feels backward (remember, our textures are BGRA format)... But it's the best result in can get for the splash screen for now.
+                            pixels[pixel_idx * 4 + 0] = pixel[1];
+                            pixels[pixel_idx * 4 + 1] = pixel[2];
+                            pixels[pixel_idx * 4 + 2] = pixel[3];
+                            pixels[pixel_idx * 4 + 3] = 255;
+                        },
+                    }
+                }
+            }
+
+            self._gctx.queue.writeTexture(
+                .{
+                    .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
+                    .origin = .{},
+                },
+                .{
+                    .bytes_per_row = 4 * u_size,
+                    .rows_per_image = v_size,
+                },
+                .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                u8,
+                pixels,
+            );
         }
     }
 
@@ -399,8 +668,11 @@ pub const Renderer = struct {
         const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
         const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
 
+        // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
+        //        which doesn't make sense. The vertices z position looks more inline with what
+        //        I understand of render pipeline.
         const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
-        self.max_depth = @max(self.max_depth, depth);
+        _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
         const parameter_volume_mode = (gpu._get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
@@ -410,7 +682,7 @@ pub const Renderer = struct {
         var vertices: [4]Vertex = undefined;
 
         var vertex_byte_size: u32 = 4 * (3 + 1);
-        var tex_idx: u16 = 0;
+        var tex_idx: TextureIndex = 0;
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
@@ -434,11 +706,14 @@ pub const Renderer = struct {
 
         const use_alpha = tsp_instruction.use_alpha == 1;
 
-        const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
-            .textured = isp_tsp_instruction.texture,
-            .mode = tsp_instruction.texture_shading_instruction,
-            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-        } };
+        const tex = VertexTextureInfo{
+            .index = tex_idx,
+            .shading = ShadingInstructions{
+                .textured = isp_tsp_instruction.texture,
+                .mode = tsp_instruction.texture_shading_instruction,
+                .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+            },
+        };
         const tex_size = self.texture_metadata[tex_idx].size;
 
         for (0..3) |i| {
@@ -463,7 +738,7 @@ pub const Renderer = struct {
             vertices[i] = Vertex{
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
-                .z = depth,
+                .z = @bitCast(vp[2]),
                 .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
                 .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
                 .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
@@ -473,11 +748,13 @@ pub const Renderer = struct {
                 .tex = tex,
                 .tex_size = tex_size,
             };
+            // FIXME: We should probably render the background in a separate pass with depth test disabled.
+            self.max_depth = @max(self.max_depth, 1 / vertices[i].z);
         }
         vertices[3] = Vertex{
             .x = vertices[1].x,
             .y = vertices[2].y,
-            .z = depth,
+            .z = vertices[2].z,
             // NOTE: I have no idea how the color is computed, looking at the boot menu, this seems right.
             .r = vertices[2].r,
             .g = vertices[2].g,
@@ -490,7 +767,7 @@ pub const Renderer = struct {
             .tex_size = tex_size,
         };
 
-        const indices: [6]u32 = .{ 0, 1, 2, 2, 1, 3 };
+        const indices = [_]u32{ 0, 1, 2, 3 };
 
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
@@ -509,11 +786,17 @@ pub const Renderer = struct {
 
         self.update_background(gpu);
 
-        self.read_from_framebuffer(gpu); // FIXME: I don't think rendering needs to be enabled for this to work.
+        self.passes.clearRetainingCapacity();
 
         // TODO: Handle Modifier Volumes
-        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |t| {
-            const display_list = gpu.ta_display_lists[@intFromEnum(t)];
+        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |list_type| {
+            const start_vertex = vertices.items.len;
+            const start_index = indices.items.len;
+
+            // Parameters specific to a polygon type
+            var face_color: fRGBA = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
+            const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
+
             for (0..display_list.polygons.items.len) |idx| {
                 const start: u32 = @intCast(FirstVertex + vertices.items.len);
 
@@ -522,8 +805,6 @@ pub const Renderer = struct {
                 var isp_tsp_instruction: HollyModule.ISPTSPInstructionWord = undefined;
                 var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
                 var texture_control: HollyModule.TextureControlWord = undefined;
-                // Specific to a polygon type
-                var face_color: fRGBA = undefined;
 
                 switch (display_list.polygons.items[idx]) {
                     .PolygonType0 => |p| {
@@ -537,20 +818,22 @@ pub const Renderer = struct {
                         isp_tsp_instruction = p.isp_tsp_instruction;
                         tsp_instruction = p.tsp_instruction;
                         texture_control = p.texture_control;
-                        face_color = .{
-                            .r = p.face_color_r,
-                            .g = p.face_color_g,
-                            .b = p.face_color_b,
-                            .a = p.face_color_a,
-                        };
+                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
+                            face_color = .{
+                                .r = p.face_color_r,
+                                .g = p.face_color_g,
+                                .b = p.face_color_b,
+                                .a = p.face_color_a,
+                            };
                     },
                     else => {
                         renderer_log.err("Unhandled polygon type: {any}", .{display_list.polygons.items[idx]});
                     },
                 }
 
-                var tex_idx: u16 = 0;
-                if (parameter_control_word.obj_control.texture == 1) {
+                var tex_idx: TextureIndex = 0;
+                const textured = parameter_control_word.obj_control.texture == 1;
+                if (textured) {
                     const tmp_tex_idx = self.get_texture_index(texture_control);
                     if (tmp_tex_idx == null) {
                         tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
@@ -570,15 +853,23 @@ pub const Renderer = struct {
                     renderer_log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                 }
 
-                const tex = VertexTexture{ .index = tex_idx, .shading = ShadingInstructions{
-                    .textured = isp_tsp_instruction.texture,
-                    .mode = tsp_instruction.texture_shading_instruction,
-                    .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                } };
+                const tex = VertexTextureInfo{
+                    .index = tex_idx,
+                    .shading = ShadingInstructions{
+                        .textured = parameter_control_word.obj_control.texture,
+                        .mode = tsp_instruction.texture_shading_instruction,
+                        .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+                    },
+                };
 
                 for (display_list.vertex_parameters.items[idx].items) |vertex| {
+                    // std.debug.print("Vertex: {any}\n", .{vertex});
                     switch (vertex) {
+                        // Packed Color, Non-Textured
                         .Type0 => |v| {
+                            // Sanity checks.
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(!textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -592,6 +883,8 @@ pub const Renderer = struct {
                         },
                         // Non-Textured, Floating Color
                         .Type1 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
+                            std.debug.assert(!textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -603,7 +896,10 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Packed Color, Textured 32bit UV
                         .Type3 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -620,12 +916,14 @@ pub const Renderer = struct {
                         },
                         // Intensity
                         .Type7 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                            std.debug.assert(textured);
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
                                 .r = v.base_intensity * face_color.r,
-                                .g = v.base_intensity * face_color.b,
+                                .g = v.base_intensity * face_color.g,
                                 .b = v.base_intensity * face_color.b,
                                 .a = if (use_alpha) face_color.a else 1.0,
                                 .u = v.u,
@@ -640,24 +938,24 @@ pub const Renderer = struct {
                         },
                     }
 
-                    self.max_depth = @max(self.max_depth, vertices.getLast().z);
+                    self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
                 }
 
-                try indices.append(start + 0);
-                try indices.append(start + 1);
-                try indices.append(start + 2);
                 // Triangle Strips
-                for (0..display_list.vertex_parameters.items[idx].items.len - 3) |i| {
-                    if (i % 2 == 0) {
-                        try indices.append(@intCast(start + i + 1));
-                        try indices.append(@intCast(start + i + 3));
-                        try indices.append(@intCast(start + i + 2));
-                    } else {
-                        try indices.append(@intCast(start + i + 1));
-                        try indices.append(@intCast(start + i + 2));
-                        try indices.append(@intCast(start + i + 3));
-                    }
+                for (0..display_list.vertex_parameters.items[idx].items.len) |i| {
+                    try indices.append(@intCast(start + i));
                 }
+                try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+            }
+
+            if (vertices.items.len > start_vertex) {
+                try self.passes.append(.{
+                    .pass_type = list_type,
+                    .start_vertex = @intCast(start_vertex),
+                    .vertex_count = @intCast(vertices.items.len - start_vertex),
+                    .start_index = @intCast(start_index),
+                    .index_count = @intCast(indices.items.len - start_index),
+                });
             }
         }
 
@@ -665,8 +963,6 @@ pub const Renderer = struct {
             // Offsets: The 4 first vertices and 6 first indices are used by the background.
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, vertices.items);
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, FirstIndex * @sizeOf(u32), u32, indices.items);
-
-            self.index_count = @intCast(indices.items.len);
         }
     }
 
@@ -686,16 +982,46 @@ pub const Renderer = struct {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
 
-            pass: {
-                const vb_info = gctx.lookupResourceInfo(self.vertex_buffer) orelse break :pass;
-                const ib_info = gctx.lookupResourceInfo(self.index_buffer) orelse break :pass;
-                const pipeline = gctx.lookupResource(self.pipeline) orelse break :pass;
-                const bind_group = gctx.lookupResource(self.bind_group) orelse break :pass;
-                const depth_view = gctx.lookupResource(self.depth_texture_view) orelse break :pass;
+            // Convert Framebuffer from native 640*480 to window resolution
+            {
+                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = back_buffer_view,
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
                     .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
+
+                const pass = encoder.beginRenderPass(render_pass_info);
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+            }
+
+            {
+                const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
+                const bind_group = gctx.lookupResource(self.bind_group).?;
+                const depth_view = gctx.lookupResource(self.depth_texture_view).?;
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .load_op = .load,
                     .store_op = .store,
                 }};
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
@@ -718,16 +1044,62 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                pass.setPipeline(pipeline);
+                for (self.passes.items) |pass_metadata| {
+                    switch (pass_metadata.pass_type) {
+                        .Opaque, .PunchThrough => {
+                            const pipeline = gctx.lookupResource(self.opaque_pipeline).?;
+                            pass.setPipeline(pipeline);
+                        },
+                        .Translucent => {
+                            const pipeline = gctx.lookupResource(self.translucent_pipeline).?;
+                            pass.setPipeline(pipeline);
+                        },
+                        else => {
+                            unreachable;
+                        },
+                    }
 
-                {
-                    const mem = gctx.uniformsAllocate([4]f32, 1);
-                    mem.slice[0][0] = self.max_depth;
+                    {
+                        const mem = gctx.uniformsAllocate([4]f32, 1);
+                        mem.slice[0][0] = self.max_depth;
 
-                    pass.setBindGroup(0, bind_group, &.{mem.offset});
-                    pass.drawIndexed(self.index_count, 1, 0, 0, 0);
+                        pass.setBindGroup(0, bind_group, &.{mem.offset});
+                        pass.drawIndexed(pass_metadata.index_count, 1, pass_metadata.start_index, 0, 0);
+                    }
                 }
             }
+
+            // Blit to screen
+            {
+                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = back_buffer_view,
+                    .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
+
+                const pass = encoder.beginRenderPass(render_pass_info);
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, blit_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+            }
+
             {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = back_buffer_view,

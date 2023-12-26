@@ -26,7 +26,7 @@ fn main(
     output.position_clip.x = position.x * 2.0 / screen_size.x - 1.0;
     output.position_clip.y = position.y * -2.0 / screen_size.y + 1.0;
 
-    output.position_clip.z = 1.0 - position.z / max_depth[0]; // Remap to the [0.0..1.0] range used by WGPU
+    output.position_clip.z = (1.0 / position.z) /  max_depth[0]; // Remap to the [0.0..1.0] range used by WGPU
     output.position_clip.w = 1.0;
 
     output.color = color;

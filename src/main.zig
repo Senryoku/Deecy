@@ -128,7 +128,7 @@ pub fn main() !void {
     defer window.destroy();
 
     const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
-        .present_mode = .mailbox,
+        //.present_mode = .mailbox,
     });
     defer gctx.destroy(common.GeneralAllocator);
 
@@ -256,19 +256,19 @@ pub fn main() !void {
         zgui.end();
 
         if (zgui.begin("FPU", .{})) {
-            zgui.text("FPUL: {d: >8.2} | {d: >8.2} | {d: >8.2}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
+            zgui.text("FPUL: {d: >8.4} | {d: >8.4} | {d: >8.4}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
 
             zgui.spacing();
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("FR{d: <2}: {d: >12.2}", .{ i, dc.cpu.FR(@truncate(i)).* });
+                zgui.text("FR{d: <2}: {d: >12.4}", .{ i, dc.cpu.FR(@truncate(i)).* });
             }
             zgui.endGroup();
 
@@ -276,13 +276,13 @@ pub fn main() !void {
 
             zgui.beginGroup();
             for (0..8) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
             zgui.sameLine(.{});
             zgui.beginGroup();
             for (8..16) |i| {
-                zgui.text("XF{d: <2}: {d: >12.2}", .{ i, dc.cpu.XF(@truncate(i)).* });
+                zgui.text("XF{d: <2}: {d: >12.4}", .{ i, dc.cpu.XF(@truncate(i)).* });
             }
             zgui.endGroup();
         }
@@ -331,12 +331,14 @@ pub fn main() !void {
             const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
             zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
 
+            const FB_C_SOF: u32 = dc.gpu._get_register(u32, .FB_C_SOF).*;
             const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;
             const FB_W_SOF1: u32 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
             const FB_W_SOF2: u32 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
             const FB_R_CTRL: u32 = dc.gpu._get_register(u32, .FB_R_CTRL).*;
             const FB_R_SOF1: u32 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
             const FB_R_SOF2: u32 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
+            zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
             zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
             zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
@@ -344,57 +346,61 @@ pub fn main() !void {
             zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
             zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
 
-            if (zgui.collapsingHeader("Framebuffer?", .{})) {
+            if (zgui.collapsingHeader("VRAM", .{})) {
                 const static = struct {
                     var start_addr: i32 = 0x04200000;
                     var format: i32 = 0x6;
+                    var twiddled: bool = false;
+                    var width: i32 = vram_width;
                 };
                 _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 0x8000, .flags = .{ .chars_hexadecimal = true } });
                 _ = zgui.inputInt("Format", .{ .v = &static.format, .step = 1, .flags = .{ .chars_hexadecimal = true } });
+                _ = zgui.inputInt("Width", .{ .v = &static.width, .step = 8 });
+                _ = zgui.checkbox("Twiddled", .{ .v = &static.twiddled });
                 static.format = std.math.clamp(static.format, 0, 0x6);
+                static.width = std.math.clamp(static.width, 8, vram_width);
+                const width: u32 = @intCast(static.width);
                 const bytes_per_pixels: u32 = if (static.format & 0b111 == 0x6) 4 else 2;
-                var start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
-                const end = std.math.clamp(start + bytes_per_pixels * vram_width * vram_height, 0x04000000, 0x04800000);
+                const start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
+                const end = std.math.clamp(start + bytes_per_pixels * width * vram_height, 0x04000000, 0x04800000);
                 zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
-                var i: usize = 0;
-                while (start < end) {
+                var i: u32 = 0;
+                var current_addr = start;
+                while (current_addr < end) {
+                    const pixel_idx: u32 = if (static.twiddled) RendererModule.to_tiddled_index(@intCast(i), width) else i;
+                    const addr: u32 = start + bytes_per_pixels * pixel_idx;
+                    if (addr >= 0x04800000 - bytes_per_pixels) break;
                     switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Holly.Color16 = .{
-                                .value = dc.cpu.read16(@intCast(start)),
-                            };
+                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
                             pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 2;
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
-                            const color: Holly.Color16 = .{
-                                .value = dc.cpu.read16(@intCast(start)),
-                            };
+                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
                             pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                             pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                             pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                            pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            start += 2;
+                            pixels[4 * i + 3] = 255;
                             i += 1;
                         },
                         // ARGB 32-Bits
                         0x6 => {
-                            pixels[4 * i + 0] = dc.cpu.read8(@intCast(start + 3));
-                            pixels[4 * i + 1] = dc.cpu.read8(@intCast(start + 2));
-                            pixels[4 * i + 2] = dc.cpu.read8(@intCast(start + 1));
-                            pixels[4 * i + 3] = dc.cpu.read8(@intCast(start + 0));
-                            start += 4;
+                            pixels[4 * i + 0] = dc.cpu.read8(@intCast(addr + 3));
+                            pixels[4 * i + 1] = dc.cpu.read8(@intCast(addr + 2));
+                            pixels[4 * i + 2] = dc.cpu.read8(@intCast(addr + 1));
+                            pixels[4 * i + 3] = dc.cpu.read8(@intCast(addr + 0));
                             i += 1;
                         },
                         else => {
-                            start = end;
+                            current_addr = end;
                             zgui.text("Unsupported packed format: 0x{X:0>1}", .{static.format & 0b111});
                         },
                     }
+                    current_addr += bytes_per_pixels;
                 }
 
                 gctx.queue.writeTexture(
@@ -403,7 +409,7 @@ pub fn main() !void {
                         .bytes_per_row = 4 * vram_width,
                         .rows_per_image = vram_height,
                     },
-                    .{ .width = vram_width, .height = vram_height },
+                    .{ .width = width, .height = vram_height },
                     u8,
                     pixels,
                 );
@@ -411,8 +417,12 @@ pub fn main() !void {
 
                 zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
             }
+        }
+        zgui.end();
 
-            if (zgui.collapsingHeader("Renderer Textures", .{})) {
+        if (zgui.begin("Renderer", .{})) {
+            zgui.text("Max Depth: {d: >4.2}", .{renderer.max_depth});
+            if (zgui.collapsingHeader("Textures", .{})) {
                 const static = struct {
                     var index: i32 = 0;
                     var scale: f32 = 1;
@@ -427,6 +437,14 @@ pub fn main() !void {
                 }
                 const tex_id = gctx.lookupResource(renderer_texture_view).?;
                 zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
+            }
+            if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
+                const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
+                zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
+            }
+            if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
+                const fb_tex_id = gctx.lookupResource(renderer.resized_framebuffer_texture_view).?;
+                zgui.image(fb_tex_id, .{ .w = @floatFromInt(gctx.swapchain_descriptor.width), .h = @floatFromInt(gctx.swapchain_descriptor.height) });
             }
         }
         zgui.end();
@@ -482,6 +500,7 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
+        renderer.update_framebuffer(&dc.gpu);
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);

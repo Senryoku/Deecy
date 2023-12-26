@@ -17,6 +17,13 @@ pub const P4MemoryRegister = enum(u32) {
     QACR0 = 0xFF000038,
     QACR1 = 0xFF00003C,
 
+    PMCR1 = 0xFF000084, // Performance Counter Control Register  1
+    PMCR2 = 0xFF000088, // Performance Counter Control Register 2
+    PC1H = 0xFF100004, // Performance counter 1H
+    PC1L = 0xFF100008, // Performance counter 1L
+    PC2H = 0xFF10000C, // Performance counter 2H
+    PC2L = 0xFF100010, // Performance counter 2L
+
     _FF000030 = 0xFF000030,
 
     // UBC

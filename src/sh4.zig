@@ -1,4 +1,5 @@
 // Hitachi SH-4
+// FIXME: Exact model is actually SH7091, I think.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -168,7 +169,9 @@ pub const SH4 = struct {
         //   and cheaply remap it to a way smaller memory range.
         //   The one exception is the virtual register SDMR (SDMR2/SDMR3), which is
         //   handled by read8 (but not emulated).
-        //   Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
+        // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
+        // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
+        //   I ignore them in read16/write16.
         sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
 
         init_jump_table();
@@ -547,12 +550,12 @@ pub const SH4 = struct {
         const instr = Instr{ .value = opcode };
         const desc = Opcodes[JumpTable[opcode]];
 
-        if (comptime (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch unreachable, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
 
         desc.fn_(self, instr);
 
-        if (comptime (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
         self.add_cycles(desc.issue_cycles);
@@ -793,11 +796,6 @@ pub const SH4 = struct {
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
-                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
-                    return @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
-                    ))).* & 0xF;
-                },
                 @intFromEnum(P4MemoryRegister.RFCR) => {
                     // Hack: This is the Refresh Count Register, related to DRAM control.
                     //       If don't think its proper emulation is needed, but it's accessed by the bios,
@@ -833,6 +831,13 @@ pub const SH4 = struct {
                     tfinal |= @intFromEnum(self._dc.?.cable_type) << 8;
 
                     return tfinal;
+                },
+                // FIXME: Not emulated at all, these clash with my P4 access pattern :(
+                @intFromEnum(P4MemoryRegister.PMCR1) => {
+                    return 0;
+                },
+                @intFromEnum(P4MemoryRegister.PMCR2) => {
+                    return 0;
                 },
                 else => {
                     sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
@@ -944,15 +949,22 @@ pub const SH4 = struct {
             switch (virtual_addr) {
                 @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
                     std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
-                    @as(*u16, @alignCast(@ptrCast(
-                        self._get_memory(addr),
-                    ))).* = 0b10100101_00000000 | (value & 0xFF);
+                    self.p4_register_addr(u16, addr).* = (value & 0xFF);
+                    return;
                 },
                 @intFromEnum(P4MemoryRegister.RFCR) => {
                     std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
-                    @as(*u16, @alignCast(@ptrCast(
-                        self._get_memory(addr),
-                    ))).* = 0b10100100_00000000 | (value & 0b11_11111111);
+                    self.p4_register_addr(u16, addr).* = (value & 0b11_11111111);
+                    return;
+                },
+                // FIXME: Not emulated at all, these clash with my P4 access pattern :(
+                @intFromEnum(P4MemoryRegister.PMCR1) => {
+                    sh4_log.warn("Write to non implemented P4 register PMCR1: {X:0>4}.", .{value});
+                    return;
+                },
+                @intFromEnum(P4MemoryRegister.PMCR2) => {
+                    sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
+                    return;
                 },
                 else => {
                     sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
@@ -2587,7 +2599,7 @@ fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n).* = @sqrt(cpu.DR(opcode.nmd.n).*);
+        cpu.DR(opcode.nmd.n >> 1).* = @sqrt(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
 fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
