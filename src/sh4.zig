@@ -693,7 +693,17 @@ pub const SH4 = struct {
                 sh4_log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}", .{ addr, physical_addr });
         }
 
+        // NOTE: These cases are out of order as an optimization.
+        //       Empirically tested on interpreter_perf (i.e. 200_000_000 first 'ticks' of Sonic Adventure and the Boot ROM).
+        //       The compile seems to really having equal length ranges (and also easily maskable, I guess)!
         switch (addr) {
+            0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
+                return &self._dc.?.ram[addr & 0x00FFFFFF];
+            },
+            0x04000000...0x07FFFFFF => {
+                return self._dc.?.gpu._get_vram(addr);
+            },
+
             0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
                 switch (addr) {
                     0x00000000...0x001FFFFF => {
@@ -736,14 +746,8 @@ pub const SH4 = struct {
                     },
                 }
             },
-            0x04000000...0x07FFFFFF => {
-                return self._dc.?.gpu._get_vram(addr);
-            },
             0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
                 self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr});
-            },
-            0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
-                return &self._dc.?.ram[addr & 0x00FFFFFF];
             },
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});

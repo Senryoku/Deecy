@@ -84,6 +84,10 @@ pub fn build(b: *std.Build) void {
     const perf_step = b.step("perf", "Run performance tests");
     perf_step.dependOn(&run_perf_tests.step);
 
+    const pref_install = b.addInstallArtifact(interpreter_perf, .{});
+    const perf_install_step = b.step("perf_install", "Install the performance tests");
+    perf_install_step.dependOn(&pref_install.step);
+
     // ----- Tests ------
 
     // Creates a step for unit testing. This only builds the test executable
