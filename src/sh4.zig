@@ -236,6 +236,15 @@ pub const SH4 = struct {
         self.p4_register(u32, .BCR1).* = 0;
         self.p4_register(u32, .BCR2).* = 0x3FFC;
         self.p4_register(u32, .PCTRA).* = 0;
+
+        self.p4_register(u16, .SCSMR2).* = 0x0000;
+        self.p4_register(u8, .SCBRR2).* = 0xFF;
+        self.p4_register(u16, .SCSCR2).* = 0x0000;
+        self.p4_register(u16, .SCFSR2).* = 0x0060;
+        self.p4_register(u16, .SCFCR2).* = 0x0000;
+        self.p4_register(u16, .SCFDR2).* = 0x0000;
+        self.p4_register(u16, .SCSPTR2).* = 0x0000;
+        self.p4_register(u16, .SCLSR2).* = 0x0000;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -932,6 +941,15 @@ pub const SH4 = struct {
                     // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
                     return;
                 },
+                @intFromEnum(P4MemoryRegister.SCFTDR2) => {
+                    sh4_log.warn(termcolor.yellow("Write to non-implemented P4 register SCFTDR2: 0x{X:0>2}."), .{value});
+                    // Immediately mark transfer as complete.
+                    //   Or rather, attempts to, this is not enough.
+                    const SCFSR2 = self.p4_register(MemoryRegisters.SCFSR2, .SCFSR2);
+                    SCFSR2.*.tend = 1;
+                    // FIXME: The serial interface is not implemented at all.
+                    return;
+                },
                 else => {
                     sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
@@ -983,6 +1001,12 @@ pub const SH4 = struct {
                 },
                 @intFromEnum(P4MemoryRegister.PMCR2) => {
                     sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
+                    return;
+                },
+                // Serial Interface
+                @intFromEnum(P4MemoryRegister.SCFSR2) => {
+                    // Writable bits can only be cleared.
+                    self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                     return;
                 },
                 else => {

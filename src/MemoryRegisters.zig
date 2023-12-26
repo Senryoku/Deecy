@@ -113,16 +113,16 @@ pub const P4MemoryRegister = enum(u32) {
     SCSPTR1 = 0xFFE0001C,
 
     // SCIF
-    SCSMR2 = 0xFFE80000,
-    SCBRR2 = 0xFFE80004,
-    SCSCR2 = 0xFFE80008,
-    SCFTDR2 = 0xFFE8000C,
-    SCFSR2 = 0xFFE80010,
-    SCFRDR2 = 0xFFE80014,
-    SCFCR2 = 0xFFE80018,
-    SCFDR2 = 0xFFE8001C,
-    SCSPTR2 = 0xFFE80020,
-    SCLSR2 = 0xFFE80024,
+    SCSMR2 = 0xFFE80000, // Serial mode register
+    SCBRR2 = 0xFFE80004, // Bit rate register
+    SCSCR2 = 0xFFE80008, // Serial control register
+    SCFTDR2 = 0xFFE8000C, // Transmit FIFO data register
+    SCFSR2 = 0xFFE80010, // Serial status register
+    SCFRDR2 = 0xFFE80014, // Receive FIFO data register
+    SCFCR2 = 0xFFE80018, // FIFO control register
+    SCFDR2 = 0xFFE8001C, // FIFO data count register
+    SCSPTR2 = 0xFFE80020, // Serial port register
+    SCLSR2 = 0xFFE80024, // Line status register
 
     SDMR = 0xFF940190,
 
@@ -482,4 +482,17 @@ pub const SB_ISTEXT = packed struct(u32) {
     Modem: u1 = 0,
     ExternalDevice: u1 = 0,
     _: u28 = 0,
+};
+
+pub const SCFSR2 = packed struct(u16) {
+    dr: u1 = 0,
+    rdf: u1 = 0,
+    per: u1 = 0,
+    fer: u1 = 0,
+    brk: u1 = 0,
+    tdfe: u1 = 1,
+    tend: u1 = 1,
+    er: u1 = 0,
+    fer_number: u4 = 0,
+    per_number: u4 = 0,
 };
