@@ -1413,6 +1413,24 @@ fn swapw(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = val << 16 | val >> 16;
 }
 
+test "swapb" {
+    var cpu = try SH4.init(std.testing.allocator, null);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 0xAABBCCDD;
+    swapb(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0xAABBDDCC);
+}
+
+test "swapw" {
+    var cpu = try SH4.init(std.testing.allocator, null);
+    defer cpu.deinit();
+
+    cpu.R(0).* = 0xAABBCCDD;
+    swapw(&cpu, .{ .nmd = .{ ._ = undefined, .n = 0, .m = undefined, .d = undefined } });
+    try std.testing.expect(cpu.R(0).* == 0xCCDDAABB);
+}
+
 fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = (cpu.R(opcode.nmd.m).* << 16) & 0xFFFF0000 | (cpu.R(opcode.nmd.m).* >> 16) & 0x0000FFFF;
 }
