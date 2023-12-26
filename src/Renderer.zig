@@ -137,6 +137,13 @@ pub const Renderer = struct {
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
 
+    fn create_blit_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
+        return gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+        });
+    }
+
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) Renderer {
         // Write to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
@@ -159,17 +166,7 @@ pub const Renderer = struct {
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
-        const resized_framebuffer_texture = gctx.createTexture(.{
-            .usage = .{ .texture_binding = true, .render_attachment = true },
-            .size = .{
-                .width = gctx.swapchain_descriptor.width,
-                .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
-                .depth_or_array_layers = 1,
-            },
-            .format = zgpu.GraphicsContext.swapchain_format,
-            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
-        });
-        const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
+        const resized_framebuffer = Renderer.create_resized_frammebuffer_texture(gctx);
 
         const vertex_attributes = [_]wgpu.VertexAttribute{
             .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
@@ -283,10 +280,7 @@ pub const Renderer = struct {
             break :transluscent_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
-        const blit_bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
-        });
+        const blit_bind_group_layout = create_blit_bind_group_layout(gctx);
         defer gctx.releaseResource(blit_bind_group_layout);
         const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
         defer gctx.releaseResource(blit_pipeline_layout);
@@ -367,7 +361,7 @@ pub const Renderer = struct {
             .{ .binding = 1, .sampler_handle = sampler },
         });
         const blit_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = resized_framebuffer_texture_view },
+            .{ .binding = 0, .texture_view_handle = resized_framebuffer.view },
             .{ .binding = 1, .sampler_handle = sampler },
         });
 
@@ -400,7 +394,7 @@ pub const Renderer = struct {
         });
 
         // Create a depth texture and its 'view'.
-        const depth = createDepthTexture(gctx);
+        const depth = create_depth_texture(gctx);
 
         return .{
             .polygons = std.ArrayList(HollyModule.Polygon).init(allocator),
@@ -414,8 +408,8 @@ pub const Renderer = struct {
 
             .framebuffer_texture = framebuffer_texture,
             .framebuffer_texture_view = framebuffer_texture_view,
-            .resized_framebuffer_texture = resized_framebuffer_texture,
-            .resized_framebuffer_texture_view = resized_framebuffer_texture_view,
+            .resized_framebuffer_texture = resized_framebuffer.texture,
+            .resized_framebuffer_texture_view = resized_framebuffer.view,
 
             .opaque_pipeline = opaque_pipeline,
             .translucent_pipeline = translucent_pipeline,
@@ -970,12 +964,6 @@ pub const Renderer = struct {
 
     pub fn draw(self: *Renderer) void {
         const gctx = self._gctx;
-        const fb_width = gctx.swapchain_descriptor.width;
-        _ = fb_width;
-        const fb_height = gctx.swapchain_descriptor.height;
-        _ = fb_height;
-        const t = @as(f32, @floatCast(gctx.stats.time));
-        _ = t;
 
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
@@ -1058,6 +1046,7 @@ pub const Renderer = struct {
                 pass.setPipeline(opaque_pipeline);
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
+                // FIXME: Draw the passes in order.
                 for (self.passes.items) |pass_metadata| {
                     switch (pass_metadata.pass_type) {
                         .Opaque, .PunchThrough => {
@@ -1119,12 +1108,29 @@ pub const Renderer = struct {
         self._gctx.destroyResource(self.depth_texture);
 
         // Create a new depth texture to match the new window size.
-        const depth = createDepthTexture(self._gctx);
+        const depth = create_depth_texture(self._gctx);
         self.depth_texture = depth.texture;
         self.depth_texture_view = depth.view;
+
+        // Same thing for our screen size framebuffer.
+        self._gctx.releaseResource(self.resized_framebuffer_texture_view);
+        self._gctx.destroyResource(self.resized_framebuffer_texture);
+
+        const resized_framebuffer = create_resized_frammebuffer_texture(self._gctx);
+        self.resized_framebuffer_texture = resized_framebuffer.texture;
+        self.resized_framebuffer_texture_view = resized_framebuffer.view;
+
+        const blit_bind_group_layout = create_blit_bind_group_layout(self._gctx);
+        defer self._gctx.releaseResource(blit_bind_group_layout);
+
+        self._gctx.releaseResource(self.blit_bind_group);
+        self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = resized_framebuffer.view },
+            .{ .binding = 1, .sampler_handle = self.sampler },
+        });
     }
 
-    fn createDepthTexture(gctx: *zgpu.GraphicsContext) struct {
+    fn create_depth_texture(gctx: *zgpu.GraphicsContext) struct {
         texture: zgpu.TextureHandle,
         view: zgpu.TextureViewHandle,
     } {
@@ -1142,5 +1148,23 @@ pub const Renderer = struct {
         });
         const view = gctx.createTextureView(texture, .{});
         return .{ .texture = texture, .view = view };
+    }
+
+    fn create_resized_frammebuffer_texture(gctx: *zgpu.GraphicsContext) struct {
+        texture: zgpu.TextureHandle,
+        view: zgpu.TextureViewHandle,
+    } {
+        const resized_framebuffer_texture = gctx.createTexture(.{
+            .usage = .{ .texture_binding = true, .render_attachment = true },
+            .size = .{
+                .width = gctx.swapchain_descriptor.width,
+                .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
+        return .{ .texture = resized_framebuffer_texture, .view = resized_framebuffer_texture_view };
     }
 };
