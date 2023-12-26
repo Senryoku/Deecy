@@ -95,7 +95,7 @@ const PassMetadata = struct {
 pub const Renderer = struct {
     const MaxTextures: u32 = 256; // FIXME: Not sure what's a good value.
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
-    const FirstIndex: u32 = 6; // The 6 first indices are reserved for the background.
+    const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
     texture_metadata: [MaxTextures]TextureMetadata = .{.{}} ** MaxTextures,
 
@@ -767,10 +767,13 @@ pub const Renderer = struct {
             .tex_size = tex_size,
         };
 
-        const indices = [_]u32{ 0, 1, 2, 3 };
+        const indices = [_]u32{ 0, 1, 2, 3, 0xFFFFFFFF };
 
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
+
+        std.debug.assert(FirstVertex == vertices.len);
+        std.debug.assert(FirstIndex == indices.len);
     }
 
     pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
@@ -798,7 +801,7 @@ pub const Renderer = struct {
             const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
 
             for (0..display_list.polygons.items.len) |idx| {
-                const start: u32 = @intCast(FirstVertex + vertices.items.len);
+                const start: u32 = @intCast(vertices.items.len);
 
                 // Generic Parameters
                 var parameter_control_word: HollyModule.ParameterControlWord = undefined;
@@ -943,7 +946,7 @@ pub const Renderer = struct {
 
                 // Triangle Strips
                 for (0..display_list.vertex_parameters.items[idx].items.len) |i| {
-                    try indices.append(@intCast(start + i));
+                    try indices.append(@intCast(FirstVertex + start + i));
                 }
                 try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
             }
@@ -951,16 +954,15 @@ pub const Renderer = struct {
             if (vertices.items.len > start_vertex) {
                 try self.passes.append(.{
                     .pass_type = list_type,
-                    .start_vertex = @intCast(start_vertex),
+                    .start_vertex = @intCast(FirstVertex + start_vertex),
                     .vertex_count = @intCast(vertices.items.len - start_vertex),
-                    .start_index = @intCast(start_index),
+                    .start_index = @intCast(FirstIndex + start_index),
                     .index_count = @intCast(indices.items.len - start_index),
                 });
             }
         }
 
         if (vertices.items.len > 0) {
-            // Offsets: The 4 first vertices and 6 first indices are used by the background.
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, vertices.items);
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, FirstIndex * @sizeOf(u32), u32, indices.items);
         }
@@ -1026,7 +1028,7 @@ pub const Renderer = struct {
                 }};
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
-                    .depth_load_op = .clear,
+                    .depth_load_op = .clear, // FIXME: We don't want to clear after the first pass.
                     .depth_store_op = .store,
                     .depth_clear_value = 1.0,
                 };
@@ -1044,28 +1046,32 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
+                // Set uniforms
+                const mem = gctx.uniformsAllocate([4]f32, 1);
+                mem.slice[0][0] = self.max_depth;
+                pass.setBindGroup(0, bind_group, &.{mem.offset});
+
+                const opaque_pipeline = gctx.lookupResource(self.opaque_pipeline).?;
+                const translucent_pipeline = gctx.lookupResource(self.translucent_pipeline).?;
+
+                // Draw background
+                pass.setPipeline(opaque_pipeline);
+                pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
+
                 for (self.passes.items) |pass_metadata| {
                     switch (pass_metadata.pass_type) {
                         .Opaque, .PunchThrough => {
-                            const pipeline = gctx.lookupResource(self.opaque_pipeline).?;
-                            pass.setPipeline(pipeline);
+                            pass.setPipeline(opaque_pipeline);
                         },
                         .Translucent => {
-                            const pipeline = gctx.lookupResource(self.translucent_pipeline).?;
-                            pass.setPipeline(pipeline);
+                            pass.setPipeline(translucent_pipeline);
                         },
                         else => {
                             unreachable;
                         },
                     }
 
-                    {
-                        const mem = gctx.uniformsAllocate([4]f32, 1);
-                        mem.slice[0][0] = self.max_depth;
-
-                        pass.setBindGroup(0, bind_group, &.{mem.offset});
-                        pass.drawIndexed(pass_metadata.index_count, 1, pass_metadata.start_index, 0, 0);
-                    }
+                    pass.drawIndexed(pass_metadata.index_count, 1, pass_metadata.start_index, 0, 0);
                 }
             }
 
@@ -1094,23 +1100,6 @@ pub const Renderer = struct {
 
                 pass.setBindGroup(0, blit_bind_group, &.{});
                 pass.drawIndexed(4, 1, 0, 0, 0);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
-            }
-
-            {
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = back_buffer_view,
-                    .load_op = .load,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
                 defer {
                     pass.end();
                     pass.release();

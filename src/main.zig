@@ -27,7 +27,7 @@ pub const std_options = struct {
     pub const log_level = .info;
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .sh4, .level = .debug },
+        .{ .scope = .sh4, .level = .info },
         .{ .scope = .holy, .level = .info },
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .renderer, .level = .info },
