@@ -1254,7 +1254,7 @@ pub const Holly = struct {
                         self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
                         self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
 
-                        self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).init(self._allocator);
+                        self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).initCapacity(self._allocator, 32) catch unreachable;
                     }
                 }
             },

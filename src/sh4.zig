@@ -783,13 +783,12 @@ pub const SH4 = struct {
                     ))).* });
                 },
             }
+        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            return self.read_operand_cache(u8, virtual_addr);
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            return self.read_operand_cache(u8, virtual_addr);
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -852,6 +851,8 @@ pub const SH4 = struct {
                     ))).* });
                 },
             }
+        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+            return self.read_operand_cache(u16, virtual_addr);
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
@@ -859,9 +860,6 @@ pub const SH4 = struct {
         }
         if (addr >= 0x00710000 and addr <= 0x00710008) {
             return @truncate(self._dc.?.aica.read_rtc_register(addr));
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            return self.read_operand_cache(u16, virtual_addr);
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
@@ -872,30 +870,31 @@ pub const SH4 = struct {
     pub inline fn read32(self: @This(), virtual_addr: addr_t) u32 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
-        if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                else => {
-                    sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
-                    ))).* });
-                },
-            }
+        switch (virtual_addr) {
+            0xFF000000...0xFFFFFFFF => {
+                sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                    @constCast(&self)._get_memory(addr),
+                ))).* });
+            },
+            0x7C000000...0x7FFFFFFF => {
+                return self.read_operand_cache(u32, virtual_addr);
+            },
+            else => {},
         }
 
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                @constCast(&self)._get_memory(addr),
-            ))).* });
-        }
-
-        if (addr >= 0x00700000 and addr <= 0x00707FE0) {
-            return self._dc.?.aica.read_register(addr);
-        }
-        if (addr >= 0x00710000 and addr <= 0x00710008) {
-            return self._dc.?.aica.read_rtc_register(addr);
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            return self.read_operand_cache(u32, virtual_addr);
+        switch (addr) {
+            0x005F6800...0x005F7FFF => {
+                sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                    @constCast(&self)._get_memory(addr),
+                ))).* });
+            },
+            0x00700000...0x00707FE0 => {
+                return self._dc.?.aica.read_register(addr);
+            },
+            0x00710000...0x00710008 => {
+                return self._dc.?.aica.read_rtc_register(addr);
+            },
+            else => {},
         }
 
         return @as(*const u32, @alignCast(@ptrCast(
@@ -905,9 +904,20 @@ pub const SH4 = struct {
 
     pub inline fn read64(self: @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
-        return @as(*const u64, @alignCast(@ptrCast(
+
+        const r = @as(*const u64, @alignCast(@ptrCast(
             @constCast(&self)._get_memory(addr),
         ))).*;
+
+        // Small sanity check.
+        if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+            const low: u64 = self.read32(addr);
+            const high: u64 = self.read32(addr + 4);
+            const check = high << 32 | low;
+            std.debug.assert(check == r);
+        }
+
+        return r;
     }
 
     pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
@@ -922,8 +932,7 @@ pub const SH4 = struct {
                     sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u8, virtual_addr).* = value;
             return;
         }
@@ -937,12 +946,11 @@ pub const SH4 = struct {
                 },
             }
         }
-        if (addr >= 0x005F8000 and addr < 0x005FA000) {
-            @panic("write8 to GPU register not implemented");
-        }
-        if (addr >= 0x10000000 and addr < 0x14000000) {
-            @panic("write8 to TA not implemented");
-        }
+
+        // write8 to GPU registers not implemented
+        std.debug.assert(!(addr >= 0x005F8000 and addr <= 0x005FA000));
+        // write8 to TA not implemented
+        std.debug.assert(!(addr >= 0x10000000 and addr <= 0x14000000));
 
         @as(*u8, @alignCast(@ptrCast(
             self._get_memory(addr),
@@ -977,8 +985,7 @@ pub const SH4 = struct {
                     sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
                 },
             }
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u16, virtual_addr).* = value;
             return;
         }
@@ -990,12 +997,11 @@ pub const SH4 = struct {
                 },
             }
         }
-        if (addr >= 0x005F8000 and addr < 0x005FA000) {
-            @panic("write16 to GPU register not implemented");
-        }
-        if (addr >= 0x10000000 and addr < 0x14000000) {
-            @panic("write16 to TA not implemented");
-        }
+
+        // write16 to GPU registers not implemented
+        std.debug.assert(!(addr >= 0x005F8000 and addr <= 0x005FA000));
+        // write16 to TA not implemented
+        std.debug.assert(!(addr >= 0x10000000 and addr <= 0x14000000));
 
         @as(*u16, @alignCast(@ptrCast(
             self._get_memory(addr),
@@ -1016,80 +1022,79 @@ pub const SH4 = struct {
                     },
                 }
             }
-        }
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u32, virtual_addr).* = value;
             return;
         }
 
         const addr = virtual_addr & 0x1FFFFFFF;
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            // Hardware registers
-            switch (addr) {
-                @intFromEnum(MemoryRegister.SB_SFRES) => {
-                    // SB_SFRES, Software Reset
-                    if (value == 0x00007611) {
-                        self.software_reset();
-                    }
-                    return;
-                },
-                @intFromEnum(MemoryRegister.SB_ADST) => {
-                    if (value == 1) {
-                        self._dc.?.aica.start_dma(self._dc.?);
-                    }
-                },
-                @intFromEnum(MemoryRegister.SB_MDAPRO) => {
-                    // This register specifies the address range for Maple-DMA involving the system (work) memory.
-                    // Check "Security code"
-                    if (value & 0xFFFF0000 != 0x61550000) return;
-                },
-                @intFromEnum(MemoryRegister.SB_MDST) => {
-                    if (value == 1) {
-                        self._dc.?.start_maple_dma();
+        switch (addr) {
+            0x005F6800...0x005F7FFF => {
+                // Hardware registers
+                switch (addr) {
+                    @intFromEnum(MemoryRegister.SB_SFRES) => {
+                        // SB_SFRES, Software Reset
+                        if (value == 0x00007611) {
+                            self.software_reset();
+                        }
                         return;
-                    }
-                },
-                @intFromEnum(MemoryRegister.SB_ISTNRM) => {
-                    // Interrupt can be cleared by writing "1" to the corresponding bit.
-                    self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
-                    return;
-                },
-                @intFromEnum(MemoryRegister.SB_ISTERR) => {
-                    // Interrupt can be cleared by writing "1" to the corresponding bit.
-                    self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
-                    return;
-                },
-                @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
-                    self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
-                    return;
-                },
-                @intFromEnum(MemoryRegister.SB_C2DST) => {
-                    if (value == 1) {
-                        self._dc.?.start_ch2_dma();
-                    } else {
-                        self._dc.?.end_ch2_dma();
-                    }
-                    return;
-                },
-                else => {
-                    sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
-                },
-            }
-        }
-        if (addr >= 0x005F8000 and addr < 0x005FA000) {
-            return self._dc.?.gpu.write_register(addr, value);
-        }
-
-        if (addr >= 0x00700000 and addr < 0x00710000) {
-            return self._dc.?.aica.write_register(addr, value);
-        }
-
-        if (addr >= 0x00710000 and addr < 0x00710008) {
-            return self._dc.?.aica.write_rtc_register(addr, value);
-        }
-
-        if (addr >= 0x10000000 and addr < 0x14000000) {
-            return self._dc.?.gpu.write_ta(addr, value);
+                    },
+                    @intFromEnum(MemoryRegister.SB_ADST) => {
+                        if (value == 1) {
+                            self._dc.?.aica.start_dma(self._dc.?);
+                        }
+                    },
+                    @intFromEnum(MemoryRegister.SB_MDAPRO) => {
+                        // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                        // Check "Security code"
+                        if (value & 0xFFFF0000 != 0x61550000) return;
+                    },
+                    @intFromEnum(MemoryRegister.SB_MDST) => {
+                        if (value == 1) {
+                            self._dc.?.start_maple_dma();
+                            return;
+                        }
+                    },
+                    @intFromEnum(MemoryRegister.SB_ISTNRM) => {
+                        // Interrupt can be cleared by writing "1" to the corresponding bit.
+                        self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                        return;
+                    },
+                    @intFromEnum(MemoryRegister.SB_ISTERR) => {
+                        // Interrupt can be cleared by writing "1" to the corresponding bit.
+                        self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
+                        return;
+                    },
+                    @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
+                        self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+                        return;
+                    },
+                    @intFromEnum(MemoryRegister.SB_C2DST) => {
+                        if (value == 1) {
+                            self._dc.?.start_ch2_dma();
+                        } else {
+                            self._dc.?.end_ch2_dma();
+                        }
+                        return;
+                    },
+                    else => {
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    },
+                }
+            },
+            0x005F8000...0x005F9FFF => {
+                return self._dc.?.gpu.write_register(addr, value);
+            },
+            0x00700000...0x0070FFFF => {
+                return self._dc.?.aica.write_register(addr, value);
+            },
+            0x00710000...0x00710008 => {
+                return self._dc.?.aica.write_rtc_register(addr, value);
+            },
+            0x10000000...0x13FFFFFF => {
+                return self._dc.?.gpu.write_ta(addr, value);
+            },
+            else => {},
         }
 
         @as(*u32, @alignCast(@ptrCast(
