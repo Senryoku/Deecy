@@ -533,20 +533,23 @@ pub const Renderer = struct {
                     .usage = 0,
                     .size = .{ u_size, v_size },
                 };
-                // TODO: Fill with repeating texture data when v_size < u_size to avoid wrapping artifacts.
-                self._gctx.queue.writeTexture(
-                    .{
-                        .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
-                        .origin = .{ .z = @intCast(i) },
-                    },
-                    .{
-                        .bytes_per_row = u_size * 4,
-                        .rows_per_image = v_size,
-                    },
-                    .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
-                    u8,
-                    pixels,
-                );
+
+                // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
+                for (0..u_size / v_size) |part| {
+                    self._gctx.queue.writeTexture(
+                        .{
+                            .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
+                            .origin = .{ .y = @intCast(v_size * part), .z = @intCast(i) },
+                        },
+                        .{
+                            .bytes_per_row = u_size * 4,
+                            .rows_per_image = v_size,
+                        },
+                        .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                        u8,
+                        pixels,
+                    );
+                }
 
                 // Write to VRAM at the texture address a signpost value to detect if it has been overwritten (and our GPU texture is thus outdated).
                 // FIXME: Make sure this won't cause synchronization issues (Lock?).
