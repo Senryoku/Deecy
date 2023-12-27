@@ -384,12 +384,12 @@ pub const Renderer = struct {
 
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
-            .size = 4096 * @sizeOf(Vertex), // FIXME: Arbitrary size for testing
+            .size = 4 * 4096 * @sizeOf(Vertex), // FIXME: Arbitrary size for testing
         });
 
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = 16384 * @sizeOf(u32), // FIXME: Arbitrary size for testing
+            .size = 4 * 16384 * @sizeOf(u32), // FIXME: Arbitrary size for testing
         });
 
         // Create a depth texture and its 'view'.
@@ -1044,6 +1044,11 @@ pub const Renderer = struct {
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
                 // FIXME: Draw the passes in order.
+                //          Opaque
+                //          Punch Through (Same as opaque, but discarding pixels with alpha = 0.0, I think)
+                //          Opaque (and Punch Through) Modifier Volume
+                //          Translucent
+                //          Translucent Modifier Volume:
                 for (self.passes.items) |pass_metadata| {
                     switch (pass_metadata.pass_type) {
                         .Opaque, .PunchThrough => {
