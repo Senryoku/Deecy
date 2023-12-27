@@ -1070,6 +1070,7 @@ pub const SH4 = struct {
                     @intFromEnum(MemoryRegister.SB_ADST) => {
                         if (value == 1) {
                             self._dc.?.aica.start_dma(self._dc.?);
+                            return;
                         }
                     },
                     @intFromEnum(MemoryRegister.SB_MDAPRO) => {

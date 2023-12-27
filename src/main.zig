@@ -35,9 +35,25 @@ pub const std_options = struct {
 };
 
 var running = false;
+var draw_ui = true;
 
 fn trapa_handler() void {
     running = false;
+}
+
+fn glfw_key_callback(
+    window: *zglfw.Window,
+    key: zglfw.Key,
+    scancode: i32,
+    action: zglfw.Action,
+    mods: zglfw.Mods,
+) callconv(.C) void {
+    _ = window;
+    _ = scancode;
+    _ = mods;
+    if (key == .escape and action == .press) {
+        draw_ui = !draw_ui;
+    }
 }
 
 pub fn main() !void {
@@ -127,6 +143,8 @@ pub fn main() !void {
     };
     defer window.destroy();
 
+    _ = window.setKeyCallback(glfw_key_callback);
+
     const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
         //.present_mode = .mailbox,
     });
@@ -192,262 +210,264 @@ pub fn main() !void {
             gctx.swapchain_descriptor.height,
         );
 
-        if (zgui.begin("CPU State", .{})) {
-            zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
-            zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
-            zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
-            zgui.text("GBR: 0x{X:0>8}", .{dc.cpu.gbr});
-            zgui.text("VBR: 0x{X:0>8}", .{dc.cpu.vbr});
-            zgui.beginGroup();
-            for (0..8) |i| {
-                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
-            }
-            zgui.endGroup();
-            zgui.sameLine(.{});
-            zgui.beginGroup();
-            for (8..16) |i| {
-                zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
-            }
-            zgui.endGroup();
-
-            const range = 16; // In bytes.
-            const pc = dc.cpu.pc & 0x1FFFFFFF;
-            //              In RAM                                                                           In BootROM
-            var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
-            const end_addr = addr + range;
-            while (addr < end_addr) {
-                //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == dc.cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[dc.read16(@intCast(addr))]].name });
-                const disassembly = try sh4.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
-                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
-                addr += 2;
-            }
-
-            if (zgui.button(if (running) "Pause" else "Run", .{ .w = 200.0 })) {
-                running = !running;
-            }
-
-            if (zgui.button("Step", .{ .w = 200.0 })) {
-                dc.tick();
-            }
-
-            if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-                _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
-            } else {
-                zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in ReleaseFast builds!", .{});
-            }
-
-            for (0..breakpoints.items.len) |i| {
-                zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
-                zgui.sameLine(.{});
-                if (zgui.button("Remove", .{})) {
-                    _ = breakpoints.orderedRemove(i);
-                    break;
-                }
-            }
-            const static = struct {
-                var bp_addr: i32 = 0;
-            };
-            _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
-            zgui.sameLine(.{});
-            if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
-                try breakpoints.append(@as(u32, @intCast(static.bp_addr)) & 0x1FFFFFFF);
-            }
-        }
-        zgui.end();
-
-        if (zgui.begin("FPU", .{})) {
-            zgui.text("FPUL: {d: >8.4} | {d: >8.4} | {d: >8.4}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
-
-            zgui.spacing();
-
-            zgui.beginGroup();
-            for (0..8) |i| {
-                zgui.text("FR{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
-            }
-            zgui.endGroup();
-            zgui.sameLine(.{});
-            zgui.beginGroup();
-            for (8..16) |i| {
-                zgui.text("FR{d: <2}: {d: >12.4}", .{ i, dc.cpu.FR(@truncate(i)).* });
-            }
-            zgui.endGroup();
-
-            zgui.spacing();
-
-            zgui.beginGroup();
-            for (0..8) |i| {
-                zgui.text("XF{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
-            }
-            zgui.endGroup();
-            zgui.sameLine(.{});
-            zgui.beginGroup();
-            for (8..16) |i| {
-                zgui.text("XF{d: <2}: {d: >12.4}", .{ i, dc.cpu.XF(@truncate(i)).* });
-            }
-            zgui.endGroup();
-        }
-        zgui.end();
-
-        if (zgui.begin("Memory", .{})) {
-            const static = struct {
-                var start_addr: i32 = 0;
-                var edit_addr: i32 = 0;
-            };
-            if (zgui.inputInt("Start", .{ .v = &static.edit_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } })) {
-                static.start_addr = static.edit_addr;
-            }
-            var addr = @max(0, @as(u32, @intCast(static.start_addr & 0x1FFFFFFF)));
-            const end_addr = addr + 128;
-            zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
-            while (addr < end_addr) {
-                zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
-                    addr,
-                    dc.cpu.read8(@intCast(addr)),
-                    dc.cpu.read8(@intCast(addr + 1)),
-                    dc.cpu.read8(@intCast(addr + 2)),
-                    dc.cpu.read8(@intCast(addr + 3)),
-                    dc.cpu.read8(@intCast(addr + 4)),
-                    dc.cpu.read8(@intCast(addr + 5)),
-                    dc.cpu.read8(@intCast(addr + 6)),
-                    dc.cpu.read8(@intCast(addr + 7)),
-                });
-                addr += 8;
-            }
-
-            zgui.separator();
-
-            for (0..2) |sq| {
+        if (draw_ui) {
+            if (zgui.begin("CPU State", .{})) {
+                zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
+                zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
+                zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
+                zgui.text("GBR: 0x{X:0>8}", .{dc.cpu.gbr});
+                zgui.text("VBR: 0x{X:0>8}", .{dc.cpu.vbr});
+                zgui.beginGroup();
                 for (0..8) |i| {
-                    zgui.text("[SQ{d:0>1}] {X:0>8}", .{
-                        sq,
-                        dc.cpu.store_queues[sq][i],
-                    });
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
                 }
-            }
-        }
-        zgui.end();
+                zgui.endGroup();
+                zgui.sameLine(.{});
+                zgui.beginGroup();
+                for (8..16) |i| {
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
+                }
+                zgui.endGroup();
 
-        if (zgui.begin("Holly", .{})) {
-            const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
-            zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
+                const range = 16; // In bytes.
+                const pc = dc.cpu.pc & 0x1FFFFFFF;
+                //              In RAM                                                                           In BootROM
+                var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
+                const end_addr = addr + range;
+                while (addr < end_addr) {
+                    //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == dc.cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[dc.read16(@intCast(addr))]].name });
+                    const disassembly = try sh4.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
+                    zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
+                    addr += 2;
+                }
 
-            const FB_C_SOF: u32 = dc.gpu._get_register(u32, .FB_C_SOF).*;
-            const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;
-            const FB_W_SOF1: u32 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
-            const FB_W_SOF2: u32 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
-            const FB_R_CTRL: u32 = dc.gpu._get_register(u32, .FB_R_CTRL).*;
-            const FB_R_SOF1: u32 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
-            const FB_R_SOF2: u32 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
-            zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
-            zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
-            zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
-            zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
-            zgui.text("FB_R_CTRL: 0x{X:0>8}", .{FB_R_CTRL});
-            zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
-            zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
+                if (zgui.button(if (running) "Pause" else "Run", .{ .w = 200.0 })) {
+                    running = !running;
+                }
 
-            if (zgui.collapsingHeader("VRAM", .{})) {
-                const static = struct {
-                    var start_addr: i32 = 0x04200000;
-                    var format: i32 = 0x6;
-                    var twiddled: bool = false;
-                    var width: i32 = vram_width;
-                };
-                _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 0x8000, .flags = .{ .chars_hexadecimal = true } });
-                _ = zgui.inputInt("Format", .{ .v = &static.format, .step = 1, .flags = .{ .chars_hexadecimal = true } });
-                _ = zgui.inputInt("Width", .{ .v = &static.width, .step = 8 });
-                _ = zgui.checkbox("Twiddled", .{ .v = &static.twiddled });
-                static.format = std.math.clamp(static.format, 0, 0x6);
-                static.width = std.math.clamp(static.width, 8, vram_width);
-                const width: u32 = @intCast(static.width);
-                const bytes_per_pixels: u32 = if (static.format & 0b111 == 0x6) 4 else 2;
-                const start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
-                const end = std.math.clamp(start + bytes_per_pixels * width * vram_height, 0x04000000, 0x04800000);
-                zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
-                var i: u32 = 0;
-                var current_addr = start;
-                while (current_addr < end) {
-                    const pixel_idx: u32 = if (static.twiddled) RendererModule.to_tiddled_index(@intCast(i), width) else i;
-                    const addr: u32 = start + bytes_per_pixels * pixel_idx;
-                    if (addr >= 0x04800000 - bytes_per_pixels) break;
-                    switch (static.format & 0b111) {
-                        0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
-                            pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
-                            pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
-                            pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
-                            pixels[4 * i + 3] = 255; // FIXME: Not really.
-                            i += 1;
-                        },
-                        0x1 => { // 565 RGB 16 bit
-                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
-                            pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
-                            pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
-                            pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
-                            pixels[4 * i + 3] = 255;
-                            i += 1;
-                        },
-                        // ARGB 32-Bits
-                        0x6 => {
-                            pixels[4 * i + 0] = dc.cpu.read8(@intCast(addr + 3));
-                            pixels[4 * i + 1] = dc.cpu.read8(@intCast(addr + 2));
-                            pixels[4 * i + 2] = dc.cpu.read8(@intCast(addr + 1));
-                            pixels[4 * i + 3] = dc.cpu.read8(@intCast(addr + 0));
-                            i += 1;
-                        },
-                        else => {
-                            current_addr = end;
-                            zgui.text("Unsupported packed format: 0x{X:0>1}", .{static.format & 0b111});
-                        },
+                if (zgui.button("Step", .{ .w = 200.0 })) {
+                    dc.tick();
+                }
+
+                if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+                    _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });
+                } else {
+                    zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "Debug trace is not available in ReleaseFast builds!", .{});
+                }
+
+                for (0..breakpoints.items.len) |i| {
+                    zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, breakpoints.items[i] });
+                    zgui.sameLine(.{});
+                    if (zgui.button("Remove", .{})) {
+                        _ = breakpoints.orderedRemove(i);
+                        break;
                     }
-                    current_addr += bytes_per_pixels;
                 }
-
-                gctx.queue.writeTexture(
-                    .{ .texture = gctx.lookupResource(texture).? },
-                    .{
-                        .bytes_per_row = 4 * vram_width,
-                        .rows_per_image = vram_height,
-                    },
-                    .{ .width = width, .height = vram_height },
-                    u8,
-                    pixels,
-                );
-                const tex_id = gctx.lookupResource(texture_view).?;
-
-                zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
-            }
-        }
-        zgui.end();
-
-        if (zgui.begin("Renderer", .{})) {
-            zgui.text("Max Depth: {d: >4.2}", .{renderer.max_depth});
-            if (zgui.collapsingHeader("Textures", .{})) {
                 const static = struct {
-                    var index: i32 = 0;
-                    var scale: f32 = 1;
+                    var bp_addr: i32 = 0;
                 };
-                if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
-                    gctx.releaseResource(renderer_texture_view);
-                    static.index = std.math.clamp(static.index, 0, 255);
-                    renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
+                _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
+                zgui.sameLine(.{});
+                if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
+                    try breakpoints.append(@as(u32, @intCast(static.bp_addr)) & 0x1FFFFFFF);
                 }
-                if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
-                    static.scale = std.math.clamp(static.scale, 1.0, 8.0);
+            }
+            zgui.end();
+
+            if (zgui.begin("FPU", .{})) {
+                zgui.text("FPUL: {d: >8.4} | {d: >8.4} | {d: >8.4}", .{ @as(f32, @bitCast(dc.cpu.fpul)), dc.cpu.fpul, @as(i32, @bitCast(dc.cpu.fpul)) });
+
+                zgui.spacing();
+
+                zgui.beginGroup();
+                for (0..8) |i| {
+                    zgui.text("FR{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.FR(@truncate(i)).* });
                 }
-                const tex_id = gctx.lookupResource(renderer_texture_view).?;
-                zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
+                zgui.endGroup();
+                zgui.sameLine(.{});
+                zgui.beginGroup();
+                for (8..16) |i| {
+                    zgui.text("FR{d: <2}: {d: >12.4}", .{ i, dc.cpu.FR(@truncate(i)).* });
+                }
+                zgui.endGroup();
+
+                zgui.spacing();
+
+                zgui.beginGroup();
+                for (0..8) |i| {
+                    zgui.text("XF{d: <2}: {d: >12.4}  ", .{ i, dc.cpu.XF(@truncate(i)).* });
+                }
+                zgui.endGroup();
+                zgui.sameLine(.{});
+                zgui.beginGroup();
+                for (8..16) |i| {
+                    zgui.text("XF{d: <2}: {d: >12.4}", .{ i, dc.cpu.XF(@truncate(i)).* });
+                }
+                zgui.endGroup();
             }
-            if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
-                const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
-                zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
+            zgui.end();
+
+            if (zgui.begin("Memory", .{})) {
+                const static = struct {
+                    var start_addr: i32 = 0;
+                    var edit_addr: i32 = 0;
+                };
+                if (zgui.inputInt("Start", .{ .v = &static.edit_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } })) {
+                    static.start_addr = static.edit_addr;
+                }
+                var addr = @max(0, @as(u32, @intCast(static.start_addr & 0x1FFFFFFF)));
+                const end_addr = addr + 128;
+                zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
+                while (addr < end_addr) {
+                    zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
+                        addr,
+                        dc.cpu.read8(@intCast(addr)),
+                        dc.cpu.read8(@intCast(addr + 1)),
+                        dc.cpu.read8(@intCast(addr + 2)),
+                        dc.cpu.read8(@intCast(addr + 3)),
+                        dc.cpu.read8(@intCast(addr + 4)),
+                        dc.cpu.read8(@intCast(addr + 5)),
+                        dc.cpu.read8(@intCast(addr + 6)),
+                        dc.cpu.read8(@intCast(addr + 7)),
+                    });
+                    addr += 8;
+                }
+
+                zgui.separator();
+
+                for (0..2) |sq| {
+                    for (0..8) |i| {
+                        zgui.text("[SQ{d:0>1}] {X:0>8}", .{
+                            sq,
+                            dc.cpu.store_queues[sq][i],
+                        });
+                    }
+                }
             }
-            if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
-                const fb_tex_id = gctx.lookupResource(renderer.resized_framebuffer_texture_view).?;
-                zgui.image(fb_tex_id, .{ .w = @floatFromInt(gctx.swapchain_descriptor.width), .h = @floatFromInt(gctx.swapchain_descriptor.height) });
+            zgui.end();
+
+            if (zgui.begin("Holly", .{})) {
+                const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
+                zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
+
+                const FB_C_SOF: u32 = dc.gpu._get_register(u32, .FB_C_SOF).*;
+                const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;
+                const FB_W_SOF1: u32 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
+                const FB_W_SOF2: u32 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
+                const FB_R_CTRL: u32 = dc.gpu._get_register(u32, .FB_R_CTRL).*;
+                const FB_R_SOF1: u32 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
+                const FB_R_SOF2: u32 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
+                zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
+                zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
+                zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
+                zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
+                zgui.text("FB_R_CTRL: 0x{X:0>8}", .{FB_R_CTRL});
+                zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
+                zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
+
+                if (zgui.collapsingHeader("VRAM", .{})) {
+                    const static = struct {
+                        var start_addr: i32 = 0x04200000;
+                        var format: i32 = 0x6;
+                        var twiddled: bool = false;
+                        var width: i32 = vram_width;
+                    };
+                    _ = zgui.inputInt("Start", .{ .v = &static.start_addr, .step = 0x8000, .flags = .{ .chars_hexadecimal = true } });
+                    _ = zgui.inputInt("Format", .{ .v = &static.format, .step = 1, .flags = .{ .chars_hexadecimal = true } });
+                    _ = zgui.inputInt("Width", .{ .v = &static.width, .step = 8 });
+                    _ = zgui.checkbox("Twiddled", .{ .v = &static.twiddled });
+                    static.format = std.math.clamp(static.format, 0, 0x6);
+                    static.width = std.math.clamp(static.width, 8, vram_width);
+                    const width: u32 = @intCast(static.width);
+                    const bytes_per_pixels: u32 = if (static.format & 0b111 == 0x6) 4 else 2;
+                    const start: u32 = @intCast(std.math.clamp(static.start_addr, 0x04000000, 0x04800000));
+                    const end = std.math.clamp(start + bytes_per_pixels * width * vram_height, 0x04000000, 0x04800000);
+                    zgui.text("(VRAM addresses: {X:0>8} - {X:0>8})", .{ start, end });
+                    var i: u32 = 0;
+                    var current_addr = start;
+                    while (current_addr < end) {
+                        const pixel_idx: u32 = if (static.twiddled) RendererModule.to_tiddled_index(@intCast(i), width) else i;
+                        const addr: u32 = start + bytes_per_pixels * pixel_idx;
+                        if (addr >= 0x04800000 - bytes_per_pixels) break;
+                        switch (static.format & 0b111) {
+                            0x0, 0x3 => { // 0555 KRGB 16 bits
+                                const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
+                                pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
+                                pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
+                                pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                                pixels[4 * i + 3] = 255; // FIXME: Not really.
+                                i += 1;
+                            },
+                            0x1 => { // 565 RGB 16 bit
+                                const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
+                                pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
+                                pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
+                                pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
+                                pixels[4 * i + 3] = 255;
+                                i += 1;
+                            },
+                            // ARGB 32-Bits
+                            0x6 => {
+                                pixels[4 * i + 0] = dc.cpu.read8(@intCast(addr + 3));
+                                pixels[4 * i + 1] = dc.cpu.read8(@intCast(addr + 2));
+                                pixels[4 * i + 2] = dc.cpu.read8(@intCast(addr + 1));
+                                pixels[4 * i + 3] = dc.cpu.read8(@intCast(addr + 0));
+                                i += 1;
+                            },
+                            else => {
+                                current_addr = end;
+                                zgui.text("Unsupported packed format: 0x{X:0>1}", .{static.format & 0b111});
+                            },
+                        }
+                        current_addr += bytes_per_pixels;
+                    }
+
+                    gctx.queue.writeTexture(
+                        .{ .texture = gctx.lookupResource(texture).? },
+                        .{
+                            .bytes_per_row = 4 * vram_width,
+                            .rows_per_image = vram_height,
+                        },
+                        .{ .width = width, .height = vram_height },
+                        u8,
+                        pixels,
+                    );
+                    const tex_id = gctx.lookupResource(texture_view).?;
+
+                    zgui.image(tex_id, .{ .w = vram_width, .h = vram_height });
+                }
             }
+            zgui.end();
+
+            if (zgui.begin("Renderer", .{})) {
+                zgui.text("Max Depth: {d: >4.2}", .{renderer.max_depth});
+                if (zgui.collapsingHeader("Textures", .{})) {
+                    const static = struct {
+                        var index: i32 = 0;
+                        var scale: f32 = 1;
+                    };
+                    if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
+                        gctx.releaseResource(renderer_texture_view);
+                        static.index = std.math.clamp(static.index, 0, 255);
+                        renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
+                    }
+                    if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
+                        static.scale = std.math.clamp(static.scale, 1.0, 8.0);
+                    }
+                    const tex_id = gctx.lookupResource(renderer_texture_view).?;
+                    zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
+                }
+                if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
+                    const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
+                    zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
+                }
+                if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
+                    const fb_tex_id = gctx.lookupResource(renderer.resized_framebuffer_texture_view).?;
+                    zgui.image(fb_tex_id, .{ .w = @floatFromInt(gctx.swapchain_descriptor.width), .h = @floatFromInt(gctx.swapchain_descriptor.height) });
+                }
+            }
+            zgui.end();
         }
-        zgui.end();
 
         // FIXME: Just testing things, as always!
         const keybinds: [7]struct { zglfw.Key, MapleModule.ControllerButtons } = .{
@@ -507,22 +527,24 @@ pub fn main() !void {
         }
         renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
 
-        const commands = commands: {
-            const encoder = gctx.device.createCommandEncoder(null);
-            defer encoder.release();
+        if (draw_ui) {
+            const commands = commands: {
+                const encoder = gctx.device.createCommandEncoder(null);
+                defer encoder.release();
 
-            // GUI pass
-            {
-                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                defer zgpu.endReleasePass(pass);
-                zgui.backend.draw(pass);
-            }
+                // GUI pass
+                {
+                    const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+                    defer zgpu.endReleasePass(pass);
+                    zgui.backend.draw(pass);
+                }
 
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
+                break :commands encoder.finish(null);
+            };
+            defer commands.release();
 
-        gctx.submit(&.{commands});
+            gctx.submit(&.{commands});
+        }
 
         if (gctx.present() == .swap_chain_resized) {
             renderer.on_resize();
