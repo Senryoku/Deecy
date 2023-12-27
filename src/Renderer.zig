@@ -611,9 +611,8 @@ pub const Renderer = struct {
                         },
                         0x1 => { // 565 RGB
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            // FIXME: I think there's something wrong with FB_R_CTRL.concat here.
                             pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | FB_R_CTRL.concat & 0b11;
+                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                             pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
@@ -626,10 +625,9 @@ pub const Renderer = struct {
                         },
                         0x3 => { // 0888 RGB 32 bit
                             const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
-                            // FIXME: This feels backward (remember, our textures are BGRA format)... But it's the best result in can get for the splash screen for now.
-                            pixels[pixel_idx * 4 + 0] = pixel[1];
-                            pixels[pixel_idx * 4 + 1] = pixel[2];
-                            pixels[pixel_idx * 4 + 2] = pixel[3];
+                            pixels[pixel_idx * 4 + 0] = pixel[0];
+                            pixels[pixel_idx * 4 + 1] = pixel[1];
+                            pixels[pixel_idx * 4 + 2] = pixel[2];
                             pixels[pixel_idx * 4 + 3] = 255;
                         },
                     }
