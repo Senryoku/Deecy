@@ -200,17 +200,19 @@ pub fn main() !void {
     var renderer = Renderer.init(common.GeneralAllocator, gctx);
     defer renderer.deinit();
 
-    var renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = 0, .array_layer_count = 1 });
+    var renderer_texture_views: [8]zgpu.TextureViewHandle = undefined;
+    for (0..renderer_texture_views.len) |i|
+        renderer_texture_views[i] = gctx.createTextureView(renderer.texture_arrays[i], .{ .dimension = .tvdim_2d, .base_array_layer = 0, .array_layer_count = 1 });
 
     while (!window.shouldClose()) {
         zglfw.pollEvents();
 
-        zgui.backend.newFrame(
-            gctx.swapchain_descriptor.width,
-            gctx.swapchain_descriptor.height,
-        );
-
         if (draw_ui) {
+            zgui.backend.newFrame(
+                gctx.swapchain_descriptor.width,
+                gctx.swapchain_descriptor.height,
+            );
+
             if (zgui.begin("CPU State", .{})) {
                 zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
                 zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
@@ -444,18 +446,28 @@ pub fn main() !void {
                 if (zgui.collapsingHeader("Textures", .{})) {
                     const static = struct {
                         var index: i32 = 0;
-                        var scale: f32 = 1;
+                        var scale: f32 = 512.0 / 8.0;
+                        var size: i32 = 0;
                     };
+                    if (zgui.inputInt("Size", .{ .v = &static.size, .step = 1 })) {
+                        static.size = std.math.clamp(static.size, 0, @as(i32, @intCast(renderer_texture_views.len - 1)));
+                        static.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(static.size))));
+                        static.index = std.math.clamp(static.index, 0, Renderer.MaxTextures[@intCast(static.size)] - 1);
+                        gctx.releaseResource(renderer_texture_views[@intCast(static.size)]);
+                        renderer_texture_views[@intCast(static.size)] = gctx.createTextureView(renderer.texture_arrays[@intCast(static.size)], .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
+                    }
+                    zgui.sameLine(.{});
+                    zgui.text("{d: >3}x{d: >3}", .{ @as(u32, 8) << @intCast(static.size), @as(u32, 8) << @intCast(static.size) });
                     if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
-                        gctx.releaseResource(renderer_texture_view);
-                        static.index = std.math.clamp(static.index, 0, 255);
-                        renderer_texture_view = gctx.createTextureView(renderer.texture_array, .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
+                        static.index = std.math.clamp(static.index, 0, Renderer.MaxTextures[@intCast(static.size)] - 1);
+                        gctx.releaseResource(renderer_texture_views[@intCast(static.size)]);
+                        renderer_texture_views[@intCast(static.size)] = gctx.createTextureView(renderer.texture_arrays[@intCast(static.size)], .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
                     }
                     if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
                         static.scale = std.math.clamp(static.scale, 1.0, 8.0);
                     }
-                    const tex_id = gctx.lookupResource(renderer_texture_view).?;
-                    zgui.image(tex_id, .{ .w = static.scale * 1024, .h = static.scale * 1024 });
+                    const tex_id = gctx.lookupResource(renderer_texture_views[@intCast(static.size)]).?;
+                    zgui.image(tex_id, .{ .w = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))), .h = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))) });
                 }
                 if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
                     const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;

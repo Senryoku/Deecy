@@ -8,14 +8,27 @@ struct VertexOut {
      @location(2) @interpolate(flat) tex: vec2<u32>,
  }
 
+fn tex_size(idx: u32) -> f32 {
+    switch(idx & 7)  {
+        case 0: { return 8.0; }
+        case 1: { return 16.0; }
+        case 2: { return 32.0; }
+        case 3: { return 64.0; }
+        case 4: { return 128.0; }
+        case 5: { return 256.0; }
+        case 6: { return 512.0; }
+        case 7: { return 1024.0; }
+        default: { return 8.0; }
+    }
+}
+
 @vertex
 fn main(
     @location(0) position: vec3<f32>,
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) tex: vec2<u32>,
-    @location(4) tex_size: vec2<u32>, // u16 doesn't exist in WGSL, apparently.
-    @location(5) uv_offset: vec2<f32>, // TODO
+    @location(3) tex: vec2<u32>, // Texture index and Texture control word
+    @location(4) uv_offset: vec2<f32>, // TODO
 ) -> VertexOut {
     var output: VertexOut;
 
@@ -30,7 +43,11 @@ fn main(
     output.position_clip.w = 1.0;
 
     output.color = color;
-    output.uv = vec2<f32>(tex_size) / 1024.0 * uv ; // Adjust for the actual texture size (We're storing everything in 1024x1024 texture for now.)
+
+    let u_size: f32 = tex_size((tex[1] >> 4) & 7);
+    let v_size: f32 = tex_size((tex[1] >> 7) & 7);
+
+    output.uv = vec2<f32>(1.0, v_size / u_size) * uv ;
     output.tex = tex;
 
     return output;
