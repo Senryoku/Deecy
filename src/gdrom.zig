@@ -122,6 +122,23 @@ const ScheduledEvent = struct {
     status: StatusRegister,
 };
 
+const SPIPacketCommandCode = enum(u8) {
+    TestUnit = 0x00, // Verify access readiness
+    ReqStat = 0x10, // Get CD status
+    ReqMode = 0x11, // Get various settings
+    SetMode = 0x12, // Make various settings
+    ReqError = 0x13, // Get error details
+    GetToC = 0x14, // Get all TOC data
+    ReqSes = 0x15, // Get specified session data
+    CDOpen = 0x16, // Open tray
+    CDPlay = 0x20, // Play CD
+    CDSeek = 0x21, // Seek for playback position
+    CDScan = 0x22, // Perform scan
+    CDRead = 0x30, // Read CD
+    CDRead2 = 0x31, // CD read (pre-read position)
+    GetSCD = 0x40, // Get subcode
+};
+
 pub const GDROM = struct {
     disk: GDI = .{},
 
@@ -197,16 +214,40 @@ pub const GDROM = struct {
                 self.status_register.drq = 0;
                 return val;
             },
+            .GD_Data => {
+                if (self.data_queue.count == 0) {
+                    gdrom_log.warn(termcolor.yellow("  Error: Read to Data while data_queue is empty (@{X:0>8})."), .{addr});
+                    return 0;
+                }
+                gdrom_log.debug("  Read to Data FIFO.", .{});
+                if (T == u8) {
+                    return self.data_queue.readItem().?;
+                } else if (T == u16) {
+                    const low = self.data_queue.readItem().?;
+                    const high = self.data_queue.readItem().?;
+                    return @as(u16, low) | (@as(u16, high) << 8);
+                } else {
+                    std.debug.assert(false);
+                }
+                return 0;
+            },
             .GD_InterruptReason_SectorCount => {
                 gdrom_log.debug("  Read Interrupt Reason @{X:0>8} = 0x{X:0>8}", .{ addr, 0b10 });
                 return @intCast(@as(u8, @bitCast(self.interrupt_reason_register)));
             },
+            .GD_SectorNumber => {
+                gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Read to SectorNumber @{X:0>8}"), .{addr});
+                // TODO: See REQ_STAT
+                //  7  6  5  4  | 3  2  1  0
+                //  Disc Format |   Status
+                return 0x82;
+            },
             .GD_ByteCountLow => {
-                gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, self.byte_count });
+                gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, @as(u8, @truncate(self.byte_count)) });
                 return @as(u8, @truncate(self.byte_count));
             },
             .GD_ByteCountHigh => {
-                gdrom_log.debug("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, self.byte_count });
+                gdrom_log.debug("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, @as(u8, @truncate(self.byte_count >> @intCast(8))) });
                 return @as(u8, @truncate(self.byte_count >> @intCast(8)));
             },
             .GD_DriveSelect => {
@@ -222,7 +263,6 @@ pub const GDROM = struct {
 
     pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
-        gdrom_log.debug("  write_register @{X:0>8} = 0x{X:0>8}", .{ addr, value });
         switch (@as(MemoryRegister, @enumFromInt(addr))) {
             .GD_Status_Command => {
                 self.status_register.check = 0;
@@ -252,7 +292,7 @@ pub const GDROM = struct {
                         self.packet_command_idx = 0;
 
                         self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                            .cycles = 20, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
                         };
                     },
@@ -303,6 +343,9 @@ pub const GDROM = struct {
                     },
                 }
             },
+            .GD_Error_Features => {
+                gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to Features @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
+            },
             .GD_InterruptReason_SectorCount => {
                 gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorCount @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
             },
@@ -324,16 +367,76 @@ pub const GDROM = struct {
                     self.packet_command[self.packet_command_idx] = value;
                     self.packet_command_idx += 1;
                 } else if (T == u16) {
-                    self.packet_command[self.packet_command_idx] = @truncate(value >> 8);
-                    self.packet_command[self.packet_command_idx + 1] = @truncate(value);
+                    self.packet_command[self.packet_command_idx] = @truncate(value);
+                    self.packet_command[self.packet_command_idx + 1] = @truncate(value >> 8);
                     self.packet_command_idx += 2;
                 } else {
                     std.debug.assert(false);
                 }
                 if (self.packet_command_idx >= 12) {
+                    self.packet_command_idx = 0;
+
                     self.status_register.bsy = 1;
                     self.status_register.drq = 0;
-                    gdrom_log.warn(termcolor.yellow("  TODO: Start DMA!"), .{});
+                    gdrom_log.warn(termcolor.yellow("  TODO: Handle SPI Packet!"), .{});
+
+                    self.interrupt_reason_register.io = 1;
+                    self.interrupt_reason_register.cod = 1;
+
+                    for (0..6) |i| {
+                        gdrom_log.debug("      {X:0>2} {X:0>2}", .{ self.packet_command[2 * i + 0], self.packet_command[2 * i + 1] });
+                    }
+
+                    switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
+                        .TestUnit => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit"), .{});
+                            self.byte_count = 0;
+                        },
+                        .ReqStat => {
+                            self.req_stat();
+                        },
+                        .ReqMode => {
+                            self.req_mode();
+                        },
+                        .SetMode => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode"), .{});
+                        },
+                        .ReqError => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqError"), .{});
+                        },
+                        .GetToC => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetTOC"), .{});
+                        },
+                        .CDOpen => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen"), .{});
+                        },
+                        .CDPlay => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay"), .{});
+                        },
+                        .CDSeek => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek"), .{});
+                        },
+                        .CDScan => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan"), .{});
+                        },
+                        .CDRead => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead"), .{});
+                        },
+                        .CDRead2 => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2"), .{});
+                        },
+                        .GetSCD => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetSCD"), .{});
+                        },
+                        else => {
+                            gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]});
+                        },
+                    }
+
+                    self.scheduled_event = .{
+                        .cycles = 200, // FIXME: Random value
+                        .status = .{ .bsy = 0, .drq = 1 },
+                    };
                 }
             },
             else => {
@@ -351,6 +454,51 @@ pub const GDROM = struct {
         self.status_register.bsy = 0;
         // TODO:
         //   Asserting the INTRQ signal
+    }
+
+    fn req_stat(self: *@This()) void {
+        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqStat"), .{});
+        const start_addr = self.packet_command[2];
+        _ = start_addr;
+        const alloc_length = self.packet_command[4];
+        _ = alloc_length;
+        // 0 |  0 0 0 0 STATUS
+        // 1 |  Disc Format Repeat Count
+        // 2 |  Address Control
+        // 3 |  TNO
+        // 4 |  X
+        // 5 |  FAD
+        // 6 |  FAD
+        // 7 |  FAD
+        // 8 |  Max Read Error Retry Times
+        // 9 |  0 0 0 0 0 0 0 0
+    }
+
+    fn req_mode(self: *@This()) void {
+        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqMode"), .{});
+        const start_addr = self.packet_command[2];
+        _ = start_addr;
+        const alloc_length = self.packet_command[4];
+
+        if (alloc_length > 0) {
+            self.data_queue.writeItemAssumeCapacity(0);
+            self.data_queue.writeItemAssumeCapacity(0);
+            self.data_queue.writeItemAssumeCapacity(0); // CDROM Speed, 00 = Max. speed
+            self.data_queue.writeItemAssumeCapacity(0);
+            self.data_queue.writeItemAssumeCapacity(0); // Standby Time
+            self.data_queue.writeItemAssumeCapacity(0xB4); // Standby Time, 0xB4 is default
+            self.data_queue.writeItemAssumeCapacity(0b00011001); // From MSB to LSB : 0 0 [Read Continuous] [ECC (Option)] [Read Retry] 0 0 [Form2 Read Retry]
+            self.data_queue.writeItemAssumeCapacity(0);
+            self.data_queue.writeItemAssumeCapacity(0);
+            self.data_queue.writeItemAssumeCapacity(0x08); // Read Retry Times, default is 0x08
+            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // Drive Information (ASCII)
+            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Version (ASCII)
+            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Date (ASCII
+
+            self.byte_count = 32;
+        } else {
+            self.byte_count = 0;
+        }
     }
 
     // HLE - Used by the BIOS syscalls
