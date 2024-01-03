@@ -29,9 +29,25 @@ pub const SB_ADSUSP = packed struct(u32) {
 
 const AICARegisterStart = 0x00700000;
 
+// Some potential memory-mapped registers, I'm really not sure what to do with this yet.
+const AICAMemoryRegister = enum(u32) {
+    REG_BUS_REQUEST = 0x00802808,
+    REG_ARM_INT_ENABLE = 0x0080289c,
+    REG_ARM_INT_SEND = 0x008028a0,
+    REG_ARM_INT_RESET = 0x008028a4,
+    REG_ARM_FIQ_BIT_0 = 0x008028a8,
+    REG_ARM_FIQ_BIT_1 = 0x008028ac,
+    REG_ARM_FIQ_BIT_2 = 0x008028b0,
+    REG_SH4_INT_ENABLE = 0x008028b4,
+    REG_SH4_INT_SEND = 0x008028b8,
+    REG_SH4_INT_RESET = 0x008028bc,
+    REG_ARM_FIQ_CODE = 0x00802d00,
+    REG_ARM_FIQ_ACK = 0x00802d04,
+};
+
 pub const AICA = struct {
     regs: []u32 = undefined, // All registers are 32-bit afaik
-    wave_memory: []u8 = undefined,
+    wave_memory: []u8 align(4) = undefined,
 
     rtc_write_enabled: bool = false,
 
@@ -50,6 +66,23 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self._allocator.free(self.regs);
         self._allocator.free(self.wave_memory);
+    }
+
+    pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
+        switch (addr) {
+            0x0080005C => {
+                return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
+            },
+            else => {},
+        }
+        return @as(*T, @alignCast(@ptrCast(&self.wave_memory[addr - 0x00800000]))).*;
+    }
+
+    pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
+        switch (addr) {
+            else => {},
+        }
+        @as(*T, @alignCast(@ptrCast(&self.wave_memory[addr - 0x00800000]))).* = value;
     }
 
     pub fn read_register(self: *const AICA, addr: u32) u32 {

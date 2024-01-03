@@ -28,13 +28,14 @@ pub const std_options = struct {
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
+        .{ .scope = .aica, .level = .info },
         .{ .scope = .holy, .level = .info },
-        .{ .scope = .gdrom, .level = .info },
+        .{ .scope = .gdrom, .level = .debug },
         .{ .scope = .renderer, .level = .info },
     };
 };
 
-var running = false;
+var running = true;
 var draw_ui = true;
 
 fn trapa_handler() void {
@@ -70,6 +71,8 @@ pub fn main() !void {
 
     var gdi_path: ?[]const u8 = null;
 
+    var skip_bios = false;
+
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
     while (args.next()) |arg| {
@@ -100,6 +103,13 @@ pub fn main() !void {
         if (std.mem.eql(u8, arg, "-d")) {
             dc.cpu.debug_trace = true;
         }
+        if (std.mem.eql(u8, arg, "--skip-bios")) {
+            skip_bios = true;
+        }
+    }
+
+    if (gdi_path != null) {
+        try dc.gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
     }
 
     if (binary_path != null) {
@@ -118,9 +128,8 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     } else if (gdi_path != null) {
-        dc.skip_bios();
-
-        try dc.gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
+        if (skip_bios)
+            dc.skip_bios();
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
@@ -128,10 +137,12 @@ pub fn main() !void {
 
         syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
-        // Boot to menu
-        dc.skip_bios();
-        // Skip IP.bin (Maybe we should bundle one to load here).
-        dc.cpu.pc = 0xAC010000;
+        if (skip_bios) {
+            // Boot to menu
+            dc.skip_bios();
+            // Skip IP.bin (Maybe we should bundle one to load here).
+            dc.cpu.pc = 0xAC010000;
+        }
     }
 
     try zglfw.init();
@@ -272,6 +283,21 @@ pub fn main() !void {
                 zgui.sameLine(.{});
                 if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
                     try breakpoints.append(@as(u32, @intCast(static.bp_addr)) & 0x1FFFFFFF);
+                }
+
+                const timers = .{
+                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT0, .control = MemoryRegisters.P4MemoryRegister.TCR0, .constant = MemoryRegisters.P4MemoryRegister.TCOR0 },
+                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT1, .control = MemoryRegisters.P4MemoryRegister.TCR1, .constant = MemoryRegisters.P4MemoryRegister.TCOR1 },
+                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT2, .control = MemoryRegisters.P4MemoryRegister.TCR2, .constant = MemoryRegisters.P4MemoryRegister.TCOR2 },
+                };
+                const TSTR = dc.cpu.read_p4_register(u32, .TSTR);
+                inline for (0..3) |i| {
+                    zgui.beginGroup();
+                    const control = dc.cpu.read_p4_register(MemoryRegisters.TCR, timers[i].control);
+                    zgui.text("Timer {d:0>1}: Enabled: {any}", .{ i, ((TSTR >> i) & 1) == 1 });
+                    zgui.text("  0x{X:0>8}/0x{X:0>8}", .{ dc.cpu.read_p4_register(u32, timers[i].counter), dc.cpu.read_p4_register(u32, timers[i].constant) });
+                    zgui.text("  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} ICPE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.icpe, control.unf });
+                    zgui.endGroup();
                 }
             }
             zgui.end();

@@ -145,9 +145,17 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             //         -1 - request has failed (examine extended status information for cause of failure)
             dc.cpu.R(0).* = dc.gdrom.check_command(dc.cpu.R(4).*);
             for (0..4) |i| {
-                dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.result[i]);
+                dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.hle_result[i]);
             }
-            std.log.debug("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(0).*, dc.gdrom.result[0], dc.gdrom.result[1], dc.gdrom.result[2], dc.gdrom.result[3] });
+            std.log.debug("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
+                dc.cpu.R(4).*,
+                dc.cpu.R(5).*,
+                dc.cpu.R(0).*,
+                dc.gdrom.hle_result[0],
+                dc.gdrom.hle_result[1],
+                dc.gdrom.hle_result[2],
+                dc.gdrom.hle_result[3],
+            });
         },
         2 => {
             // GDROM_MAINLOOP
@@ -171,7 +179,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
             std.log.debug("  GDROM_CHECK_DRIVE", .{});
-            dc.cpu.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.status)); // GDROM status. 0x2 => Standby.
+            dc.cpu.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.hle_status)); // GDROM status. 0x2 => Standby.
             dc.cpu.write32(dc.cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             dc.cpu.R(0).* = 0;
         },

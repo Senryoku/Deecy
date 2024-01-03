@@ -52,7 +52,7 @@ pub const Dreamcast = struct {
             .gpu = try Holly.init(allocator),
             .aica = try AICA.init(allocator),
             .maple = MapleHost.init(),
-            .gdrom = GDROM.init(),
+            .gdrom = GDROM.init(allocator),
             .ram = try allocator.alloc(u8, 16 * 1024 * 1024),
             .hardware_registers = try allocator.alloc(u8, 0x200000), // FIXME: Huge waste of memory.
             ._allocator = allocator,
@@ -78,6 +78,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.gdrom.deinit();
         self.aica.deinit();
         self.gpu.deinit();
         self.cpu.deinit();
@@ -221,6 +222,7 @@ pub const Dreamcast = struct {
 
     pub fn tick(self: *@This()) void {
         const cycles = self.cpu.execute();
+        self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
     }

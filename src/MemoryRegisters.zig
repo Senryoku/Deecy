@@ -218,7 +218,7 @@ pub const MemoryRegister = enum(u32) {
     GD_InterruptReason_SectorCount = 0x005F7088,
     GD_SectorNumber = 0x005F708C,
     GD_ByteCountLow = 0x005F7090,
-    GD_ByteCountLowHigh = 0x005F7094,
+    GD_ByteCountHigh = 0x005F7094,
     GD_DriveSelect = 0x005F7098,
     GD_Status_Command = 0x005F709C, // Read: Status, Write: Command
 

@@ -141,7 +141,10 @@ pub const GDI = struct {
             defer self._allocator.free(track_file_path);
             const track_file = try std.fs.cwd().openFile(track_file_path, .{});
             defer track_file.close();
+
+            // NOTE: Use MMAP on non-windows platforms?
             const track_data = try track_file.readToEndAlloc(self._allocator, 4 * 1024 * 1024 * 1024);
+
             self.tracks.items[num - 1] = (.{
                 .num = num,
                 .offset = offset,

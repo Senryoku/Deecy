@@ -714,21 +714,31 @@ pub const SH4 = struct {
             },
 
             0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-                switch (addr) {
+                // NOTE: I think 0x02000000-0x03FFFFFF is a mirror of 0x00000000-0x01FFFFFF
+                //       0x03000000-0x03FFFFFF is definitely a mirror of 0x01000000-0x01FFFFFF
+                //       See page 232 of DreamcastDevBoxSystemArchitecture.pdf for the peripheral registers.
+                const area_0_addr = addr & 0x01FFFFFF;
+                switch (area_0_addr) {
                     0x00000000...0x001FFFFF => {
-                        return &self._dc.?.boot[addr];
+                        return &self._dc.?.boot[area_0_addr];
                     },
                     0x00200000...0x0021FFFF => {
-                        return &self._dc.?.flash[addr - 0x200000];
+                        return &self._dc.?.flash[area_0_addr - 0x200000];
                     },
-                    0x005F6800...0x005F7FFF => {
-                        return self._dc.?.hw_register_addr(u8, addr);
+                    0x005F6800...0x005F6FFF => {
+                        return self._dc.?.hw_register_addr(u8, area_0_addr);
+                    },
+                    0x005F7000...0x005F709C => {
+                        @panic("_get_memory to GDROM Register. This should be handled in read/write functions.");
+                    },
+                    0x005F709D...0x005F7FFF => {
+                        return self._dc.?.hw_register_addr(u8, area_0_addr);
                     },
                     0x005F8000...0x005F9FFF => {
-                        return self._dc.?.gpu._get_register_from_addr(u8, addr);
+                        return self._dc.?.gpu._get_register_from_addr(u8, area_0_addr);
                     },
                     0x005FA000...0x005FFFFF => {
-                        return self._dc.?.hw_register_addr(u8, addr);
+                        return self._dc.?.hw_register_addr(u8, area_0_addr);
                     },
                     0x00600000...0x006007FF => {
                         const static = struct {
@@ -747,10 +757,22 @@ pub const SH4 = struct {
                         @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
                     },
                     0x00800000...0x009FFFFF => { // G2 Wave Memory
-                        return &self._dc.?.aica.wave_memory[addr - 0x00800000];
+                        @panic("_get_memory to AICA Wave Memory. This should be handled in read/write functions.");
+                    },
+                    0x01000000...0x01FFFFFF => { // Expansion Devices
+                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+
+                        // FIXME: TEMP DEBUG: Crazy Taxi accesses 030100C0 (010100C0) and 030100A0 (010100A0)
+                        //        And 0101003C to 0101007C, and 01010014, and 01010008
+                        // self.on_trapa.?();
+
+                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
+                        return @ptrCast(&self._dc.?._dummy);
                     },
                     else => {
-                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8}"), .{addr});
+                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+
+                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dc.?._dummy);
                     },
                 }
@@ -801,7 +823,11 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+            if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+                return self._dc.?.gdrom.read_register(u8, addr);
+            } else {
+                sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+            }
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
@@ -869,7 +895,11 @@ pub const SH4 = struct {
         }
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+            if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+                return self._dc.?.gdrom.read_register(u16, addr);
+            } else {
+                sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+            }
         }
         if (addr >= 0x00710000 and addr <= 0x00710008) {
             return @truncate(self._dc.?.aica.read_rtc_register(addr));
@@ -897,15 +927,35 @@ pub const SH4 = struct {
 
         switch (addr) {
             0x005F6800...0x005F7FFF => {
-                sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                    @constCast(&self)._get_memory(addr),
-                ))).* });
+                switch (addr) {
+                    @intFromEnum(MemoryRegister.SB_ADSUSP), @intFromEnum(MemoryRegister.SB_E1SUSP), @intFromEnum(MemoryRegister.SB_E2SUSP), @intFromEnum(MemoryRegister.SB_DDSUSP) => {
+                        // DMA status, always report transfer possible and not in progress.
+                        //    Bit 5: DMA Request Input State
+                        //      0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
+                        //      1: The DMA transfer request is low (transfer possible)
+                        //    Bit 4: DMA Suspend or DMA Stop
+                        //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
+                        //      1: DMA transfer has ended, or is stopped due to a suspen
+                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                            @constCast(&self)._get_memory(addr),
+                        ))).* });
+                        return 0x30;
+                    },
+                    else => {
+                        sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                            @constCast(&self)._get_memory(addr),
+                        ))).* });
+                    },
+                }
             },
             0x00700000...0x00707FE0 => {
                 return self._dc.?.aica.read_register(addr);
             },
             0x00710000...0x00710008 => {
                 return self._dc.?.aica.read_rtc_register(addr);
+            },
+            0x00800000...0x00FFFFFF => {
+                return self._dc.?.aica.read_mem(u32, addr);
             },
             else => {},
         }
@@ -963,6 +1013,9 @@ pub const SH4 = struct {
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             // Hardware registers
             switch (addr) {
+                0x005F7000...0x005F709C => {
+                    return self._dc.?.gdrom.write_register(u8, addr, value);
+                },
                 else => {
                     sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
@@ -1020,6 +1073,9 @@ pub const SH4 = struct {
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
+                0x005F7000...0x005F70A0 => {
+                    return self._dc.?.gdrom.write_register(u16, addr, value);
+                },
                 else => {
                     sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
                 },
@@ -1119,6 +1175,9 @@ pub const SH4 = struct {
             },
             0x00710000...0x00710008 => {
                 return self._dc.?.aica.write_rtc_register(addr, value);
+            },
+            0x00800000...0x00FFFFFF => {
+                return self._dc.?.aica.write_mem(u32, addr, value);
             },
             0x10000000...0x13FFFFFF => {
                 return self._dc.?.gpu.write_ta(addr, value);
