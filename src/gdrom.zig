@@ -173,12 +173,9 @@ pub const GDROM = struct {
     _next_command_id: u32 = 1,
     _current_command_id: u32 = 0,
 
-    _dc: *Dreamcast,
-
-    pub fn init(_: std.mem.Allocator, dc: *Dreamcast) GDROM {
+    pub fn init(_: std.mem.Allocator) GDROM {
         var gdrom = GDROM{
             .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 1024 }).init(),
-            ._dc = dc,
         };
         gdrom.reinit();
         return gdrom;
@@ -230,7 +227,6 @@ pub const GDROM = struct {
                     return 0;
                 }
                 gdrom_log.debug("  Read({any}) to Data FIFO.", .{T});
-                self._dc.cpu.on_trapa.?();
                 if (T == u8) {
                     return self.data_queue.readItem().?;
                 } else if (T == u16) {
