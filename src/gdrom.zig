@@ -411,7 +411,7 @@ pub const GDROM = struct {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqError"), .{});
                         },
                         .GetToC => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetTOC"), .{});
+                            self.get_toc();
                         },
                         .CDOpen => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen"), .{});
@@ -508,6 +508,85 @@ pub const GDROM = struct {
 
         if (alloc_length > 0) {
             self.data_queue.writeAssumeCapacity(response[start_addr..][0..alloc_length]);
+        }
+        self.byte_count = alloc_length;
+    }
+
+    fn get_toc(self: *@This()) void {
+        gdrom_log.debug(" GDROM PacketCommand GetToC", .{});
+        // Selects the type of volume.
+        //   0: Get TOC information from single-density area.
+        //   1: Get TOC information from double-density area
+        const select = self.packet_command[1] & 1;
+        _ = select;
+        const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
+
+        if (alloc_length > 0) {
+            for (self.disk.tracks.items) |*track| {
+                // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
+                //   0h No sub Q channel mode information
+                //   1h Sub Q channel indicates current position.
+                //   (Example: track, index, absolute address, relative address)
+                //   2h Sub Q channel indicates media catalog number.
+                //   3h Sub Q channel indicates ISRC code.
+                //   4h~Fh Reserved
+                const adr: u4 = 0;
+                // Control: This item indicates the type of track.
+                //  Bit | If 0                                    | If 1
+                //   0  | Audio data without pre-emphasis (CD-DA) | Audio data with pre-emphasis (CD-DA)
+                //      | At-once recorded track (CD-ROM)         | Packet-recorded track (CD-ROM)
+                //   1  | Digital copy prohibited                 | Digital copy allowed
+                //   2  | Audio track                             | Data track
+                //   3  | 2-channel audio                         | 4-channel audio
+                const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 16));
+                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
+                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
+            }
+            for (self.disk.tracks.items.len..100) |_| {
+                self.data_queue.writeItemAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
+            }
+            if (self.disk.tracks.items.len > 0) {
+                {
+                    const track = self.disk.tracks.items[0];
+                    const adr: u4 = 0;
+                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                    self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                }
+                {
+                    const track = self.disk.tracks.items[self.disk.tracks.items.len - 1];
+                    const adr: u4 = 0;
+                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                    self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                }
+                // TODO: Lead Out Information
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+            } else {
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0);
+            }
         }
         self.byte_count = alloc_length;
     }
