@@ -219,7 +219,7 @@ pub const GDROM = struct {
                     gdrom_log.warn(termcolor.yellow("  Error: Read to Data while data_queue is empty (@{X:0>8})."), .{addr});
                     return 0;
                 }
-                gdrom_log.debug("  Read to Data FIFO.", .{});
+                gdrom_log.debug("  Read({any}) to Data FIFO.", .{T});
                 if (T == u8) {
                     return self.data_queue.readItem().?;
                 } else if (T == u16) {
@@ -476,7 +476,7 @@ pub const GDROM = struct {
 
     fn req_mode(self: *@This()) void {
         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqMode"), .{});
-        const start_addr = self.packet_command[2];
+        const start_addr = self.packet_command[2]; // FIXME: I don't understand. What's the point of this?
         _ = start_addr;
         const alloc_length = self.packet_command[4];
 
@@ -489,13 +489,17 @@ pub const GDROM = struct {
             self.data_queue.writeItemAssumeCapacity(0xB4); // Standby Time, 0xB4 is default
             self.data_queue.writeItemAssumeCapacity(0b00011001); // From MSB to LSB : 0 0 [Read Continuous] [ECC (Option)] [Read Retry] 0 0 [Form2 Read Retry]
             self.data_queue.writeItemAssumeCapacity(0);
-            self.data_queue.writeItemAssumeCapacity(0);
-            self.data_queue.writeItemAssumeCapacity(0x08); // Read Retry Times, default is 0x08
-            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // Drive Information (ASCII)
-            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Version (ASCII)
-            self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Date (ASCII
+            // FIXME: Just testing stuff. Here we're assuming alloc_length is either 8 or the full 32. The way I fill the queue doesn't doesn't work well with the variable response length... It's so weird.
+            if (alloc_length > 8) {
+                std.debug.assert(alloc_length == 32);
+                self.data_queue.writeItemAssumeCapacity(0);
+                self.data_queue.writeItemAssumeCapacity(0x08); // Read Retry Times, default is 0x08
+                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // Drive Information (ASCII)
+                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Version (ASCII)
+                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Date (ASCII
+            }
 
-            self.byte_count = 32;
+            self.byte_count = alloc_length;
         } else {
             self.byte_count = 0;
         }
@@ -582,7 +586,7 @@ pub const GDROM = struct {
             GDROMCommand.GetSCD => {
                 gdrom_log.warn(termcolor.yellow("    Unimplemented GDROM command {X:0>8} {s}"), .{ self.hle_command, @tagName(self.hle_command) });
                 const dest = self.hle_params[1];
-                dc.cpu.write32(dest, @intFromEnum(CDAudioStatus.Ended));
+                dc.cpu.write32(dest, 0x15);
                 self.hle_status = GDROMStatus.Standby;
             },
             else => {
