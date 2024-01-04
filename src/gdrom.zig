@@ -502,7 +502,7 @@ pub const GDROM = struct {
             0,
             0x08, // Read Retry Times, default is 0x08
             'S', 'E', 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // Drive Information (ASCII)
-            'R', 'e', 'v', 0x20, '5', 0x20, 0x20, 0x20, // System Version (ASCII) - This is checked by the Boot ROM, anything before 5 will put it to sleep
+            'R', 'e', 'v', 0x20, '5', 0x20, 0x20, 0x20, // System Version (ASCII) - This is checked by the Boot ROM, anything bellow 5 will put it to sleep
             0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // System Date (ASCII)
         };
 
@@ -513,81 +513,96 @@ pub const GDROM = struct {
     }
 
     fn get_toc(self: *@This()) void {
-        gdrom_log.debug(" GDROM PacketCommand GetToC", .{});
         // Selects the type of volume.
         //   0: Get TOC information from single-density area.
         //   1: Get TOC information from double-density area
         const select = self.packet_command[1] & 1;
-        _ = select;
         const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
 
+        gdrom_log.warn(" GDROM PacketCommand GetToC - {s}", .{if (select == 0) "Single Density" else "Double Density"});
+
         if (alloc_length > 0) {
-            for (self.disk.tracks.items) |*track| {
-                // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
-                //   0h No sub Q channel mode information
-                //   1h Sub Q channel indicates current position.
-                //   (Example: track, index, absolute address, relative address)
-                //   2h Sub Q channel indicates media catalog number.
-                //   3h Sub Q channel indicates ISRC code.
-                //   4h~Fh Reserved
-                const adr: u4 = 0;
-                // Control: This item indicates the type of track.
-                //  Bit | If 0                                    | If 1
-                //   0  | Audio data without pre-emphasis (CD-DA) | Audio data with pre-emphasis (CD-DA)
-                //      | At-once recorded track (CD-ROM)         | Packet-recorded track (CD-ROM)
-                //   1  | Digital copy prohibited                 | Digital copy allowed
-                //   2  | Audio track                             | Data track
-                //   3  | 2-channel audio                         | 4-channel audio
-                const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
-                self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 16));
-                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
-                self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
-            }
-            for (self.disk.tracks.items.len..100) |_| {
-                self.data_queue.writeItemAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
-            }
-            if (self.disk.tracks.items.len > 0) {
-                {
-                    const track = self.disk.tracks.items[0];
-                    const adr: u4 = 0;
-                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
-                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                    self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
+            if (select == 1) {
+                if (self.disk.tracks.items.len >= 3) {
+                    // Copy ToC directly from the third track. No idea if this is what's expected here.
+                    self.data_queue.writeAssumeCapacity(self.disk.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
+                } else {
+                    for (0..alloc_length) |_| {
+                        self.data_queue.writeItemAssumeCapacity(0xFF);
+                    }
                 }
-                {
-                    const track = self.disk.tracks.items[self.disk.tracks.items.len - 1];
-                    const adr: u4 = 0;
-                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
-                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                    self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                }
-                // TODO: Lead Out Information
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
             } else {
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
+                for (self.disk.tracks.items) |*track| {
+                    // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
+                    //   0h No sub Q channel mode information
+                    //   1h Sub Q channel indicates current position.
+                    //   (Example: track, index, absolute address, relative address)
+                    //   2h Sub Q channel indicates media catalog number.
+                    //   3h Sub Q channel indicates ISRC code.
+                    //   4h~Fh Reserved
+                    const adr: u4 = 0;
+                    // Control: This item indicates the type of track.
+                    //  Bit | If 0                                    | If 1
+                    //   0  | Audio data without pre-emphasis (CD-DA) | Audio data with pre-emphasis (CD-DA)
+                    //      | At-once recorded track (CD-ROM)         | Packet-recorded track (CD-ROM)
+                    //   1  | Digital copy prohibited                 | Digital copy allowed
+                    //   2  | Audio track                             | Data track
+                    //   3  | 2-channel audio                         | 4-channel audio
+                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 16));
+                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
+                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
+                }
+                for (self.disk.tracks.items.len..100) |_| {
+                    self.data_queue.writeAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
+                }
+                if (self.disk.tracks.items.len > 0) {
+                    {
+                        const track = self.disk.tracks.items[0];
+                        const adr: u4 = 0;
+                        const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                        self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                        self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                        self.data_queue.writeItemAssumeCapacity(0);
+                        self.data_queue.writeItemAssumeCapacity(0);
+                    }
+                    {
+                        const track = self.disk.tracks.items[self.disk.tracks.items.len - 1];
+                        const adr: u4 = 0;
+                        const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                        self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                        self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                        self.data_queue.writeItemAssumeCapacity(0);
+                        self.data_queue.writeItemAssumeCapacity(0);
+                    }
+                    // TODO: Lead Out Information
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                } else {
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
 
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
 
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0);
+                }
             }
         }
+
+        // FIXME: I'm not actually honoring the alloc_length parameter here
+        std.debug.assert(self.data_queue.count == alloc_length);
+
         self.byte_count = alloc_length;
     }
 
@@ -683,7 +698,10 @@ pub const GDROM = struct {
             GDROMCommand.GetSCD => {
                 gdrom_log.warn(termcolor.yellow("    Unimplemented GDROM command {X:0>8} {s}"), .{ self.hle_command, @tagName(self.hle_command) });
                 const dest = self.hle_params[1];
-                dc.cpu.write32(dest, 0x15);
+                dc.cpu.write8(dest + 0, 0);
+                dc.cpu.write8(dest + 1, 0x15);
+                dc.cpu.write8(dest + 2, 0);
+                dc.cpu.write8(dest + 3, 0);
                 self.hle_status = GDROMStatus.Standby;
             },
             else => {
