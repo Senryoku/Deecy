@@ -10,6 +10,8 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const MemoryRegisters = @import("MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 
+const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
+
 // HLE
 
 pub const GDROMStatus = enum(u32) {
@@ -137,6 +139,11 @@ const SPIPacketCommandCode = enum(u8) {
     CDRead = 0x30, // Read CD
     CDRead2 = 0x31, // CD read (pre-read position)
     GetSCD = 0x40, // Get subcode
+    // Undocumented Security Commands, see gdrom_secu.zig
+    SYS_CHK_SECU = 0x70,
+    SYS_REQ_SECU = 0x71,
+    SYS_CHG_COMD = 0x72,
+    SYS_REQ_COMD = 0x73,
 };
 
 pub const GDROM = struct {
@@ -166,9 +173,12 @@ pub const GDROM = struct {
     _next_command_id: u32 = 1,
     _current_command_id: u32 = 0,
 
-    pub fn init(_: std.mem.Allocator) GDROM {
+    _dc: *Dreamcast,
+
+    pub fn init(_: std.mem.Allocator, dc: *Dreamcast) GDROM {
         var gdrom = GDROM{
             .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 1024 }).init(),
+            ._dc = dc,
         };
         gdrom.reinit();
         return gdrom;
@@ -220,6 +230,7 @@ pub const GDROM = struct {
                     return 0;
                 }
                 gdrom_log.debug("  Read({any}) to Data FIFO.", .{T});
+                self._dc.cpu.on_trapa.?();
                 if (T == u8) {
                     return self.data_queue.readItem().?;
                 } else if (T == u16) {
@@ -378,7 +389,7 @@ pub const GDROM = struct {
 
                     self.status_register.bsy = 1;
                     self.status_register.drq = 0;
-                    gdrom_log.warn(termcolor.yellow("  TODO: Handle SPI Packet!"), .{});
+                    gdrom_log.debug("  Received full SPI Command Packet!", .{});
 
                     self.interrupt_reason_register.io = 1;
                     self.interrupt_reason_register.cod = 1;
@@ -389,7 +400,6 @@ pub const GDROM = struct {
 
                     switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
                         .TestUnit => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit"), .{});
                             self.byte_count = 0;
                         },
                         .ReqStat => {
@@ -427,6 +437,12 @@ pub const GDROM = struct {
                         },
                         .GetSCD => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetSCD"), .{});
+                        },
+                        .SYS_CHK_SECU => {
+                            self.byte_count = 0;
+                        },
+                        .SYS_REQ_SECU => {
+                            self.req_secu();
                         },
                         else => {
                             gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]});
@@ -475,34 +491,40 @@ pub const GDROM = struct {
     }
 
     fn req_mode(self: *@This()) void {
-        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqMode"), .{});
-        const start_addr = self.packet_command[2]; // FIXME: I don't understand. What's the point of this?
-        _ = start_addr;
+        gdrom_log.debug(" GDROM PacketCommand ReqMode", .{});
+        const start_addr = self.packet_command[2];
+        const alloc_length = self.packet_command[4];
+
+        const response = [_]u8{
+            0, 0,
+            0, // CDROM Speed, 00 = Max. speed
+            0,
+            0, // Standby Time
+            0xB4, // Standby Time, 0xB4 is default
+            0b00011001, // From MSB to LSB : 0 0 [Read Continuous] [ECC (Option)] [Read Retry] 0 0 [Form2 Read Retry]
+            0,
+            0,
+            0x08, // Read Retry Times, default is 0x08
+            'S', 'E', 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // Drive Information (ASCII)
+            'R', 'e', 'v', 0x20, '5', 0x20, 0x20, 0x20, // System Version (ASCII) - This is checked by the Boot ROM, anything before 5 will put it to sleep
+            0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // System Date (ASCII)
+        };
+
+        if (alloc_length > 0) {
+            self.data_queue.writeAssumeCapacity(response[start_addr..][0..alloc_length]);
+        }
+        self.byte_count = alloc_length;
+    }
+
+    fn req_secu(self: *@This()) void {
+        gdrom_log.debug(" GDROM PacketCommand ReqSecu", .{});
+        const start_addr = self.packet_command[2];
         const alloc_length = self.packet_command[4];
 
         if (alloc_length > 0) {
-            self.data_queue.writeItemAssumeCapacity(0);
-            self.data_queue.writeItemAssumeCapacity(0);
-            self.data_queue.writeItemAssumeCapacity(0); // CDROM Speed, 00 = Max. speed
-            self.data_queue.writeItemAssumeCapacity(0);
-            self.data_queue.writeItemAssumeCapacity(0); // Standby Time
-            self.data_queue.writeItemAssumeCapacity(0xB4); // Standby Time, 0xB4 is default
-            self.data_queue.writeItemAssumeCapacity(0b00011001); // From MSB to LSB : 0 0 [Read Continuous] [ECC (Option)] [Read Retry] 0 0 [Form2 Read Retry]
-            self.data_queue.writeItemAssumeCapacity(0);
-            // FIXME: Just testing stuff. Here we're assuming alloc_length is either 8 or the full 32. The way I fill the queue doesn't doesn't work well with the variable response length... It's so weird.
-            if (alloc_length > 8) {
-                std.debug.assert(alloc_length == 32);
-                self.data_queue.writeItemAssumeCapacity(0);
-                self.data_queue.writeItemAssumeCapacity(0x08); // Read Retry Times, default is 0x08
-                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // Drive Information (ASCII)
-                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Version (ASCII)
-                self.data_queue.writeAssumeCapacity(&[_]u8{ 0, 0, 0, 0, 0, 0, 0, 0 }); // System Date (ASCII
-            }
-
-            self.byte_count = alloc_length;
-        } else {
-            self.byte_count = 0;
+            self.data_queue.writeAssumeCapacity(GDROMCommand71Reply[start_addr..][0..alloc_length]);
         }
+        self.byte_count = alloc_length;
     }
 
     // HLE - Used by the BIOS syscalls
