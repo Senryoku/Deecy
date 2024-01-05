@@ -28,9 +28,9 @@ pub const std_options = struct {
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
-        .{ .scope = .aica, .level = .debug },
+        .{ .scope = .aica, .level = .info },
         .{ .scope = .holy, .level = .info },
-        .{ .scope = .gdrom, .level = .debug },
+        .{ .scope = .gdrom, .level = .info },
         .{ .scope = .renderer, .level = .info },
     };
 };
@@ -208,7 +208,7 @@ pub fn main() !void {
     const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
     defer common.GeneralAllocator.free(pixels);
 
-    var renderer = Renderer.init(common.GeneralAllocator, gctx);
+    var renderer = try Renderer.init(common.GeneralAllocator, gctx);
     defer renderer.deinit();
 
     var renderer_texture_views: [8]zgpu.TextureViewHandle = undefined;

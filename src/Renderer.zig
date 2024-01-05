@@ -138,6 +138,8 @@ pub const Renderer = struct {
 
     max_depth: f32 = 1.0,
 
+    _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
+
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
 
@@ -148,7 +150,7 @@ pub const Renderer = struct {
         });
     }
 
-    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) Renderer {
+    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
         // Write to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
 
@@ -448,6 +450,8 @@ pub const Renderer = struct {
 
             .passes = std.ArrayList(PassMetadata).init(allocator),
 
+            ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
+
             ._gctx = gctx,
             ._allocator = allocator,
         };
@@ -456,6 +460,7 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         self.passes.deinit();
         self.polygons.deinit();
+        self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot of resources to destroy.
     }
 
@@ -477,15 +482,19 @@ pub const Renderer = struct {
         const twiddled = texture_control_word.scan_order == 0;
         if (texture_control_word.mip_mapped != 0)
             renderer_log.warn(termcolor.yellow(" TODO: Support mip mapping."), .{});
-        std.debug.assert(texture_control_word.vq_compressed == 0); // Not implemented
+        if (texture_control_word.vq_compressed != 0)
+            renderer_log.warn(termcolor.red(" TODO: Support VQ Compressed Textures!"), .{});
 
         const size_index = tsp_instruction.texture_u_size;
-        const u_size: u16 = if (texture_control_word.scan_order == 1 and texture_control_word.stride_select == 1) @as(u16, 32) * texture_control_register.stride else (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
-        const v_size: u16 = if (texture_control_word.scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
 
-        // FIXME: Allocate a scratch pad once and stick to it?
-        var pixels = self._allocator.alloc(u8, @as(u32, 4) * u_size * v_size) catch unreachable;
-        defer self._allocator.free(pixels);
+        // NOTE: This is used by stride textures. Stride textures actual size can be smaller than their allocated size, but UV calculation are still done with it.
+        const alloc_u_size = (@as(u16, 8) << tsp_instruction.texture_u_size);
+        const alloc_v_size = (@as(u16, 8) << tsp_instruction.texture_v_size);
+
+        const u_size: u16 = if (texture_control_word.scan_order == 1 and texture_control_word.stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
+        const v_size: u16 = if (texture_control_word.scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
+
+        @memset(self._scratch_pad, 0);
 
         const addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
 
@@ -494,33 +503,33 @@ pub const Renderer = struct {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.arbg1555.b) << 3;
-                    pixels[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
-                    pixels[i * 4 + 2] = @as(u8, pixel.arbg1555.r) << 3;
-                    pixels[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
+                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.arbg1555.b) << 3;
+                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
+                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.arbg1555.r) << 3;
+                    self._scratch_pad[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
                 }
             },
             .RGB565 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
-                    pixels[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                    pixels[i * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
-                    pixels[i * 4 + 3] = 255;
+                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
+                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
+                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
+                    self._scratch_pad[i * 4 + 3] = 255;
                 }
             },
             .ARGB4444 => {
                 for (0..(@as(u32, u_size) * v_size)) |i| {
                     const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
                     const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    pixels[i * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
-                    pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                    pixels[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
-                    pixels[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
+                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
+                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
+                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
+                    self._scratch_pad[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
                 }
             },
-            .Palette4BPP => {
+            .Palette4BPP, .Palette8BPP => {
                 std.debug.assert(twiddled);
                 const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                 // 0x0 ARGB1555 (default)
@@ -528,46 +537,40 @@ pub const Renderer = struct {
                 // 0x2 ARGB4444
                 // 0x3 ARGB8888
                 const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
-                const palette_selector = (@as(u32, @bitCast(texture_control_word)) >> 20) & 0b111111;
-                const texture_data = (@as(u32, @bitCast(texture_control_word)) >> 16) & 0b1111;
-                const palette_addr = (palette_selector << 4) | texture_data; // FIXME: Double Check.
-                var i: u32 = 0;
-                while (i < (@as(u32, u_size) * v_size)) {
-                    const pixel_palette: u8 = gpu.vram[addr + i];
-                    for (0..2) |pidx| {
-                        const pixel_idx = to_tiddled_index(@intCast(i + pidx), u_size); // FIXME: I'm trying to do the opposite here of the other texture formats, this is probably wrong.
-                        // FIXME: I don't know how the palettes actually works.
-                        const pixel: HollyModule.Color16 = .{ .value = @as([*]const u16, @ptrCast(&palette_ram))[palette_addr + ((pixel_palette >> @intCast(4 * pidx)) & 0xF)] };
-                        switch (palette_ctrl_ram) {
-                            0x0 => { // ARGB1555
-                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.arbg1555.b) << 4;
-                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.arbg1555.g) << 4;
-                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.arbg1555.r) << 4;
-                                pixels[pixel_idx * 4 + 3] = @as(u8, pixel.arbg1555.a) << 4;
-                            },
-                            0x1 => { // RGB565
-                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
-                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
-                                pixels[pixel_idx * 4 + 3] = 255;
-                            },
-                            0x2 => { // ARGB4444
-                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
-                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
-                                pixels[pixel_idx * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
-                            },
-                            0x3 => { // ARGB8888
-                                @panic("Unsupported palette_ctrl_ram ARGB8888");
-                            },
-                            else => {
-                                renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
-                                @panic("Invalid palette_ctrl_ram value");
-                            },
-                        }
+                const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
+                for (0..(@as(u32, u_size) * v_size)) |i| {
+                    const pixel_idx = to_tiddled_index(@intCast(i), u_size);
+                    const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) pixel_idx >> 1 else pixel_idx;
+                    const pixel_palette: u8 = gpu.vram[addr + ram_addr];
+                    const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (pixel_idx & 0x1))) & 0xF) else pixel_palette;
+                    const pixel: HollyModule.Color16 = .{ .value = @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset] };
+                    switch (palette_ctrl_ram) {
+                        0x0 => { // ARGB1555
+                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.arbg1555.b) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.arbg1555.g) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.arbg1555.r) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 3] = @as(u8, pixel.arbg1555.a) << 4;
+                        },
+                        0x1 => { // RGB565
+                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
+                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
+                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
+                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
+                        },
+                        0x2 => { // ARGB4444
+                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
+                            self._scratch_pad[pixel_idx * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
+                        },
+                        0x3 => { // ARGB8888
+                            @panic("Unsupported palette_ctrl_ram ARGB8888");
+                        },
+                        else => {
+                            renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
+                            @panic("Invalid palette_ctrl_ram value");
+                        },
                     }
-
-                    i += 2;
                 }
             },
             else => {
@@ -583,10 +586,13 @@ pub const Renderer = struct {
                     .control_word = texture_control_word,
                     .index = @intCast(i),
                     .usage = 0,
-                    .size = .{ u_size, v_size },
+                    // NOTE: This is used for UV calculation in the shaders.
+                    //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
+                    .size = .{ alloc_u_size, alloc_v_size },
                 };
 
                 // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
+                // FIXME: We should do the same the stride textures when u_size < alloc_u_size.
                 for (0..u_size / v_size) |part| {
                     self._gctx.queue.writeTexture(
                         .{
@@ -599,7 +605,7 @@ pub const Renderer = struct {
                         },
                         .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
                         u8,
-                        pixels,
+                        self._scratch_pad,
                     );
                 }
 
@@ -675,9 +681,7 @@ pub const Renderer = struct {
                 3 => 4,
             };
 
-            // FIXME: Use scratch pad or something.
-            var pixels = self._allocator.alloc(u8, 4 * u_size * v_size) catch unreachable;
-            defer self._allocator.free(pixels);
+            @memset(self._scratch_pad, 0);
 
             for (0..v_size) |y| {
                 for (0..u_size) |x| {
@@ -686,31 +690,31 @@ pub const Renderer = struct {
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 3] = 255;
+                            self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
+                            self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
+                            self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x1 => { // 565 RGB
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
-                            pixels[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
-                            pixels[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
-                            pixels[pixel_idx * 4 + 3] = 255;
+                            self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
+                            self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
+                            self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
+                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x2 => { // 888 RGB 24 bit packed
                             const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..3].*;
-                            pixels[pixel_idx * 4 + 0] = pixel[2];
-                            pixels[pixel_idx * 4 + 1] = pixel[1];
-                            pixels[pixel_idx * 4 + 2] = pixel[0];
-                            pixels[pixel_idx * 4 + 3] = 255;
+                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
+                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
+                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x3 => { // 0888 RGB 32 bit
                             const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
-                            pixels[pixel_idx * 4 + 0] = pixel[0];
-                            pixels[pixel_idx * 4 + 1] = pixel[1];
-                            pixels[pixel_idx * 4 + 2] = pixel[2];
-                            pixels[pixel_idx * 4 + 3] = 255;
+                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
+                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
+                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                     }
                 }
@@ -727,7 +731,7 @@ pub const Renderer = struct {
                 },
                 .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
                 u8,
-                pixels,
+                self._scratch_pad,
             );
         }
     }
@@ -744,7 +748,7 @@ pub const Renderer = struct {
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
         //        which doesn't make sense. The vertices z position looks more inline with what
-        //        I understand of render pipeline.
+        //        I understand of the render pipeline.
         const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
         _ = depth;
 
@@ -871,6 +875,7 @@ pub const Renderer = struct {
 
             // Parameters specific to a polygon type
             var face_color: fRGBA = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
+            var face_offset_color: fRGBA = undefined;
             const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
 
             for (0..display_list.polygons.items.len) |idx| {
@@ -903,6 +908,26 @@ pub const Renderer = struct {
                                 .g = p.face_color_g,
                                 .b = p.face_color_b,
                                 .a = p.face_color_a,
+                            };
+                    },
+                    .PolygonType2 => |p| {
+                        parameter_control_word = p.parameter_control_word;
+                        isp_tsp_instruction = p.isp_tsp_instruction;
+                        tsp_instruction = p.tsp_instruction;
+                        texture_control = p.texture_control;
+                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
+                            face_color = .{
+                                .r = p.face_color_r,
+                                .g = p.face_color_g,
+                                .b = p.face_color_b,
+                                .a = p.face_color_a,
+                            };
+                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
+                            face_offset_color = .{
+                                .r = p.face_offset_color_r,
+                                .g = p.face_offset_color_g,
+                                .b = p.face_offset_color_b,
+                                .a = p.face_offset_color_a,
                             };
                     },
                     .Sprite => |p| {
@@ -1076,13 +1101,13 @@ pub const Renderer = struct {
                             try vertices.append(.{
                                 .x = v.dx,
                                 .y = v.dy,
-                                .z = v.az, // FIXME: There is no 'DZ' in the documentation, this is just a guess.
+                                .z = 1.0, // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
                                 .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
                                 .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.buv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
-                                .v = @bitCast(@as(u32, v.cuv.v) << 16),
+                                .u = @bitCast(@as(u32, v.cuv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
+                                .v = @bitCast(@as(u32, v.auv.v) << 16),
                                 .tex = tex,
                             });
                         },

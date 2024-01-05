@@ -261,6 +261,21 @@ pub const TEXT_CONTROL = packed struct(u32) {
     _r2: u14,
 };
 
+pub const TA_ALLOC_CTRL = packed struct(u32) {
+    O_OPB: u2,
+    _r0: u2,
+    OM_OPB: u2,
+    _r1: u2,
+    T_OPB: u2,
+    _r2: u2,
+    TM_OPB: u2,
+    _r3: u2,
+    PT_OPB: u2,
+    _r4: u2,
+    OPB_Mode: u1,
+    _r5: u15,
+};
+
 pub const ParameterType = enum(u3) {
     // Control Parameter
     EndOfList = 0,
@@ -324,6 +339,20 @@ pub const UserTileClip = packed struct(u256) {
     user_clip_y_min: u32,
     user_clip_x_max: u32,
     user_clip_y_max: u32,
+};
+
+const ObjectListSet = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    object_pointer: u32,
+    _ignored: u64,
+    bounding_box_x_min: u6,
+    _invalid0: u26,
+    bounding_box_y_min: u4,
+    _invalid1: u28,
+    bounding_box_x_max: u36,
+    _invalid2: u26,
+    bounding_box_y_max: u34,
+    _invalid3: u28,
 };
 
 // Global Parameter Formats
@@ -1141,7 +1170,7 @@ pub const Holly = struct {
     }
 
     pub fn handle_command(self: *@This()) void {
-        if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 bytes or 16 bytes long
+        if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 bytes long
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
 
@@ -1180,11 +1209,7 @@ pub const Holly = struct {
                 @panic("Unimplemented UserTileClip");
             },
             .ObjectListSet => {
-                if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
-                }
-                holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
+                self.handle_object_list_set();
             },
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
@@ -1249,60 +1274,70 @@ pub const Holly = struct {
                     @panic("No current polygon");
                 } else {
                     const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
-                    const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                    if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
-
-                    switch (format) {
-                        .Type0 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                    switch (self._ta_current_polygon.?) {
+                        .Sprite => {
+                            std.debug.assert(parameter_control_word.end_of_strip == 1); // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                            if (polygon_obj_control.texture == 0) {
+                                if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
+                                self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                            } else {
+                                if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
+                                self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                            }
                         },
-                        .Type1 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type2 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type3 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type4 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type5 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type6 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type7 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type8 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type9 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type10 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type11 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type12 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type13 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .Type14 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .SpriteType0 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                        },
-                        .SpriteType1 => {
-                            self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        else => {
+                            const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                            if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+                            switch (format) {
+                                .Type0 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type1 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type2 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type3 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type4 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type5 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type6 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type7 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type8 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type9 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type10 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type11 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type12 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type13 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                .Type14 => {
+                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                },
+                                else => {
+                                    @panic("Unexpected vertex parameter type");
+                                },
+                            }
                         },
                     }
 
@@ -1320,6 +1355,59 @@ pub const Holly = struct {
         }
         // Command has been handled, reset buffer.
         self._ta_command_buffer_index = 0;
+    }
+
+    fn handle_object_list_set(self: *@This()) void {
+        const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
+        std.debug.assert(parameter_control_word.parameter_type == .ObjectListSet);
+
+        if (self._ta_list_type == null) {
+            self._ta_list_type = parameter_control_word.list_type;
+            self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
+        }
+        holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
+        // FIXME: Really not sure if I need to do any thing here...
+        //        Is it meant to separate objects by tiles? Are they already submitted elsewhere anyway?
+        if (false) {
+            const object_list_set = @as(*ObjectListSet, @ptrCast(&self._ta_command_buffer)).*;
+            const param_base = self._get_register(u32, .PARAM_BASE).*;
+            const ta_alloc_ctrl = self._get_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*;
+            std.debug.assert(ta_alloc_ctrl.OPB_Mode == 0);
+            const addr = 4 * object_list_set.object_pointer; // 32bit word address
+            while (true) {
+                const object = @as(*u32, @ptrCast(&self.vram[addr])).*;
+                if (object & 0x80000000 == 0) {
+                    // Triangle Strip
+                    const strip_addr = param_base + 4 * (object & 0x1FFFFF);
+                    _ = strip_addr;
+                } else {
+                    switch ((object >> 29) & 0b11) {
+                        0b00 => {
+                            // Triangle Array
+                            @panic("Unimplemented Triangle Array");
+                        },
+                        0b01 => {
+                            // Quad Array
+                            @panic("Unimplemented Quad Array");
+                        },
+                        0b11 => {
+                            std.debug.assert(object & 0b11 == 0);
+                            // Object Pointer Block Link
+                            if (object & 0x10000000 == 0x10000000) {
+                                // End of list
+                                break;
+                            } else {
+                                @panic("Unimplemented Object Pointer Block Link");
+                            }
+                        },
+                        else => {
+                            @panic("Invalid Object type");
+                        },
+                    }
+                }
+                addr += 4;
+            }
+        }
     }
 
     pub fn ta_fifo_yuv_converter_path(self: *@This()) void {
