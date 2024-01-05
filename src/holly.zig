@@ -251,6 +251,16 @@ pub const FB_R_SIZE = packed struct(u32) {
     _: u2,
 };
 
+pub const TEXT_CONTROL = packed struct(u32) {
+    stride: u5, // This field specifies the U size of the stride texture. The U size is the stride value × 32.
+    _r0: u3,
+    bank_bit: u5 = 0, // This field specifies the position of the bank bit when accessing texture memory (default = 0x00). Normally, set 0x00
+    _r1: u3,
+    index_endian_reg: u1 = 0, // 0 = Little Endian, 1 = Big Endian
+    code_book_endian_reg: u1 = 0,
+    _r2: u14,
+};
+
 pub const ParameterType = enum(u3) {
     // Control Parameter
     EndOfList = 0,
@@ -469,12 +479,24 @@ const PolygonType4 = packed struct(u512) {
     face_offset_color_b: f32,
 };
 
+const Sprite = packed struct(u256) {
+    parameter_control_word: ParameterControlWord,
+    isp_tsp_instruction: ISPTSPInstructionWord,
+    tsp_instruction: TSPInstructionWord,
+    texture_control: TextureControlWord,
+    base_color: PackedColor,
+    offset_color: PackedColor,
+    data_size: u32,
+    next_address: u32,
+};
+
 const PolygonType = enum {
     PolygonType0,
     PolygonType1,
     PolygonType2,
     PolygonType3,
     PolygonType4,
+    Sprite,
 };
 
 pub const Polygon = union(PolygonType) {
@@ -483,17 +505,7 @@ pub const Polygon = union(PolygonType) {
     PolygonType2: PolygonType2,
     PolygonType3: PolygonType3,
     PolygonType4: PolygonType4,
-};
-
-const Sprite = packed struct(u256) {
-    parameter_control_word: ParameterControlWord,
-    isp_tsp_instruction: ISPTSPInstructionWord,
-    tsp_instruction: TSPInstructionWord,
-    texture_control: TextureControlWord,
-    base_color: u32,
-    offset_color: u32,
-    data_size: u32,
-    next_address: u32,
+    Sprite: Sprite,
 };
 
 const ModifierVolume = packed struct(u256) {
@@ -716,6 +728,41 @@ const VertexParameter_14 = packed struct(u512) {
     _ignored_2: u128,
 };
 
+const VertexParameter_Sprite_0 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    ax: f32,
+    ay: f32,
+    az: f32,
+    bx: f32,
+    by: f32,
+    bz: f32,
+    cx: f32,
+    cy: f32,
+    cz: f32,
+    dx: f32,
+    dy: f32,
+    _: u128,
+};
+
+const VertexParameter_Sprite_1 = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    ax: f32,
+    ay: f32,
+    az: f32,
+    bx: f32,
+    by: f32,
+    bz: f32,
+    cx: f32,
+    cy: f32,
+    cz: f32,
+    dx: f32,
+    dy: f32,
+    _: u32,
+    auv: UV16,
+    buv: UV16,
+    cuv: UV16,
+};
+
 pub const VertexParameterType = enum {
     Type0,
     Type1,
@@ -732,6 +779,8 @@ pub const VertexParameterType = enum {
     Type12,
     Type13,
     Type14,
+    SpriteType0,
+    SpriteType1,
 };
 
 pub const VertexParameter = union(VertexParameterType) {
@@ -750,6 +799,8 @@ pub const VertexParameter = union(VertexParameterType) {
     Type12: VertexParameter_12,
     Type13: VertexParameter_13,
     Type14: VertexParameter_14,
+    SpriteType0: VertexParameter_Sprite_0,
+    SpriteType1: VertexParameter_Sprite_1,
 };
 
 // Returns the size in words (4 bytes) of the vertex parameter
@@ -770,6 +821,8 @@ pub fn vertex_parameter_size(format: VertexParameterType) u32 {
         .Type12 => @sizeOf(VertexParameter_12) / 4,
         .Type13 => @sizeOf(VertexParameter_13) / 4,
         .Type14 => @sizeOf(VertexParameter_14) / 4,
+        .SpriteType0 => @sizeOf(VertexParameter_Sprite_0) / 4,
+        .SpriteType1 => @sizeOf(VertexParameter_Sprite_1) / 4,
     };
 }
 
@@ -1131,7 +1184,7 @@ pub const Holly = struct {
                     self._ta_list_type = parameter_control_word.list_type;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
-                @panic("Unimplemented ObjectListSet");
+                holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
             },
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
@@ -1188,7 +1241,7 @@ pub const Holly = struct {
                     self._ta_list_type = parameter_control_word.list_type;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
-                @panic("Unimplemented SpriteList");
+                self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
             },
             .VertexParameter => {
                 if (self._ta_current_polygon == null) {
@@ -1244,6 +1297,12 @@ pub const Holly = struct {
                         },
                         .Type14 => {
                             self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .SpriteType0 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                        },
+                        .SpriteType1 => {
+                            self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                         },
                     }
 

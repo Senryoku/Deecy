@@ -472,13 +472,15 @@ pub const Renderer = struct {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
+        const texture_control_register = gpu._get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
+
         const twiddled = texture_control_word.scan_order == 0;
-        std.debug.assert(texture_control_word.mip_mapped == 0);
-        std.debug.assert(texture_control_word.stride_select == 0); // Not implemented
+        if (texture_control_word.mip_mapped != 0)
+            renderer_log.warn(termcolor.yellow(" TODO: Support mip mapping."), .{});
         std.debug.assert(texture_control_word.vq_compressed == 0); // Not implemented
 
         const size_index = tsp_instruction.texture_u_size;
-        const u_size: u16 = (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
+        const u_size: u16 = if (texture_control_word.scan_order == 1 and texture_control_word.stride_select == 1) @as(u16, 32) * texture_control_register.stride else (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_u_size));
         const v_size: u16 = if (texture_control_word.scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else (@as(u16, 1) << @intCast(@as(u5, 3) + tsp_instruction.texture_v_size));
 
         // FIXME: Allocate a scratch pad once and stick to it?
@@ -516,6 +518,56 @@ pub const Renderer = struct {
                     pixels[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
                     pixels[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
                     pixels[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
+                }
+            },
+            .Palette4BPP => {
+                std.debug.assert(twiddled);
+                const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+                // 0x0 ARGB1555 (default)
+                // 0x1 RGB565
+                // 0x2 ARGB4444
+                // 0x3 ARGB8888
+                const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
+                const palette_selector = (@as(u32, @bitCast(texture_control_word)) >> 20) & 0b111111;
+                const texture_data = (@as(u32, @bitCast(texture_control_word)) >> 16) & 0b1111;
+                const palette_addr = (palette_selector << 4) | texture_data; // FIXME: Double Check.
+                var i: u32 = 0;
+                while (i < (@as(u32, u_size) * v_size)) {
+                    const pixel_palette: u8 = gpu.vram[addr + i];
+                    for (0..2) |pidx| {
+                        const pixel_idx = to_tiddled_index(@intCast(i + pidx), u_size); // FIXME: I'm trying to do the opposite here of the other texture formats, this is probably wrong.
+                        // FIXME: I don't know how the palettes actually works.
+                        const pixel: HollyModule.Color16 = .{ .value = @as([*]const u16, @ptrCast(&palette_ram))[palette_addr + ((pixel_palette >> @intCast(4 * pidx)) & 0xF)] };
+                        switch (palette_ctrl_ram) {
+                            0x0 => { // ARGB1555
+                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.arbg1555.b) << 4;
+                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.arbg1555.g) << 4;
+                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.arbg1555.r) << 4;
+                                pixels[pixel_idx * 4 + 3] = @as(u8, pixel.arbg1555.a) << 4;
+                            },
+                            0x1 => { // RGB565
+                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
+                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
+                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
+                                pixels[pixel_idx * 4 + 3] = 255;
+                            },
+                            0x2 => { // ARGB4444
+                                pixels[pixel_idx * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
+                                pixels[pixel_idx * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
+                                pixels[pixel_idx * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
+                                pixels[pixel_idx * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
+                            },
+                            0x3 => { // ARGB8888
+                                @panic("Unsupported palette_ctrl_ram ARGB8888");
+                            },
+                            else => {
+                                renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
+                                @panic("Invalid palette_ctrl_ram value");
+                            },
+                        }
+                    }
+
+                    i += 2;
                 }
             },
             else => {
@@ -830,6 +882,9 @@ pub const Renderer = struct {
                 var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
                 var texture_control: HollyModule.TextureControlWord = undefined;
 
+                var sprite_base_color: HollyModule.PackedColor = undefined;
+                var sprite_offset_color: HollyModule.PackedColor = undefined;
+
                 switch (display_list.polygons.items[idx]) {
                     .PolygonType0 => |p| {
                         parameter_control_word = p.parameter_control_word;
@@ -849,6 +904,14 @@ pub const Renderer = struct {
                                 .b = p.face_color_b,
                                 .a = p.face_color_a,
                             };
+                    },
+                    .Sprite => |p| {
+                        parameter_control_word = p.parameter_control_word;
+                        isp_tsp_instruction = p.isp_tsp_instruction;
+                        tsp_instruction = p.tsp_instruction;
+                        texture_control = p.texture_control;
+                        sprite_base_color = p.base_color;
+                        sprite_offset_color = p.offset_color;
                     },
                     else => {
                         renderer_log.err("Unhandled polygon type: {any}", .{display_list.polygons.items[idx]});
@@ -940,6 +1003,21 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Packed Color, Textured 16bit UV
+                        .Type4 => |v| {
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.uv.u) << 16),
+                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .tex = tex,
+                            });
+                        },
                         // Intensity
                         .Type7 => |v| {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
@@ -954,6 +1032,57 @@ pub const Renderer = struct {
                                 .a = if (use_alpha) face_color.a else 1.0,
                                 .u = v.u,
                                 .v = v.v,
+                                .tex = tex,
+                            });
+                        },
+                        .SpriteType1 => |v| {
+                            // FIXME: I assume this actually encodes the 4 necessary vertices.
+                            try vertices.append(.{
+                                .x = v.ax,
+                                .y = v.ay,
+                                .z = v.az,
+                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.auv.u) << 16),
+                                .v = @bitCast(@as(u32, v.auv.v) << 16),
+                                .tex = tex,
+                            });
+                            try vertices.append(.{
+                                .x = v.bx,
+                                .y = v.by,
+                                .z = v.bz,
+                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.buv.u) << 16),
+                                .v = @bitCast(@as(u32, v.buv.v) << 16),
+                                .tex = tex,
+                            });
+                            try vertices.append(.{
+                                .x = v.cx,
+                                .y = v.cy,
+                                .z = v.cz,
+                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.cuv.u) << 16),
+                                .v = @bitCast(@as(u32, v.cuv.v) << 16),
+                                .tex = tex,
+                            });
+                            try vertices.append(.{
+                                .x = v.dx,
+                                .y = v.dy,
+                                .z = v.az, // FIXME: There is no 'DZ' in the documentation, this is just a guess.
+                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.buv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
+                                .v = @bitCast(@as(u32, v.cuv.v) << 16),
                                 .tex = tex,
                             });
                         },
@@ -1089,7 +1218,7 @@ pub const Renderer = struct {
                             pass.setPipeline(translucent_pipeline);
                         },
                         else => {
-                            unreachable;
+                            @panic("Unsupported pass type");
                         },
                     }
 

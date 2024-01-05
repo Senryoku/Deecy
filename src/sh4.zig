@@ -509,7 +509,7 @@ pub const SH4 = struct {
             2 => return 64,
             3 => return 256,
             5 => return 1024,
-            else => unreachable,
+            else => @panic("Invalid prescaler"),
         }
     }
 
@@ -603,7 +603,7 @@ pub const SH4 = struct {
             2 => 2, // Word
             3 => 4, // Longword
             4 => 32, // 32-bytes block
-            else => unreachable,
+            else => @panic("Invalid transfer size"),
         };
         const len = self.read_p4_register(u32, .DMATCR2);
         const byte_len = transfer_size * len;
@@ -612,13 +612,13 @@ pub const SH4 = struct {
             0 => 0,
             1 => 1,
             2 => -1,
-            else => unreachable,
+            else => @panic("Invalid destination stride"),
         };
         const src_stride: i32 = switch (chcr.sm) {
             0 => 0,
             1 => 1,
             2 => -1,
-            else => unreachable,
+            else => @panic("Invalid source stride"),
         };
 
         const is_memcpy_safe = dst_stride == 1 and src_stride == 1;
@@ -748,6 +748,7 @@ pub const SH4 = struct {
                             static.once = true;
                             sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
                         }
+                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dc.?._dummy);
                     },
                     0x00700000...0x00707FE0 => { // G2 AICA Register
@@ -791,7 +792,7 @@ pub const SH4 = struct {
                 };
                 if (!static.once) {
                     static.once = true;
-                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5: {X:0>8} (This will only be reported once)"), .{addr});
+                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (MODEM): {X:0>8} (This will only be reported once)"), .{addr});
                 }
                 return @ptrCast(&self._dc.?._dummy);
             },
@@ -804,7 +805,8 @@ pub const SH4 = struct {
                 return self.p4_register_addr(u8, addr);
             },
             else => {
-                unreachable;
+                sh4_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
+                @panic("Invalid _get_memory");
             },
         }
     }
