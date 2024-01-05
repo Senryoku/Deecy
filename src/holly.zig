@@ -286,6 +286,8 @@ pub const ParameterType = enum(u3) {
     SpriteList = 5,
     // Vertex Parameter
     VertexParameter = 7,
+
+    _,
 };
 
 pub const ListType = enum(u3) {
@@ -557,7 +559,7 @@ const BumpMapParameter = packed struct(u32) {
     k1: u8,
 };
 
-const UV16 = packed struct(u32) {
+pub const UV16 = packed struct(u32) {
     v: u16, // Upper bits of a 32-bit float
     u: u16,
 };
@@ -661,7 +663,7 @@ const VertexParameter_7 = packed struct(u256) {
     base_intensity: f32,
     offset_intensity: f32,
 };
-// Intensity, Textured 32bit UV
+// Intensity, Textured 16bit UV
 const VertexParameter_8 = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
     x: f32,
@@ -1206,7 +1208,7 @@ pub const Holly = struct {
                 self._ta_current_polygon = null;
             },
             .UserTileClip => {
-                @panic("Unimplemented UserTileClip");
+                holly_log.err(termcolor.red("  Unimplemented UserTileClip"), .{});
             },
             .ObjectListSet => {
                 self.handle_object_list_set();
@@ -1271,7 +1273,7 @@ pub const Holly = struct {
             .VertexParameter => {
                 if (self._ta_current_polygon == null) {
                     holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
-                    @panic("No current polygon");
+                    //@panic("No current polygon");
                 } else {
                     const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
                     switch (self._ta_current_polygon.?) {
@@ -1351,6 +1353,9 @@ pub const Holly = struct {
                         self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).initCapacity(self._allocator, 32) catch unreachable;
                     }
                 }
+            },
+            _ => {
+                holly_log.err(termcolor.red("    Invalid parameter type: {d}."), .{parameter_control_word.parameter_type});
             },
         }
         // Command has been handled, reset buffer.

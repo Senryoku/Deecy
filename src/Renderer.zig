@@ -21,6 +21,15 @@ pub fn to_twiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
 
+pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
+    std.debug.assert(h < w);
+    // Operate square by square, assuming that, if w != h, then w > h and w is a multiple of h.
+    var r = zorder_curve(@intCast(u % h), @intCast(v));
+    // Shift square by square.
+    r += (u / h) * h * h;
+    return r;
+}
+
 const fRGBA = struct {
     r: f32,
     g: f32,
@@ -36,6 +45,10 @@ const ShadingInstructions = packed struct(u32) {
     tex_v_size: u3,
     _: u22 = 0,
 };
+
+fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mip_filter: wgpu.FilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
+    return @as(u8, @intFromEnum(address_mode_v)) << 5 | @as(u8, @intFromEnum(address_mode_u)) << 3 | @as(u8, @intFromEnum(mip_filter)) << 2 | @as(u8, @intFromEnum(min_filter)) << 1 | @as(u8, @intFromEnum(mag_filter));
+}
 
 const TextureIndex = u32;
 const InvalidTextureIndex = std.math.maxInt(TextureIndex);
@@ -74,12 +87,11 @@ const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
-// TODO: Pack smaller textures into an Atlas.
-
 const TextureMetadata = struct {
     const Unused: u32 = 0xFFFFFFFF;
 
     control_word: HollyModule.TextureControlWord = .{},
+    tsp_instruction: HollyModule.TSPInstructionWord = @bitCast(@as(u32, 0)), // For debugging
     index: TextureIndex = InvalidTextureIndex,
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
@@ -280,6 +292,7 @@ pub const Renderer = struct {
                 .depth_stencil = &wgpu.DepthStencilState{
                     .format = .depth32_float,
                     .depth_write_enabled = false,
+                    .depth_compare = .less_equal,
                 },
                 .fragment = &wgpu.FragmentState{
                     .module = fs_module,
@@ -362,6 +375,29 @@ pub const Renderer = struct {
         });
         gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u16, blit_index_data[0..]);
 
+        // TODO: Create samplers ahead of time, but I'm not sure I can actually pass an array of samplers in WGPU...
+        //       An example of how this could work: (sampler_index would also be used when creating vertex data to assign samplers)
+        if (false) {
+            const samplers: [256]wgpu.SampleHandle = undefined;
+            for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |mag_filter| {
+                for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |min_filter| {
+                    for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |mip_filter| {
+                        for (.{ wgpu.AddressMode.repeat, wgpu.AddressMode.mirror_repeat, wgpu.AddressMode.clamp_to_edge }) |u_addr_mode| {
+                            for (.{ wgpu.AddressMode.repeat, wgpu.AddressMode.mirror_repeat, wgpu.AddressMode.clamp_to_edge }) |v_addr_mode| {
+                                samplers[sampler_index(mag_filter, min_filter, mip_filter, u_addr_mode, v_addr_mode)] =
+                                    gctx.createSampler(.{
+                                    .mag_filter = mag_filter,
+                                    .min_filter = min_filter,
+                                    .mip_filter = mip_filter,
+                                    .address_mode_u = u_addr_mode,
+                                    .address_mode_v = v_addr_mode,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         const sampler = gctx.createSampler(.{
             .mag_filter = .linear,
             .min_filter = .linear,
@@ -534,12 +570,12 @@ pub const Renderer = struct {
 
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
-            std.debug.assert(!twiddled); // Please.
+            std.debug.assert(twiddled); // Please.
             const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
             const indices = @as([*]u8, @ptrCast(&gpu.vram[addr + 8 * 256]))[0..];
             // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
-            for (0..(@as(u32, v_size / 2))) |v| {
-                for (0..(@as(u32, u_size / 2))) |u| {
+            for (0..v_size / 2) |v| {
+                for (0..u_size / 2) |u| {
                     const index = indices[zorder_curve(@intCast(u), @intCast(v))];
                     const texels = code_book[index];
                     for (0..4) |tidx| {
@@ -560,9 +596,12 @@ pub const Renderer = struct {
         } else {
             switch (texture_control_word.pixel_format) {
                 .ARGB1555, .RGB565, .ARGB4444 => {
-                    for (0..(@as(u32, u_size) * v_size)) |i| {
-                        const pixel_idx = if (twiddled) to_twiddled_index(@intCast(i), u_size) else i;
-                        self.bgra_scratch_pad()[i] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).*);
+                    for (0..v_size) |v| {
+                        for (0..u_size) |u| {
+                            const pixel_idx = v * u_size + u;
+                            const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
+                            self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*);
+                        }
                     }
                 },
                 .Palette4BPP, .Palette8BPP => {
@@ -601,6 +640,7 @@ pub const Renderer = struct {
             if (self.texture_metadata[size_index][i].usage == TextureMetadata.Unused) {
                 self.texture_metadata[size_index][i] = .{
                     .control_word = texture_control_word,
+                    .tsp_instruction = tsp_instruction,
                     .index = @intCast(i),
                     .usage = 0,
                     // NOTE: This is used for UV calculation in the shaders.
@@ -976,11 +1016,16 @@ pub const Renderer = struct {
                 const use_alpha = tsp_instruction.use_alpha == 1;
 
                 const clamp_uv = tsp_instruction.clamp_uv == 1;
+                if (clamp_uv) {
+                    renderer_log.warn(termcolor.yellow("[Renderer] TODO: Clamp UV!"), .{});
+                    // TODO: Use an appropriate sampler with AddressMode ClampToEdge
+                }
 
                 const flip_u = tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
                 const flip_v = (tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
                 if (flip_u or flip_v) {
                     renderer_log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
+                    // TODO: Use an appropriate sampler with AddressMode MirrorRepeat
                 }
 
                 const tex = VertexTextureInfo{
@@ -1077,8 +1122,27 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        .Type8 => |v| {
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                            std.debug.assert(textured);
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = v.base_intensity * face_color.r,
+                                .g = v.base_intensity * face_color.g,
+                                .b = v.base_intensity * face_color.b,
+                                .a = if (use_alpha) face_color.a else 1.0,
+                                .u = @bitCast(@as(u32, v.uv.u) << 16),
+                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .tex = tex,
+                            });
+                        },
                         .SpriteType1 => |v| {
-                            // FIXME: I assume this actually encodes the 4 necessary vertices.
+                            // B --- C
+                            // |  \  |
+                            // A --- D
+                            // Pushing the vertices in CCW order: A, D, B, C
                             try vertices.append(.{
                                 .x = v.ax,
                                 .y = v.ay,
@@ -1088,6 +1152,19 @@ pub const Renderer = struct {
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
                                 .u = @bitCast(@as(u32, v.auv.u) << 16),
+                                .v = @bitCast(@as(u32, v.auv.v) << 16),
+                                .tex = tex,
+                            });
+                            const dz = 1.0; // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
+                            try vertices.append(.{
+                                .x = v.dx,
+                                .y = v.dy,
+                                .z = dz,
+                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
+                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
+                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
+                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
+                                .u = @bitCast(@as(u32, v.cuv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
                                 .v = @bitCast(@as(u32, v.auv.v) << 16),
                                 .tex = tex,
                             });
@@ -1115,18 +1192,10 @@ pub const Renderer = struct {
                                 .v = @bitCast(@as(u32, v.cuv.v) << 16),
                                 .tex = tex,
                             });
-                            try vertices.append(.{
-                                .x = v.dx,
-                                .y = v.dy,
-                                .z = 1.0, // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
-                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.cuv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
-                                .v = @bitCast(@as(u32, v.auv.v) << 16),
-                                .tex = tex,
-                            });
+                            self.max_depth = @max(self.max_depth, 1.0 / v.az);
+                            self.max_depth = @max(self.max_depth, 1.0 / v.bz);
+                            self.max_depth = @max(self.max_depth, 1.0 / v.cz);
+                            self.max_depth = @max(self.max_depth, 1.0 / dz);
                         },
                         else => {
                             std.debug.print(termcolor.red("[Renderer] Unsupported vertex type {any}"), .{vertex});

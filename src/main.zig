@@ -494,6 +494,8 @@ pub fn main() !void {
                     }
                     const tex_id = gctx.lookupResource(renderer_texture_views[@intCast(static.size)]).?;
                     zgui.image(tex_id, .{ .w = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))), .h = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))) });
+                    zgui.text("Parameter Control Word: {any}", .{renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].control_word});
+                    zgui.text("TSP Instruction: {any}", .{renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].tsp_instruction});
                 }
                 if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
                     const fb_tex_id = gctx.lookupResource(renderer.framebuffer_texture_view).?;
@@ -508,7 +510,7 @@ pub fn main() !void {
         }
 
         // FIXME: Just testing things, as always!
-        const keybinds: [7]struct { zglfw.Key, MapleModule.ControllerButtons } = .{
+        const keybinds: [9]struct { zglfw.Key, MapleModule.ControllerButtons } = .{
             .{ .enter, .{ .start = 0 } },
             .{ .up, .{ .up = 0 } },
             .{ .down, .{ .down = 0 } },
@@ -516,6 +518,8 @@ pub fn main() !void {
             .{ .right, .{ .right = 0 } },
             .{ .q, .{ .a = 0 } },
             .{ .w, .{ .b = 0 } },
+            .{ .a, .{ .x = 0 } },
+            .{ .s, .{ .b = 0 } },
         };
         for (keybinds) |keybind| {
             const key_status = window.getKey(keybind[0]);

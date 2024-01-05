@@ -2687,7 +2687,6 @@ fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
-    std.debug.assert(cpu.fpscr.sz == 0);
     cpu.FR(opcode.nmd.n).* += cpu.FR(0).* * cpu.FR(opcode.nmd.m).*;
 }
 fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -3086,7 +3085,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
 
-    // Actually handled by single precision version - Switched by SR register
+    // Handled by single precision version - Switched by SR register sz flag
     //.{ .code = 0b1111000000001100, .mask = 0b0000111011100000, .fn_ = fmov_DRm_DRn, .name = "fmov DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     //.{ .code = 0b1111000100001100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov DRm,XDn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     //.{ .code = 0b1111000000011100, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fmov XDm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
@@ -3122,10 +3121,11 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000111101, .mask = 0b0000111100000000, .fn_ = ftrc_FRn_FPUL, .name = "ftrc FRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = fipr_FVm_FVn, .name = "fipr FVm,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .privileged = false, .issue_cycles = 1, .latency_cycles = 5 },
-    // Undocumented opcodes - Supposed to be exclusive to the SH4A, but some games seem to use them (I hope this is not sue to a mistake I made somewhere else :D).
+    // Undocumented opcodes - Supposed to be exclusive to the SH4A, but the SH7091 seem to have them.
     .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = fsrra_FRn, .name = "fsrra FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1111000011111101, .mask = 0b0000111000000000, .fn_ = fsca_FPUL_DRn, .name = "fsca FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
+    // Handled by single precision version - Switched by SR register pr flag
     //.{ .code = 0b1111000001011101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fabs DRn", .privileged = false },
     //.{ .code = 0b1111000001001101, .mask = 0b0000111000000000, .fn_ = unimplemented, .name = "fneg DRn", .privileged = false },
     //.{ .code = 0b1111000000000000, .mask = 0b0000111011100000, .fn_ = unimplemented, .name = "fadd DRm,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 7 },

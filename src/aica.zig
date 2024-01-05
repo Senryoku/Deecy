@@ -69,9 +69,16 @@ pub const AICA = struct {
     }
 
     pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
+        // FIXME: Hopefully remove this when we have a working AICA (I mean, one can dream.)
         switch (addr) {
             0x0080005C => {
                 return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
+            },
+            0x00800104 => {
+                return 0x00900000; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
+            },
+            0x00800284, 0x00800288 => {
+                return 0x00900000; // Same thing when trying to start an arcade game.
             },
             else => {},
         }
