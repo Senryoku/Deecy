@@ -766,7 +766,9 @@ pub const SH4 = struct {
                         //        And 0101003C to 0101007C, and 01010014, and 01010008
                         // self.on_trapa.?();
 
-                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
+                        // FIXME: I have no idea why Crazy Taxi seem to expect to find 0x80 at 01010008, but this lets it go further.
+                        self._dc.?._dummy = .{ 0x80, 0, 0, 0 };
+
                         return @ptrCast(&self._dc.?._dummy);
                     },
                     else => {
