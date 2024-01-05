@@ -17,7 +17,7 @@ pub fn zorder_curve(x: u32, y: u32) u32 {
     return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
 }
 
-pub fn to_tiddled_index(i: u32, w: u32) u32 {
+pub fn to_twiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
 
@@ -473,6 +473,43 @@ pub const Renderer = struct {
         return null;
     }
 
+    inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
+        const pixel: HollyModule.Color16 = .{ .value = val };
+        switch (format) {
+            .ARGB1555 => {
+                return .{
+                    @as(u8, pixel.arbg1555.b) << 3,
+                    @as(u8, pixel.arbg1555.g) << 3,
+                    @as(u8, pixel.arbg1555.r) << 3,
+                    @as(u8, pixel.arbg1555.a) * 0xFF,
+                };
+            },
+            .RGB565 => {
+                return .{
+                    @as(u8, pixel.rgb565.b) << 3,
+                    @as(u8, pixel.rgb565.g) << 2,
+                    @as(u8, pixel.rgb565.r) << 3,
+                    255,
+                };
+            },
+            .ARGB4444 => {
+                return .{
+                    @as(u8, pixel.argb4444.b) << 4,
+                    @as(u8, pixel.argb4444.g) << 4,
+                    @as(u8, pixel.argb4444.r) << 4,
+                    @as(u8, pixel.argb4444.a) << 4,
+                };
+            },
+            else => {
+                @panic("Invalid 16-bits pixel format");
+            },
+        }
+    }
+
+    inline fn bgra_scratch_pad(self: *Renderer) [*][4]u8 {
+        return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
+    }
+
     fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
@@ -482,9 +519,6 @@ pub const Renderer = struct {
         const twiddled = texture_control_word.scan_order == 0;
         if (texture_control_word.mip_mapped != 0)
             renderer_log.warn(termcolor.yellow(" TODO: Support mip mapping."), .{});
-        if (texture_control_word.vq_compressed != 0)
-            renderer_log.warn(termcolor.red(" TODO: Support VQ Compressed Textures!"), .{});
-
         const size_index = tsp_instruction.texture_u_size;
 
         // NOTE: This is used by stride textures. Stride textures actual size can be smaller than their allocated size, but UV calculation are still done with it.
@@ -498,85 +532,68 @@ pub const Renderer = struct {
 
         const addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
 
-        switch (texture_control_word.pixel_format) {
-            .ARGB1555 => {
-                for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.arbg1555.b) << 3;
-                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.arbg1555.g) << 3;
-                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.arbg1555.r) << 3;
-                    self._scratch_pad[i * 4 + 3] = @as(u8, pixel.arbg1555.a) * 0xFF; // FIXME: TESTING
-                }
-            },
-            .RGB565 => {
-                for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
-                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
-                    self._scratch_pad[i * 4 + 3] = 255;
-                }
-            },
-            .ARGB4444 => {
-                for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = if (twiddled) to_tiddled_index(@intCast(i), u_size) else i;
-                    const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).* };
-                    self._scratch_pad[i * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
-                    self._scratch_pad[i * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                    self._scratch_pad[i * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
-                    self._scratch_pad[i * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
-                }
-            },
-            .Palette4BPP, .Palette8BPP => {
-                std.debug.assert(twiddled);
-                const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                // 0x0 ARGB1555 (default)
-                // 0x1 RGB565
-                // 0x2 ARGB4444
-                // 0x3 ARGB8888
-                const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
-                const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-                for (0..(@as(u32, u_size) * v_size)) |i| {
-                    const pixel_idx = to_tiddled_index(@intCast(i), u_size);
-                    const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) pixel_idx >> 1 else pixel_idx;
-                    const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                    const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (pixel_idx & 0x1))) & 0xF) else pixel_palette;
-                    const pixel: HollyModule.Color16 = .{ .value = @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset] };
-                    switch (palette_ctrl_ram) {
-                        0x0 => { // ARGB1555
-                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.arbg1555.b) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.arbg1555.g) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.arbg1555.r) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 3] = @as(u8, pixel.arbg1555.a) << 4;
-                        },
-                        0x1 => { // RGB565
-                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.rgb565.b) << 3;
-                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.rgb565.g) << 2;
-                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.rgb565.r) << 3;
-                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
-                        },
-                        0x2 => { // ARGB4444
-                            self._scratch_pad[pixel_idx * 4 + 0] = @as(u8, pixel.argb4444.b) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 1] = @as(u8, pixel.argb4444.g) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 2] = @as(u8, pixel.argb4444.r) << 4;
-                            self._scratch_pad[pixel_idx * 4 + 3] = @as(u8, pixel.argb4444.a) << 4;
-                        },
-                        0x3 => { // ARGB8888
-                            @panic("Unsupported palette_ctrl_ram ARGB8888");
-                        },
-                        else => {
-                            renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
-                            @panic("Invalid palette_ctrl_ram value");
-                        },
+        // FIXME: This needs a big refactor.
+        if (texture_control_word.vq_compressed == 1) {
+            std.debug.assert(!twiddled); // Please.
+            const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
+            const indices = @as([*]u8, @ptrCast(&gpu.vram[addr + 8 * 256]))[0..];
+            // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
+            for (0..(@as(u32, v_size / 2))) |v| {
+                for (0..(@as(u32, u_size / 2))) |u| {
+                    const index = indices[zorder_curve(@intCast(u), @intCast(v))];
+                    const texels = code_book[index];
+                    for (0..4) |tidx| {
+                        switch (texture_control_word.pixel_format) {
+                            .ARGB1555, .RGB565, .ARGB4444 => {
+                                //                  Macro 2*2 Block            Pixel within the block
+                                const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
+                                self.bgra_scratch_pad()[pixel_index] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)));
+                            },
+                            else => {
+                                renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{texture_control_word.pixel_format});
+                                @panic("Unsupported pixel format in VQ texture");
+                            },
+                        }
                     }
                 }
-            },
-            else => {
-                renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
-                @panic("Unsupported pixel format");
-            },
+            }
+        } else {
+            switch (texture_control_word.pixel_format) {
+                .ARGB1555, .RGB565, .ARGB4444 => {
+                    for (0..(@as(u32, u_size) * v_size)) |i| {
+                        const pixel_idx = if (twiddled) to_twiddled_index(@intCast(i), u_size) else i;
+                        self.bgra_scratch_pad()[i] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * pixel_idx]))).*);
+                    }
+                },
+                .Palette4BPP, .Palette8BPP => {
+                    std.debug.assert(twiddled);
+                    const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+                    const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
+                    const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
+                    for (0..(@as(u32, u_size) * v_size)) |i| {
+                        const pixel_idx = to_twiddled_index(@intCast(i), u_size);
+                        const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) pixel_idx >> 1 else pixel_idx;
+                        const pixel_palette: u8 = gpu.vram[addr + ram_addr];
+                        const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (pixel_idx & 0x1))) & 0xF) else pixel_palette;
+                        switch (palette_ctrl_ram) {
+                            0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
+                                self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset]);
+                            },
+                            0x3 => { // ARGB8888
+                                @panic("Unsupported palette_ctrl_ram ARGB8888");
+                            },
+                            else => {
+                                renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
+                                @panic("Invalid palette_ctrl_ram value");
+                            },
+                        }
+                    }
+                },
+                else => {
+                    renderer_log.err(termcolor.red("[Holly] Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
+                    @panic("Unsupported pixel format");
+                },
+            }
         }
 
         // Search for an unused texture index.
