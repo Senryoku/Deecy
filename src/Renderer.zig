@@ -553,8 +553,6 @@ pub const Renderer = struct {
         const texture_control_register = gpu._get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
 
         const twiddled = texture_control_word.scan_order == 0;
-        if (texture_control_word.mip_mapped != 0)
-            renderer_log.warn(termcolor.yellow(" TODO: Support mip mapping."), .{});
         const size_index = tsp_instruction.texture_u_size;
 
         // NOTE: This is used by stride textures. Stride textures actual size can be smaller than their allocated size, but UV calculation are still done with it.
@@ -566,17 +564,62 @@ pub const Renderer = struct {
 
         @memset(self._scratch_pad, 0);
 
-        const addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
+        var addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
+        var vq_index_addr = addr;
+
+        if (texture_control_word.mip_mapped == 1) {
+            renderer_log.warn(termcolor.yellow(" TODO: Actually support mip mapping."), .{});
+            // We only want the highest mip level and we'll compute the others ourself.
+            // See DreamcastDevBoxSystemArchitecture.pdf p.148
+            if (texture_control_word.vq_compressed == 1) {
+                vq_index_addr += switch (u_size) {
+                    8 => 0x6,
+                    16 => 0x16,
+                    32 => 0x56,
+                    64 => 0x156,
+                    128 => 0x556,
+                    256 => 0x1556,
+                    512 => 0x5556,
+                    1024 => 0x15556,
+                    else => @panic("Invalid u_size for mip mapped texture"),
+                };
+            } else if (texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP) {
+                const val: u32 = switch (u_size) {
+                    8 => 0x18,
+                    16 => 0x58,
+                    32 => 0x158,
+                    64 => 0x558,
+                    128 => 0x1558,
+                    256 => 0x5558,
+                    512 => 0x15558,
+                    1024 => 0x55558,
+                    else => @panic("Invalid u_size for mip mapped texture"),
+                };
+                addr += if (texture_control_word.pixel_format == .Palette4BPP) val / 2 else val;
+            } else {
+                addr += switch (u_size) {
+                    8 => 0x30,
+                    16 => 0xB0,
+                    32 => 0x2B0,
+                    64 => 0xAB0,
+                    128 => 0x2AB0,
+                    256 => 0xAAB0,
+                    512 => 0x2AAB0,
+                    1024 => 0xAAAB0,
+                    else => @panic("Invalid u_size for mip mapped texture"),
+                };
+            }
+        }
 
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
             const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
-            const indices = @as([*]u8, @ptrCast(&gpu.vram[addr + 8 * 256]))[0..];
+            const indices = @as([*]u8, @ptrCast(&gpu.vram[vq_index_addr + 8 * 256]))[0..];
             // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
             for (0..v_size / 2) |v| {
                 for (0..u_size / 2) |u| {
-                    const index = indices[zorder_curve(@intCast(u), @intCast(v))];
+                    const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
                     const texels = code_book[index];
                     for (0..4) |tidx| {
                         switch (texture_control_word.pixel_format) {
@@ -609,22 +652,26 @@ pub const Renderer = struct {
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
                     const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-                    for (0..(@as(u32, u_size) * v_size)) |i| {
-                        const pixel_idx = to_twiddled_index(@intCast(i), u_size);
-                        const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) pixel_idx >> 1 else pixel_idx;
-                        const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                        const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (pixel_idx & 0x1))) & 0xF) else pixel_palette;
-                        switch (palette_ctrl_ram) {
-                            0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                                self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset]);
-                            },
-                            0x3 => { // ARGB8888
-                                @panic("Unsupported palette_ctrl_ram ARGB8888");
-                            },
-                            else => {
-                                renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
-                                @panic("Invalid palette_ctrl_ram value");
-                            },
+
+                    for (0..v_size) |v| {
+                        for (0..u_size) |u| {
+                            const pixel_idx = v * u_size + u;
+                            const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
+                            const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) texel_idx >> 1 else texel_idx;
+                            const pixel_palette: u8 = gpu.vram[addr + ram_addr];
+                            const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
+                            switch (palette_ctrl_ram) {
+                                0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
+                                    self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset]);
+                                },
+                                0x3 => { // ARGB8888
+                                    @panic("Unsupported palette_ctrl_ram ARGB8888");
+                                },
+                                else => {
+                                    renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
+                                    @panic("Invalid palette_ctrl_ram value");
+                                },
+                            }
                         }
                     }
                 },
