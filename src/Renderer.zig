@@ -568,7 +568,8 @@ pub const Renderer = struct {
         var vq_index_addr = addr;
 
         if (texture_control_word.mip_mapped == 1) {
-            renderer_log.warn(termcolor.yellow(" TODO: Actually support mip mapping."), .{});
+            renderer_log.debug(termcolor.yellow(" TODO: Actually support mip mapping."), .{});
+
             // We only want the highest mip level and we'll compute the others ourself.
             // See DreamcastDevBoxSystemArchitecture.pdf p.148
             if (texture_control_word.vq_compressed == 1) {
@@ -711,6 +712,11 @@ pub const Renderer = struct {
                         u8,
                         self._scratch_pad,
                     );
+                }
+
+                if (texture_control_word.mip_mapped == 1) {
+                    // TODO: Here we'd want to generate mipmaps.
+                    //       See zgpu.generateMipmaps, maybe?
                 }
 
                 // Write to VRAM at the texture address a signpost value to detect if it has been overwritten (and our GPU texture is thus outdated).
@@ -1064,14 +1070,14 @@ pub const Renderer = struct {
 
                 const clamp_uv = tsp_instruction.clamp_uv == 1;
                 if (clamp_uv) {
-                    renderer_log.warn(termcolor.yellow("[Renderer] TODO: Clamp UV!"), .{});
+                    renderer_log.debug(termcolor.yellow("[Renderer] TODO: Clamp UV!"), .{});
                     // TODO: Use an appropriate sampler with AddressMode ClampToEdge
                 }
 
                 const flip_u = tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
                 const flip_v = (tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
                 if (flip_u or flip_v) {
-                    renderer_log.warn(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
+                    renderer_log.debug(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
                     // TODO: Use an appropriate sampler with AddressMode MirrorRepeat
                 }
 

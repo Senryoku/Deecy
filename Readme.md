@@ -4,13 +4,21 @@
 
 -   Some games (e.g. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
 
+
 ## Things I know I have to do
 
 -   ch0-DMA and ch1-DMA?
 -   Sort-DMA? (And the corresponding end interrupt)
+
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
+
 -   The whole AICA Chip. Please have mercy.
+
+-   Renderer:
+  - Handle ClampUV and FlipUV, idealy using appropriate samplers and adressing modes.
+  - Handle and generate Mipmaps.
+
 
 ## Things I don't know I have to do
 
@@ -29,3 +37,8 @@
 ## Dependencies
 
 -   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/
+
+
+## Licence
+
+- Uses data from MAME under the BSD-3-Clause licence (see `src/gdrom_secu.zig`).
