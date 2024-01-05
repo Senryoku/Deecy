@@ -2637,7 +2637,7 @@ fn fsts_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     cpu.FR(opcode.nmd.n).* = @bitCast(cpu.fpul);
 }
 fn fabs_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = @abs(cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2646,7 +2646,7 @@ fn fabs_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2656,7 +2656,7 @@ fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
 }
 
 fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         // TODO: Handle exceptions
         // if(!cpu.fpscr.dn and (n is denorm or m  is denorm)) ...
         cpu.FR(opcode.nmd.n).* += cpu.FR(opcode.nmd.m).*;
@@ -2667,7 +2667,7 @@ fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* -= cpu.FR(opcode.nmd.m).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2677,7 +2677,7 @@ fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: There's a lot more to do here.
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* *= cpu.FR(opcode.nmd.m).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2692,7 +2692,7 @@ fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: There's a lot more to do here.
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* /= cpu.FR(opcode.nmd.m).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2701,7 +2701,7 @@ fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2710,7 +2710,7 @@ fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // TODO: Special float values checks?
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* > cpu.FR(opcode.nmd.m).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2720,7 +2720,7 @@ fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // TODO: Special float values checks?
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* == cpu.FR(opcode.nmd.m).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2731,7 +2731,7 @@ fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: We're skipping a lot of error checking here.
     // NOTE: Experimentation shows the FPUL is treated as signed, at least here. I don't know if this is ALWAYS the case, or not.
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = @floatFromInt(as_i32(cpu.fpul));
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
@@ -2743,7 +2743,7 @@ fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // FIXME: We're skipping a lot of error checking here.
     // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
     //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
-    if (cpu.fpscr.sz == 0) {
+    if (cpu.fpscr.pr == 0) {
         cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
