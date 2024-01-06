@@ -509,7 +509,7 @@ pub fn main() !void {
             zgui.end();
         }
 
-        // FIXME: Just testing things, as always!
+        // FIXME: This shouldn't be here, and is overwritten by the gamepad right after (:
         const keybinds: [9]struct { zglfw.Key, MapleModule.ControllerButtons } = .{
             .{ .enter, .{ .start = 0 } },
             .{ .up, .{ .up = 0 } },
@@ -519,7 +519,7 @@ pub fn main() !void {
             .{ .q, .{ .a = 0 } },
             .{ .w, .{ .b = 0 } },
             .{ .a, .{ .x = 0 } },
-            .{ .s, .{ .b = 0 } },
+            .{ .s, .{ .y = 0 } },
         };
         for (keybinds) |keybind| {
             const key_status = window.getKey(keybind[0]);
@@ -529,6 +529,32 @@ pub fn main() !void {
                 dc.maple.ports[0].release_buttons(keybind[1]);
             }
         }
+
+        const gamepad: zglfw.Gamepad = .{ .jid = 0 };
+        const gamepad_state = gamepad.getState();
+        const gamepad_binds: [9]struct { zglfw.Gamepad.Button, MapleModule.ControllerButtons } = .{
+            .{ .start, .{ .start = 0 } },
+            .{ .dpad_up, .{ .up = 0 } },
+            .{ .dpad_down, .{ .down = 0 } },
+            .{ .dpad_left, .{ .left = 0 } },
+            .{ .dpad_right, .{ .right = 0 } },
+            .{ .a, .{ .a = 0 } },
+            .{ .b, .{ .b = 0 } },
+            .{ .x, .{ .x = 0 } },
+            .{ .y, .{ .y = 0 } },
+        };
+        for (gamepad_binds) |keybind| {
+            const key_status = gamepad_state.buttons[@intFromEnum(keybind[0])];
+            if (key_status == .press) {
+                dc.maple.ports[0].press_buttons(keybind[1]);
+            } else if (key_status == .release) {
+                dc.maple.ports[0].release_buttons(keybind[1]);
+            }
+        }
+        dc.maple.ports[0].axis[0] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)] * 0.5 + 0.5) * 255));
+        dc.maple.ports[0].axis[1] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)] * 0.5 + 0.5) * 255));
+        dc.maple.ports[0].axis[2] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)] * 0.5 + 0.5) * 255));
+        dc.maple.ports[0].axis[3] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)] * 0.5 + 0.5) * 255));
 
         if (running) {
             const start = try std.time.Instant.now();

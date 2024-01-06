@@ -176,6 +176,7 @@ const MaplePort = struct {
 
     // FIXME: Not every peripheral is a controller :)
     buttons: ControllerButtons = .{},
+    axis: [6]u8 = .{0} ** 6,
     pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) & @as(u16, @bitCast(buttons)));
     }
@@ -221,8 +222,9 @@ const MaplePort = struct {
                         // TODO: Write some actual input data!
                         dc.cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
                         dc.cpu.write16(return_addr + 8, @bitCast(self.buttons));
-                        dc.cpu.write16(return_addr + 10, 0xFFFF);
-                        dc.cpu.write32(return_addr + 12, 0xFFFFFFFF);
+                        for (0..6) |i| {
+                            dc.cpu.write8(@intCast(return_addr + 10 + i), self.axis[i]);
+                        }
                     },
                     else => {
                         std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
