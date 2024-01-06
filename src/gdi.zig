@@ -115,7 +115,10 @@ pub const GDI = struct {
 
         self.tracks = std.ArrayList(Track).init(self._allocator);
 
-        const file = try std.fs.cwd().openFile(filepath, .{});
+        const file = std.fs.cwd().openFile(filepath, .{}) catch {
+            std.debug.print("File not found: {s}\n", .{filepath});
+            return error.FileNotFound;
+        };
         defer file.close();
         const folder = std.fs.path.dirname(filepath) orelse ".";
         const data = try file.readToEndAlloc(self._allocator, 1024 * 1024 * 1024);
@@ -139,7 +142,10 @@ pub const GDI = struct {
 
             const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
             defer self._allocator.free(track_file_path);
-            const track_file = try std.fs.cwd().openFile(track_file_path, .{});
+            const track_file = std.fs.cwd().openFile(track_file_path, .{}) catch {
+                std.debug.print("Track File not found: {s}\n", .{track_file_path});
+                return error.TrackFileNotFound;
+            };
             defer track_file.close();
 
             // NOTE: Use MMAP on non-windows platforms?

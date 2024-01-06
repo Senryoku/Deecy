@@ -19,6 +19,8 @@
   - Handle ClampUV and FlipUV, idealy using appropriate samplers and adressing modes.
   - Handle and generate Mipmaps.
 
+  - Ikaruga need some sort of MMU support :( Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
+
 
 ## Things I don't know I have to do
 
