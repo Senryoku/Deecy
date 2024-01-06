@@ -1,6 +1,8 @@
 const std = @import("std");
 const termcolor = @import("termcolor.zig");
 
+const maple_log = std.log.scoped(.maple);
+
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const zglfw = @import("zglfw");
@@ -31,7 +33,7 @@ const Command = enum(u8) {
     DeviceInfoRequest = 0x01,
     ExtendedDeviceInfo = 0x02,
     Reset = 0x03,
-    Shutdow = 0x04,
+    Shutdown = 0x04,
     DeviceInfo = 0x05,
     ExtendedDevice = 0x06,
     Acknowledge = 0x07,
@@ -165,16 +167,10 @@ pub const ControllerButtons = packed struct(u16) {
     _2: u5 = 0b11111,
 };
 
-const Peripheral = struct {
-    capabilities: FunctionCodesMask = .{},
-    subcapabilities: [3]FunctionCodesMask = .{.{}} ** 3,
-};
+const Controller = struct {
+    capabilities: FunctionCodesMask = .{ .controller = 1 },
+    subcapabilities: [3]FunctionCodesMask = .{ @bitCast(StandardControllerCapabilities), .{}, .{} },
 
-const MaplePort = struct {
-    main: ?Peripheral = null,
-    subperipherals: [5]?Peripheral = .{null} ** 5,
-
-    // FIXME: Not every peripheral is a controller :)
     buttons: ControllerButtons = .{},
     axis: [6]u8 = .{0} ** 6,
     pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
@@ -184,13 +180,66 @@ const MaplePort = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
+    pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
+        var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
+        @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
+            .FunctionCodesMask = self.capabilities,
+            .SubFunctionCodesMasks = self.subcapabilities,
+        };
+        return r;
+    }
+
+    pub fn get_condition(self: *const @This()) [3]u32 {
+        var r = [3]u32{ 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
+        r[0] = @bitCast(self.capabilities);
+        r[1] = @as(u16, @bitCast(self.buttons));
+        for (0..6) |i| {
+            @as([*]u8, @ptrCast(&r))[6 + i] = self.axis[i];
+        }
+        return r;
+    }
+};
+
+const VMU = struct {
+    capabilities: FunctionCodesMask = VMUCapabilities,
+    subcapabilities: [3]FunctionCodesMask = .{
+        @bitCast(@as(u32, 0b01111110_01111110_00111111_01000000)),
+        @bitCast(@as(u32, 0b00000000_00000101_00010000_00000000)),
+        @bitCast(@as(u32, 0b00000000_00001111_01000001_00000000)),
+    },
+
+    pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
+        var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
+        @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
+            .FunctionCodesMask = self.capabilities,
+            .SubFunctionCodesMasks = self.subcapabilities,
+        };
+        return r;
+    }
+};
+
+const PeripheralType = enum {
+    Controller,
+    VMU,
+};
+
+const Peripheral = union(PeripheralType) {
+    Controller: Controller,
+    VMU: VMU,
+};
+
+const MaplePort = struct {
+    main: ?Peripheral = null,
+    subperipherals: [5]?Peripheral = .{null} ** 5,
+
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
         const ram_addr = return_addr - 0x0C000000;
+        _ = ram_addr;
 
         const command: CommandWord = @bitCast(data[1]);
 
-        std.log.debug("    Command: {any}", .{command});
+        maple_log.debug("    Command: {any}", .{command});
 
         // Note: The sender address should also include the sub-peripheral bit when appropriate.
         var sender_address = command.recipent_address;
@@ -211,23 +260,34 @@ const MaplePort = struct {
             } else {
                 switch (command.command) {
                     .DeviceInfoRequest => {
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @sizeOf(DeviceInfoPayload) / 4 }));
-                        @as(*DeviceInfoPayload, @ptrCast(&dc.ram[ram_addr + 4])).* = .{
-                            .FunctionCodesMask = target.?.capabilities,
-                            .SubFunctionCodesMasks = target.?.subcapabilities,
+                        const identity = switch (target.?) {
+                            .Controller => |c| c.get_identity(),
+                            .VMU => |v| v.get_identity(),
                         };
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(identity.len) }));
+                        const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                        @memcpy(ptr[0..identity.len], &identity);
                     },
                     .GetCondition => {
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 3 }));
-                        // TODO: Write some actual input data!
-                        dc.cpu.write32(return_addr + 4, @bitCast(self.main.?.capabilities));
-                        dc.cpu.write16(return_addr + 8, @bitCast(self.buttons));
-                        for (0..6) |i| {
-                            dc.cpu.write8(@intCast(return_addr + 10 + i), self.axis[i]);
+                        switch (target.?) {
+                            .Controller => |c| {
+                                const condition = c.get_condition();
+                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
+                                const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                                @memcpy(ptr[0..condition.len], &condition);
+                            },
+                            .VMU => {
+                                maple_log.err("TODO: GetCondition for VMU", .{});
+                                @panic("TODO VMU GET CONDITION");
+                            },
+                            //else => {
+                            //    maple_log.err("Unimplemented GetCondition for target: {any}", .{target.?});
+                            //    @panic("[Maple] Unimplemented GetCondition for target");
+                            //},
                         }
                     },
                     else => {
-                        std.log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
+                        maple_log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
                         dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }
@@ -239,7 +299,12 @@ const MaplePort = struct {
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{ .{ .main = .{ .capabilities = .{ .controller = 1 }, .subcapabilities = .{ @bitCast(StandardControllerCapabilities), .{}, .{} } }, .subperipherals = .{ .{ .capabilities = VMUCapabilities }, null, null, null, null } }, .{}, .{}, .{} },
+    ports: [4]MaplePort = .{
+        .{ .main = .{ .Controller = .{} }, .subperipherals = .{ .{ .VMU = .{} }, null, null, null, null } },
+        .{},
+        .{},
+        .{},
+    },
 
     pub fn init() MapleHost {
         return .{};
@@ -259,7 +324,7 @@ pub const MapleHost = struct {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            std.log.debug("    Instruction: {any}", .{instr});
+            maple_log.debug("    Instruction: {any}", .{instr});
 
             switch (instr.pattern) {
                 .Normal => {
@@ -267,7 +332,7 @@ pub const MapleHost = struct {
                 },
                 .NOP, .RESET => {},
                 else => {
-                    std.log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern});
+                    maple_log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern});
                 },
             }
 
