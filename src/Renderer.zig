@@ -30,6 +30,10 @@ pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
     return r;
 }
 
+fn uv16(val: u16) f32 {
+    return @bitCast(@as(u32, val) << 16);
+}
+
 const fRGBA = struct {
     r: f32,
     g: f32,
@@ -1204,11 +1208,14 @@ pub const Renderer = struct {
                                 .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.auv.u) << 16),
-                                .v = @bitCast(@as(u32, v.auv.v) << 16),
+                                .u = uv16(v.auv.u),
+                                .v = uv16(v.auv.v),
                                 .tex = tex,
                             });
                             const dz = 1.0; // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
+                            // Same thing, texture coordinates have to be deduced from other vertices.
+                            const du = uv16(v.auv.u) + uv16(v.cuv.u) - uv16(v.buv.u);
+                            const dv = uv16(v.auv.v) + uv16(v.cuv.v) - uv16(v.buv.v);
                             try vertices.append(.{
                                 .x = v.dx,
                                 .y = v.dy,
@@ -1217,8 +1224,8 @@ pub const Renderer = struct {
                                 .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.cuv.u) << 16), // FIXME: Same thing, there is no 'DU' or 'DV' in the documentation.
-                                .v = @bitCast(@as(u32, v.auv.v) << 16),
+                                .u = du,
+                                .v = dv,
                                 .tex = tex,
                             });
                             try vertices.append(.{
@@ -1229,8 +1236,8 @@ pub const Renderer = struct {
                                 .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.buv.u) << 16),
-                                .v = @bitCast(@as(u32, v.buv.v) << 16),
+                                .u = uv16(v.buv.u),
+                                .v = uv16(v.buv.v),
                                 .tex = tex,
                             });
                             try vertices.append(.{
@@ -1241,8 +1248,8 @@ pub const Renderer = struct {
                                 .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
                                 .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
                                 .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = @bitCast(@as(u32, v.cuv.u) << 16),
-                                .v = @bitCast(@as(u32, v.cuv.v) << 16),
+                                .u = uv16(v.cuv.u),
+                                .v = uv16(v.cuv.v),
                                 .tex = tex,
                             });
                             self.max_depth = @max(self.max_depth, 1.0 / v.az);
@@ -1260,8 +1267,8 @@ pub const Renderer = struct {
                 }
 
                 // Triangle Strips
-                for (0..display_list.vertex_parameters.items[idx].items.len) |i| {
-                    try indices.append(@intCast(FirstVertex + start + i));
+                for (start..vertices.items.len) |i| {
+                    try indices.append(@intCast(FirstVertex + i));
                 }
                 try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
             }
