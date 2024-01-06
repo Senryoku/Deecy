@@ -44,7 +44,7 @@ pub const RGBA = packed struct(u32) {
     r: u8,
 };
 
-fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
+pub fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
     const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
     const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
     const y0 = @as(f32, @floatFromInt(yuv.y0));
