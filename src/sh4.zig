@@ -322,7 +322,9 @@ pub const SH4 = struct {
     }
 
     inline fn set_sr(self: *@This(), value: SR) void {
-        if (value.rb != self.sr.rb) {
+        const prev_rb = if (self.sr.md == 1) self.sr.rb else 0;
+        const new_rb = if (value.md == 1) value.rb else 0;
+        if (new_rb != prev_rb) {
             std.mem.swap([8]u32, self.r[0..8], &self.r_bank);
         }
         self.sr = @bitCast(@as(u32, @bitCast(value)) & 0x700083F3);
