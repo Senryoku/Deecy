@@ -1,4 +1,5 @@
 const std = @import("std");
+const termcolor = @import("termcolor.zig");
 
 const aica_log = std.log.scoped(.aica);
 
@@ -153,7 +154,7 @@ pub const AICA = struct {
         const aica_addr = dc.read_hw_register(u32, .SB_ADSTAG);
         const root_bus_addr = dc.read_hw_register(u32, .SB_ADSTAR);
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
-        const len = len_reg & 0x7FFFFFFF;
+        var len = len_reg & 0x7FFFFFFF;
         const direction = dc.read_hw_register(u32, .SB_ADDIR);
         aica_log.info(" AICA G2-DMA Start!", .{});
         aica_log.debug("   AICA Address: 0x{X:0>8}", .{aica_addr});
@@ -162,6 +163,26 @@ pub const AICA = struct {
         aica_log.debug("   Direction: 0x{X:0>8}", .{direction});
         aica_log.debug("   Trigger Select: 0x{X:0>8}", .{dc.read_hw_register(u32, .SB_ADTSEL)});
         aica_log.debug("   Enable: 0x{X:0>8}", .{enabled});
+
+        // NOTE: Wrong start adresses should raise exception, but we don't emulate them, yet.
+        if (aica_addr < 0x00800000 or aica_addr >= 0x00A00000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}. Canceled."), .{aica_addr});
+            return;
+        }
+        if (root_bus_addr < 0x0C000000 or root_bus_addr >= 0x0D000000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}. Canceled."), .{root_bus_addr});
+            return;
+        }
+
+        // FIXME: I have no idea how to correctly handle this error case.
+        if (aica_addr + 4 * len >= 0x00A00000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8} (Manually kept in bounds)"), .{ aica_addr, len, aica_addr + 4 * len });
+            len = (0x00A00000 - aica_addr) / 4;
+        }
+        if (root_bus_addr + 4 * len >= 0x0D000000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8} (Manually kept in bounds)"), .{ root_bus_addr, len, root_bus_addr + 4 * len });
+            len = (0x0D000000 - root_bus_addr) / 4;
+        }
 
         const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
         const physical_aica_addr = &self.wave_memory[aica_addr - 0x00800000];

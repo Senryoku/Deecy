@@ -680,8 +680,8 @@ pub const SH4 = struct {
     }
 
     fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
-        std.debug.print("PC: {X:0>8}\n", .{self.pc});
-        std.debug.panic(fmt, args);
+        std.debug.print("panic_debug: PC: {X:0>8}\n", .{self.pc});
+        std.debug.print(fmt ++ "\n", args);
         @panic(fmt);
     }
 
