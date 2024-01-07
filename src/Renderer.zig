@@ -678,7 +678,6 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => {
-                    std.debug.assert(twiddled);
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
                     const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
@@ -686,7 +685,7 @@ pub const Renderer = struct {
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
-                            const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
+                            const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
                             const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
                             const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
@@ -1186,6 +1185,7 @@ pub const Renderer = struct {
                         },
                         // Packed Color, Textured 32bit UV
                         .Type3 => |v| {
+                            // TODO: Offset color
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(textured);
                             try vertices.append(.{
@@ -1203,6 +1203,7 @@ pub const Renderer = struct {
                         },
                         // Packed Color, Textured 16bit UV
                         .Type4 => |v| {
+                            // TODO: Offset color
                             try vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
@@ -1216,8 +1217,25 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Floating Color, Textured
+                        .Type5 => |v| {
+                            // TODO: Offset color
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = v.base_r,
+                                .g = v.base_g,
+                                .b = v.base_b,
+                                .a = if (use_alpha) v.base_a else 1.0,
+                                .u = v.u,
+                                .v = v.v,
+                                .tex = tex,
+                            });
+                        },
                         // Intensity
                         .Type7 => |v| {
+                            // TODO: Offset intensity
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
                             try vertices.append(.{
