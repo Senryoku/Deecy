@@ -1341,6 +1341,7 @@ pub const Holly = struct {
                                     self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                                 },
                                 else => {
+                                    holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
                                     @panic("Unexpected vertex parameter type");
                                 },
                             }
@@ -1421,7 +1422,7 @@ pub const Holly = struct {
 
     pub fn ta_fifo_yuv_converter_path(self: *@This()) void {
         _ = self;
-
+        holly_log.err(termcolor.red("  Unimplemented ta_fifo_yuv_converter_path"), .{});
         @panic("Unimplemented ta_fifo_yuv_converter_path");
     }
 
