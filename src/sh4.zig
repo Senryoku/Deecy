@@ -423,6 +423,7 @@ pub const SH4 = struct {
         self.execution_state = .Running;
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
+        self.sgr = self.R(15).*;
 
         var new_sr = self.sr;
         new_sr.bl = true;
@@ -436,6 +437,7 @@ pub const SH4 = struct {
     fn jump_to_exception(self: *@This()) void {
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
+        self.sgr = self.R(15).*;
 
         var new_sr = self.sr;
         new_sr.bl = true;
