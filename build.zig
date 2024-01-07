@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const zgui = @import("libs/zgui/build.zig");
-const zglfw = @import("libs/zglfw/build.zig");
-const zgpu = @import("libs/zgpu/build.zig");
-const zpool = @import("libs/zpool/build.zig");
+const zgui = @import("libs/zig-gamedev/libs/zgui/build.zig");
+const zglfw = @import("libs/zig-gamedev/libs/zglfw/build.zig");
+const zgpu = @import("libs/zig-gamedev/libs/zgpu/build.zig");
+const zpool = @import("libs/zig-gamedev/libs/zpool/build.zig");
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
