@@ -271,6 +271,10 @@ const MaplePort = struct {
                     .GetCondition => {
                         switch (target.?) {
                             .Controller => |c| {
+                                std.debug.assert(command.payload_length == 1);
+                                const function = data[2];
+                                std.debug.assert(function == 0x01000000);
+
                                 const condition = c.get_condition();
                                 dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
                                 const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
