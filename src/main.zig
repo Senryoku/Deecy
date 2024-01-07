@@ -283,7 +283,7 @@ pub fn main() !void {
                 _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
                 zgui.sameLine(.{});
                 if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
-                    try breakpoints.append(@as(u32, @intCast(static.bp_addr)) & 0x1FFFFFFF);
+                    try breakpoints.append(@as(u32, @intCast(static.bp_addr & 0x1FFFFFFF)));
                 }
 
                 const timers = .{
