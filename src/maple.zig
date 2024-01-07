@@ -39,7 +39,7 @@ const Command = enum(u8) {
     Acknowledge = 0x07,
     DataTransfer = 0x08,
     GetCondition = 0x09,
-    GetMemory = 0x0A,
+    GetMemoryInformation = 0x0A,
     BlockRead = 0x0B,
     BlockWrite = 0x0C,
     GetLastError = 0x0D,
@@ -284,6 +284,24 @@ const MaplePort = struct {
                             //    maple_log.err("Unimplemented GetCondition for target: {any}", .{target.?});
                             //    @panic("[Maple] Unimplemented GetCondition for target");
                             //},
+                        }
+                    },
+                    .GetMemoryInformation => {
+                        maple_log.warn(termcolor.yellow("  Badly implemented GetMemoryInformation command!"), .{});
+                        // FIXME: Temp Hack for testing Sonic Adventure (It won't go further without a properly implemented memory card, but will if we tell it its there then gaslight it into saying it doesn't support this command.)
+                        if (true) {
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        } else {
+                            std.debug.assert(command.payload_length == 2);
+                            const function_type = data[2];
+                            const partition_number = data[3];
+                            maple_log.warn(termcolor.yellow("    Function type: {any} Partition number: {any}"), .{ function_type, partition_number });
+
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 3 }));
+                            // TODO
+                            dc.cpu.write32(return_addr + 4, 0x00000000);
+                            dc.cpu.write32(return_addr + 4, 0x00000000);
+                            dc.cpu.write32(return_addr + 4, 0x00000000);
                         }
                     },
                     else => {
