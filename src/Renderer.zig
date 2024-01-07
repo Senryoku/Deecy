@@ -683,13 +683,13 @@ pub const Renderer = struct {
                 .YUV422 => {
                     if (twiddled) {
                         // FIXME: Given the data arangement suggested by the docs, I suspect I'll have to process 2x2 blocks in the twiddled case.
-                        //        (Right now, and until I can visually check the result, this is just a copy/paste of the un-twiddled case).
+                        //        This is completely wrong ATM.
                         //     bit    63-48       47-32       31-16       15-0
                         //          Y1V (1,1)   Y1V (1,0)   Y0U (0,1)   Y0U (0,0)
                         for (0..v_size) |v| {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = v * u_size + 2 * u;
-                                const texel_idx = pixel_idx;
+                                const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
                                 const texel: HollyModule.YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*);
                                 const colors = HollyModule.yuv_to_rgba(texel);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };

@@ -31,10 +31,10 @@ pub const Color16 = packed union {
 };
 
 pub const YUV422 = packed struct(u32) {
-    v: u8,
-    y1: u8,
     u: u8,
     y0: u8,
+    v: u8,
+    y1: u8,
 };
 
 pub const RGBA = packed struct(u32) {
@@ -44,22 +44,26 @@ pub const RGBA = packed struct(u32) {
     r: u8,
 };
 
+// Expects u and v to already be shifted, then, per the documentation:
+//   R = Y + (11/8) × (V-128)
+//   G = Y - 0.25 × (11/8) × (U-128) - 0.5 × (11/8) × (V-128)
+//   B = Y + 1.25 × (11/8) × (U-128)
+//   α= 255
+inline fn _yuv(y: f32, u: f32, v: f32) RGBA {
+    return .{
+        .r = @intFromFloat(std.math.clamp(y + (11.0 / 8.0) * v, 0.0, 255.0)),
+        .g = @intFromFloat(std.math.clamp(y - 0.25 * (11.0 / 8.0) * u - 0.5 * (11.0 / 8.0) * v, 0.0, 255.0)),
+        .b = @intFromFloat(std.math.clamp(y + 1.25 * (11.0 / 8.0) * u, 0.0, 255.0)),
+        .a = 255,
+    };
+}
+
 pub fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
     const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
     const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
-    const y0 = @as(f32, @floatFromInt(yuv.y0));
-    const y1 = @as(f32, @floatFromInt(yuv.y1));
-    return .{ .{
-        .r = @intFromFloat(std.math.clamp(y0 + (11 / 8) * v, 0, 255)),
-        .g = @intFromFloat(std.math.clamp(y0 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
-        .b = @intFromFloat(std.math.clamp(y0 + 1.25 * (11 / 8) * u, 0, 255)),
-        .a = 255,
-    }, .{
-        .r = @intFromFloat(std.math.clamp(y1 + (11 / 8) * v, 0, 255)),
-        .g = @intFromFloat(std.math.clamp(y1 - 0.25 * (11 / 8) * u - 0.5 * (11 / 8) * v, 0, 255)),
-        .b = @intFromFloat(std.math.clamp(y1 + 1.25 * (11 / 8) * u, 0, 255)),
-        .a = 255,
-    } };
+    const y0: f32 = @floatFromInt(yuv.y0);
+    const y1: f32 = @floatFromInt(yuv.y1);
+    return .{ _yuv(y0, u, v), _yuv(y1, u, v) };
 }
 
 const HollyRegister = enum(u32) {
