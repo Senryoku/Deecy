@@ -21,13 +21,28 @@ pub fn to_twiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
 
+// Extract from the documentation:
+//   Twiddled format textures can be either square or rectangular. The relationship between the texture data storage address and the UV coordinates is shown below.
+//     <Squares> The bits of the storage address are configured so that each bit of the UV coordinates alternate, starting from the low-order end. The least significant bit is bit 0 of the V coordinate (V0).
+//               Example: …… U4 V4 U3 V3 U2 V2 U1 V1 U0 V0
+//     <Rectangles> The bits of the storage address are configured so that each bit of the UV coordinates alternate, starting from the low-order end. The least significant bit is bit 0 of the V coordinate (V0).
+//                  Any extra bits for one coordinate are positioned in order at the high end.
+//                  Example: …… V5 V4 U3 V3 U2 V2 U1 V1 U0 V0
+// The following function attempt to implement the general case - rectangles.
 pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
-    std.debug.assert(h < w);
-    // Operate square by square, assuming that, if w != h, then w > h and w is a multiple of h.
-    var r = zorder_curve(@intCast(u % h), @intCast(v));
-    // Shift square by square.
-    r += (u / h) * h * h;
-    return r;
+    // This can probably be made more efficient, but it makes sense to me.
+    if (h <= w) {
+        // Operate in a single square, assuming that, if w != h, then w > h and w is a multiple of h.
+        var r = zorder_curve(@intCast(u % h), @intCast(v));
+        // Shift square by square. This corresponds to the extra bits for one coordinates described in the documentation.
+        r += (u / h) * h * h;
+        return r;
+    } else {
+        // Same thing, but vertically.
+        var r = zorder_curve(@intCast(u), @intCast(v % w));
+        r += (v / w) * w * w;
+        return r;
+    }
 }
 
 fn uv16(val: u16) f32 {
@@ -541,6 +556,7 @@ pub const Renderer = struct {
                 };
             },
             else => {
+                renderer_log.err("Invalid 16-bits pixel format {any}", .{format});
                 @panic("Invalid 16-bits pixel format");
             },
         }
@@ -586,7 +602,10 @@ pub const Renderer = struct {
                     256 => 0x1556,
                     512 => 0x5556,
                     1024 => 0x15556,
-                    else => @panic("Invalid u_size for mip mapped texture"),
+                    else => {
+                        renderer_log.err(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{});
+                        @panic("Invalid u_size for mip mapped texture");
+                    },
                 };
             } else if (texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP) {
                 const val: u32 = switch (u_size) {
@@ -598,7 +617,10 @@ pub const Renderer = struct {
                     256 => 0x5558,
                     512 => 0x15558,
                     1024 => 0x55558,
-                    else => @panic("Invalid u_size for mip mapped texture"),
+                    else => {
+                        renderer_log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
+                        @panic("Invalid u_size for mip mapped texture");
+                    },
                 };
                 addr += if (texture_control_word.pixel_format == .Palette4BPP) val / 2 else val;
             } else {
@@ -611,7 +633,10 @@ pub const Renderer = struct {
                     256 => 0xAAB0,
                     512 => 0x2AAB0,
                     1024 => 0xAAAB0,
-                    else => @panic("Invalid u_size for mip mapped texture"),
+                    else => {
+                        renderer_log.err(termcolor.red("Invalid u_size for mip mapped texture"), .{});
+                        @panic("Invalid u_size for mip mapped texture");
+                    },
                 };
             }
         }
@@ -1418,6 +1443,7 @@ pub const Renderer = struct {
                             pass.setPipeline(translucent_pipeline);
                         },
                         else => {
+                            renderer_log.err("Unsupported pass type {any}", .{pass_metadata.pass_type});
                             @panic("Unsupported pass type");
                         },
                     }
