@@ -31,7 +31,7 @@ pub const std_options = struct {
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holy, .level = .info },
         .{ .scope = .gdrom, .level = .info },
-        .{ .scope = .maple, .level = .info },
+        .{ .scope = .maple, .level = .debug },
         .{ .scope = .renderer, .level = .info },
     };
 };

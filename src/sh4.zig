@@ -1012,7 +1012,7 @@ pub const SH4 = struct {
                     return;
                 },
                 @intFromEnum(P4MemoryRegister.SCFTDR2) => {
-                    sh4_log.warn(termcolor.yellow("Write to non-implemented P4 register SCFTDR2: 0x{X:0>2}."), .{value});
+                    sh4_log.warn(termcolor.yellow("Write8 to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
                     // Immediately mark transfer as complete.
                     //   Or rather, attempts to, this is not enough.
                     const SCFSR2 = self.p4_register(MemoryRegisters.SCFSR2, .SCFSR2);

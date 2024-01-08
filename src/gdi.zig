@@ -125,8 +125,8 @@ pub const GDI = struct {
         const folder = std.fs.path.dirname(filepath) orelse ".";
         const data = try file.readToEndAlloc(self._allocator, 1024 * 1024 * 1024);
         defer self._allocator.free(data);
-        // FIXME: Try to determine the end line sequence before splitting?
-        var lines = std.mem.split(u8, data, "\r\n");
+        const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
+        var lines = std.mem.split(u8, data, end_line);
 
         const first_line = lines.next().?;
         const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);

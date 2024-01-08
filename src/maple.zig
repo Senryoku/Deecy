@@ -50,6 +50,8 @@ const Command = enum(u8) {
     RequestResend = 0xFC,
     UnknownCommand = 0xFD,
     FunctionCodeNotSupported = 0xFE,
+
+    _,
 };
 
 const CommandWord = packed struct(u32) {
@@ -234,11 +236,8 @@ const MaplePort = struct {
 
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
-        const ram_addr = return_addr - 0x0C000000;
-        _ = ram_addr;
 
         const command: CommandWord = @bitCast(data[1]);
-
         maple_log.debug("    Command: {any}", .{command});
 
         // Note: The sender address should also include the sub-peripheral bit when appropriate.
@@ -309,7 +308,7 @@ const MaplePort = struct {
                         }
                     },
                     else => {
-                        maple_log.warn(termcolor.yellow("[Maple] Unimplemented command: {}"), .{command.command});
+                        maple_log.warn(termcolor.yellow("Unimplemented command: {}"), .{command.command});
                         dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                 }

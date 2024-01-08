@@ -288,7 +288,7 @@ pub const GDROM = struct {
                         self.status_register.drq = 0;
                         // The device clears the BSY bit and initiates an interrup
                         self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                            .cycles = 20, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
                         };
                         // Always report no errors.
@@ -332,7 +332,7 @@ pub const GDROM = struct {
                         self.data_queue.writeAssumeCapacity("                ");
 
                         self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                            .cycles = 20, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
                         };
                     },
@@ -450,7 +450,7 @@ pub const GDROM = struct {
                     }
 
                     self.scheduled_event = .{
-                        .cycles = 200, // FIXME: Random value
+                        .cycles = 20, // FIXME: Random value
                         .status = .{ .bsy = 0, .drq = 1 },
                     };
                 }
