@@ -132,7 +132,13 @@ pub fn main() !void {
         if (skip_bios)
             dc.skip_bios();
 
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
+        const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x70..0x80];
+        const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
+        var first_read: []u8 = try common.GeneralAllocator.alloc(u8, name_end + 2);
+        defer common.GeneralAllocator.free(first_read);
+        @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
+        @memcpy(first_read[name_end .. name_end + 2], ";1");
+        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
         if (skip_bios) {
             // Boot to menu
