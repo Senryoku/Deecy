@@ -540,13 +540,20 @@ pub const GDROM = struct {
                 if (self.disk.?.tracks.items.len >= 3) {
                     // Copy ToC directly from the third track. No idea if this is what's expected here.
                     self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
+
+                    const d = self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length];
+                    for (0..d.len / 4) |i| {
+                        std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                    }
                 } else {
                     for (0..alloc_length) |_| {
                         self.data_queue.writeItemAssumeCapacity(0xFF);
                     }
                 }
             } else {
-                for (self.disk.?.tracks.items) |*track| {
+                // Single Density: First two tracks.
+                for (0..2) |i| {
+                    const track = self.disk.?.tracks.items[i];
                     // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
                     //   0h No sub Q channel mode information
                     //   1h Sub Q channel indicates current position.
@@ -568,11 +575,11 @@ pub const GDROM = struct {
                     self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
                     self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
                 }
-                for (self.disk.?.tracks.items.len..99) |_| {
+                for (2..99) |_| {
                     self.data_queue.writeAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
                 }
                 if (self.disk.?.tracks.items.len > 0) {
-                    {
+                    { // First track
                         const track = self.disk.?.tracks.items[0];
                         const adr: u4 = 0;
                         const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
@@ -581,8 +588,8 @@ pub const GDROM = struct {
                         self.data_queue.writeItemAssumeCapacity(0);
                         self.data_queue.writeItemAssumeCapacity(0);
                     }
-                    {
-                        const track = self.disk.?.tracks.items[self.disk.?.tracks.items.len - 1];
+                    { // Last Track
+                        const track = self.disk.?.tracks.items[1];
                         const adr: u4 = 0;
                         const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
                         self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
@@ -590,26 +597,17 @@ pub const GDROM = struct {
                         self.data_queue.writeItemAssumeCapacity(0);
                         self.data_queue.writeItemAssumeCapacity(0);
                     }
-                    // TODO: Lead Out Information
+                    // Lead Out Information
                     self.data_queue.writeItemAssumeCapacity(0);
                     self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeItemAssumeCapacity(0x46);
+                    self.data_queue.writeItemAssumeCapacity(0x50);
                 } else {
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
+                    self.data_queue.writeAssumeCapacity(&[_]u8{
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                    });
                 }
             }
         }
@@ -703,23 +701,37 @@ pub const GDROM = struct {
             GDROMCommand.GetTOC2 => {
                 const area = self.hle_params[0];
                 const dest = self.hle_params[1];
+
                 gdrom_log.warn(termcolor.yellow("    GDROM GetTOC2: area={d} dest=0x{X:0>8}, TODO!"), .{ area, dest });
+                for (0..self.hle_params.len) |i| {
+                    gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
+                }
+
                 if (area == 1) {
                     // High Density Area, doesn't have a TOC? (What's that thing at 0x110 in track 3?)
                 } else {}
+
                 self.hle_status = GDROMStatus.Standby;
             },
             GDROMCommand.GetSCD => {
-                gdrom_log.warn(termcolor.yellow("    Unimplemented GDROM command {X:0>8} {s}"), .{ self.hle_command, @tagName(self.hle_command) });
-                const dest = self.hle_params[1];
-                dc.cpu.write8(dest + 0, 0);
-                dc.cpu.write8(dest + 1, 0x15);
-                dc.cpu.write8(dest + 2, 0);
-                dc.cpu.write8(dest + 3, 0);
+                gdrom_log.warn(termcolor.yellow("    Unimplemented GDROM command GetSCD"), .{});
+                for (0..self.hle_params.len) |i| {
+                    gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
+                }
+
+                const dest = self.hle_params[2];
+                const len = self.hle_params[1];
+                for (0..len) |i| {
+                    dc.cpu.write32(@intCast(dest + 4 * i), 0);
+                }
+
                 self.hle_status = GDROMStatus.Standby;
             },
             else => {
                 gdrom_log.warn(termcolor.yellow("    Unhandled GDROM command {X:0>8} {s}"), .{ self.hle_command, @tagName(self.hle_command) });
+                for (0..self.hle_params.len) |i| {
+                    gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
+                }
                 self.hle_status = GDROMStatus.Standby;
             },
         }

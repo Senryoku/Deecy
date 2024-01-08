@@ -132,10 +132,6 @@ pub fn main() !void {
         if (skip_bios)
             dc.skip_bios();
 
-        // Load IP.bin from disk (16 first sectors of the last track)
-        // FIXME: Here we assume the last track is the 3rd.
-        _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-
         syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
         if (skip_bios) {

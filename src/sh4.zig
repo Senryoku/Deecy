@@ -580,7 +580,7 @@ pub const SH4 = struct {
         const desc = Opcodes[JumpTable[opcode]];
 
         if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-            std.debug.print("[{X:0>4}] {b:0>16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch {
+            std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, d={X:0>1}, d8={X:0>2}, d12={X:0>3}\n", .{ addr, opcode, disassemble(instr, self._allocator) catch {
                 std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
                 unreachable;
             }, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, instr.nmd.d, instr.nd8.d, instr.d12.d });
@@ -588,7 +588,7 @@ pub const SH4 = struct {
         desc.fn_(self, instr);
 
         if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-            std.debug.print("[{X:0>4}] {X: >16} {s: <20}\tR{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
+            std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).* });
 
         self.add_cycles(desc.issue_cycles);
     }
@@ -1134,47 +1134,54 @@ pub const SH4 = struct {
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
             0x005F6800...0x005F7FFF => {
+                const reg: MemoryRegister = @enumFromInt(addr);
                 // Hardware registers
-                switch (addr) {
-                    @intFromEnum(MemoryRegister.SB_SFRES) => {
+                switch (reg) {
+                    .SB_SFRES => {
                         // SB_SFRES, Software Reset
                         if (value == 0x00007611) {
                             self.software_reset();
                         }
                         return;
                     },
-                    @intFromEnum(MemoryRegister.SB_ADST) => {
+                    .SB_ADST => {
                         if (value == 1) {
                             self._dc.?.aica.start_dma(self._dc.?);
                             return;
                         }
                     },
-                    @intFromEnum(MemoryRegister.SB_MDAPRO) => {
+                    .SB_E1ST, .SB_E2ST, .SB_DDST => {
+                        if (value == 1) {
+                            sh4_log.warn(termcolor.yellow("Unimplemented {any} DMA initiation!"), .{reg});
+                            return;
+                        }
+                    },
+                    .SB_MDAPRO => {
                         // This register specifies the address range for Maple-DMA involving the system (work) memory.
                         // Check "Security code"
                         if (value & 0xFFFF0000 != 0x61550000) return;
                     },
-                    @intFromEnum(MemoryRegister.SB_MDST) => {
+                    .SB_MDST => {
                         if (value == 1) {
                             self._dc.?.start_maple_dma();
                             return;
                         }
                     },
-                    @intFromEnum(MemoryRegister.SB_ISTNRM) => {
+                    .SB_ISTNRM => {
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
                         return;
                     },
-                    @intFromEnum(MemoryRegister.SB_ISTERR) => {
+                    .SB_ISTERR => {
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
                         return;
                     },
-                    @intFromEnum(MemoryRegister.SB_C2DSTAT) => {
+                    .SB_C2DSTAT => {
                         self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
                         return;
                     },
-                    @intFromEnum(MemoryRegister.SB_C2DST) => {
+                    .SB_C2DST => {
                         if (value == 1) {
                             self._dc.?.start_ch2_dma();
                         } else {

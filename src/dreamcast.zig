@@ -53,8 +53,8 @@ pub const Dreamcast = struct {
             .aica = try AICA.init(allocator),
             .maple = MapleHost.init(),
             .gdrom = GDROM.init(allocator),
-            .ram = try allocator.alloc(u8, 16 * 1024 * 1024),
-            .hardware_registers = try allocator.alloc(u8, 0x200000), // FIXME: Huge waste of memory.
+            .ram = try allocator.alloc(u8, 0x0100_0000),
+            .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
             ._allocator = allocator,
         };
 
@@ -168,7 +168,6 @@ pub const Dreamcast = struct {
         }
 
         // Other set values, IDK
-
         inline for (.{
             .{ 0x8C0000AC, 0xA05F7000 },
             .{ 0x8C0000A8, 0xA0200000 },
@@ -178,6 +177,20 @@ pub const Dreamcast = struct {
             .{ 0x8CFFFFF8, 0x8C000128 },
         }) |p| {
             self.cpu.write32(p[0], p[1]);
+        }
+
+        // Load IP.bin from disk (16 first sectors of the last track)
+        // FIXME: Here we assume the last track is the 3rd.
+        if (self.gdrom.disk != null)
+            _ = self.gdrom.disk.?.load_sectors(45150, 16 * 2048, self.ram[0x00008000..]);
+
+        // IP.bin patches
+        inline for (.{
+            .{ 0xAC0090D8, 0x5113 },
+            .{ 0xAC00940A, 0x000B },
+            .{ 0xAC00940C, 0x0009 },
+        }) |p| {
+            self.cpu.write16(p[0], p[1]);
         }
 
         // Patch some functions apparently used by interrupts
