@@ -691,7 +691,7 @@ pub const Renderer = struct {
                             const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                                    self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @as([*]const u16, @ptrCast(&palette_ram))[palette_selector + offset]);
+                                    self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]));
                                 },
                                 0x3 => { // ARGB8888
                                     @panic("Unsupported palette_ctrl_ram ARGB8888");
