@@ -7,7 +7,7 @@ const sh4 = @import("./sh4.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const Dreamcast = @import("./dreamcast.zig").Dreamcast;
-const GDI = @import("./GDI.zig").GDI;
+const GDI = @import("./gdi.zig").GDI;
 const Holly = @import("./holly.zig");
 const MapleModule = @import("./maple.zig");
 
@@ -110,7 +110,7 @@ pub fn main() !void {
     }
 
     if (gdi_path != null) {
-        try dc.gdrom.disk.init(gdi_path.?, common.GeneralAllocator);
+        dc.gdrom.disk = try GDI.init(gdi_path.?, common.GeneralAllocator);
     }
 
     if (binary_path != null) {
@@ -134,9 +134,9 @@ pub fn main() !void {
 
         // Load IP.bin from disk (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
-        _ = dc.gdrom.disk.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
+        _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
 
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
+        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
     } else {
         if (skip_bios) {
             // Boot to menu

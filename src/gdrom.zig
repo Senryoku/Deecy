@@ -147,7 +147,7 @@ const SPIPacketCommandCode = enum(u8) {
 };
 
 pub const GDROM = struct {
-    disk: GDI = .{},
+    disk: ?GDI = null,
 
     // LLE
     status_register: StatusRegister = .{},
@@ -156,7 +156,7 @@ pub const GDROM = struct {
     interrupt_reason_register: InterruptReasonRegister = .{},
     byte_count: u16 = 0,
 
-    data_queue: std.fifo.LinearFifo(u8, .{ .Static = 1024 }),
+    data_queue: std.fifo.LinearFifo(u8, .{ .Static = 2048 }),
 
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = undefined,
@@ -175,7 +175,7 @@ pub const GDROM = struct {
 
     pub fn init(_: std.mem.Allocator) GDROM {
         var gdrom = GDROM{
-            .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 1024 }).init(),
+            .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 2048 }).init(),
         };
         gdrom.reinit();
         return gdrom;
@@ -247,7 +247,11 @@ pub const GDROM = struct {
                 // TODO: See REQ_STAT
                 //  7  6  5  4  | 3  2  1  0
                 //  Disc Format |   Status
-                return 0x82;
+                if (self.disk == null) {
+                    return 0x87;
+                } else {
+                    return 0x82;
+                }
             },
             .GD_ByteCountLow => {
                 gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, @as(u8, @truncate(self.byte_count)) });
@@ -519,20 +523,30 @@ pub const GDROM = struct {
         const select = self.packet_command[1] & 1;
         const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
 
-        gdrom_log.warn(" GDROM PacketCommand GetToC - {s}", .{if (select == 0) "Single Density" else "Double Density"});
+        gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
+
+        if (self.disk == null) {
+            self.byte_count = 0;
+            return;
+        }
+
+        if (self.data_queue.count > 0) {
+            gdrom_log.warn("   GetToC - Data queue was not empty ({d})", .{self.data_queue.count});
+            self.data_queue.discard(self.data_queue.count);
+        }
 
         if (alloc_length > 0) {
             if (select == 1) {
-                if (self.disk.tracks.items.len >= 3) {
+                if (self.disk.?.tracks.items.len >= 3) {
                     // Copy ToC directly from the third track. No idea if this is what's expected here.
-                    self.data_queue.writeAssumeCapacity(self.disk.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
+                    self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
                 } else {
                     for (0..alloc_length) |_| {
                         self.data_queue.writeItemAssumeCapacity(0xFF);
                     }
                 }
             } else {
-                for (self.disk.tracks.items) |*track| {
+                for (self.disk.?.tracks.items) |*track| {
                     // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
                     //   0h No sub Q channel mode information
                     //   1h Sub Q channel indicates current position.
@@ -554,12 +568,12 @@ pub const GDROM = struct {
                     self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
                     self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
                 }
-                for (self.disk.tracks.items.len..100) |_| {
+                for (self.disk.?.tracks.items.len..99) |_| {
                     self.data_queue.writeAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
                 }
-                if (self.disk.tracks.items.len > 0) {
+                if (self.disk.?.tracks.items.len > 0) {
                     {
-                        const track = self.disk.tracks.items[0];
+                        const track = self.disk.?.tracks.items[0];
                         const adr: u4 = 0;
                         const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
                         self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
@@ -568,7 +582,7 @@ pub const GDROM = struct {
                         self.data_queue.writeItemAssumeCapacity(0);
                     }
                     {
-                        const track = self.disk.tracks.items[self.disk.tracks.items.len - 1];
+                        const track = self.disk.?.tracks.items[self.disk.?.tracks.items.len - 1];
                         const adr: u4 = 0;
                         const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
                         self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
@@ -650,7 +664,7 @@ pub const GDROM = struct {
 
                 gdrom_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.hle_command), lba, size, dest });
                 const byte_size = 2048 * size;
-                const read = self.disk.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0..byte_size]);
+                const read = self.disk.?.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0..byte_size]);
 
                 dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 dc.raise_external_interrupt(.{ .GDRom = 1 });

@@ -110,7 +110,9 @@ pub const GDI = struct {
 
     _allocator: std.mem.Allocator = undefined,
 
-    pub fn init(self: *@This(), filepath: []const u8, allocator: std.mem.Allocator) !void {
+    pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !GDI {
+        var self: GDI = .{};
+
         self._allocator = allocator;
 
         self.tracks = std.ArrayList(Track).init(self._allocator);
@@ -160,6 +162,8 @@ pub const GDI = struct {
                 .data = track_data,
             });
         }
+
+        return self;
     }
 
     pub fn deinit(self: *@This()) void {

@@ -309,10 +309,19 @@ pub const SH4 = struct {
         self.R(0xE).* = 0x00000000;
         self.R(0xF).* = 0x8D000000;
 
+        self.r_bank[0] = 0xDFFFFFFF;
+        self.r_bank[1] = 0x500000F1;
+        self.r_bank[2] = 0x00000000;
+        self.r_bank[3] = 0x00000000;
+        self.r_bank[4] = 0x00000000;
+        self.r_bank[5] = 0x00000000;
+        self.r_bank[6] = 0x00000000;
+        self.r_bank[7] = 0x00000000;
+
         self.gbr = 0x8C000000;
         self.ssr = 0x40000001;
         self.spc = 0x8C000776;
-        self.sgr = 0x8d000000;
+        self.sgr = 0x8D000000;
         self.dbr = 0x8C000010;
         self.vbr = 0x8C000000;
         self.pr = 0xAC00043C;
@@ -2074,7 +2083,7 @@ fn shld_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     } else if ((cpu.R(opcode.nmd.m).* & 0x1F) == 0) {
         cpu.R(opcode.nmd.n).* = 0;
     } else {
-        cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> @intCast((~cpu.R(opcode.nmd.m).* & 0x1F) + 1);
+        cpu.R(opcode.nmd.n).* >>= @intCast(((~cpu.R(opcode.nmd.m).*) & 0x1F) + 1);
     }
 }
 fn shll(cpu: *SH4, opcode: Instr) void {
