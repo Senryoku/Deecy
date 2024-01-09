@@ -1150,7 +1150,7 @@ pub const SH4 = struct {
                             return;
                         }
                     },
-                    .SB_E1ST, .SB_E2ST, .SB_DDST => {
+                    .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST => {
                         if (value == 1) {
                             sh4_log.warn(termcolor.yellow("Unimplemented {any} DMA initiation!"), .{reg});
                             return;
@@ -1914,6 +1914,10 @@ fn or_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
+fn orb_imm_at_R0_gbr(cpu: *SH4, opcode: Instr) void {
+    const val: u8 = cpu.read8(cpu.gbr + cpu.R(0).*) | opcode.nd8.d;
+    cpu.write8(cpu.gbr + cpu.R(0).*, val);
+}
 
 fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
@@ -2313,6 +2317,14 @@ fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
+
+fn ldtlb(cpu: *SH4, opcode: Instr) void {
+    _ = cpu;
+    _ = opcode;
+
+    sh4_log.warn(termcolor.yellow("Unimplemented instruction: ldtlb"), .{});
+}
+
 fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     // TODO: This instruction deals with cache, no idea if this is important to get right.
 
@@ -3007,7 +3019,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = not_Rm_Rn, .name = "not Rm,Rn", .privileged = false },
     .{ .code = 0b0010000000001011, .mask = 0b0000111111110000, .fn_ = or_Rm_Rn, .name = "or Rm,Rn", .privileged = false },
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = or_imm_r0, .name = "or #imm,R0", .privileged = false },
-    .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = unimplemented, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
+    .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = orb_imm_at_R0_gbr, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = tasb_at_Rn, .name = "tas.b @Rn", .privileged = false, .issue_cycles = 5, .latency_cycles = 5 },
     .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = tst_Rm_Rn, .name = "tst Rm,Rn", .privileged = false },
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = tst_imm_r0, .name = "tst #imm,R0", .privileged = false },
@@ -3065,7 +3077,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = ldsl_at_Rn_inc_MACL, .name = "lds.l @Rn+,MACL", .privileged = false },
     .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = lds_Rn_PR, .name = "lds Rn,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3 },
     .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 2 },
-    .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = unimplemented, .name = "ldtbl", .privileged = true },
+    .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = ldtlb, .name = "ldtlb", .privileged = true },
     .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = movcal_R0_atRn, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0000000000001001, .mask = 0b0000000000000000, .fn_ = nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b0000000010010011, .mask = 0b0000111100000000, .fn_ = ocbi_atRn, .name = "ocbi @Rn", .privileged = false },
