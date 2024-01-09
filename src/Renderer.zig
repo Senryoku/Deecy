@@ -125,6 +125,69 @@ const PassMetadata = struct {
     index_count: u32,
 };
 
+fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
+    var r: [4]Vertex = undefined;
+
+    // B --- C
+    // |  \  |
+    // A --- D
+    // Pushing the vertices in CCW order: A, D, B, C
+
+    switch (sprite) {
+        .SpriteType0 => |v| {
+            r[0].x = v.ax;
+            r[0].y = v.ay;
+            r[0].z = v.az;
+
+            r[1].x = v.dx;
+            r[1].y = v.dy;
+
+            r[2].x = v.bx;
+            r[2].y = v.by;
+            r[2].z = v.bz;
+
+            r[3].x = v.cx;
+            r[3].y = v.cy;
+            r[3].z = v.cz;
+        },
+        .SpriteType1 => |v| {
+            r[0].x = v.ax;
+            r[0].y = v.ay;
+            r[0].z = v.az;
+            r[0].u = uv16(v.auv.u);
+            r[0].v = uv16(v.auv.v);
+
+            r[1].x = v.dx;
+            r[1].y = v.dy;
+
+            r[2].x = v.bx;
+            r[2].y = v.by;
+            r[2].z = v.bz;
+            r[2].u = uv16(v.buv.u);
+            r[2].v = uv16(v.buv.v);
+
+            r[3].x = v.cx;
+            r[3].y = v.cy;
+            r[3].z = v.cz;
+            r[3].u = uv16(v.cuv.u);
+            r[3].v = uv16(v.cuv.v);
+        },
+        else => {
+            @panic("That's not a sprite. Dafuq are you doing?");
+        },
+    }
+
+    const dz = 1.0; // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
+    // Same thing, texture coordinates have to be deduced from other vertices.
+    const du = r[0].u + r[3].u - r[2].u;
+    const dv = r[0].v + r[3].v - r[2].v;
+    r[1].z = dz;
+    r[1].u = du;
+    r[1].v = dv;
+
+    return r;
+}
+
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 128, 32, 8, 2 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
@@ -1267,70 +1330,21 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
-                        .SpriteType1 => |v| {
-                            // B --- C
-                            // |  \  |
-                            // A --- D
-                            // Pushing the vertices in CCW order: A, D, B, C
-                            try vertices.append(.{
-                                .x = v.ax,
-                                .y = v.ay,
-                                .z = v.az,
-                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = uv16(v.auv.u),
-                                .v = uv16(v.auv.v),
-                                .tex = tex,
-                            });
-                            const dz = 1.0; // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
-                            // Same thing, texture coordinates have to be deduced from other vertices.
-                            const du = uv16(v.auv.u) + uv16(v.cuv.u) - uv16(v.buv.u);
-                            const dv = uv16(v.auv.v) + uv16(v.cuv.v) - uv16(v.buv.v);
-                            try vertices.append(.{
-                                .x = v.dx,
-                                .y = v.dy,
-                                .z = dz,
-                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = du,
-                                .v = dv,
-                                .tex = tex,
-                            });
-                            try vertices.append(.{
-                                .x = v.bx,
-                                .y = v.by,
-                                .z = v.bz,
-                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = uv16(v.buv.u),
-                                .v = uv16(v.buv.v),
-                                .tex = tex,
-                            });
-                            try vertices.append(.{
-                                .x = v.cx,
-                                .y = v.cy,
-                                .z = v.cz,
-                                .r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0,
-                                .u = uv16(v.cuv.u),
-                                .v = uv16(v.cuv.v),
-                                .tex = tex,
-                            });
-                            self.max_depth = @max(self.max_depth, 1.0 / v.az);
-                            self.max_depth = @max(self.max_depth, 1.0 / v.bz);
-                            self.max_depth = @max(self.max_depth, 1.0 / v.cz);
-                            self.max_depth = @max(self.max_depth, 1.0 / dz);
+                        .SpriteType0, .SpriteType1 => {
+                            var vs = gen_sprite_vertices(vertex);
+                            for (&vs) |*v| {
+                                v.r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0;
+                                v.g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0;
+                                v.b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0;
+                                v.a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0;
+                                v.tex = tex;
+                                self.max_depth = @max(self.max_depth, 1.0 / v.z);
+
+                                try vertices.append(v.*);
+                            }
                         },
                         else => {
-                            std.debug.print(termcolor.red("[Renderer] Unsupported vertex type {any}"), .{vertex});
+                            renderer_log.err(termcolor.red("Unsupported vertex type {any}"), .{vertex});
                             @panic("Unsupported vertex type");
                         },
                     }
