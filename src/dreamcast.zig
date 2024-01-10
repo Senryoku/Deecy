@@ -233,15 +233,14 @@ pub const Dreamcast = struct {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
     }
 
-    pub fn tick(self: *@This()) void {
-        const cycles = self.cpu.execute();
+    pub fn tick(self: *@This(), comptime max_instructions: u8) void {
+        const cycles = self.cpu.execute(max_instructions);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
     }
 
     fn check_sb_interrupts(self: *@This()) void {
-        // FIXME: Not sure if this is the right place to check for those.
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);

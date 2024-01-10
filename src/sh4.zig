@@ -462,7 +462,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn execute(self: *@This()) u32 {
+    pub fn execute(self: *@This(), comptime max_instructions: u8) u32 {
         // When the BL bit in SR is 0, exceptions and interrupts are accepted.
 
         // See h14th002d2.pdf page 665 (or 651)
@@ -496,8 +496,10 @@ pub const SH4 = struct {
         }
 
         if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
-            self._execute(self.pc);
-            self.pc += 2;
+            for (0..max_instructions) |_| {
+                self._execute(self.pc);
+                self.pc += 2;
+            }
 
             const cycles = self._pending_cycles;
             self._pending_cycles = 0;

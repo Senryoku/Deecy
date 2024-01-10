@@ -46,9 +46,10 @@ pub fn main() !void {
         _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
 
+        const max_instructions = 16;
         const start = try std.time.Instant.now();
-        for (0..steps) |_| {
-            _ = dc.tick();
+        for (0..steps / max_instructions) |_| {
+            _ = dc.tick(max_instructions);
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;

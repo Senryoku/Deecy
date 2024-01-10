@@ -1376,11 +1376,8 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn draw(self: *Renderer) void {
+    pub fn render(self: *Renderer) void {
         const gctx = self._gctx;
-
-        const back_buffer_view = gctx.swapchain.getCurrentTextureView();
-        defer back_buffer_view.release();
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
@@ -1483,6 +1480,23 @@ pub const Renderer = struct {
                     pass.drawIndexed(pass_metadata.index_count, 1, pass_metadata.start_index, 0, 0);
                 }
             }
+
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+
+        gctx.submit(&.{commands});
+    }
+
+    pub fn draw(self: *Renderer) void {
+        const gctx = self._gctx;
+
+        const back_buffer_view = gctx.swapchain.getCurrentTextureView();
+        defer back_buffer_view.release();
+
+        const commands = commands: {
+            const encoder = gctx.device.createCommandEncoder(null);
+            defer encoder.release();
 
             // Blit to screen
             {

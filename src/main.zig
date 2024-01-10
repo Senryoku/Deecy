@@ -272,7 +272,7 @@ pub fn main() !void {
 
                 if (zgui.button("Step", .{ .w = 200.0 })) {
                     running = false;
-                    dc.tick();
+                    dc.tick(1);
                 }
                 if (zgui.button("Skip", .{ .w = 200.0 })) {
                     dc.cpu.pc += 2;
@@ -583,7 +583,7 @@ pub fn main() !void {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
-                dc.tick();
+                dc.tick(16);
 
                 // Crude outlier values checking
                 if (false) {
@@ -615,6 +615,7 @@ pub fn main() !void {
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);
+            renderer.render();
         }
         renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
 
