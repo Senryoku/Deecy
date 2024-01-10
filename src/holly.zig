@@ -1222,7 +1222,9 @@ pub const Holly = struct {
                     self._ta_list_type = parameter_control_word.list_type;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
-                std.debug.assert(self._ta_list_type == parameter_control_word.list_type);
+                if (self._ta_list_type != parameter_control_word.list_type) {
+                    holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
+                }
 
                 // Note: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
                 const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));

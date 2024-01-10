@@ -46,6 +46,12 @@ const AICAMemoryRegister = enum(u32) {
     REG_ARM_FIQ_ACK = 0x00802d04,
 };
 
+// Memory Map
+// 00000000 - 007FFFFF   DRAM_AREA*
+// 00800000 - 008027FF   CHANNEL_DATA
+// 00802800 - 00802FFF   COMMON_DATA
+// 00803000 - 00807FFF   DSP_DATA
+
 pub const AICA = struct {
     regs: []u32 = undefined, // All registers are 32-bit afaik
     wave_memory: []u8 align(4) = undefined,

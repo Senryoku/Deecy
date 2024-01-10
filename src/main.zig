@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const common = @import("./common.zig");
 const termcolor = @import("./termcolor.zig");
 const sh4 = @import("./sh4.zig");
+const sh4_disassembly = @import("./sh4_disassembly.zig");
 const MemoryRegisters = @import("./MemoryRegisters.zig");
 const MemoryRegister = MemoryRegisters.MemoryRegister;
 const Dreamcast = @import("./dreamcast.zig").Dreamcast;
@@ -31,7 +32,7 @@ pub const std_options = struct {
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holy, .level = .info },
         .{ .scope = .gdrom, .level = .info },
-        .{ .scope = .maple, .level = .debug },
+        .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
     };
 };
@@ -148,6 +149,14 @@ pub fn main() !void {
         }
     }
 
+    // NOPs for DC Checker, skips serial check
+
+    // dc.cpu.write16(0x0C0196DA, 0x9);
+    // dc.cpu.write16(0x0C0196EC, 0x9);
+
+    // dc.cpu.write16(0x0C018F54, 0x9);
+    // dc.cpu.write16(0x0C018F42, 0x9);
+
     try zglfw.init();
     defer zglfw.terminate();
 
@@ -252,7 +261,7 @@ pub fn main() !void {
                 const end_addr = addr + range;
                 while (addr < end_addr) {
                     //zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == dc.cpu.pc) ">" else " ", sh4.Opcodes[sh4.JumpTable[dc.read16(@intCast(addr))]].name });
-                    const disassembly = try sh4.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
+                    const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, common.GeneralAllocator);
                     zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
                     addr += 2;
                 }
@@ -262,7 +271,11 @@ pub fn main() !void {
                 }
 
                 if (zgui.button("Step", .{ .w = 200.0 })) {
+                    running = false;
                     dc.tick();
+                }
+                if (zgui.button("Skip", .{ .w = 200.0 })) {
+                    dc.cpu.pc += 2;
                 }
 
                 if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {

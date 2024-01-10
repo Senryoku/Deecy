@@ -6,7 +6,14 @@ const MemoryRegister = MemoryRegisters.MemoryRegister;
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
+// HLE Re-Implementations of syscalls normally provided by the Boot ROM
+
 pub var FirstReadBINSectorSize: u32 = 0; // FIXME
+
+inline fn return_from_syscall(dc: *Dreamcast) void {
+    // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
+    dc.cpu.pc = dc.cpu.pr - 2;
+}
 
 pub fn syscall(dc: *Dreamcast) void {
     std.log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ dc.cpu.pc, dc.cpu.read16(dc.cpu.pc) });
@@ -38,8 +45,7 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
         },
     }
 
-    // Ret
-    dc.cpu.pc = dc.cpu.pr - 2;
+    return_from_syscall(dc);
 }
 
 pub fn syscall_romfont(dc: *Dreamcast) void {
@@ -50,8 +56,7 @@ pub fn syscall_romfont(dc: *Dreamcast) void {
         },
     }
 
-    // Ret
-    dc.cpu.pc = dc.cpu.pr - 2;
+    return_from_syscall(dc);
 }
 
 pub fn syscall_flashrom(dc: *Dreamcast) void {
@@ -108,9 +113,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             @panic("syscall_flashrom with unhandled R7");
         },
     }
-
-    // Ret
-    dc.cpu.pc = dc.cpu.pr - 2;
+    return_from_syscall(dc);
 }
 
 pub fn syscall_gdrom(dc: *Dreamcast) void {
@@ -213,8 +216,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             @panic("syscall_gdrom with unhandled R7");
         },
     }
-    // Ret
-    dc.cpu.pc = dc.cpu.pr - 2;
+    return_from_syscall(dc);
 }
 
 pub fn syscall_misc(dc: *Dreamcast) void {
@@ -240,6 +242,5 @@ pub fn syscall_misc(dc: *Dreamcast) void {
             @panic("syscall_misc with unhandled R4");
         },
     }
-    // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
-    dc.cpu.pc = dc.cpu.pr - 2;
+    return_from_syscall(dc);
 }

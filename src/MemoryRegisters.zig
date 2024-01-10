@@ -449,7 +449,7 @@ pub const SB_ISTNRM = packed struct(u32) {
     VBlankOut: u1 = 0,
     HBlankIn: u1 = 0,
 
-    EoT_YUV: u1 = 0, // End of Transfering
+    EoT_YUV: u1 = 0, // End of Transfer
     EoT_OpaqueList: u1 = 0,
     EoT_OpaqueModifierVolumeList: u1 = 0,
 

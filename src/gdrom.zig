@@ -238,8 +238,14 @@ pub const GDROM = struct {
                 }
                 return 0;
             },
+            .GD_Error_Features => {
+                gdrom_log.debug("  Read GD_Error_Features @{X:0>8} = 0x{X:0>8}", .{ addr, 0 });
+                // 7    6    5    4   3    2    1    0
+                //    Sense Key      MCR  ABRT EOMF ILI
+                return 0;
+            },
             .GD_InterruptReason_SectorCount => {
-                gdrom_log.debug("  Read Interrupt Reason @{X:0>8} = 0x{X:0>8}", .{ addr, 0b10 });
+                gdrom_log.debug("  Read Interrupt Reason @{X:0>8} = {any}", .{ addr, self.interrupt_reason_register });
                 return @intCast(@as(u8, @bitCast(self.interrupt_reason_register)));
             },
             .GD_SectorNumber => {

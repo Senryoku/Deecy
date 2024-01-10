@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const common = @import("common.zig");
+const GDI = @import("gdi.zig").GDI;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // FIXME
@@ -41,9 +42,9 @@ pub fn main() !void {
         }
 
         dc.skip_bios();
-        try dc.gdrom.disk.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
-        _ = dc.gdrom.disk.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
+        dc.gdrom.disk = try GDI.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
+        _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
+        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
 
         const start = try std.time.Instant.now();
         for (0..steps) |_| {
@@ -54,5 +55,5 @@ pub fn main() !void {
         std.debug.print("Sonic: Ran {d} instructions in {} ms\n", .{ steps, elapsed / std.time.ns_per_ms });
     }
 
-    std.debug.print("Toal: {} ms\n", .{total_time / std.time.ns_per_ms});
+    std.debug.print("Total: {} ms\n", .{total_time / std.time.ns_per_ms});
 }
