@@ -76,6 +76,8 @@ pub fn main() !void {
 
     var skip_bios = false;
 
+    var use_jit = false;
+
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
     while (args.next()) |arg| {
@@ -238,6 +240,7 @@ pub fn main() !void {
             );
 
             if (zgui.begin("CPU State", .{})) {
+                _ = zgui.checkbox("JIT", .{ .v = &use_jit });
                 zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
                 zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
                 zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
@@ -584,7 +587,7 @@ pub fn main() !void {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
-                if (false) {
+                if (!use_jit) {
                     const max_instructions = 16;
 
                     dc.tick(max_instructions);
@@ -611,9 +614,12 @@ pub fn main() !void {
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);
-            renderer.render();
         }
-        renderer.draw(); // Draw to a texture and reuse it instead of re drawing everytime?
+        // FIXME: We don't need to render everything if the DC did not issued a render_start command, but we still need to render the
+        //        direct framebuffer writes. Reverting to rendering everything for now.
+        renderer.render();
+
+        renderer.draw(); //  Blit to screen
 
         if (draw_ui) {
             const commands = commands: {
