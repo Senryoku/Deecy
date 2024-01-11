@@ -112,20 +112,20 @@ pub const Emitter = struct {
 
                     const offset: u32 = @offsetOf(@import("../sh4.zig").SH4, "pc");
 
-                    // mov    r9,QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")]
-                    for ([_]u8{ 0x4D, 0x8B, 0x8C, 0x24 }) |val| {
+                    // mov    r9d,QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")]
+                    for ([_]u8{ 0x45, 0x8b, 0x8c, 0x24 }) |val| {
                         try self.block.emit(val);
                     }
                     try self.block.emit(@truncate(offset >> 0));
                     try self.block.emit(@truncate(offset >> 8));
                     try self.block.emit(@truncate(offset >> 16));
                     try self.block.emit(@truncate(offset >> 24));
-                    // add    r9,0x2
-                    for ([_]u8{ 0x49, 0x83, 0xC1, 0x02 }) |val| {
+                    // add    r9d,0x2
+                    for ([_]u8{ 0x41, 0x83, 0xC1, 0x02 }) |val| {
                         try self.block.emit(val);
                     }
-                    //mov    QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")],r9
-                    for ([_]u8{ 0x4D, 0x89, 0x8C, 0x24 }) |val| {
+                    //mov    QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")],r9d
+                    for ([_]u8{ 0x45, 0x89, 0x8C, 0x24 }) |val| {
                         try self.block.emit(val);
                     }
                     try self.block.emit(@truncate(offset >> 0));
