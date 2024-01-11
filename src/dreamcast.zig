@@ -12,6 +12,7 @@ const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
 const SH4 = @import("sh4.zig").SH4;
+const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
 const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
 const AICA = @import("aica.zig").AICA;
@@ -33,6 +34,8 @@ pub const Dreamcast = struct {
     maple: MapleHost,
     gdrom: GDROM,
 
+    sh4_jit: SH4JIT,
+
     // Pluged in video cable reported to the CPU:e.
     cable_type: CableType = .VGA,
 
@@ -53,6 +56,7 @@ pub const Dreamcast = struct {
             .aica = try AICA.init(allocator),
             .maple = MapleHost.init(),
             .gdrom = GDROM.init(allocator),
+            .sh4_jit = try SH4JIT.init(allocator),
             .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
             ._allocator = allocator,
@@ -235,6 +239,13 @@ pub const Dreamcast = struct {
 
     pub fn tick(self: *@This(), comptime max_instructions: u8) void {
         const cycles = self.cpu.execute(max_instructions);
+        self.gdrom.update(self, cycles);
+        self.gpu.update(self, cycles);
+        self.aica.update(self, cycles);
+    }
+
+    pub fn tick_jit(self: *@This()) !void {
+        const cycles = try self.sh4_jit.execute(&self.cpu);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);

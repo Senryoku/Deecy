@@ -29,6 +29,7 @@ pub const std_options = struct {
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
+        .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holy, .level = .info },
         .{ .scope = .gdrom, .level = .info },
@@ -583,27 +584,22 @@ pub fn main() !void {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
-                dc.tick(16);
-
-                // Crude outlier values checking
                 if (false) {
-                    if (std.math.lossyCast(f32, dc.cpu.fpul) >= 4294966000.000) {
-                        std.debug.print("Weird: FPUL = {d}\n", .{std.math.lossyCast(f32, dc.cpu.fpul)});
-                        running = false;
-                    }
-                    for (0..16) |i| {
-                        if (dc.cpu.FR(@intCast(i)).* >= 4294966000.000) {
-                            std.debug.print("Weird: FR({d}) = {d}\n", .{ i, dc.cpu.FR(@intCast(i)).* });
+                    const max_instructions = 16;
+
+                    dc.tick(max_instructions);
+
+                    // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+                    if (comptime max_instructions == 1) {
+                        const breakpoint = for (breakpoints.items, 0..) |addr, index| {
+                            if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
+                        } else null;
+                        if (breakpoint != null) {
                             running = false;
                         }
                     }
-                }
-
-                const breakpoint = for (breakpoints.items, 0..) |addr, index| {
-                    if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
-                } else null;
-                if (breakpoint != null) {
-                    running = false;
+                } else {
+                    try dc.tick_jit();
                 }
             }
         }

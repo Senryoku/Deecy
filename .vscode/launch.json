@@ -1,0 +1,24 @@
+{
+	"version": "0.2.0",
+	"configurations": [
+		{
+			"name": "Debug (LLDB)",
+			"type": "lldb",
+			"request": "launch",
+			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "build"
+		},
+		{
+			"name": "Debug",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"environment": [],
+			"preLaunchTask": "build"
+		}
+	]
+}

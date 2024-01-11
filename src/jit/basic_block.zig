@@ -1,18 +1,24 @@
 const std = @import("std");
 
-const BasicBlock = struct {
+pub const BasicBlock = struct {
     buffer: []u8,
-    end: u32 = undefined,
-
-    start_address: u32,
-    end_address: u32 = undefined,
+    size: u32 = 0,
 
     cycles: u32 = 0,
+    instr_count: u32 = 0,
 
-    pub fn init(buffer: []u8, start_address: u32) @This() {
+    pub fn init(buffer: []u8) @This() {
         return .{
             .buffer = buffer,
-            .start_address = start_address,
         };
+    }
+
+    pub fn emit(self: *@This(), value: u8) !void {
+        self.buffer[self.size] = value;
+        self.size += 1;
+    }
+
+    pub fn execute(self: *@This(), user_data: *anyopaque) void {
+        @as(*const fn (*anyopaque) void, @ptrCast(self.buffer.ptr))(user_data);
     }
 };

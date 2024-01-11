@@ -462,7 +462,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn execute(self: *@This(), comptime max_instructions: u8) u32 {
+    pub fn handle_interrupts(self: *@This()) void {
         // When the BL bit in SR is 0, exceptions and interrupts are accepted.
 
         // See h14th002d2.pdf page 665 (or 651)
@@ -494,6 +494,10 @@ pub const SH4 = struct {
             // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
             // status register (SR).
         }
+    }
+
+    pub fn execute(self: *@This(), comptime max_instructions: u8) u32 {
+        self.handle_interrupts();
 
         if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
             for (0..max_instructions) |_| {
@@ -507,7 +511,9 @@ pub const SH4 = struct {
         } else {
             // FIXME: Not sure if this is a thing.
             self.add_cycles(8);
-            return 8;
+            const cycles = self._pending_cycles;
+            self._pending_cycles = 0;
+            return cycles;
         }
     }
 
