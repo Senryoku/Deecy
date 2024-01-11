@@ -547,10 +547,11 @@ pub const GDROM = struct {
                     // Copy ToC directly from the third track. No idea if this is what's expected here.
                     self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
 
-                    const d = self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length];
-                    for (0..d.len / 4) |i| {
-                        std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
-                    }
+                    // Debug Dump
+                    // const d = self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length];
+                    // for (0..d.len / 4) |i| {
+                    //     std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                    // }
                 } else {
                     for (0..alloc_length) |_| {
                         self.data_queue.writeItemAssumeCapacity(0xFF);

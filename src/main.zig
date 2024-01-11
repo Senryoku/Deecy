@@ -76,7 +76,7 @@ pub fn main() !void {
 
     var skip_bios = false;
 
-    var use_jit = false;
+    var enable_jit = true;
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -240,7 +240,7 @@ pub fn main() !void {
             );
 
             if (zgui.begin("CPU State", .{})) {
-                _ = zgui.checkbox("JIT", .{ .v = &use_jit });
+                _ = zgui.checkbox("JIT", .{ .v = &enable_jit });
                 zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
                 zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
                 zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
@@ -276,7 +276,7 @@ pub fn main() !void {
 
                 if (zgui.button("Step", .{ .w = 200.0 })) {
                     running = false;
-                    dc.tick(1);
+                    _ = dc.tick(1);
                 }
                 if (zgui.button("Skip", .{ .w = 200.0 })) {
                     dc.cpu.pc += 2;
@@ -587,10 +587,10 @@ pub fn main() !void {
             const start = try std.time.Instant.now();
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
-                if (!use_jit) {
+                if (!enable_jit) {
                     const max_instructions = 16;
 
-                    dc.tick(max_instructions);
+                    _ = dc.tick(max_instructions);
 
                     // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
                     if (comptime max_instructions == 1) {
@@ -602,7 +602,7 @@ pub fn main() !void {
                         }
                     }
                 } else {
-                    try dc.tick_jit();
+                    _ = dc.tick_jit();
                 }
             }
         }

@@ -237,18 +237,22 @@ pub const Dreamcast = struct {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
     }
 
-    pub fn tick(self: *@This(), comptime max_instructions: u8) void {
+    pub fn tick(self: *@This(), comptime max_instructions: u8) u32 {
         const cycles = self.cpu.execute(max_instructions);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
+        return cycles;
     }
 
-    pub fn tick_jit(self: *@This()) !void {
-        const cycles = try self.sh4_jit.execute(&self.cpu);
+    pub fn tick_jit(self: *@This()) u32 {
+        // FIXME: Using try here makes the function always return 0.
+        //        Compiler bug?
+        const cycles = self.sh4_jit.execute(&self.cpu) catch unreachable;
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
+        return cycles;
     }
 
     fn check_sb_interrupts(self: *@This()) void {

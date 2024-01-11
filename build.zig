@@ -81,12 +81,30 @@ pub fn build(b: *std.Build) void {
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
     const run_perf_tests = b.addRunArtifact(interpreter_perf);
+    const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
+    interpreter_perf_step.dependOn(&run_perf_tests.step);
+
+    const jit_perf = b.addExecutable(.{
+        .name = "JITPerf",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/jit_perf.zig" },
+        .target = target,
+        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+    });
+    const run_jit_perf_tests = b.addRunArtifact(jit_perf);
+    const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
+    jit_perf_step.dependOn(&run_jit_perf_tests.step);
+
     const perf_step = b.step("perf", "Run performance tests");
     perf_step.dependOn(&run_perf_tests.step);
+    perf_step.dependOn(&run_jit_perf_tests.step);
 
     const pref_install = b.addInstallArtifact(interpreter_perf, .{});
+    const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
     const perf_install_step = b.step("perf_install", "Install the performance tests");
     perf_install_step.dependOn(&pref_install.step);
+    perf_install_step.dependOn(&jit_pref_install.step);
 
     // ----- Tests ------
 

@@ -15,8 +15,6 @@ pub const std_options = struct {
 
 pub fn main() !void {
     const cycles_target = 5 * 200_000_000;
-    const max_instructions = 16;
-
     var total_time: u64 = 0;
 
     {
@@ -33,14 +31,13 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += dc.tick_jit();
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
-        std.debug.print("[Interpreter] Boot:  Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
+        std.debug.print("[JIT] Boot:  Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
     }
 
-    // Boot Logo
     {
         var dc = try Dreamcast.create(common.GeneralAllocator);
         defer {
@@ -55,11 +52,11 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += dc.tick_jit();
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
-        std.debug.print("[Interpreter] Boot Logo: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
+        std.debug.print("[JIT] Boot Logo: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
     }
 
     {
@@ -77,12 +74,12 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += dc.tick_jit();
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
-        std.debug.print("[Interpreter] Sonic: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
+        std.debug.print("[JIT] Sonic: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
     }
 
-    std.debug.print("[Interpreter] Total: {} ms\n", .{total_time / std.time.ns_per_ms});
+    std.debug.print("[JIT] Total: {} ms\n", .{total_time / std.time.ns_per_ms});
 }

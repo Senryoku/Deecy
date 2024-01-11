@@ -1234,7 +1234,7 @@ pub const Holly = struct {
                 global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
 
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
-                    holly_log.err(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
+                    holly_log.warn(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
                     self._ta_current_polygon = null;
                 } else {
                     if (parameter_control_word.obj_control.volume == 0) {
