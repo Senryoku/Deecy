@@ -24,12 +24,12 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = interpreter.nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = interpreter.unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     // Fake opcodes to catch emulated syscalls
-    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_flashrom, .name = "Syscall FlashROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_gdrom, .name = "Syscall GDROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_unknown, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
-    .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0 },
+    .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000000110000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_flashrom, .name = "Syscall FlashROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000001000000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_gdrom, .name = "Syscall GDROM", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_unknown, .name = "Syscall", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_misc, .name = "Syscall Misc.", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
