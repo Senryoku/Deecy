@@ -126,7 +126,7 @@ pub const SH4JIT = struct {
 };
 
 pub fn interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !bool {
-    try block.mov(.ArgRegister0, .{ .reg = .SavedRegister0 });
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     try block.push_arg(1, @as(u16, @bitCast(instr)));
     try block.call_2(*sh4.SH4, sh4.Instr, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
     return false;
@@ -135,4 +135,11 @@ pub fn interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !bool {
 pub fn interpreter_fallback_branch(block: *JITBlock, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback(block, instr);
     return true;
+}
+
+pub fn mov_rm_rn(block: *JITBlock, instr: sh4.Instr) !bool {
+    // cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).*;
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, instr.nmd.m) * 4 } });
+    try block.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, instr.nmd.n) * 4 } }, .{ .reg = .ReturnRegister });
+    return false;
 }

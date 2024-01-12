@@ -24,6 +24,20 @@ const Registers = enum(u4) {
     R15 = 15,
 };
 
+const REX = packed struct(u8) {
+    b: bool = false,
+    x: bool = false,
+    r: bool = false,
+    w: bool = false,
+    _: u4 = 0b0100,
+};
+
+const MODRM = packed struct(u8) {
+    r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
+    reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
+    mod: u2, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
+};
+
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
 const ReturnRegister = if (builtin.os.tag == .windows) Registers.RAX else @compileError("Unsupported ABI");
@@ -75,6 +89,7 @@ pub const Emitter = struct {
 
     pub fn get_reg(reg: JIT.Register) Registers {
         return switch (reg) {
+            .ReturnRegister => ReturnRegister,
             .ArgRegister0 => ArgRegisters[0],
             .ArgRegister1 => ArgRegisters[1],
             .ArgRegister2 => ArgRegisters[2],
@@ -96,15 +111,8 @@ pub const Emitter = struct {
                 .FunctionCall => |function| {
                     try self.native_call(function);
                 },
-                .Mov => |mov| {
-                    switch (mov.src) {
-                        .reg => |reg| {
-                            try self.mov_reg_reg(get_reg(mov.dst), get_reg(reg));
-                        },
-                        .imm => |imm| {
-                            try self.mov_reg_imm(get_reg(mov.dst), imm);
-                        },
-                    }
+                .Mov => |m| {
+                    try self.mov(m.dst, m.src);
                 },
                 .IncPC => {
                     // FIXME: Big Hack. This should be split into proper instructions at the JITBlock level (see sh4_jit). I'm just too lazy to properly abstract it right now.
@@ -166,6 +174,18 @@ pub const Emitter = struct {
         try self.ret();
     }
 
+    fn encode_reg(reg: Registers) u3 {
+        return @truncate(@intFromEnum(reg));
+    }
+
+    fn encode(reg: JIT.Register) u3 {
+        return encode_reg(get_reg(reg));
+    }
+
+    fn need_rex(reg: JIT.Register) bool {
+        return @intFromEnum(get_reg(reg)) >= 8;
+    }
+
     pub fn mov_reg_imm(self: *@This(), reg: Registers, value: u64) !void {
         try self.emit(u8, 0x48);
         try self.emit(u8, 0xB8 + @as(u8, @intCast(@intFromEnum(reg))));
@@ -173,16 +193,54 @@ pub const Emitter = struct {
     }
 
     pub fn mov_reg_reg(self: *@This(), dst: Registers, src: Registers) !void {
-        var rex: u8 = 0x48;
-        if (@intFromEnum(dst) >= 8) {
-            rex |= 0x1;
-        }
-        if (@intFromEnum(src) >= 8) {
-            rex |= 0x4;
-        }
-        try self.emit(u8, rex);
+        const rex: REX = .{ .w = true, .r = @intFromEnum(src) >= 8, .b = @intFromEnum(dst) >= 8 };
+        try self.emit(u8, @bitCast(rex));
         try self.emit(u8, 0x89);
         try self.emit(u8, 0xC0 + (@as(u8, @intCast(@intFromEnum(src) & 0x7)) << 3) + @as(u8, @intCast(@intFromEnum(dst) & 0x7)));
+    }
+
+    pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        switch (dst) {
+            .mem => |dst_m| {
+                const rex: REX = .{ .r = need_rex(src.reg), .b = need_rex(dst_m.reg) };
+                const opcode = 0x89;
+                const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src.reg), .r_m = encode(dst_m.reg) };
+                try self.block.emit(@bitCast(rex));
+                try self.block.emit(opcode);
+                try self.block.emit(@bitCast(modrm));
+                // FIXME: ESP / R12 need a SIB byte. I don't know why, or how SIB works yet.
+                if (encode(dst_m.reg) == 0b100) {
+                    try self.block.emit(0x24);
+                }
+                try self.emit(u32, dst_m.offset);
+            },
+            .reg => |dst_reg| {
+                switch (src) {
+                    .reg => |reg| {
+                        try self.mov_reg_reg(get_reg(dst_reg), get_reg(reg));
+                    },
+                    .imm => |imm| {
+                        try self.mov_reg_imm(get_reg(dst_reg), imm);
+                    },
+                    .mem => |src_m| {
+                        const rex: REX = .{ .r = need_rex(dst_reg), .b = need_rex(src_m.reg) };
+                        const opcode = 0x8B;
+                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
+                        try self.block.emit(@bitCast(rex));
+                        try self.block.emit(opcode);
+                        try self.block.emit(@bitCast(modrm));
+                        // FIXME: ESP / R12 need a SIB byte. I don't know why, or how SIB works yet.
+                        if (encode(src_m.reg) == 0b100) {
+                            try self.block.emit(0x24);
+                        }
+                        try self.emit(u32, src_m.offset);
+                    },
+                }
+            },
+            .imm => {
+                return error.InvalidDestination;
+            },
+        }
     }
 
     pub fn native_call(self: *@This(), function: *const anyopaque) !void {

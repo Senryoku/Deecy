@@ -19,6 +19,16 @@
 			"cwd": "${workspaceFolder}",
 			"environment": [],
 			"preLaunchTask": "build"
+		},
+		{
+			"name": "Debug (Release)",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"args": [],
+			"cwd": "${workspaceFolder}",
+			"environment": [],
+			"preLaunchTask": "build-release-fast"
 		}
 	]
 }

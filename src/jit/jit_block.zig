@@ -8,6 +8,7 @@ pub const InstructionType = enum {
 };
 
 pub const Register = enum {
+    ReturnRegister,
     ArgRegister0,
     ArgRegister1,
     ArgRegister2,
@@ -21,17 +22,22 @@ pub const Register = enum {
 const OperandType = enum {
     reg,
     imm,
+    mem,
 };
 
-const RegisterOrImmediate = union(OperandType) {
+pub const Operand = union(OperandType) {
     reg: Register,
     imm: u64,
+    mem: struct {
+        reg: Register,
+        offset: u32,
+    },
 };
 
 pub const Instruction = union(InstructionType) {
     FunctionCall: *const anyopaque,
     PushArg: struct { number: u8, value: u64 },
-    Mov: struct { dst: Register, src: RegisterOrImmediate },
+    Mov: struct { dst: Operand, src: Operand },
     IncPC: void, // FIXME: Remove.
 };
 
@@ -66,7 +72,7 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .PushArg = .{ .number = number, .value = value } });
     }
 
-    pub fn mov(self: *@This(), dst: Register, src: RegisterOrImmediate) !void {
+    pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
     }
 
