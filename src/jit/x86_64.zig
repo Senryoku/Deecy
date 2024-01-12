@@ -220,27 +220,36 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.reg) });
                         const opcode = 0x89;
-                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src_reg), .r_m = encode(dst_m.reg) };
                         if (dst_m.size == 16) // Operand size prefix
                             try self.emit(u8, 0x66);
                         try self.emit(u8, opcode);
+                        const modrm: MODRM = .{
+                            .mod = if (dst_m.offset == 0) 0b00 else 0b10,
+                            .reg_opcode = encode(src_reg),
+                            .r_m = encode(dst_m.reg),
+                        };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(dst_m.reg) == 0b100) {
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                         }
-                        try self.emit(u32, dst_m.offset);
+                        if (dst_m.offset != 0)
+                            try self.emit(u32, dst_m.offset);
                     },
                     .imm32 => |imm| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.reg) });
-                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = 0, .r_m = encode(dst_m.reg) };
                         try self.emit(u8, 0xC7);
+                        const modrm: MODRM = .{
+                            .mod = if (dst_m.offset == 0) 0b00 else 0b10,
+                            .reg_opcode = 0,
+                            .r_m = encode(dst_m.reg),
+                        };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(dst_m.reg) == 0b100) {
+                        if (encode(dst_m.reg) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        }
-                        try self.emit(u32, dst_m.offset);
+                        if (dst_m.offset != 0)
+                            try self.emit(u32, dst_m.offset);
                         try self.emit(u32, imm);
                     },
                     else => return error.InvalidMovSource,
@@ -257,16 +266,20 @@ pub const Emitter = struct {
                     .mem => |src_m| {
                         try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
                         const opcode = 0x8B;
-                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
                         if (src_m.size == 16) // Operand size prefix
                             try self.emit(u8, 0x66);
                         try self.emit(u8, opcode);
+                        const modrm: MODRM = .{
+                            .mod = if (src_m.offset == 0) 0b00 else 0b10,
+                            .reg_opcode = encode(dst.reg),
+                            .r_m = encode(src_m.reg),
+                        };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(src_m.reg) == 0b100) {
+                        if (encode(src_m.reg) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        }
-                        try self.emit(u32, src_m.offset);
+                        if (src_m.offset != 0)
+                            try self.emit(u32, src_m.offset);
                     },
                     else => return error.InvalidMovSource,
                 }
@@ -288,13 +301,17 @@ pub const Emitter = struct {
                             16 => try self.emit(u8, 0xBF),
                             else => return error.UnsupportedMovsxSourceSize,
                         }
-                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
+                        const modrm: MODRM = .{
+                            .mod = if (src_m.offset == 0) 0b00 else 0b10,
+                            .reg_opcode = encode(dst.reg),
+                            .r_m = encode(src_m.reg),
+                        };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(src_m.reg) == 0b100) {
+                        if (encode(src_m.reg) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        }
-                        try self.emit(u32, src_m.offset);
+                        if (src_m.offset != 0)
+                            try self.emit(u32, src_m.offset);
                     },
                     else => return error.InvalidMovsxSource,
                 }
