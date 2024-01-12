@@ -911,7 +911,7 @@ pub const DisplayList = struct {
 
     pub fn reset(self: *DisplayList) void {
         for (self.vertex_parameters.items) |*vertex_parameters| {
-            vertex_parameters.deinit();
+            vertex_parameters.deinit(); // FIXME: This is a huge waste. Why reallocate everytime? :(
         }
         self.vertex_parameters.clearRetainingCapacity();
         self.polygons.clearRetainingCapacity();
@@ -1016,12 +1016,11 @@ pub const Holly = struct {
         }
 
         // FIXME: Move all of this to its own SPG Module ?
-
         const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
         const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
         const cycles_per_pixel = 7; // FIXME: Approximation. ~200/27.
-        if (static._tmp_cycles >= cycles_per_pixel) {
+        while (static._tmp_cycles >= cycles_per_pixel) {
             static._tmp_cycles -= cycles_per_pixel;
             static._pixel += 1;
 
