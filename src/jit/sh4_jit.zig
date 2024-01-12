@@ -72,16 +72,21 @@ const BlockCache = struct {
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, ctx, @bitCast(instr));
 
             // Increment PC and update it in memory.
+            // NOTE: I now realize that there are only 3 instructions that use the PC without branching, and
+            //       they can be turned into constant lookups (see mov.l @(d:8,PC),Rn). If I finish to JIT them all,
+            //       we'll be able to delay updating the PC until the last instruction of each block.
+            //       (We'll have to mark branch instructions as such and can't rely on the jit function to return true
+            //       because we'll need to update the PC before calling it.)
             if (branch) // This instruction might have updated the PC, we have to reload it from memory.
                 try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
             try jb.add(.SavedRegister1, .{ .imm = 2 });
             try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .SavedRegister1 });
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
-            index += 1;
             if (branch)
                 break;
 
+            index += 1;
             ctx.address += 2;
         }
 
