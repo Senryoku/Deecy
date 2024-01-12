@@ -65,27 +65,17 @@ const BlockCache = struct {
 
         // We'll be using these callee saved registers, push 'em to the stack.
         try jb.push(.{ .reg = .SavedRegister0 });
-        try jb.push(.{ .reg = .SavedRegister1 });
+        try jb.push(.{ .reg = .SavedRegister1 }); // NOTE: Not needed anymore, but we need to align the stack to 16 bytes, so might as well.
 
         try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
-        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }); // Load PC into SavedRegister1.
 
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
-            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
-            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, ctx, @bitCast(instr));
 
-            // Increment PC and update it in memory.
-            // NOTE: I now realize that there are only 3 instructions that use the PC without branching, and
-            //       they can be turned into constant lookups (see mov.l @(d:8,PC),Rn). If I finish to JIT them all,
-            //       we'll be able to delay updating the PC until the last instruction of each block.
-            //       (We'll have to mark branch instructions as such and can't rely on the jit function to return true
-            //       because we'll need to update the PC before calling it.)
-            if (branch) // This instruction might have updated the PC, we have to reload it from memory.
-                try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.SavedRegister1, .{ .imm = 2 });
-            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .SavedRegister1 });
+            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
+
+            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, ctx, @bitCast(instr));
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             if (branch)
@@ -98,6 +88,12 @@ const BlockCache = struct {
                 return error.JITCacheFull;
             }
         }
+
+        // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
+        // cpu.pc += 2;
+        try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
+        try jb.add(.ReturnRegister, .{ .imm = 2 });
+        try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
         // Restore callee saved registers.
         try jb.pop(.{ .reg = .SavedRegister1 });
@@ -175,6 +171,8 @@ pub fn interpreter_fallback(block: *JITBlock, _: JITContext, instr: sh4.Instr) !
 }
 
 pub fn interpreter_fallback_branch(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
+    // Restore PC in memory.
+    try block.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
     _ = try interpreter_fallback(block, ctx, instr);
     return true;
 }
@@ -196,7 +194,6 @@ pub fn mov_imm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn mova_atdispPC_R0(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
-    // cpu.R(0).* = (cpu.pc & 0xFFFFFFFC) + 4 + (zero_extend(opcode.nd8.d) << 2);
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
     try block.mov(get_reg_mem(0), .{ .imm32 = addr });
