@@ -108,6 +108,9 @@ pub const Emitter = struct {
         self.emit_block_prologue();
         for (0..jb.instructions.items.len) |i| {
             switch (jb.instructions.items[i]) {
+                .Break => {
+                    try self.emit_byte(0xCC);
+                },
                 .FunctionCall => |function| {
                     try self.native_call(function);
                 },

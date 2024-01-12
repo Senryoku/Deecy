@@ -11,6 +11,8 @@ const sh4_instructions = @import("../sh4_instructions.zig");
 
 const sh4_jit_log = std.log.scoped(.sh4_jit);
 
+const Dreamcast = @import("../dreamcast.zig").Dreamcast;
+
 const BlockBufferSize = 1024 * 4096;
 
 const HashMapContext = struct {
@@ -48,7 +50,9 @@ const BlockCache = struct {
         return self.blocks.get(address);
     }
 
-    pub fn compile(self: *@This(), address: u32, instructions: [*]u16) !BasicBlock {
+    pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
+        var ctx = start_ctx;
+
         var emitter = Emitter.init(self.buffer[self.cursor..]);
 
         var jb = JITBlock.init(self._allocator);
@@ -64,8 +68,8 @@ const BlockCache = struct {
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
-            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ address + 2 * index, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
-            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, @bitCast(instr));
+            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
+            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, ctx, @bitCast(instr));
 
             // Increment PC and update it in memory.
             if (branch) // This instruction might have updated the PC, we have to reload it from memory.
@@ -77,6 +81,8 @@ const BlockCache = struct {
             index += 1;
             if (branch)
                 break;
+
+            ctx.address += 2;
         }
 
         // Restore callee saved registers.
@@ -94,9 +100,14 @@ const BlockCache = struct {
             @panic("JIT block buffer overflow. Please increase BlockBufferSize :)");
         }
 
-        try self.blocks.put(address, emitter.block);
-        return self.get(address).?;
+        try self.blocks.put(start_ctx.address, emitter.block);
+        return self.get(start_ctx.address).?;
     }
+};
+
+pub const JITContext = struct {
+    address: u32,
+    dc: *Dreamcast,
 };
 
 pub const SH4JIT = struct {
@@ -124,7 +135,7 @@ pub const SH4JIT = struct {
             if (block == null) {
                 sh4_jit_log.info("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try self.block_cache.compile(pc, instructions);
+                block = try self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
             }
             sh4_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(cpu);
@@ -142,15 +153,15 @@ pub const SH4JIT = struct {
     }
 };
 
-pub fn interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !bool {
+pub fn interpreter_fallback(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .imm = @as(u16, @bitCast(instr)) });
     try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
     return false;
 }
 
-pub fn interpreter_fallback_branch(block: *JITBlock, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback(block, instr);
+pub fn interpreter_fallback_branch(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
+    _ = try interpreter_fallback(block, ctx, instr);
     return true;
 }
 
@@ -158,14 +169,30 @@ fn get_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4 } };
 }
 
-pub fn mov_rm_rn(block: *JITBlock, instr: sh4.Instr) !bool {
+pub fn mov_rm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.m));
     try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
-pub fn mov_imm_rn(block: *JITBlock, instr: sh4.Instr) !bool {
+pub fn mov_imm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
     // FIXME: Should keep the "signess" in the type system?  ---v
     try block.mov(get_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    return false;
+}
+
+pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
+    // Adress should be either in Boot ROM, or in RAM.
+    std.debug.assert(ctx.address < 0x00200000 or (ctx.address >= 0x0C000000 and ctx.address < 0x10000000));
+    // @(d8,PC) is fixed, compute its real absolute address
+    const d = bit_manip.zero_extend(instr.nd8.d) << 2;
+    const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
+    const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
+    // Set it to a scratch register
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .imm = abs_addr });
+    // Load the pointed value
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .ReturnRegister, .offset = 0 } });
+    // Store it into Rn
+    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;
 }
