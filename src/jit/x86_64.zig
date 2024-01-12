@@ -114,6 +114,24 @@ pub const Emitter = struct {
                 .Mov => |m| {
                     try self.mov(m.dst, m.src);
                 },
+                .Push => |reg_or_imm| {
+                    switch (reg_or_imm) {
+                        .reg => |reg| {
+                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
+                            try self.emit(u8, encode_opcode(0x50, reg));
+                        },
+                        else => return error.UnimplementedPushImmediate,
+                    }
+                },
+                .Pop => |reg_or_imm| {
+                    switch (reg_or_imm) {
+                        .reg => |reg| {
+                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
+                            try self.emit(u8, encode_opcode(0x58, reg));
+                        },
+                        else => return error.UnimplementedPushImmediate,
+                    }
+                },
                 .Add => |a| {
                     try self.add(a.dst, a.src);
                 },
@@ -143,9 +161,6 @@ pub const Emitter = struct {
         try self.emit(u8, 0x48);
         try self.emit(u8, 0x89);
         try self.emit(u8, 0xE5);
-
-        // Save user_data to SavedRegisters[0]. FIXME: Should probably no be there.
-        try self.mov_reg_reg(.SavedRegister0, .ArgRegister0);
     }
 
     pub fn emit_block_epilogue(self: *@This()) void {
@@ -165,6 +180,10 @@ pub const Emitter = struct {
 
     fn need_rex(reg: JIT.Register) bool {
         return @intFromEnum(get_reg(reg)) >= 8;
+    }
+
+    fn encode_opcode(opcode: u8, reg: JIT.Register) u8 {
+        return opcode + encode(reg);
     }
 
     fn emit_rex_if_needed(self: *@This(), rex: REX) !void {

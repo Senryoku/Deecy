@@ -43,22 +43,32 @@ const BlockCache = struct {
         var jb = JITBlock.init(self._allocator);
         defer jb.deinit();
 
+        try jb.push(.{ .reg = .SavedRegister0 });
+        try jb.push(.{ .reg = .SavedRegister1 });
+        try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
+        // Load PC into SavedRegister1.
+        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
+
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
             sh4_jit_log.debug("  [{X:0>8}] {s}", .{ address + 2 * index, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, @bitCast(instr));
 
-            // Increment PC
-            try jb.mov(.{ .reg = .ArgRegister3 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
-            try jb.add(.ArgRegister3, .{ .imm = 2 });
-            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .ArgRegister3 });
+            // Increment PC and update it in memory.
+            if (branch)
+                try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
+            try jb.add(.SavedRegister1, .{ .imm = 2 });
+            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .SavedRegister1 });
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             index += 1;
             if (branch)
                 break;
         }
+
+        try jb.pop(.{ .reg = .SavedRegister1 });
+        try jb.pop(.{ .reg = .SavedRegister0 });
 
         try emitter.emit_block(&jb);
         emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.

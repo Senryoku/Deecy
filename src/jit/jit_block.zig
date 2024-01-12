@@ -3,6 +3,8 @@ const std = @import("std");
 pub const InstructionType = enum {
     FunctionCall,
     Mov,
+    Push,
+    Pop,
     Add,
 };
 
@@ -36,6 +38,8 @@ pub const Operand = union(OperandType) {
 pub const Instruction = union(InstructionType) {
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },
+    Push: Operand,
+    Pop: Operand,
     Add: struct { dst: Register, src: Operand },
 };
 
@@ -52,12 +56,24 @@ pub const JITBlock = struct {
         self.instructions.deinit();
     }
 
+    pub fn append(self: *@This(), instr: Instruction) !void {
+        try self.instructions.append(instr);
+    }
+
     pub fn call(self: *@This(), func: *const anyopaque) !void {
         try self.instructions.append(.{ .FunctionCall = func });
     }
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn push(self: *@This(), op: Operand) !void {
+        try self.instructions.append(.{ .Push = op });
+    }
+
+    pub fn pop(self: *@This(), op: Operand) !void {
+        try self.instructions.append(.{ .Pop = op });
     }
 
     pub fn add(self: *@This(), dst: Register, src: Operand) !void {
