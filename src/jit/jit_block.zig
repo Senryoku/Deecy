@@ -22,12 +22,14 @@ pub const Register = enum {
 
 const OperandType = enum {
     reg,
+    imm32,
     imm,
     mem,
 };
 
 pub const Operand = union(OperandType) {
     reg: Register,
+    imm32: u32,
     imm: u64,
     mem: struct {
         reg: Register,

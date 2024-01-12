@@ -1,7 +1,9 @@
 const std = @import("std");
 
 const sh4 = @import("../sh4.zig");
-const JITBlock = @import("jit_block.zig").JITBlock;
+const bit_manip = @import("../bit_manip.zig");
+const JIT = @import("jit_block.zig");
+const JITBlock = JIT.JITBlock;
 const Emitter = @import("x86_64.zig").Emitter;
 const BasicBlock = @import("basic_block.zig").BasicBlock;
 
@@ -43,11 +45,12 @@ const BlockCache = struct {
         var jb = JITBlock.init(self._allocator);
         defer jb.deinit();
 
+        // We'll be using these callee saved registers, push 'em to the stack.
         try jb.push(.{ .reg = .SavedRegister0 });
         try jb.push(.{ .reg = .SavedRegister1 });
+
         try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
-        // Load PC into SavedRegister1.
-        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
+        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }); // Load PC into SavedRegister1.
 
         var index: u32 = 0;
         while (true) {
@@ -56,7 +59,7 @@ const BlockCache = struct {
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, @bitCast(instr));
 
             // Increment PC and update it in memory.
-            if (branch)
+            if (branch) // This instruction might have updated the PC, we have to reload it from memory.
                 try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
             try jb.add(.SavedRegister1, .{ .imm = 2 });
             try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .SavedRegister1 });
@@ -67,6 +70,7 @@ const BlockCache = struct {
                 break;
         }
 
+        // Restore callee saved registers.
         try jb.pop(.{ .reg = .SavedRegister1 });
         try jb.pop(.{ .reg = .SavedRegister0 });
 
@@ -141,9 +145,18 @@ pub fn interpreter_fallback_branch(block: *JITBlock, instr: sh4.Instr) !bool {
     return true;
 }
 
+fn get_reg_mem(r: u4) JIT.Operand {
+    return .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4 } };
+}
+
 pub fn mov_rm_rn(block: *JITBlock, instr: sh4.Instr) !bool {
-    // cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).*;
-    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, instr.nmd.m) * 4 } });
-    try block.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, instr.nmd.n) * 4 } }, .{ .reg = .ReturnRegister });
+    try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.m));
+    try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+    return false;
+}
+
+pub fn mov_imm_rn(block: *JITBlock, instr: sh4.Instr) !bool {
+    // FIXME: Should keep the "signess" in the type system?  ---v
+    try block.mov(get_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }

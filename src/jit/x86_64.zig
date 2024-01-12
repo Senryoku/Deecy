@@ -208,16 +208,33 @@ pub const Emitter = struct {
     pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
         switch (dst) {
             .mem => |dst_m| {
-                try self.emit_rex_if_needed(.{ .r = need_rex(src.reg), .b = need_rex(dst_m.reg) });
-                const opcode = 0x89;
-                const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src.reg), .r_m = encode(dst_m.reg) };
-                try self.emit(u8, opcode);
-                try self.emit(u8, @bitCast(modrm));
-                // NOTE: ESP/R12-based addressing need a SIB byte.
-                if (encode(dst_m.reg) == 0b100) {
-                    try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                switch (src) {
+                    .reg => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.reg) });
+                        const opcode = 0x89;
+                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src_reg), .r_m = encode(dst_m.reg) };
+                        try self.emit(u8, opcode);
+                        try self.emit(u8, @bitCast(modrm));
+                        // NOTE: ESP/R12-based addressing need a SIB byte.
+                        if (encode(dst_m.reg) == 0b100) {
+                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                        }
+                        try self.emit(u32, dst_m.offset);
+                    },
+                    .imm32 => |imm| {
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.reg) });
+                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = 0, .r_m = encode(dst_m.reg) };
+                        try self.emit(u8, 0xC7);
+                        try self.emit(u8, @bitCast(modrm));
+                        // NOTE: ESP/R12-based addressing need a SIB byte.
+                        if (encode(dst_m.reg) == 0b100) {
+                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                        }
+                        try self.emit(u32, dst_m.offset);
+                        try self.emit(u32, imm);
+                    },
+                    else => return error.InvalidMovSource,
                 }
-                try self.emit(u32, dst_m.offset);
             },
             .reg => |dst_reg| {
                 switch (src) {
@@ -239,11 +256,10 @@ pub const Emitter = struct {
                         }
                         try self.emit(u32, src_m.offset);
                     },
+                    else => return error.InvalidMovSource,
                 }
             },
-            .imm => {
-                return error.InvalidDestination;
-            },
+            else => return error.InvalidMovDestination,
         }
     }
 
