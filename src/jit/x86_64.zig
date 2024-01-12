@@ -117,6 +117,9 @@ pub const Emitter = struct {
                 .Mov => |m| {
                     try self.mov(m.dst, m.src);
                 },
+                .Movsx => |m| {
+                    try self.movsx(m.dst, m.src);
+                },
                 .Push => |reg_or_imm| {
                     switch (reg_or_imm) {
                         .reg => |reg| {
@@ -213,9 +216,11 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.reg) });
+                        try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.reg) });
                         const opcode = 0x89;
                         const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src_reg), .r_m = encode(dst_m.reg) };
+                        if (dst_m.size == 16) // Operand size prefix
+                            try self.emit(u8, 0x66);
                         try self.emit(u8, opcode);
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
@@ -248,9 +253,11 @@ pub const Emitter = struct {
                         try self.mov_reg_imm(dst_reg, imm);
                     },
                     .mem => |src_m| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
+                        try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
                         const opcode = 0x8B;
                         const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
+                        if (src_m.size == 16) // Operand size prefix
+                            try self.emit(u8, 0x66);
                         try self.emit(u8, opcode);
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
@@ -263,6 +270,34 @@ pub const Emitter = struct {
                 }
             },
             else => return error.InvalidMovDestination,
+        }
+    }
+
+    pub fn movsx(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .mem => |src_m| {
+                        // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
+                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
+                        try self.emit(u8, 0x0F);
+                        switch (src_m.size) {
+                            8 => try self.emit(u8, 0xBE),
+                            16 => try self.emit(u8, 0xBF),
+                            else => return error.UnsupportedMovsxSourceSize,
+                        }
+                        const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
+                        try self.emit(u8, @bitCast(modrm));
+                        // NOTE: ESP/R12-based addressing need a SIB byte.
+                        if (encode(src_m.reg) == 0b100) {
+                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                        }
+                        try self.emit(u32, src_m.offset);
+                    },
+                    else => return error.InvalidMovsxSource,
+                }
+            },
+            else => return error.InvalidMovsxDestination,
         }
     }
 

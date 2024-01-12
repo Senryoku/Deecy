@@ -68,7 +68,7 @@ const BlockCache = struct {
         try jb.push(.{ .reg = .SavedRegister1 });
 
         try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
-        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }); // Load PC into SavedRegister1.
+        try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }); // Load PC into SavedRegister1.
 
         var index: u32 = 0;
         while (true) {
@@ -83,9 +83,9 @@ const BlockCache = struct {
             //       (We'll have to mark branch instructions as such and can't rely on the jit function to return true
             //       because we'll need to update the PC before calling it.)
             if (branch) // This instruction might have updated the PC, we have to reload it from memory.
-                try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
+                try jb.mov(.{ .reg = .SavedRegister1 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
             try jb.add(.SavedRegister1, .{ .imm = 2 });
-            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .SavedRegister1 });
+            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .SavedRegister1 });
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             if (branch)
@@ -180,7 +180,7 @@ pub fn interpreter_fallback_branch(block: *JITBlock, ctx: JITContext, instr: sh4
 }
 
 fn get_reg_mem(r: u4) JIT.Operand {
-    return .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4 } };
+    return .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4, .size = 32 } };
 }
 
 pub fn mov_rm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
@@ -195,6 +195,22 @@ pub fn mov_imm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
+    // Adress should be either in Boot ROM, or in RAM.
+    std.debug.assert(ctx.address < 0x00200000 or (ctx.address >= 0x0C000000 and ctx.address < 0x10000000));
+    // @(d8,PC) is fixed, compute its real absolute address
+    const d = bit_manip.zero_extend(instr.nd8.d) << 1;
+    const addr = ctx.address + 4 + d;
+    const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
+    // Set it to a scratch register
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .imm = abs_addr });
+    // Load the pointed value
+    try block.movsx(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .ReturnRegister, .offset = 0, .size = 16 } });
+    // Store it into Rn
+    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
+    return false;
+}
+
 pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
     // Adress should be either in Boot ROM, or in RAM.
     std.debug.assert(ctx.address < 0x00200000 or (ctx.address >= 0x0C000000 and ctx.address < 0x10000000));
@@ -205,7 +221,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bo
     // Set it to a scratch register
     try block.mov(.{ .reg = .ReturnRegister }, .{ .imm = abs_addr });
     // Load the pointed value
-    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .ReturnRegister, .offset = 0 } });
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .ReturnRegister, .offset = 0, .size = 32 } });
     // Store it into Rn
     try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;

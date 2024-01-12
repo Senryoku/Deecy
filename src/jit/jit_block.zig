@@ -4,6 +4,7 @@ pub const InstructionType = enum {
     Break, // For Debugging
     FunctionCall,
     Mov,
+    Movsx, // Mov with sign extension
     Push,
     Pop,
     Add,
@@ -35,6 +36,7 @@ pub const Operand = union(OperandType) {
     mem: struct {
         reg: Register,
         offset: u32,
+        size: u8,
     },
 };
 
@@ -42,6 +44,7 @@ pub const Instruction = union(InstructionType) {
     Break: u8, // FIXME: Could be void, but I don't know how to initialize a void value :')
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },
+    Movsx: struct { dst: Operand, src: Operand },
     Push: Operand,
     Pop: Operand,
     Add: struct { dst: Register, src: Operand },
@@ -70,6 +73,10 @@ pub const JITBlock = struct {
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
+        try self.instructions.append(.{ .Movsx = .{ .dst = dst, .src = src } });
     }
 
     pub fn push(self: *@This(), op: Operand) !void {
