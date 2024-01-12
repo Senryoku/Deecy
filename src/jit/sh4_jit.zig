@@ -49,10 +49,9 @@ const BlockCache = struct {
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, @bitCast(instr));
 
             // Increment PC
-            try jb.inc_pc(); // FIXME: This should not be a thing.
-            // try emitter.block.load(.ArgRegister3, .{ .reg = .r12, .offset = @offsetOf(sh4.SH4, "pc") });
-            // try emitter.block.add(.ArgRegister3, .{ .imm = 2 });
-            // try emitter.block.store(.ArgRegister3, .{ .reg = .r12, .offset = @offsetOf(sh4.SH4, "pc") });
+            try jb.mov(.{ .reg = .ArgRegister3 }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } });
+            try jb.add(.ArgRegister3, .{ .imm = 2 });
+            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .ArgRegister3 });
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             emitter.block.instr_count += 1;
@@ -127,7 +126,7 @@ pub const SH4JIT = struct {
 
 pub fn interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !bool {
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
-    try block.push_arg(1, @as(u16, @bitCast(instr)));
+    try block.mov(.{ .reg = .ArgRegister1 }, .{ .imm = @as(u16, @bitCast(instr)) });
     try block.call_2(*sh4.SH4, sh4.Instr, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
     return false;
 }

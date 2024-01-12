@@ -2,9 +2,8 @@ const std = @import("std");
 
 pub const InstructionType = enum {
     FunctionCall,
-    PushArg,
     Mov,
-    IncPC, // FIXME: Hack. Remove once we have the proper abstractions.
+    Add,
 };
 
 pub const Register = enum {
@@ -36,9 +35,8 @@ pub const Operand = union(OperandType) {
 
 pub const Instruction = union(InstructionType) {
     FunctionCall: *const anyopaque,
-    PushArg: struct { number: u8, value: u64 },
     Mov: struct { dst: Operand, src: Operand },
-    IncPC: void, // FIXME: Remove.
+    Add: struct { dst: Register, src: Operand },
 };
 
 pub const JITBlock = struct {
@@ -68,12 +66,12 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .FunctionCall = func });
     }
 
-    pub fn push_arg(self: *@This(), number: u8, value: u64) !void {
-        try self.instructions.append(.{ .PushArg = .{ .number = number, .value = value } });
-    }
-
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn add(self: *@This(), dst: Register, src: Operand) !void {
+        try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
     }
 
     pub fn inc_pc(self: *@This()) !void {

@@ -38,6 +38,12 @@ const MODRM = packed struct(u8) {
     mod: u2, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
 };
 
+const SIB = packed struct(u8) {
+    base: u3,
+    index: u3,
+    scale: u2,
+};
+
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
 const ReturnRegister = if (builtin.os.tag == .windows) Registers.RAX else @compileError("Unsupported ABI");
@@ -105,41 +111,14 @@ pub const Emitter = struct {
         self.emit_block_prologue();
         for (0..jb.instructions.items.len) |i| {
             switch (jb.instructions.items[i]) {
-                .PushArg => |arg| {
-                    try self.mov_reg_imm(ArgRegisters[arg.number], arg.value);
-                },
                 .FunctionCall => |function| {
                     try self.native_call(function);
                 },
                 .Mov => |m| {
                     try self.mov(m.dst, m.src);
                 },
-                .IncPC => {
-                    // FIXME: Big Hack. This should be split into proper instructions at the JITBlock level (see sh4_jit). I'm just too lazy to properly abstract it right now.
-                    // Increment PC of sh4.
-
-                    const offset: u32 = @offsetOf(@import("../sh4.zig").SH4, "pc");
-
-                    // mov    r9d,QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")]
-                    for ([_]u8{ 0x45, 0x8b, 0x8c, 0x24 }) |val| {
-                        try self.block.emit(val);
-                    }
-                    try self.block.emit(@truncate(offset >> 0));
-                    try self.block.emit(@truncate(offset >> 8));
-                    try self.block.emit(@truncate(offset >> 16));
-                    try self.block.emit(@truncate(offset >> 24));
-                    // add    r9d,0x2
-                    for ([_]u8{ 0x41, 0x83, 0xC1, 0x02 }) |val| {
-                        try self.block.emit(val);
-                    }
-                    //mov    QWORD PTR [r12+@offsetOf(sh4.SH4, "pc")],r9d
-                    for ([_]u8{ 0x45, 0x89, 0x8C, 0x24 }) |val| {
-                        try self.block.emit(val);
-                    }
-                    try self.block.emit(@truncate(offset >> 0));
-                    try self.block.emit(@truncate(offset >> 8));
-                    try self.block.emit(@truncate(offset >> 16));
-                    try self.block.emit(@truncate(offset >> 24));
+                .Add => |a| {
+                    try self.add(a.dst, a.src);
                 },
                 //else => @panic("Unhandled JIT instruction"),
             }
@@ -163,8 +142,8 @@ pub const Emitter = struct {
         try self.emit(u8, 0x89);
         try self.emit(u8, 0xE5);
 
-        // Save user_date to SavedRegisters[0]. FIXME: Should probably no be there.
-        try self.mov_reg_reg(SavedRegisters[0], ArgRegisters[0]);
+        // Save user_data to SavedRegisters[0]. FIXME: Should probably no be there.
+        try self.mov_reg_reg(.SavedRegister0, .ArgRegister0);
     }
 
     pub fn emit_block_epilogue(self: *@This()) void {
@@ -186,52 +165,56 @@ pub const Emitter = struct {
         return @intFromEnum(get_reg(reg)) >= 8;
     }
 
-    pub fn mov_reg_imm(self: *@This(), reg: Registers, value: u64) !void {
-        try self.emit(u8, 0x48);
-        try self.emit(u8, 0xB8 + @as(u8, @intCast(@intFromEnum(reg))));
+    fn emit_rex_if_needed(self: *@This(), rex: REX) !void {
+        if (@as(u8, @bitCast(rex)) != @as(u8, @bitCast(REX{})))
+            try self.emit(u8, @bitCast(rex));
+    }
+
+    pub fn mov_reg_imm(self: *@This(), dst: JIT.Register, value: u64) !void {
+        // movabs <reg>,<imm64>
+        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst) });
+        try self.emit(u8, 0xB8 + @as(u8, encode(dst)));
         try self.emit(u64, value);
     }
 
-    pub fn mov_reg_reg(self: *@This(), dst: Registers, src: Registers) !void {
-        const rex: REX = .{ .w = true, .r = @intFromEnum(src) >= 8, .b = @intFromEnum(dst) >= 8 };
-        try self.emit(u8, @bitCast(rex));
+    pub fn mov_reg_reg(self: *@This(), dst: JIT.Register, src: JIT.Register) !void {
+        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
-        try self.emit(u8, 0xC0 + (@as(u8, @intCast(@intFromEnum(src) & 0x7)) << 3) + @as(u8, @intCast(@intFromEnum(dst) & 0x7)));
+        const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(src), .r_m = encode(dst) };
+        try self.block.emit(@bitCast(modrm));
     }
 
     pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
         switch (dst) {
             .mem => |dst_m| {
-                const rex: REX = .{ .r = need_rex(src.reg), .b = need_rex(dst_m.reg) };
+                try self.emit_rex_if_needed(.{ .r = need_rex(src.reg), .b = need_rex(dst_m.reg) });
                 const opcode = 0x89;
                 const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src.reg), .r_m = encode(dst_m.reg) };
-                try self.block.emit(@bitCast(rex));
                 try self.block.emit(opcode);
                 try self.block.emit(@bitCast(modrm));
-                // FIXME: ESP / R12 need a SIB byte. I don't know why, or how SIB works yet.
+                // NOTE: ESP/R12-based addressing need a SIB byte.
                 if (encode(dst_m.reg) == 0b100) {
-                    try self.block.emit(0x24);
+                    try self.block.emit(@bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                 }
                 try self.emit(u32, dst_m.offset);
             },
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |reg| {
-                        try self.mov_reg_reg(get_reg(dst_reg), get_reg(reg));
+                        try self.mov_reg_reg(dst_reg, reg);
                     },
                     .imm => |imm| {
-                        try self.mov_reg_imm(get_reg(dst_reg), imm);
+                        try self.mov_reg_imm(dst_reg, imm);
                     },
                     .mem => |src_m| {
-                        const rex: REX = .{ .r = need_rex(dst_reg), .b = need_rex(src_m.reg) };
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
                         const opcode = 0x8B;
                         const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
-                        try self.block.emit(@bitCast(rex));
                         try self.block.emit(opcode);
                         try self.block.emit(@bitCast(modrm));
-                        // FIXME: ESP / R12 need a SIB byte. I don't know why, or how SIB works yet.
+                        // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(src_m.reg) == 0b100) {
-                            try self.block.emit(0x24);
+                            try self.block.emit(@bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                         }
                         try self.emit(u32, src_m.offset);
                     },
@@ -240,6 +223,27 @@ pub const Emitter = struct {
             .imm => {
                 return error.InvalidDestination;
             },
+        }
+    }
+
+    pub fn add(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
+        // FIXME: Handle different sizes. We expect a u32 immediate.
+        switch (src) {
+            .reg => |src_reg| {
+                try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
+                try self.emit(u8, 0x81);
+                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) };
+                try self.emit(u8, @bitCast(modrm));
+            },
+            .imm => |imm| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
+                try self.emit(u8, 0x81); // ADD r/m32, imm32
+                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0, .r_m = encode(dst) };
+                try self.emit(u8, @bitCast(modrm));
+                //try self.emit(@TypeOf(imm), imm); // FIXME
+                try self.emit(u32, @truncate(imm));
+            },
+            else => return error.InvalidSource,
         }
     }
 
