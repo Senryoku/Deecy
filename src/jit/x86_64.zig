@@ -109,7 +109,9 @@ pub const Emitter = struct {
         for (0..jb.instructions.items.len) |i| {
             switch (jb.instructions.items[i]) {
                 .Break => {
-                    try self.emit_byte(0xCC);
+                    if (builtin.mode == .Debug) {
+                        try self.emit_byte(0xCC);
+                    } else std.debug.print("[x64_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
                 },
                 .FunctionCall => |function| {
                     try self.native_call(function);
