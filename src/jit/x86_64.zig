@@ -82,15 +82,12 @@ const SavedRegisters = if (builtin.os.tag == .windows) [_]Registers{
 
 pub const Emitter = struct {
     block: BasicBlock,
+    block_size: u32 = 0,
 
     pub fn init(block_buffer: []u8) @This() {
         return .{
             .block = BasicBlock.init(block_buffer),
         };
-    }
-
-    pub fn deinit(self: *@This()) void {
-        self.block.deinit();
     }
 
     pub fn get_reg(reg: JIT.Register) Registers {
@@ -126,9 +123,14 @@ pub const Emitter = struct {
         self.emit_block_epilogue();
     }
 
+    pub fn emit_byte(self: *@This(), value: u8) !void {
+        self.block.buffer[self.block_size] = value;
+        self.block_size += 1;
+    }
+
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
         for (0..@sizeOf(T)) |i| {
-            try self.block.emit(@truncate((value >> @intCast(8 * i)) & 0xFF));
+            try self.emit_byte(@truncate((value >> @intCast(8 * i)) & 0xFF));
         }
     }
 
@@ -181,7 +183,7 @@ pub const Emitter = struct {
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
         const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(src), .r_m = encode(dst) };
-        try self.block.emit(@bitCast(modrm));
+        try self.emit(u8, @bitCast(modrm));
     }
 
     pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
@@ -190,11 +192,11 @@ pub const Emitter = struct {
                 try self.emit_rex_if_needed(.{ .r = need_rex(src.reg), .b = need_rex(dst_m.reg) });
                 const opcode = 0x89;
                 const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(src.reg), .r_m = encode(dst_m.reg) };
-                try self.block.emit(opcode);
-                try self.block.emit(@bitCast(modrm));
+                try self.emit(u8, opcode);
+                try self.emit(u8, @bitCast(modrm));
                 // NOTE: ESP/R12-based addressing need a SIB byte.
                 if (encode(dst_m.reg) == 0b100) {
-                    try self.block.emit(@bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                    try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                 }
                 try self.emit(u32, dst_m.offset);
             },
@@ -210,11 +212,11 @@ pub const Emitter = struct {
                         try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
                         const opcode = 0x8B;
                         const modrm: MODRM = .{ .mod = 0b10, .reg_opcode = encode(dst.reg), .r_m = encode(src_m.reg) };
-                        try self.block.emit(opcode);
-                        try self.block.emit(@bitCast(modrm));
+                        try self.emit(u8, opcode);
+                        try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(src_m.reg) == 0b100) {
-                            try self.block.emit(@bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                         }
                         try self.emit(u32, src_m.offset);
                     },

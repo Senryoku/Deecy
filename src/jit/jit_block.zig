@@ -34,7 +34,7 @@ pub const Operand = union(OperandType) {
 };
 
 pub const Instruction = union(InstructionType) {
-    FunctionCall: *const anyopaque,
+    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },
     Add: struct { dst: Register, src: Operand },
 };
@@ -48,21 +48,11 @@ pub const JITBlock = struct {
         };
     }
 
-    pub fn deinit(self: *JITBlock) void {
+    pub fn deinit(self: *@This()) void {
         self.instructions.deinit();
     }
 
-    pub fn call(self: *@This(), func: *const fn () void) void {
-        _ = self;
-        _ = func;
-    }
-
-    pub fn call_1(self: *@This(), func: *const fn (*anyopaque) void) void {
-        _ = self;
-        _ = func;
-    }
-
-    pub fn call_2(self: *@This(), comptime arg_0: type, comptime arg_1: type, func: *const fn (arg_0, arg_1) void) !void {
+    pub fn call(self: *@This(), func: *const anyopaque) !void {
         try self.instructions.append(.{ .FunctionCall = func });
     }
 
@@ -72,9 +62,5 @@ pub const JITBlock = struct {
 
     pub fn add(self: *@This(), dst: Register, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
-    }
-
-    pub fn inc_pc(self: *@This()) !void {
-        try self.instructions.append(.{ .IncPC = {} });
     }
 };

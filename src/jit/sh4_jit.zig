@@ -41,6 +41,7 @@ const BlockCache = struct {
         var emitter = Emitter.init(self.buffer[self.cursor..]);
 
         var jb = JITBlock.init(self._allocator);
+        defer jb.deinit();
 
         var index: u32 = 0;
         while (true) {
@@ -54,26 +55,20 @@ const BlockCache = struct {
             try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc") } }, .{ .reg = .ArgRegister3 });
 
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
-            emitter.block.instr_count += 1;
             index += 1;
             if (branch)
                 break;
         }
 
         try emitter.emit_block(&jb);
+        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
 
-        self.cursor += emitter.block.size;
+        self.cursor += emitter.block_size;
 
         if (self.cursor > BlockBufferSize) {
+            // FIXME: This will never trigger, we'll segfault before. Leaving this here to remember to correctly handle the situation at some point.
+            // FIXME: Maybe simply clear the entire block cache?
             @panic("JIT block buffer overflow. Please increase BlockBufferSize :)");
-        }
-
-        // Debug Dump
-        if (false) {
-            for (0..emitter.block.size) |i| {
-                std.debug.print("{X:0>2} ", .{emitter.block.buffer[i]});
-            }
-            std.debug.print("\n", .{});
         }
 
         try self.blocks.put(address, emitter.block);
@@ -127,7 +122,7 @@ pub const SH4JIT = struct {
 pub fn interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !bool {
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .imm = @as(u16, @bitCast(instr)) });
-    try block.call_2(*sh4.SH4, sh4.Instr, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+    try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
     return false;
 }
 
