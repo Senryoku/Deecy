@@ -195,6 +195,14 @@ pub fn mov_imm_rn(block: *JITBlock, _: JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn mova_atdispPC_R0(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
+    // cpu.R(0).* = (cpu.pc & 0xFFFFFFFC) + 4 + (zero_extend(opcode.nd8.d) << 2);
+    const d = bit_manip.zero_extend(instr.nd8.d) << 2;
+    const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
+    try block.mov(get_reg_mem(0), .{ .imm32 = addr });
+    return false;
+}
+
 pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: JITContext, instr: sh4.Instr) !bool {
     // Adress should be either in Boot ROM, or in RAM.
     std.debug.assert(ctx.address < 0x00200000 or (ctx.address >= 0x0C000000 and ctx.address < 0x10000000));

@@ -33,7 +33,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
 
     .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.mov_rm_rn, .name = "mov Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.mov_rm_rn },
     .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.mov_imm_rn, .name = "mov #imm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.mov_imm_rn },
-    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = interpreter.mova_atdispPC_R0, .name = "mova @(d:8,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = interpreter.mova_atdispPC_R0, .name = "mova @(d:8,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.mova_atdispPC_R0 },
     .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movw_atdispPC_Rn, .name = "mov.w @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atdispPC_Rn },
     .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_atdispPC_Rn, .name = "mov.l @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atdispPC_Rn },
     .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
