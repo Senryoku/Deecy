@@ -13,10 +13,19 @@ const sh4_jit_log = std.log.scoped(.sh4_jit);
 
 const BlockBufferSize = 1024 * 4096;
 
+const HashMapContext = struct {
+    pub fn hash(_: @This(), addr: u32) u64 {
+        return @as(u64, addr) * 2654435761;
+    }
+    pub fn eql(_: @This(), a: u32, b: u32) bool {
+        return a == b;
+    }
+};
+
 const BlockCache = struct {
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: std.AutoHashMap(u32, BasicBlock),
+    blocks: std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage),
 
     _allocator: std.mem.Allocator,
 
@@ -25,7 +34,7 @@ const BlockCache = struct {
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
         return .{
             .buffer = buffer,
-            .blocks = std.AutoHashMap(u32, BasicBlock).init(allocator),
+            .blocks = std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator),
             ._allocator = allocator,
         };
     }
