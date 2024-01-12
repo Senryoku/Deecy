@@ -46,6 +46,11 @@ const BlockCache = struct {
         self.blocks.deinit();
     }
 
+    pub fn reset(self: *@This()) void {
+        self.cursor = 0;
+        self.blocks.clearRetainingCapacity();
+    }
+
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
         return self.blocks.get(address);
     }
@@ -88,6 +93,10 @@ const BlockCache = struct {
 
             index += 1;
             ctx.address += 2;
+
+            if (self.cursor + emitter.block_size >= BlockBufferSize) {
+                return error.JITCacheFull;
+            }
         }
 
         // Restore callee saved registers.
@@ -98,12 +107,6 @@ const BlockCache = struct {
         emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
 
         self.cursor += emitter.block_size;
-
-        if (self.cursor > BlockBufferSize) {
-            // FIXME: This will never trigger, we'll segfault before. Leaving this here to remember to correctly handle the situation at some point.
-            // FIXME: Maybe simply clear the entire block cache?
-            @panic("JIT block buffer overflow. Please increase BlockBufferSize :)");
-        }
 
         try self.blocks.put(start_ctx.address, emitter.block);
         return self.get(start_ctx.address).?;
@@ -140,7 +143,13 @@ pub const SH4JIT = struct {
             if (block == null) {
                 sh4_jit_log.info("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
+                block = try (self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
+                    if (err == error.JITCacheFull) {
+                        self.block_cache.reset();
+                        sh4_jit_log.info("JIT cache purged.", .{});
+                        break :retry self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
+                    } else break :retry err;
+                });
             }
             sh4_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(cpu);
