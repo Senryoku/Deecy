@@ -1353,10 +1353,14 @@ pub const Renderer = struct {
                 }
 
                 // Triangle Strips
-                for (start..vertices.items.len) |i| {
-                    try indices.append(@intCast(FirstVertex + i));
+                if (vertices.items.len - start < 3) {
+                    renderer_log.err("Not enough vertices in strip: {d} vertices.", .{vertices.items.len - start});
+                } else {
+                    for (start..vertices.items.len) |i| {
+                        try indices.append(@intCast(FirstVertex + i));
+                    }
+                    try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                 }
-                try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
             }
 
             if (vertices.items.len > start_vertex) {

@@ -300,6 +300,7 @@ pub const ListType = enum(u3) {
     Translucent = 2,
     TranslucentModifierVolume = 3,
     PunchThrough = 4,
+    _,
 };
 
 pub const GroupControl = packed struct(u8) {
@@ -542,6 +543,66 @@ pub const Polygon = union(PolygonType) {
     PolygonType4: PolygonType4,
     Sprite: Sprite,
 };
+
+fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
+    // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset - Gouraud (Ignored) - 16bit UV
+    const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_1_0_1;
+    switch (masked) {
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType1,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType4,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType1,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType2,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType1,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType2,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType4,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType4,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType4,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType4,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
+        @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
+        // NOTE: These will return PolygonType0.
+        // @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .Sprite,
+        // @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .Sprite,
+        else => {
+            std.debug.print(termcolor.red("Unimplemented obj_control_to_polygon_format: {b:0>16}, {any}\n"), .{ masked, obj_control });
+            @panic("Unimplemented");
+        },
+    }
+}
+
+fn polygon_format_size(polygon_format: PolygonType) u32 {
+    return switch (polygon_format) {
+        .PolygonType0 => @sizeOf(PolygonType0) / 4,
+        .PolygonType1 => @sizeOf(PolygonType1) / 4,
+        .PolygonType2 => @sizeOf(PolygonType2) / 4,
+        .PolygonType3 => @sizeOf(PolygonType3) / 4,
+        .PolygonType4 => @sizeOf(PolygonType4) / 4,
+        .Sprite => @sizeOf(Sprite) / 4,
+    };
+}
 
 const ModifierVolume = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
@@ -1167,6 +1228,8 @@ pub const Holly = struct {
 
     pub fn write_ta_fifo_polygon_path(self: *@This(), v: []u32) void {
         std.debug.assert(v.len == 8);
+        std.debug.assert(self._ta_command_buffer_index % 8 == 0);
+
         @memcpy(self._ta_command_buffer[self._ta_command_buffer_index .. self._ta_command_buffer_index + 8], v);
 
         self._ta_command_buffer_index += 8;
@@ -1180,7 +1243,7 @@ pub const Holly = struct {
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
 
         holly_log.debug(" TA Parameter Type: {any}", .{parameter_control_word.parameter_type});
-        for (0..8) |i| {
+        for (0..self._ta_command_buffer_index) |i| {
             holly_log.debug("      {X:0>8}", .{self._ta_command_buffer[i]});
         }
 
@@ -1225,7 +1288,7 @@ pub const Holly = struct {
                     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
                 }
 
-                // Note: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
+                // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
                 const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
                 global_parameter.*.isp_tsp_instruction.texture = global_parameter.*.parameter_control_word.obj_control.texture;
                 global_parameter.*.isp_tsp_instruction.offset = global_parameter.*.parameter_control_word.obj_control.offset;
@@ -1236,35 +1299,16 @@ pub const Holly = struct {
                     holly_log.warn(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
                     self._ta_current_polygon = null;
                 } else {
-                    if (parameter_control_word.obj_control.volume == 0) {
-                        switch (parameter_control_word.obj_control.col_type) {
-                            .PackedColor, .FloatingColor => {
-                                const polygon_type_0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).*;
-                                self._ta_current_polygon = .{ .PolygonType0 = polygon_type_0 };
-                            },
-                            .IntensityMode1, .IntensityMode2 => {
-                                if (parameter_control_word.obj_control.offset == 0) {
-                                    const polygon_type_1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).*;
-                                    self._ta_current_polygon = .{ .PolygonType1 = polygon_type_1 };
-                                } else {
-                                    if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
-                                    const polygon_type_2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).*;
-                                    self._ta_current_polygon = .{ .PolygonType2 = polygon_type_2 };
-                                }
-                            },
-                        }
-                    } else { // "With Two Volumes"
-                        switch (parameter_control_word.obj_control.col_type) {
-                            .PackedColor, .FloatingColor => {
-                                const polygon_type_3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).*;
-                                self._ta_current_polygon = .{ .PolygonType3 = polygon_type_3 };
-                            },
-                            .IntensityMode1, .IntensityMode2 => {
-                                if (self._ta_command_buffer_index < 16) return; // Command not fully received yet
-                                const polygon_type_4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).*;
-                                self._ta_current_polygon = .{ .PolygonType4 = polygon_type_4 };
-                            },
-                        }
+                    const format = obj_control_to_polygon_format(parameter_control_word.obj_control);
+                    if (self._ta_command_buffer_index < polygon_format_size(format)) return;
+
+                    switch (format) {
+                        .PolygonType0 => self._ta_current_polygon = .{ .PolygonType0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType1 => self._ta_current_polygon = .{ .PolygonType1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType2 => self._ta_current_polygon = .{ .PolygonType2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType3 => self._ta_current_polygon = .{ .PolygonType3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType4 => self._ta_current_polygon = .{ .PolygonType4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).* },
+                        else => @panic("Invalid polygon format"),
                     }
                 }
             },
