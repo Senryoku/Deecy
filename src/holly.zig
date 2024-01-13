@@ -545,6 +545,7 @@ pub const Polygon = union(PolygonType) {
 };
 
 fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
+    // NOTE: See 3.7.6.2 Parameter Combinations. Some entries are duplicated to account for the fact that the value of offset doesn't matter in these cases.
     // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset - Gouraud (Ignored) - 16bit UV
     const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_1_0_1;
     switch (masked) {
@@ -583,9 +584,6 @@ fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
-        // NOTE: These will return PolygonType0.
-        // @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .Sprite,
-        // @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .Sprite,
         else => {
             std.debug.print(termcolor.red("Unimplemented obj_control_to_polygon_format: {b:0>16}, {any}\n"), .{ masked, obj_control });
             @panic("Unimplemented");
