@@ -1153,8 +1153,8 @@ pub const Holly = struct {
     }
 
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
-        switch (addr) {
-            @intFromEnum(HollyRegister.SOFTRESET) => {
+        switch (@as(HollyRegister, @enumFromInt(addr))) {
+            HollyRegister.SOFTRESET => {
                 holly_log.warn("TODO SOFTRESET: {X:0>8}", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
@@ -1168,7 +1168,7 @@ pub const Holly = struct {
                 }
                 return;
             },
-            @intFromEnum(HollyRegister.STARTRENDER) => {
+            HollyRegister.STARTRENDER => {
                 holly_log.info(termcolor.green("STARTRENDER!"), .{});
 
                 self.render_start = true;
@@ -1177,7 +1177,7 @@ pub const Holly = struct {
                 self.schedule_interrupt(400, .{ .RenderDoneISP = 1 });
                 self.schedule_interrupt(600, .{ .RenderDoneVideo = 1 });
             },
-            @intFromEnum(HollyRegister.TA_LIST_INIT) => {
+            HollyRegister.TA_LIST_INIT => {
                 if (v == 0x80000000) {
                     holly_log.debug("TA_LIST_INIT: {X:0>8}", .{v});
                     if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
@@ -1189,14 +1189,14 @@ pub const Holly = struct {
                     self._ta_current_polygon = null;
                 }
             },
-            @intFromEnum(HollyRegister.TA_LIST_CONT) => {
+            HollyRegister.TA_LIST_CONT => {
                 holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
             },
-            @intFromEnum(HollyRegister.SPG_CONTROL), @intFromEnum(HollyRegister.SPG_LOAD) => {
+            HollyRegister.SPG_CONTROL, HollyRegister.SPG_LOAD => {
                 holly_log.warn("TODO SPG_CONTROL/SPG_LOAD: {X:0>8}", .{v});
             },
-            else => {
-                holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, @as(HollyRegister, @enumFromInt(addr))) orelse "Unknown", v });
+            else => |reg| {
+                holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
             },
         }
         self._get_register_from_addr(u32, addr).* = v;
@@ -1248,25 +1248,18 @@ pub const Holly = struct {
         switch (parameter_control_word.parameter_type) {
             .EndOfList => {
                 if (self._ta_list_type != null) { // Apprently this happens?... Why would a game do this?
-                    // Fire corresponding interrupt.
-                    // FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
-                    switch (self._ta_list_type.?) {
-                        .Opaque => {
-                            self.schedule_interrupt(800, .{ .EoT_OpaqueList = 1 });
+                    // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
+                    self.schedule_interrupt(800, switch (self._ta_list_type.?) {
+                        .Opaque => .{ .EoT_OpaqueList = 1 },
+                        .OpaqueModifierVolume => .{ .EoT_OpaqueModifierVolumeList = 1 },
+                        .Translucent => .{ .EoT_TranslucentList = 1 },
+                        .TranslucentModifierVolume => .{ .EoT_TranslucentModifierVolumeList = 1 },
+                        .PunchThrough => .{ .EoD_PunchThroughList = 1 },
+                        else => {
+                            holly_log.err(termcolor.red("  Unimplemented List Type {any}"), .{self._ta_list_type});
+                            @panic("Unimplemented List Type");
                         },
-                        .OpaqueModifierVolume => {
-                            self.schedule_interrupt(800, .{ .EoT_OpaqueModifierVolumeList = 1 });
-                        },
-                        .Translucent => {
-                            self.schedule_interrupt(800, .{ .EoT_TranslucentList = 1 });
-                        },
-                        .TranslucentModifierVolume => {
-                            self.schedule_interrupt(800, .{ .EoT_TranslucentModifierVolumeList = 1 });
-                        },
-                        .PunchThrough => {
-                            self.schedule_interrupt(800, .{ .EoD_PunchThroughList = 1 });
-                        },
-                    }
+                    });
                 }
                 self._ta_list_type = null;
                 self._ta_current_polygon = null;
@@ -1300,14 +1293,14 @@ pub const Holly = struct {
                     const format = obj_control_to_polygon_format(parameter_control_word.obj_control);
                     if (self._ta_command_buffer_index < polygon_format_size(format)) return;
 
-                    switch (format) {
-                        .PolygonType0 => self._ta_current_polygon = .{ .PolygonType0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType1 => self._ta_current_polygon = .{ .PolygonType1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType2 => self._ta_current_polygon = .{ .PolygonType2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType3 => self._ta_current_polygon = .{ .PolygonType3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType4 => self._ta_current_polygon = .{ .PolygonType4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).* },
+                    self._ta_current_polygon = switch (format) {
+                        .PolygonType0 => .{ .PolygonType0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType1 => .{ .PolygonType1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType2 => .{ .PolygonType2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType3 => .{ .PolygonType3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).* },
+                        .PolygonType4 => .{ .PolygonType4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).* },
                         else => @panic("Invalid polygon format"),
-                    }
+                    };
                 }
             },
             .SpriteList => {
@@ -1337,57 +1330,28 @@ pub const Holly = struct {
                         else => {
                             const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
                             if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
-                            switch (format) {
-                                .Type0 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type1 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type2 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type3 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type4 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type5 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type6 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type7 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type8 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type9 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type10 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type11 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type12 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type13 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
-                                .Type14 => {
-                                    self._ta_current_polygon_vertex_parameters.append(.{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                },
+
+                            self._ta_current_polygon_vertex_parameters.append(switch (format) {
+                                .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
+                                .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
                                 else => {
                                     holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
                                     @panic("Unexpected vertex parameter type");
                                 },
-                            }
+                            }) catch unreachable;
                         },
                     }
 
