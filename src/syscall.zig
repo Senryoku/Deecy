@@ -49,10 +49,21 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
 }
 
 pub fn syscall_romfont(dc: *Dreamcast) void {
-    switch (dc.cpu.R(7).*) {
+    switch (dc.cpu.R(1).*) {
+        0 => {
+            // ROMFONT_ADDRESS
+            dc.cpu.R(0).* = 0xA0100020; // NOTE: Just an informed guess from stepping through the boot ROM.
+        },
+        1 => {
+            // ROMFONT_LOCK - Nothing to do, I guess?
+            dc.cpu.R(0).* = 0; // Returns: 0 if you got the mutex (unlock it with ROMFONT_UNLOCK when you're done), -1 if it was already taken by someone else
+        },
+        2 => {
+            // ROMFONT_UNLOCK - Nothing to do, I guess?
+        },
         else => {
-            std.log.err("  syscall_romfont with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
-            @panic("syscall_romfont with unhandled R7");
+            std.log.err("  syscall_romfont with unhandled R1: R1={d}", .{dc.cpu.R(1).*});
+            @panic("syscall_romfont with unhandled R1");
         },
     }
 
