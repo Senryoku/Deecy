@@ -20,6 +20,9 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // FIXME: This should be exported by the arm7 build script, probably.
+    const arm7_module = b.createModule(.{ .source_file = .{ .path = "libs/arm7/src/arm7.zig" } });
+
     const exe = b.addExecutable(.{
         .name = "Katana",
         // In this case the main source file is merely a path, however, in more
@@ -28,6 +31,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.addModule("arm7", arm7_module);
 
     const zgui_pkg = zgui.package(b, target, optimize, .{
         .options = .{ .backend = .glfw_wgpu },
@@ -80,6 +84,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
+    interpreter_perf.addModule("arm7", arm7_module);
     const run_perf_tests = b.addRunArtifact(interpreter_perf);
     const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
     interpreter_perf_step.dependOn(&run_perf_tests.step);
@@ -92,6 +97,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
+    jit_perf.addModule("arm7", arm7_module);
     const run_jit_perf_tests = b.addRunArtifact(jit_perf);
     const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
     jit_perf_step.dependOn(&run_jit_perf_tests.step);
@@ -115,7 +121,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-
+    unit_tests.addModule("arm7", arm7_module);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

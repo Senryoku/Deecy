@@ -62,6 +62,8 @@ pub const Dreamcast = struct {
             ._allocator = allocator,
         };
 
+        dc.*.aica.setup_arm();
+
         // Load ROM
         dc.boot = try dc._allocator.alloc(u8, 0x200000);
         var boot_file = try std.fs.cwd().openFile("./bin/dc_boot.bin", .{});
@@ -220,6 +222,8 @@ pub const Dreamcast = struct {
         self.cpu.write32(0x8C000064, 0x8c008100);
         self.cpu.write16(0x8C000090, 0);
         self.cpu.write16(0x8C000092, @bitCast(@as(i16, -128)));
+
+        self.hw_register(u32, .SB_MDST).* = 0;
 
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;

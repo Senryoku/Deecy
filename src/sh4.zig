@@ -774,7 +774,7 @@ pub const SH4 = struct {
                         self._dc.?._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dc.?._dummy);
                     },
-                    0x00700000...0x00707FE0 => { // G2 AICA Register
+                    0x00700000...0x00707FFF => { // G2 AICA Register
                         @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
                     },
                     0x00710000...0x00710008 => { // G2 AICA RTC Registers
@@ -1160,6 +1160,12 @@ pub const SH4 = struct {
                     .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
                         if (value == 1) {
                             sh4_log.warn(termcolor.yellow("Unimplemented {any} DMA initiation!"), .{reg});
+                            return;
+                        }
+                    },
+                    .SB_GDST => {
+                        if (value == 1) {
+                            sh4_log.err(termcolor.red("Unimplemented {any} DMA (ch0-DMA) initiation!"), .{reg});
                             return;
                         }
                     },

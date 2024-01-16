@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const common = @import("./common.zig");
+const arm7 = @import("arm7");
 const termcolor = @import("./termcolor.zig");
 const sh4 = @import("./sh4.zig");
 const sh4_disassembly = @import("./sh4_disassembly.zig");
@@ -30,7 +31,7 @@ pub const std_options = struct {
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
-        .{ .scope = .aica, .level = .info },
+        .{ .scope = .aica, .level = .debug },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .maple, .level = .info },
@@ -110,6 +111,9 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, arg, "--skip-bios")) {
             skip_bios = true;
+        }
+        if (std.mem.eql(u8, arg, "--stop")) {
+            running = false;
         }
     }
 
@@ -352,6 +356,33 @@ pub fn main() !void {
                     zgui.text("XF{d: <2}: {d: >12.4}", .{ i, dc.cpu.XF(@truncate(i)).* });
                 }
                 zgui.endGroup();
+            }
+            zgui.end();
+
+            if (zgui.begin("AICA", .{})) {
+                zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
+                zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc().*});
+                zgui.beginGroup();
+                for (0..8) |i| {
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r(@truncate(i)).* });
+                }
+                zgui.endGroup();
+                zgui.sameLine(.{});
+                zgui.beginGroup();
+                for (8..16) |i| {
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r(@truncate(i)).* });
+                }
+                zgui.endGroup();
+
+                const range = 32; // In bytes.
+                const pc = 0x00800000 + dc.aica.arm7.pc().* - 4;
+                var addr = std.math.clamp(pc, 0x00800000 + range / 2, 0x00A00000 - range);
+                const end_addr = addr + range;
+                while (addr < end_addr) {
+                    const disassembly = arm7.ARM7.disassemble(dc.aica.read_mem(u32, addr));
+                    zgui.text("[{X: >6}] {s} {s}", .{ addr - 0x00800000, if (addr == pc) ">" else " ", disassembly });
+                    addr += 4;
+                }
             }
             zgui.end();
 

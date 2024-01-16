@@ -137,7 +137,7 @@ pub const SH4JIT = struct {
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc);
             if (block == null) {
-                sh4_jit_log.info("(Cache Miss) Compiling {X:0>8}...", .{pc});
+                sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
                 block = try (self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
