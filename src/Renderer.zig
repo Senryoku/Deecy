@@ -881,29 +881,19 @@ pub const Renderer = struct {
     }
 
     pub fn update_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
+        const SPG_CONTROL = gpu._get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
-        const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
-        _ = FB_C_SOF; // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
-        _ = FB_R_SOF2;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
 
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
-            const addr: u32 = FB_R_SOF1;
             // TODO: Find a way to avoid unecessary uploads?
-
-            // FIXME: Handle interlaced mode? Or not?
             renderer_log.debug("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
-            renderer_log.debug("  FB_R_CTRL: {any}", .{FB_R_CTRL});
-            renderer_log.debug("  FB_R_SOF1: {X:0>8}", .{FB_R_SOF1});
-            renderer_log.debug("  FB_R_SIZE: {any}", .{FB_R_SIZE});
 
-            // FIXME: In the minifont KOS example, this is half the framebuffer width, and clearly wrong.
-            //        Doubling/Forcing it to 640 seems to make it work as intended, but I don't undersand why.
-            const u_size: u32 = FB_R_SIZE.x_size + 1;
-            const v_size: u32 = FB_R_SIZE.y_size + 1;
+            const line_size: u32 = 4 * (@as(u32, FB_R_SIZE.x_size) + 1); // From 32-bit units to bytes.
+            const field_size: u32 = @as(u32, FB_R_SIZE.y_size) + 1; // Number of lines
 
             const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
                 0, 1 => 2,
@@ -911,12 +901,19 @@ pub const Renderer = struct {
                 3 => 4,
             };
 
-            @memset(self._scratch_pad, 0);
+            const interlaced = SPG_CONTROL.interlace == 1;
+            const x_size = line_size / bytes_per_pixels;
+            const y_size = if (interlaced) field_size * 2 else field_size;
+            const line_padding = 4 * (@as(u32, FB_R_SIZE.modulus) - 1); // In bytes
 
-            for (0..v_size) |y| {
-                for (0..u_size) |x| {
-                    const pixel_idx = u_size * y + x;
-                    const pixel_addr = addr + bytes_per_pixels * (y * (u_size + FB_R_SIZE.modulus - 1) + x);
+            @memset(self._scratch_pad, 0); // TODO: Fill using VO_BORDER_COL?
+
+            for (0..y_size) |y| {
+                const line_in_field = if (interlaced) y / 2 else y;
+                const addr = (if (interlaced and (y % 2) == 1) FB_R_SOF2 else FB_R_SOF1) + line_in_field * (line_size + line_padding);
+                for (0..x_size) |x| {
+                    const pixel_idx = x_size * y + x;
+                    const pixel_addr = addr + bytes_per_pixels * x;
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
                             const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
@@ -949,17 +946,16 @@ pub const Renderer = struct {
                     }
                 }
             }
-
             self._gctx.queue.writeTexture(
                 .{
                     .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
                     .origin = .{},
                 },
                 .{
-                    .bytes_per_row = 4 * u_size,
-                    .rows_per_image = v_size,
+                    .bytes_per_row = 4 * x_size,
+                    .rows_per_image = y_size,
                 },
-                .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                .{ .width = x_size, .height = y_size, .depth_or_array_layers = 1 },
                 u8,
                 self._scratch_pad,
             );
