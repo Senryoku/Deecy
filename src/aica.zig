@@ -11,7 +11,7 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
 pub const AICARegister = enum(u32) {
-    _00702800 = 0x00002800,
+    MasterVolume = 0x00002800,
     TESTB0 = 0x00002804,
     _00702808 = 0x00002808,
     AFSET = 0x0000280C,
@@ -118,6 +118,8 @@ const ScheduledEvents = struct {
     cycles: u32,
 };
 
+const DisableARMCore: bool = true; // FIXME: Temp debug.
+
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
 
@@ -146,7 +148,7 @@ pub const AICA = struct {
         r.arm7 = arm7.ARM7.init(r.wave_memory);
         r.arm7.reset_pipeline();
 
-        r.regs[@intFromEnum(AICARegister._00702800) / 4] = 0x10;
+        r.regs[@intFromEnum(AICARegister.MasterVolume) / 4] = 0x10;
 
         r.regs[@intFromEnum(AICARegister.SCILV0) / 4] = 0x18;
         r.regs[@intFromEnum(AICARegister.SCILV1) / 4] = 0x50;
@@ -174,17 +176,19 @@ pub const AICA = struct {
 
     pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
         // FIXME: Hopefully remove this when we have a working AICA (I mean, one can dream.)
-        switch (addr) {
-            0x0080005C => {
-                return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
-            },
-            0x00800104 => {
-                return 0x00900000; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
-            },
-            0x00800284, 0x00800288 => {
-                return 0x00900000; // Same thing when trying to start an arcade game.
-            },
-            else => {},
+        if (DisableARMCore) {
+            switch (addr) {
+                0x0080005C => {
+                    return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
+                },
+                0x00800104 => {
+                    return 0x00900000; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
+                },
+                0x00800284, 0x00800288 => {
+                    return 0x00900000; // Same thing when trying to start an arcade game.
+                },
+                else => {},
+            }
         }
         return @as(*T, @alignCast(@ptrCast(&self.wave_memory[addr - 0x00800000]))).*;
     }
@@ -211,6 +215,10 @@ pub const AICA = struct {
         const local_addr = addr & 0x0000FFFF;
         aica_log.info("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
+            .MasterVolume => {
+                aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
+                return;
+            },
             .DDIR_DEXE => {
                 self.regs[local_addr / 4] = value & 0xFFFFFFFC;
                 if (value & 1 == 1) {
@@ -219,18 +227,22 @@ pub const AICA = struct {
                 }
                 return;
             },
-            .ARMRST => {
-                if (value & 1 == 0) {
-                    aica_log.info(termcolor.green("ARM reset"), .{});
-                    self.arm7.set_reset(.High);
-                } else {
-                    self.arm7.set_reset(.Low);
-                }
-            },
             .MCIPD => {
                 if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).SCPU == 1) {
                     aica_log.info(termcolor.green("SCPU interrupt"), .{});
                     self.events.append(.{ .event_type = .ExternalInterrupt, .cycles = 0 }) catch unreachable;
+                }
+            },
+            .ARMRST => {
+                if (value & 1 == 0) {
+                    aica_log.info(termcolor.green("ARM reset"), .{});
+                    self.arm7.set_reset(.High);
+                    if (self.wave_memory[0] == 0x00000000) {
+                        aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
+                        self.arm7.set_reset(.Low);
+                    }
+                } else {
+                    self.arm7.set_reset(.Low);
                 }
             },
             else => {},
@@ -274,7 +286,9 @@ pub const AICA = struct {
 
     pub fn read_from_arm(self: *const AICA, addr: u32) u32 {
         // I think the AICA might try to access out of bounds here.
-        if (addr >= 0x00200000) {}
+        if (addr >= 0x00200000) {
+            std.debug.print(termcolor.red("AICA read from out of bounds address: 0x{X:0>8}\n"), .{addr});
+        }
         return self.read_register(addr);
     }
 
@@ -304,7 +318,7 @@ pub const AICA = struct {
             }
         }
 
-        if (self.arm7.reset_line == .High) {
+        if (self.arm7.reset_line == .High and !DisableARMCore) {
             self._cycles_counter += cycles;
             // FIXME: We're not acutally counter ARM7 cycles here (unless all instructions are 1 cycle :^)).
             while (self._cycles_counter >= ARM7CycleRatio) {

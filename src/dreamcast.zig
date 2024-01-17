@@ -313,7 +313,7 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_MDST).* = 1;
             defer self.hw_register(u32, .SB_MDST).* = 0;
 
-            dc_log.info(termcolor.yellow("  Maple-DMA initiation!"), .{});
+            dc_log.debug("Maple-DMA initiation!", .{});
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
             self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);

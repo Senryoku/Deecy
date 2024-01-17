@@ -129,7 +129,7 @@ const HollyRegister = enum(u32) {
     PAL_RAM_CTRL = 0x005F8108,
     SPG_STATUS = 0x005F810C,
     FB_BURSTCTRL = 0x005F8110,
-    FB_C_SOF = 0x005F8114,
+    FB_C_SOF = 0x005F8114, // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
     Y_COEFF = 0x005F8118,
     PT_ALPHA_REF = 0x005F811C,
 
@@ -202,7 +202,7 @@ pub const SPG_CONTROL = packed struct(u32) {
     PAL: u1 = 0,
     sync_direction: u1 = 0,
     csync_on_h: u1 = 0,
-    _: u21 = 0,
+    _: u22 = 0,
 };
 
 pub const SPG_LOAD = packed struct(u32) {

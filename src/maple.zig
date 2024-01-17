@@ -187,6 +187,7 @@ const Controller = struct {
         @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
             .FunctionCodesMask = self.capabilities,
             .SubFunctionCodesMasks = self.subcapabilities,
+            .DescriptionString = "Dreamcast Controller         \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
         };
         return r;
     }
