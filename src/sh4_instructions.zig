@@ -143,7 +143,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = interpreter.bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
-    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .privileged = false },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrt, .name = "clrt", .privileged = false },

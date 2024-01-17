@@ -254,8 +254,16 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
     ctx.delay_slot = ctx.address + 2;
-
     ctx.outdated_pc = false;
+    return true;
+}
 
+pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    // cpu.pc = cpu.pr
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
+    try block.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
     return true;
 }
