@@ -976,7 +976,7 @@ pub const SH4 = struct {
                 }
             },
             0x00700000...0x00707FE0 => {
-                return self._dc.?.aica.read_register(addr);
+                return self._dc.?.aica.read_register(u32, addr);
             },
             0x00710000...0x00710008 => {
                 return self._dc.?.aica.read_rtc_register(addr);
@@ -1211,7 +1211,7 @@ pub const SH4 = struct {
                 return self._dc.?.gpu.write_register(addr, value);
             },
             0x00700000...0x0070FFFF => {
-                return self._dc.?.aica.write_register(addr, value);
+                return self._dc.?.aica.write_register(u32, addr, value);
             },
             0x00710000...0x00710008 => {
                 return self._dc.?.aica.write_rtc_register(addr, value);

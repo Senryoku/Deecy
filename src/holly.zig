@@ -1287,7 +1287,7 @@ pub const Holly = struct {
                 global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
 
                 if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
-                    holly_log.warn(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
+                    holly_log.debug(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
                     self._ta_current_polygon = null;
                 } else {
                     const format = obj_control_to_polygon_format(parameter_control_word.obj_control);
@@ -1312,7 +1312,7 @@ pub const Holly = struct {
             },
             .VertexParameter => {
                 if (self._ta_current_polygon == null) {
-                    holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
+                    holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
                     //@panic("No current polygon");
                 } else {
                     const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
@@ -1382,7 +1382,7 @@ pub const Holly = struct {
             self._ta_list_type = parameter_control_word.list_type;
             self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
         }
-        holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
+        holly_log.debug(termcolor.red("  Unimplemented ObjectListSet"), .{});
         // FIXME: Really not sure if I need to do any thing here...
         //        Is it meant to separate objects by tiles? Are they already submitted elsewhere anyway?
         if (false) {

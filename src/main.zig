@@ -162,8 +162,8 @@ pub fn main() !void {
     // dc.cpu.write16(0x0C0196EC, 0x9);
 
     // DC CHECKER for Repair v2.050
-    // dc.cpu.write16(0x0C018F54, 0x9);
-    // dc.cpu.write16(0x0C018F42, 0x9);
+    dc.cpu.write16(0x0C018F54, 0x9);
+    dc.cpu.write16(0x0C018F42, 0x9);
 
     try zglfw.init();
     defer zglfw.terminate();
@@ -235,6 +235,9 @@ pub fn main() !void {
     for (0..renderer_texture_views.len) |i|
         renderer_texture_views[i] = gctx.createTextureView(renderer.texture_arrays[i], .{ .dimension = .tvdim_2d, .base_array_layer = 0, .array_layer_count = 1 });
 
+    var last_frame_timestamp = std.time.microTimestamp();
+    var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);
+
     while (!window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -243,6 +246,17 @@ pub fn main() !void {
                 gctx.swapchain_descriptor.width,
                 gctx.swapchain_descriptor.height,
             );
+
+            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
+            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true } })) {
+                var sum: i128 = 0;
+                for (0..last_n_frametimes.count) |i| {
+                    sum += last_n_frametimes.peekItem(i);
+                }
+                const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
+                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            }
+            zgui.end();
 
             if (zgui.begin("CPU State", .{})) {
                 _ = zgui.checkbox("JIT", .{ .v = &enable_jit });
@@ -646,6 +660,13 @@ pub fn main() !void {
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);
+
+            if (last_n_frametimes.count >= 10) {
+                _ = last_n_frametimes.readItem();
+            }
+            const now = std.time.microTimestamp();
+            try last_n_frametimes.writeItem(now - last_frame_timestamp);
+            last_frame_timestamp = now;
         }
         // FIXME: We don't need to render everything if the DC did not issued a render_start command, but we still need to render the
         //        direct framebuffer writes. Reverting to rendering everything for now.

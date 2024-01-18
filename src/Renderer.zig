@@ -525,12 +525,12 @@ pub const Renderer = struct {
 
         const vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
-            .size = 4 * 4096 * @sizeOf(Vertex), // FIXME: Arbitrary size for testing
+            .size = 64 * 4096 * @sizeOf(Vertex), // FIXME: Arbitrary size for testing
         });
 
         const index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = 4 * 16384 * @sizeOf(u32), // FIXME: Arbitrary size for testing
+            .size = 64 * 16384 * @sizeOf(u32), // FIXME: Arbitrary size for testing
         });
 
         // Create a depth texture and its 'view'.
@@ -770,17 +770,27 @@ pub const Renderer = struct {
                 .YUV422 => {
                     if (twiddled) {
                         // FIXME: Given the data arangement suggested by the docs, I suspect I'll have to process 2x2 blocks in the twiddled case.
-                        //        This is completely wrong ATM.
+                        //        Still completely wrong, but at least it shouldn't crash because of alignment issues.
                         //     bit    63-48       47-32       31-16       15-0
                         //          Y1V (1,1)   Y1V (1,0)   Y0U (0,1)   Y0U (0,0)
-                        for (0..v_size) |v| {
+                        for (0..v_size / 2) |v| {
                             for (0..u_size / 2) |u| {
-                                const pixel_idx = v * u_size + 2 * u;
-                                const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
-                                const texel: HollyModule.YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*);
-                                const colors = HollyModule.yuv_to_rgba(texel);
-                                self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
-                                self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
+                                const pixel_idx = 2 * v * u_size + 2 * u;
+                                const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
+                                const halfwords = [4]u16{
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 0]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 2]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 4]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 6]))).*),
+                                };
+                                const texels_0_1: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
+                                const texels_2_3: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
+                                const colors_0 = HollyModule.yuv_to_rgba(texels_0_1);
+                                self.bgra_scratch_pad()[pixel_idx] = .{ colors_0[0].b, colors_0[0].g, colors_0[0].r, colors_0[0].a };
+                                self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors_0[1].b, colors_0[1].g, colors_0[1].r, colors_0[1].a };
+                                const colors_1 = HollyModule.yuv_to_rgba(texels_2_3);
+                                self.bgra_scratch_pad()[pixel_idx + u_size] = .{ colors_1[0].b, colors_1[0].g, colors_1[0].r, colors_1[0].a };
+                                self.bgra_scratch_pad()[pixel_idx + u_size + 1] = .{ colors_1[1].b, colors_1[1].g, colors_1[1].r, colors_1[1].a };
                             }
                         }
                     } else {

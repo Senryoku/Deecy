@@ -62,14 +62,17 @@ const CommandWord = packed struct(u32) {
 };
 
 const InputCapabilities = packed struct(u32) {
-    c: u1 = 0,
-    b: u1 = 0,
-    a: u1 = 0,
-    start: u1 = 0,
-    up: u1 = 0,
-    down: u1 = 0,
-    left: u1 = 0,
-    right: u1 = 0,
+    _0: u8 = 0,
+
+    analogRtrigger: u1 = 0,
+    analogLtrigger: u1 = 0,
+    analogHorizontal: u1 = 0,
+    analogVertical: u1 = 0,
+    analogHorizontal2: u1 = 0,
+    analogVertical2: u1 = 0,
+
+    _1: u2 = 0,
+
     z: u1 = 0,
     y: u1 = 0,
     x: u1 = 0,
@@ -78,14 +81,15 @@ const InputCapabilities = packed struct(u32) {
     down2: u1 = 0,
     left2: u1 = 0,
     right2: u1 = 0,
-    analogRtrigger: u1 = 0,
-    analogLtrigger: u1 = 0,
-    analogHorizontal: u1 = 0,
-    analogVertical: u1 = 0,
-    analogHorizontal2: u1 = 0,
-    analogVertical2: u1 = 0,
 
-    _: u10 = 0,
+    c: u1 = 0,
+    b: u1 = 0,
+    a: u1 = 0,
+    start: u1 = 0,
+    up: u1 = 0,
+    down: u1 = 0,
+    left: u1 = 0,
+    right: u1 = 0,
 };
 
 // Note: I'm not sure of the order of fields here...
@@ -118,7 +122,7 @@ const LocationWord = packed struct(u32) {
 const DeviceInfoPayload = extern struct {
     FunctionCodesMask: FunctionCodesMask align(1),
     SubFunctionCodesMasks: [3]FunctionCodesMask align(1),
-    RegionCode: u8 align(1) = 0,
+    RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
     DescriptionString: [30]u8 align(1) = .{0} ** 30,
     ProducerString: [60]u8 align(1) = .{0} ** 60,
@@ -174,7 +178,7 @@ const Controller = struct {
     subcapabilities: [3]FunctionCodesMask = .{ @bitCast(StandardControllerCapabilities), .{}, .{} },
 
     buttons: ControllerButtons = .{},
-    axis: [6]u8 = .{0} ** 6,
+    axis: [6]u8 = .{0x80} ** 6,
     pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) & @as(u16, @bitCast(buttons)));
     }
@@ -188,6 +192,9 @@ const Controller = struct {
             .FunctionCodesMask = self.capabilities,
             .SubFunctionCodesMasks = self.subcapabilities,
             .DescriptionString = "Dreamcast Controller         \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
+            .StandbyConsumption = 0x01AE,
+            .MaximumConsumption = 0x01F4,
         };
         return r;
     }

@@ -13,7 +13,7 @@ const sh4_jit_log = std.log.scoped(.sh4_jit);
 
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
-const BlockBufferSize = 1024 * 4096;
+const BlockBufferSize = 16 * 1024 * 1024;
 
 const HashMapContext = struct {
     pub fn hash(_: @This(), addr: u32) u64 {
@@ -92,7 +92,9 @@ const BlockCache = struct {
             }
         }
 
-        if (self.cursor + emitter.block_size >= BlockBufferSize) {
+        // Crude appromixation, better purging slightly too often than crashing.
+        // Also feels better than checking the length at each insertion.
+        if (self.cursor + 4 * 32 + 8 * 4 * emitter.block_size >= BlockBufferSize) {
             return error.JITCacheFull;
         }
 
