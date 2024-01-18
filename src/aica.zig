@@ -118,7 +118,7 @@ const ScheduledEvents = struct {
     cycles: u32,
 };
 
-const DisableARMCore: bool = true; // FIXME: Temp debug.
+const DisableARMCore: bool = false; // FIXME: Temp debug.
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
@@ -235,14 +235,14 @@ pub const AICA = struct {
             },
             .ARMRST => {
                 if (value & 1 == 0) {
+                    self.arm7.set_reset(.Low);
+                } else {
                     aica_log.info(termcolor.green("ARM reset"), .{});
                     self.arm7.set_reset(.High);
                     if (self.wave_memory[0] == 0x00000000) {
                         aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
                         self.arm7.set_reset(.Low);
                     }
-                } else {
-                    self.arm7.set_reset(.Low);
                 }
             },
             else => {},
@@ -318,7 +318,7 @@ pub const AICA = struct {
             }
         }
 
-        if (self.arm7.reset_line == .High and !DisableARMCore) {
+        if (self.arm7.running and !DisableARMCore) {
             self._cycles_counter += cycles;
             // FIXME: We're not acutally counter ARM7 cycles here (unless all instructions are 1 cycle :^)).
             while (self._cycles_counter >= ARM7CycleRatio) {

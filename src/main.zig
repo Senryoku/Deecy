@@ -161,6 +161,7 @@ pub fn main() !void {
     // dc.cpu.write16(0x0C0196DA, 0x9);
     // dc.cpu.write16(0x0C0196EC, 0x9);
 
+    // DC CHECKER for Repair v2.050
     // dc.cpu.write16(0x0C018F54, 0x9);
     // dc.cpu.write16(0x0C018F42, 0x9);
 
@@ -619,12 +620,12 @@ pub fn main() !void {
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
                 if (!enable_jit) {
-                    const max_instructions = 16;
+                    const max_instructions: u8 = if (breakpoints.items.len == 0) 16 else 1;
 
                     _ = dc.tick(max_instructions);
 
                     // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-                    if (comptime max_instructions == 1) {
+                    if (max_instructions == 1) {
                         const breakpoint = for (breakpoints.items, 0..) |addr, index| {
                             if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
                         } else null;

@@ -241,7 +241,7 @@ pub const Dreamcast = struct {
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
     }
 
-    pub fn tick(self: *@This(), comptime max_instructions: u8) u32 {
+    pub fn tick(self: *@This(), max_instructions: u8) u32 {
         const cycles = self.cpu.execute(max_instructions);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);

@@ -496,7 +496,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn execute(self: *@This(), comptime max_instructions: u8) u32 {
+    pub fn execute(self: *@This(), max_instructions: u8) u32 {
         self.handle_interrupts();
 
         if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
