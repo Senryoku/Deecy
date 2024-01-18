@@ -213,7 +213,7 @@ const Controller = struct {
 const VMU = struct {
     capabilities: FunctionCodesMask = VMUCapabilities,
     subcapabilities: [3]FunctionCodesMask = .{
-        @bitCast(@as(u32, 0b01111110_01111110_00111111_01000000)),
+        @bitCast(@as(u32, 0b01111110_01111110_00111111_01000000)), // FIXME: This is wrong (at least because of endianess, maybe more)
         @bitCast(@as(u32, 0b00000000_00000101_00010000_00000000)),
         @bitCast(@as(u32, 0b00000000_00001111_01000001_00000000)),
     },

@@ -952,28 +952,33 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParamet
     }
 }
 
+const VertexStrip = struct {
+    polygon: Polygon,
+    verter_parameter_index: usize = 0,
+    verter_parameter_count: usize = 0,
+};
+
 pub const DisplayList = struct {
-    polygons: std.ArrayList(Polygon) = undefined,
-    vertex_parameters: std.ArrayList(std.ArrayList(VertexParameter)) = undefined,
+    vertex_strips: std.ArrayList(VertexStrip) = undefined,
+    vertex_parameters: std.ArrayList(VertexParameter) = undefined,
+    next_first_vertex_parameters_index: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) DisplayList {
         return .{
-            .polygons = std.ArrayList(Polygon).init(allocator),
-            .vertex_parameters = std.ArrayList(std.ArrayList(VertexParameter)).init(allocator),
+            .vertex_strips = std.ArrayList(VertexStrip).init(allocator),
+            .vertex_parameters = std.ArrayList(VertexParameter).init(allocator),
         };
     }
 
     pub fn deinit(self: *DisplayList) void {
         self.vertex_parameters.deinit();
-        self.polygons.deinit();
+        self.vertex_strips.deinit();
     }
 
     pub fn reset(self: *DisplayList) void {
-        for (self.vertex_parameters.items) |*vertex_parameters| {
-            vertex_parameters.deinit(); // FIXME: This is a huge waste. Why reallocate everytime? :(
-        }
         self.vertex_parameters.clearRetainingCapacity();
-        self.polygons.clearRetainingCapacity();
+        self.vertex_strips.clearRetainingCapacity();
+        self.next_first_vertex_parameters_index = 0;
     }
 };
 
@@ -995,7 +1000,6 @@ pub const Holly = struct {
     _ta_list_type: ?ListType = null,
 
     _ta_current_polygon: ?Polygon = null,
-    _ta_current_polygon_vertex_parameters: std.ArrayList(VertexParameter) = undefined, // FIXME: Move out.
 
     ta_display_lists: [5]DisplayList = undefined,
 
@@ -1006,7 +1010,6 @@ pub const Holly = struct {
             ._allocator = allocator,
             .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
             .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
-            ._ta_current_polygon_vertex_parameters = std.ArrayList(VertexParameter).init(allocator),
             ._scheduled_interrupts = try std.ArrayList(ScheduledInterrupt).initCapacity(allocator, 32),
         };
         for (0..holly.ta_display_lists.len) |i| {
@@ -1022,8 +1025,6 @@ pub const Holly = struct {
         for (&self.ta_display_lists) |*display_list| {
             display_list.deinit();
         }
-
-        self._ta_current_polygon_vertex_parameters.deinit();
 
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
@@ -1311,6 +1312,7 @@ pub const Holly = struct {
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
             },
             .VertexParameter => {
+                var display_list = &self.ta_display_lists[@intFromEnum(self._ta_list_type.?)];
                 if (self._ta_current_polygon == null) {
                     holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
                     //@panic("No current polygon");
@@ -1321,17 +1323,17 @@ pub const Holly = struct {
                             std.debug.assert(parameter_control_word.end_of_strip == 1); // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
                             if (polygon_obj_control.texture == 0) {
                                 if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
-                                self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                             } else {
                                 if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
-                                self._ta_current_polygon_vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                             }
                         },
                         else => {
                             const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
                             if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
 
-                            self._ta_current_polygon_vertex_parameters.append(switch (format) {
+                            display_list.vertex_parameters.append(switch (format) {
                                 .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
                                 .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
                                 .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
@@ -1359,10 +1361,13 @@ pub const Holly = struct {
 
                     if (parameter_control_word.end_of_strip == 1) {
                         // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
-                        self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].polygons.append(self._ta_current_polygon.?) catch unreachable;
-                        self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].vertex_parameters.append(self._ta_current_polygon_vertex_parameters) catch unreachable;
+                        display_list.vertex_strips.append(.{
+                            .polygon = self._ta_current_polygon.?,
+                            .verter_parameter_index = display_list.next_first_vertex_parameters_index,
+                            .verter_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
+                        }) catch unreachable;
 
-                        self._ta_current_polygon_vertex_parameters = @TypeOf(self._ta_current_polygon_vertex_parameters).initCapacity(self._allocator, 32) catch unreachable;
+                        display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
                     }
                 }
             },

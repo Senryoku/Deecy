@@ -1114,7 +1114,7 @@ pub const Renderer = struct {
             var face_offset_color: fRGBA = undefined;
             const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
 
-            for (0..display_list.polygons.items.len) |idx| {
+            for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(vertices.items.len);
 
                 // Generic Parameters
@@ -1126,7 +1126,7 @@ pub const Renderer = struct {
                 var sprite_base_color: HollyModule.PackedColor = undefined;
                 var sprite_offset_color: HollyModule.PackedColor = undefined;
 
-                switch (display_list.polygons.items[idx]) {
+                switch (display_list.vertex_strips.items[idx].polygon) {
                     .PolygonType0 => |p| {
                         parameter_control_word = p.parameter_control_word;
                         isp_tsp_instruction = p.isp_tsp_instruction;
@@ -1175,7 +1175,7 @@ pub const Renderer = struct {
                         sprite_offset_color = p.offset_color;
                     },
                     else => {
-                        renderer_log.err("Unhandled polygon type: {any}", .{display_list.polygons.items[idx]});
+                        renderer_log.err("Unhandled polygon type: {any}", .{display_list.vertex_strips.items[idx].polygon});
                     },
                 }
 
@@ -1218,7 +1218,10 @@ pub const Renderer = struct {
                     },
                 };
 
-                for (display_list.vertex_parameters.items[idx].items) |vertex| {
+                const first_vertex = display_list.vertex_strips.items[idx].verter_parameter_index;
+                const last_vertex = display_list.vertex_strips.items[idx].verter_parameter_index + display_list.vertex_strips.items[idx].verter_parameter_count;
+
+                for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
                     // std.debug.print("Vertex: {any}\n", .{vertex});
                     switch (vertex) {
                         // Packed Color, Non-Textured
