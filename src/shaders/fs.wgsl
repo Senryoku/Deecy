@@ -1,13 +1,15 @@
  
- @group(0) @binding(1) var image_sampler: sampler;
- @group(0) @binding(2) var texture_array_8x8: texture_2d_array<f32>;
- @group(0) @binding(3) var texture_array_16x16: texture_2d_array<f32>;
- @group(0) @binding(4) var texture_array_32x32: texture_2d_array<f32>;
- @group(0) @binding(5) var texture_array_64x64: texture_2d_array<f32>;
- @group(0) @binding(6) var texture_array_128x128: texture_2d_array<f32>;
- @group(0) @binding(7) var texture_array_256x256: texture_2d_array<f32>;
- @group(0) @binding(8) var texture_array_512x512: texture_2d_array<f32>;
- @group(0) @binding(9) var texture_array_1024x1024: texture_2d_array<f32>;
+
+ @group(0) @binding(1) var texture_array_8x8: texture_2d_array<f32>;
+ @group(0) @binding(2) var texture_array_16x16: texture_2d_array<f32>;
+ @group(0) @binding(3) var texture_array_32x32: texture_2d_array<f32>;
+ @group(0) @binding(4) var texture_array_64x64: texture_2d_array<f32>;
+ @group(0) @binding(5) var texture_array_128x128: texture_2d_array<f32>;
+ @group(0) @binding(6) var texture_array_256x256: texture_2d_array<f32>;
+ @group(0) @binding(7) var texture_array_512x512: texture_2d_array<f32>;
+ @group(0) @binding(8) var texture_array_1024x1024: texture_2d_array<f32>;
+
+ @group(1) @binding(0) var image_sampler: sampler;
 
 fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
     // textureSample can't be called in non-uniform context, because of this derivative, I guess.

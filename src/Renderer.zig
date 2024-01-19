@@ -65,8 +65,12 @@ const ShadingInstructions = packed struct(u32) {
     _: u22 = 0,
 };
 
-fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mip_filter: wgpu.FilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
-    return @as(u8, @intFromEnum(address_mode_v)) << 5 | @as(u8, @intFromEnum(address_mode_u)) << 3 | @as(u8, @intFromEnum(mip_filter)) << 2 | @as(u8, @intFromEnum(min_filter)) << 1 | @as(u8, @intFromEnum(mag_filter));
+fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
+    return @as(u8, @truncate(@intFromEnum(address_mode_v))) << 5 |
+        @as(u8, @truncate(@intFromEnum(address_mode_u))) << 3 |
+        @as(u8, @truncate(@intFromEnum(mipmap_filter))) << 2 |
+        @as(u8, @truncate(@intFromEnum(min_filter))) << 1 |
+        @as(u8, @truncate(@intFromEnum(mag_filter)));
 }
 
 const TextureIndex = u32;
@@ -124,12 +128,39 @@ const TextureMetadata = struct {
     hash: [4]u8 = .{ 0, 0, 0, 0 }, // Well, not really a hash, just the 4 first bytes, but used as a hash.
 };
 
+const DrawCall = struct {
+    sampler: u8,
+    start_index: u32 = 0,
+    index_count: u32 = 0,
+
+    indices: std.ArrayList(u32), // Temporary storage before uploading them to the GPU.
+
+    pub fn init(allocator: std.mem.Allocator, sampler: u8) DrawCall {
+        return .{
+            .sampler = sampler,
+            .indices = std.ArrayList(u32).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *DrawCall) void {
+        self.indices.deinit();
+    }
+};
+
 const PassMetadata = struct {
     pass_type: HollyModule.ListType,
-    start_vertex: u32,
-    vertex_count: u32,
-    start_index: u32,
-    index_count: u32,
+    draw_calls: std.AutoArrayHashMap(u32, DrawCall),
+
+    pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
+        return .{
+            .pass_type = pass_type,
+            .draw_calls = std.AutoArrayHashMap(u32, DrawCall).init(allocator),
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.draw_calls.deinit();
+    }
 };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
@@ -212,10 +243,9 @@ pub const Renderer = struct {
     blit_index_buffer: zgpu.BufferHandle,
 
     opaque_pipeline: zgpu.RenderPipelineHandle,
+    punchthrough_pipeline: zgpu.RenderPipelineHandle,
     translucent_pipeline: zgpu.RenderPipelineHandle,
     bind_group: zgpu.BindGroupHandle,
-
-    polygons: std.ArrayList(HollyModule.Polygon),
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
@@ -230,12 +260,13 @@ pub const Renderer = struct {
     resized_framebuffer_texture: zgpu.TextureHandle,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle,
 
-    sampler: zgpu.SamplerHandle, // TODO: Have a sample per texture? Or per texture type (we'd have to pass another index to the fragment shader)?
+    samplers: [256]zgpu.SamplerHandle,
+    sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
 
     depth_texture: zgpu.TextureHandle,
     depth_texture_view: zgpu.TextureViewHandle,
 
-    passes: std.ArrayList(PassMetadata),
+    passes: [5]PassMetadata = undefined,
 
     max_depth: f32 = 1.0,
 
@@ -290,7 +321,7 @@ pub const Renderer = struct {
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
-            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(4, .{ .fragment = true }, .float, .tvdim_2d_array, false),
@@ -298,23 +329,24 @@ pub const Renderer = struct {
             zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
-            zgpu.textureEntry(9, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+        });
+        const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
         });
         defer gctx.releaseResource(bind_group_layout);
-        const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout});
+        const pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout });
         defer gctx.releaseResource(pipeline_layout);
 
+        const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+        defer vs_module.release();
+
+        const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
+        defer fs_module.release();
+
         const opaque_pipeline = opaque_pl: {
-            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
-            defer vs_module.release();
-
-            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
-            defer fs_module.release();
-
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
                 .blend = &wgpu.BlendState{
-                    // FIXME: Opaque.
                     .color = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
                     .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
                 },
@@ -348,13 +380,44 @@ pub const Renderer = struct {
             break :opaque_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
         };
 
+        const punchthrough_pipeline = punchthrough_pl: {
+            const color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
+                },
+            }};
+
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = vs_module,
+                    .entry_point = "main",
+                    .buffer_count = vertex_buffers.len,
+                    .buffers = &vertex_buffers,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
+                },
+                .depth_stencil = &wgpu.DepthStencilState{
+                    .format = .depth32_float,
+                    .depth_write_enabled = true,
+                    .depth_compare = .less_equal,
+                },
+                .fragment = &wgpu.FragmentState{
+                    .module = fs_module,
+                    .entry_point = "main",
+                    .target_count = color_targets.len,
+                    .targets = &color_targets,
+                },
+            };
+            break :punchthrough_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
+        };
+
         const translucent_pipeline = transluscent_pl: {
-            const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
-            defer vs_module.release();
-
-            const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
-            defer fs_module.release();
-
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
                 .blend = &wgpu.BlendState{
@@ -399,11 +462,11 @@ pub const Renderer = struct {
         defer gctx.releaseResource(blit_pipeline_layout);
 
         const blit_pipeline = blit_pl: {
-            const vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
-            defer vs_module.release();
+            const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
+            defer blit_vs_module.release();
 
-            const fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
-            defer fs_module.release();
+            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
+            defer blit_fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
@@ -421,7 +484,7 @@ pub const Renderer = struct {
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
                 .vertex = wgpu.VertexState{
-                    .module = vs_module,
+                    .module = blit_vs_module,
                     .entry_point = "main",
                     .buffer_count = blit_vertex_buffers.len,
                     .buffers = &blit_vertex_buffers,
@@ -434,7 +497,7 @@ pub const Renderer = struct {
                 },
                 .depth_stencil = null,
                 .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
+                    .module = blit_fs_module,
                     .entry_point = "main",
                     .target_count = color_targets.len,
                     .targets = &color_targets,
@@ -464,43 +527,39 @@ pub const Renderer = struct {
         });
         gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u16, blit_index_data[0..]);
 
-        // TODO: Create samplers ahead of time, but I'm not sure I can actually pass an array of samplers in WGPU...
-        //       An example of how this could work: (sampler_index would also be used when creating vertex data to assign samplers)
-        if (false) {
-            const samplers: [256]wgpu.SampleHandle = undefined;
-            for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |mag_filter| {
-                for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |min_filter| {
-                    for (.{ wgpu.FilterMode.nearest, wgpu.FilterMode.linear }) |mip_filter| {
-                        for (.{ wgpu.AddressMode.repeat, wgpu.AddressMode.mirror_repeat, wgpu.AddressMode.clamp_to_edge }) |u_addr_mode| {
-                            for (.{ wgpu.AddressMode.repeat, wgpu.AddressMode.mirror_repeat, wgpu.AddressMode.clamp_to_edge }) |v_addr_mode| {
-                                samplers[sampler_index(mag_filter, min_filter, mip_filter, u_addr_mode, v_addr_mode)] =
-                                    gctx.createSampler(.{
-                                    .mag_filter = mag_filter,
-                                    .min_filter = min_filter,
-                                    .mip_filter = mip_filter,
-                                    .address_mode_u = u_addr_mode,
-                                    .address_mode_v = v_addr_mode,
-                                });
-                            }
+        var samplers: [256]zgpu.SamplerHandle = undefined;
+        var sampler_bind_groups: [256]zgpu.BindGroupHandle = undefined;
+
+        for ([_]wgpu.FilterMode{ .nearest, .linear }) |mag_filter| {
+            for ([_]wgpu.FilterMode{ .nearest, wgpu.FilterMode.linear }) |min_filter| {
+                for ([_]wgpu.MipmapFilterMode{ .nearest, .linear }) |mipmap_filter| {
+                    for ([_]wgpu.AddressMode{ .repeat, .mirror_repeat, .clamp_to_edge }) |u_addr_mode| {
+                        for ([_]wgpu.AddressMode{ .repeat, .mirror_repeat, .clamp_to_edge }) |v_addr_mode| {
+                            const index = sampler_index(mag_filter, min_filter, mipmap_filter, u_addr_mode, v_addr_mode);
+                            samplers[index] =
+                                gctx.createSampler(.{
+                                .mag_filter = mag_filter,
+                                .min_filter = min_filter,
+                                .mipmap_filter = mipmap_filter,
+                                .address_mode_u = u_addr_mode,
+                                .address_mode_v = v_addr_mode,
+                            });
+                            sampler_bind_groups[index] = gctx.createBindGroup(sampler_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+                                .{ .binding = 0, .sampler_handle = samplers[index] },
+                            });
                         }
                     }
                 }
             }
         }
-        const sampler = gctx.createSampler(.{
-            .mag_filter = .linear,
-            .min_filter = .linear,
-            .address_mode_u = .repeat,
-            .address_mode_v = .repeat,
-        });
 
         const framebuffer_resize_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = framebuffer_texture_view },
-            .{ .binding = 1, .sampler_handle = sampler },
+            .{ .binding = 1, .sampler_handle = samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
         const blit_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = resized_framebuffer.view },
-            .{ .binding = 1, .sampler_handle = sampler },
+            .{ .binding = 1, .sampler_handle = samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
 
         var texture_arrays: [8]zgpu.TextureHandle = undefined;
@@ -521,15 +580,14 @@ pub const Renderer = struct {
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(f32) },
-            .{ .binding = 1, .sampler_handle = sampler },
-            .{ .binding = 2, .texture_view_handle = texture_array_views[0] },
-            .{ .binding = 3, .texture_view_handle = texture_array_views[1] },
-            .{ .binding = 4, .texture_view_handle = texture_array_views[2] },
-            .{ .binding = 5, .texture_view_handle = texture_array_views[3] },
-            .{ .binding = 6, .texture_view_handle = texture_array_views[4] },
-            .{ .binding = 7, .texture_view_handle = texture_array_views[5] },
-            .{ .binding = 8, .texture_view_handle = texture_array_views[6] },
-            .{ .binding = 9, .texture_view_handle = texture_array_views[7] },
+            .{ .binding = 1, .texture_view_handle = texture_array_views[0] },
+            .{ .binding = 2, .texture_view_handle = texture_array_views[1] },
+            .{ .binding = 3, .texture_view_handle = texture_array_views[2] },
+            .{ .binding = 4, .texture_view_handle = texture_array_views[3] },
+            .{ .binding = 5, .texture_view_handle = texture_array_views[4] },
+            .{ .binding = 6, .texture_view_handle = texture_array_views[5] },
+            .{ .binding = 7, .texture_view_handle = texture_array_views[6] },
+            .{ .binding = 8, .texture_view_handle = texture_array_views[7] },
         });
 
         const vertex_buffer = gctx.createBuffer(.{
@@ -545,9 +603,7 @@ pub const Renderer = struct {
         // Create a depth texture and its 'view'.
         const depth = create_depth_texture(gctx);
 
-        return .{
-            .polygons = std.ArrayList(HollyModule.Polygon).init(allocator),
-
+        var renderer: Renderer = .{
             .blit_pipeline = blit_pipeline,
             .blit_bind_group = blit_bind_group,
             .blit_vertex_buffer = blit_vertex_buffer,
@@ -561,32 +617,40 @@ pub const Renderer = struct {
             .resized_framebuffer_texture_view = resized_framebuffer.view,
 
             .opaque_pipeline = opaque_pipeline,
+            .punchthrough_pipeline = punchthrough_pipeline,
             .translucent_pipeline = translucent_pipeline,
 
             .bind_group = bind_group,
+            .sampler_bind_groups = sampler_bind_groups,
             .vertex_buffer = vertex_buffer,
             .index_buffer = index_buffer,
 
             .texture_arrays = texture_arrays,
             .texture_array_views = texture_array_views,
 
-            .sampler = sampler,
+            .samplers = samplers,
 
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
-
-            .passes = std.ArrayList(PassMetadata).init(allocator),
 
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
             ._allocator = allocator,
         };
+
+        for (0..renderer.passes.len) |i| {
+            renderer.passes[i] = PassMetadata.init(allocator, @enumFromInt(i));
+        }
+
+        return renderer;
     }
 
     pub fn deinit(self: *Renderer) void {
-        self.passes.deinit();
-        self.polygons.deinit();
+        for (&self.passes) |*pass| {
+            pass.deinit();
+        }
+
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot of resources to destroy.
     }
@@ -1152,8 +1216,6 @@ pub const Renderer = struct {
     pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
         var vertices = std.ArrayList(Vertex).init(self._allocator);
         defer vertices.deinit();
-        var indices = std.ArrayList(u32).init(self._allocator);
-        defer indices.deinit();
 
         self.reset_texture_usage(gpu);
         defer self.check_texture_usage();
@@ -1162,13 +1224,16 @@ pub const Renderer = struct {
 
         self.update_background(gpu);
 
-        self.passes.clearRetainingCapacity();
+        for (&self.passes) |*pass| {
+            pass.pass_type = pass.pass_type;
+            // FIXME: We probably want to retain capacity of the individual draw calls here,
+            //        We'll probably reuse the same combinaison of samplers frame after frame,
+            //        and we'll save some allocations by doing this.
+            pass.draw_calls.clearRetainingCapacity();
+        }
 
         // TODO: Handle Modifier Volumes
         inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |list_type| {
-            const start_vertex = vertices.items.len;
-            const start_index = indices.items.len;
-
             // Parameters specific to a polygon type
             var face_color: fRGBA = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             var face_offset_color: fRGBA = undefined;
@@ -1254,18 +1319,18 @@ pub const Renderer = struct {
 
                 const use_alpha = tsp_instruction.use_alpha == 1;
 
-                const clamp_uv = tsp_instruction.clamp_uv == 1;
-                if (clamp_uv) {
-                    renderer_log.debug(termcolor.yellow("[Renderer] TODO: Clamp UV!"), .{});
-                    // TODO: Use an appropriate sampler with AddressMode ClampToEdge
-                }
+                const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
+                const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
 
-                const flip_u = tsp_instruction.flip_uv & 0x1 == 1 and !clamp_uv;
-                const flip_v = (tsp_instruction.flip_uv >> 1) & 0x1 == 1 and !clamp_uv;
-                if (flip_u or flip_v) {
-                    renderer_log.debug(termcolor.yellow("[Renderer] TODO: Flip UV!"), .{});
-                    // TODO: Use an appropriate sampler with AddressMode MirrorRepeat
-                }
+                const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
+                const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
+
+                const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+                const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+
+                const filter_mode: wgpu.FilterMode = if (tsp_instruction.filter_mode == 0) .nearest else .linear; // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+
+                const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
                 const tex = VertexTextureInfo{
                     .index = tex_idx,
@@ -1425,27 +1490,37 @@ pub const Renderer = struct {
                 if (vertices.items.len - start < 3) {
                     renderer_log.err("Not enough vertices in strip: {d} vertices.", .{vertices.items.len - start});
                 } else {
-                    for (start..vertices.items.len) |i| {
-                        try indices.append(@intCast(FirstVertex + i));
-                    }
-                    try indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
-                }
-            }
+                    const draw_call_index = sampler;
 
-            if (vertices.items.len > start_vertex) {
-                try self.passes.append(.{
-                    .pass_type = list_type,
-                    .start_vertex = @intCast(FirstVertex + start_vertex),
-                    .vertex_count = @intCast(vertices.items.len - start_vertex),
-                    .start_index = @intCast(FirstIndex + start_index),
-                    .index_count = @intCast(indices.items.len - start_index),
-                });
+                    var draw_call = self.passes[@intFromEnum(list_type)].draw_calls.getPtr(draw_call_index);
+                    if (draw_call == null) {
+                        try self.passes[@intFromEnum(list_type)].draw_calls.put(draw_call_index, DrawCall.init(self._allocator, sampler));
+                        draw_call = self.passes[@intFromEnum(list_type)].draw_calls.getPtr(draw_call_index);
+                    }
+
+                    for (start..vertices.items.len) |i| {
+                        try draw_call.?.indices.append(@intCast(FirstVertex + i));
+                    }
+                    try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                }
             }
         }
 
+        // Send everything to the GPU
         if (vertices.items.len > 0) {
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, vertices.items);
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, FirstIndex * @sizeOf(u32), u32, indices.items);
+
+            var index = FirstIndex;
+            for (&self.passes) |*pass| {
+                for (pass.draw_calls.values()) |*draw_call| {
+                    draw_call.start_index = index;
+                    draw_call.index_count = @intCast(draw_call.indices.items.len);
+                    self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, index * @sizeOf(u32), u32, draw_call.indices.items);
+                    index += @intCast(draw_call.indices.items.len);
+
+                    draw_call.indices.clearRetainingCapacity();
+                }
+            }
         }
     }
 
@@ -1523,11 +1598,9 @@ pub const Renderer = struct {
                 mem.slice[0][0] = self.max_depth;
                 pass.setBindGroup(0, bind_group, &.{mem.offset});
 
-                const opaque_pipeline = gctx.lookupResource(self.opaque_pipeline).?;
-                const translucent_pipeline = gctx.lookupResource(self.translucent_pipeline).?;
-
                 // Draw background
-                pass.setPipeline(opaque_pipeline);
+                pass.setPipeline(gctx.lookupResource(self.opaque_pipeline).?);
+                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
                 // FIXME: Draw the passes in order.
@@ -1536,21 +1609,20 @@ pub const Renderer = struct {
                 //          Opaque (and Punch Through) Modifier Volume
                 //          Translucent
                 //          Translucent Modifier Volume:
-                for (self.passes.items) |pass_metadata| {
-                    switch (pass_metadata.pass_type) {
-                        .Opaque, .PunchThrough => {
-                            pass.setPipeline(opaque_pipeline);
+                inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
+                    pass.setPipeline(
+                        switch (list_type) {
+                            .Opaque => gctx.lookupResource(self.opaque_pipeline).?,
+                            .PunchThrough => gctx.lookupResource(self.punchthrough_pipeline).?,
+                            .Translucent => gctx.lookupResource(self.translucent_pipeline).?,
+                            else => unreachable,
                         },
-                        .Translucent => {
-                            pass.setPipeline(translucent_pipeline);
-                        },
-                        else => {
-                            renderer_log.err("Unsupported pass type {any}", .{pass_metadata.pass_type});
-                            @panic("Unsupported pass type");
-                        },
-                    }
+                    );
 
-                    pass.drawIndexed(pass_metadata.index_count, 1, pass_metadata.start_index, 0, 0);
+                    for (self.passes[@intFromEnum(list_type)].draw_calls.values()) |draw_call| {
+                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                    }
                 }
             }
 
@@ -1633,7 +1705,7 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blit_bind_group);
         self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = resized_framebuffer.view },
-            .{ .binding = 1, .sampler_handle = self.sampler },
+            .{ .binding = 1, .sampler_handle = self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
     }
 
