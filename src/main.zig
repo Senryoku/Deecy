@@ -177,7 +177,7 @@ pub fn main() !void {
     _ = window.setKeyCallback(glfw_key_callback);
 
     const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
-        //.present_mode = .mailbox,
+        .present_mode = .mailbox,
     });
     defer gctx.destroy(common.GeneralAllocator);
 

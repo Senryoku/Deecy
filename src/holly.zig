@@ -1004,6 +1004,8 @@ pub const Holly = struct {
     ta_display_lists: [5]DisplayList = undefined,
 
     _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined,
+    _tmp_cycles: u64 = 0,
+    _pixel: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !Holly {
         var holly = @This(){
@@ -1055,13 +1057,9 @@ pub const Holly = struct {
         self._get_register(u32, .FB_C_SOF).* = 0;
     }
 
+    // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
-        // TODO!
-        const static = struct {
-            var _tmp_cycles: u64 = 0;
-            var _pixel: u32 = 0;
-        };
-        static._tmp_cycles += cycles;
+        self._tmp_cycles += cycles;
 
         // Update scheduled interrupts
         var idx: u32 = 0;
@@ -1080,19 +1078,19 @@ pub const Holly = struct {
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
         const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
         const cycles_per_pixel = 7; // FIXME: Approximation. ~200/27.
-        while (static._tmp_cycles >= cycles_per_pixel) {
-            static._tmp_cycles -= cycles_per_pixel;
-            static._pixel += 1;
+        while (self._tmp_cycles >= cycles_per_pixel) {
+            self._tmp_cycles -= cycles_per_pixel;
+            self._pixel += 1;
 
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
-            if (static._pixel == spg_hblank.hbstart) {
+            if (self._pixel == spg_hblank.hbstart) {
                 spg_status.*.hblank = 1;
             }
-            if (static._pixel == spg_hblank.hbend) {
+            if (self._pixel == spg_hblank.hbend) {
                 spg_status.*.hblank = 0;
             }
-            if (static._pixel == spg_hblank_int.hblank_in_interrupt) {
+            if (self._pixel == spg_hblank_int.hblank_in_interrupt) {
                 switch (spg_hblank_int.hblank_int_mode) {
                     0 => {
                         // Output when the display line is the value indicated by line_comp_val.
@@ -1112,8 +1110,8 @@ pub const Holly = struct {
                 }
             }
 
-            if (static._pixel >= spg_load.hcount) {
-                static._pixel = 0;
+            if (self._pixel >= spg_load.hcount) {
+                self._pixel = 0;
 
                 const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
                 const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
@@ -1156,21 +1154,21 @@ pub const Holly = struct {
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (@as(HollyRegister, @enumFromInt(addr))) {
             HollyRegister.SOFTRESET => {
-                holly_log.warn("TODO SOFTRESET: {X:0>8}", .{v});
+                holly_log.debug("TODO SOFTRESET: {X:0>8}", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
-                    holly_log.warn(termcolor.yellow("  TODO: Tile Accelerator Soft Reset"), .{});
+                    holly_log.debug(termcolor.yellow("  TODO: Tile Accelerator Soft Reset"), .{});
                 }
                 if (sr.PipelineSoftReset == 1) {
-                    holly_log.warn(termcolor.yellow("  TODO: Pipeine Soft Reset"), .{});
+                    holly_log.debug(termcolor.yellow("  TODO: Pipeine Soft Reset"), .{});
                 }
                 if (sr.SDRAMInterfaceSoftReset == 1) {
-                    holly_log.warn(termcolor.yellow("  TODO: SDRAM Interface Soft Reset"), .{});
+                    holly_log.debug(termcolor.yellow("  TODO: SDRAM Interface Soft Reset"), .{});
                 }
                 return;
             },
             HollyRegister.STARTRENDER => {
-                holly_log.info(termcolor.green("STARTRENDER!"), .{});
+                holly_log.debug(termcolor.green("STARTRENDER!"), .{});
 
                 self.render_start = true;
 
@@ -1266,7 +1264,7 @@ pub const Holly = struct {
                 self._ta_current_polygon = null;
             },
             .UserTileClip => {
-                holly_log.err(termcolor.red("  Unimplemented UserTileClip"), .{});
+                holly_log.debug(termcolor.red("  Unimplemented UserTileClip"), .{});
             },
             .ObjectListSet => {
                 self.handle_object_list_set();

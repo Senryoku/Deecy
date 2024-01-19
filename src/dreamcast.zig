@@ -326,7 +326,7 @@ pub const Dreamcast = struct {
         const dst_addr = self.read_hw_register(u32, .SB_C2DSTAT);
         const len = self.read_hw_register(u32, .SB_C2DLEN);
 
-        dc_log.info("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.cpu.read_p4_register(u32, .SAR2), dst_addr, len });
+        dc_log.debug("  Start ch2-DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ self.cpu.read_p4_register(u32, .SAR2), dst_addr, len });
 
         std.debug.assert(dst_addr & 0xF8000000 == 0x10000000);
         self.cpu.p4_register(u32, .DAR2).* = dst_addr; // FIXME: Not sure this is correct

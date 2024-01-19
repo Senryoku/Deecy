@@ -115,6 +115,7 @@ const TextureMetadata = struct {
     usage: u32 = Unused,
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
+    start_address: u32 = 0,
 };
 
 const PassMetadata = struct {
@@ -483,6 +484,8 @@ pub const Renderer = struct {
         const sampler = gctx.createSampler(.{
             .mag_filter = .linear,
             .min_filter = .linear,
+            .address_mode_u = .repeat,
+            .address_mode_v = .repeat,
         });
 
         const framebuffer_resize_bind_group = gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
@@ -591,7 +594,15 @@ pub const Renderer = struct {
         return null;
     }
 
-    inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
+    inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16, twiddled: bool) [4]u8 {
+        if (twiddled) {
+            return bgra_from_16bits_color_twiddled(format, val);
+        } else {
+            return bgra_from_16bits_color_non_twiddled(format, val);
+        }
+    }
+
+    inline fn bgra_from_16bits_color_non_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
         const pixel: HollyModule.Color16 = .{ .value = val };
         switch (format) {
             .ARGB1555 => {
@@ -616,6 +627,40 @@ pub const Renderer = struct {
                     @as(u8, pixel.argb4444.g) << 4,
                     @as(u8, pixel.argb4444.r) << 4,
                     @as(u8, pixel.argb4444.a) << 4,
+                };
+            },
+            else => {
+                renderer_log.err("Invalid 16-bits pixel format {any}", .{format});
+                @panic("Invalid 16-bits pixel format");
+            },
+        }
+    }
+
+    inline fn bgra_from_16bits_color_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
+        const pixel: HollyModule.Color16 = .{ .value = val };
+        switch (format) {
+            .ARGB1555 => {
+                return .{
+                    @as(u8, pixel.arbg1555.b) << 3 | @as(u8, pixel.arbg1555.b) >> 2,
+                    @as(u8, pixel.arbg1555.g) << 3 | @as(u8, pixel.arbg1555.g) >> 2,
+                    @as(u8, pixel.arbg1555.r) << 3 | @as(u8, pixel.arbg1555.r) >> 2,
+                    @as(u8, pixel.arbg1555.a) * 0xFF,
+                };
+            },
+            .RGB565 => {
+                return .{
+                    @as(u8, pixel.rgb565.b) << 3 | @as(u8, pixel.rgb565.b) >> 2,
+                    @as(u8, pixel.rgb565.g) << 2 | @as(u8, pixel.rgb565.g) >> 4,
+                    @as(u8, pixel.rgb565.r) << 3 | @as(u8, pixel.rgb565.r) >> 2,
+                    255,
+                };
+            },
+            .ARGB4444 => {
+                return .{
+                    @as(u8, pixel.argb4444.b) << 4 | @as(u8, pixel.argb4444.b) >> 4,
+                    @as(u8, pixel.argb4444.g) << 4 | @as(u8, pixel.argb4444.g) >> 4,
+                    @as(u8, pixel.argb4444.r) << 4 | @as(u8, pixel.argb4444.r) >> 4,
+                    @as(u8, pixel.argb4444.a) << 4 | @as(u8, pixel.argb4444.a) >> 4,
                 };
             },
             else => {
@@ -704,6 +749,8 @@ pub const Renderer = struct {
             }
         }
 
+        const start_addr = if (texture_control_word.vq_compressed == 1) vq_index_addr else addr;
+
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
@@ -719,7 +766,7 @@ pub const Renderer = struct {
                             .ARGB1555, .RGB565, .ARGB4444 => {
                                 //                  Macro 2*2 Block            Pixel within the block
                                 const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                                self.bgra_scratch_pad()[pixel_index] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)));
+                                self.bgra_scratch_pad()[pixel_index] = bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)), true);
                             },
                             else => {
                                 renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{texture_control_word.pixel_format});
@@ -736,7 +783,7 @@ pub const Renderer = struct {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*);
+                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
                         }
                     }
                 },
@@ -754,7 +801,7 @@ pub const Renderer = struct {
                             const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                                    self.bgra_scratch_pad()[pixel_idx] = Renderer.bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]));
+                                    self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]), twiddled);
                                 },
                                 0x3 => { // ARGB8888
                                     @panic("Unsupported palette_ctrl_ram ARGB8888");
@@ -824,6 +871,7 @@ pub const Renderer = struct {
                     // NOTE: This is used for UV calculation in the shaders.
                     //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
                     .size = .{ alloc_u_size, alloc_v_size },
+                    .start_address = start_addr,
                 };
 
                 // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
@@ -851,10 +899,10 @@ pub const Renderer = struct {
 
                 // Write to VRAM at the texture address a signpost value to detect if it has been overwritten (and our GPU texture is thus outdated).
                 // FIXME: Make sure this won't cause synchronization issues (Lock?).
-                gpu.vram[texture_control_word.address + 0] = 0xc0;
-                gpu.vram[texture_control_word.address + 1] = 0xff;
-                gpu.vram[texture_control_word.address + 2] = 0xee;
-                gpu.vram[texture_control_word.address + 3] = 0x0f;
+                gpu.vram[start_addr + 0] = 0xc0;
+                gpu.vram[start_addr + 1] = 0xff;
+                gpu.vram[start_addr + 2] = 0xee;
+                gpu.vram[start_addr + 3] = 0x0f;
 
                 return @intCast(i);
             }
@@ -863,28 +911,29 @@ pub const Renderer = struct {
         @panic("Out of textures slot");
     }
 
-    fn reset_texture_usage(self: *Renderer) void {
+    fn reset_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
-                if (self.texture_metadata[j][i].usage != TextureMetadata.Unused)
+                if (self.texture_metadata[j][i].usage != TextureMetadata.Unused) {
                     self.texture_metadata[j][i].usage = 0;
+                    if (gpu.vram[self.texture_metadata[j][i].start_address + 0] != 0xc0 or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 1] != 0xff or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 2] != 0xee or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 3] != 0x0f)
+                    {
+                        // Texture appears to have changed in memory. Force re-upload.
+                        self.texture_metadata[j][i].usage = TextureMetadata.Unused;
+                    }
+                }
             }
         }
     }
 
-    fn check_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
+    fn check_texture_usage(self: *Renderer) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].usage == 0) {
                     self.texture_metadata[j][i].usage = TextureMetadata.Unused;
-                } else if (self.texture_metadata[j][i].usage != TextureMetadata.Unused) {
-                    if (gpu.vram[self.texture_metadata[j][i].control_word.address + 0] != 0xc0 or
-                        gpu.vram[self.texture_metadata[j][i].control_word.address + 1] != 0xff or
-                        gpu.vram[self.texture_metadata[j][i].control_word.address + 2] != 0xee or
-                        gpu.vram[self.texture_metadata[j][i].control_word.address + 3] != 0x0f)
-                    {
-                        renderer_log.warn(termcolor.yellow("[Renderer] Detected outdated texture #{d}. TODO!"), .{i});
-                    }
                 }
             }
         }
@@ -1095,8 +1144,8 @@ pub const Renderer = struct {
         var indices = std.ArrayList(u32).init(self._allocator);
         defer indices.deinit();
 
-        self.reset_texture_usage();
-        defer self.check_texture_usage(gpu);
+        self.reset_texture_usage(gpu);
+        defer self.check_texture_usage();
 
         self.max_depth = 1.0;
 
