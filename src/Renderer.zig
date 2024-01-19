@@ -106,16 +106,22 @@ const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
-const TextureMetadata = struct {
-    const Unused: u32 = 0xFFFFFFFF;
+const TextureStatus = enum {
+    Invalid, // Has never been written to.
+    Unused, // Wasn't used in the last frame. Will reclaim it if necessary. NOTE: We could go further and track when it was last used (LRU strategy).
+    Used, // Was used in the last frame.
+};
 
+const TextureMetadata = struct {
+    status: TextureStatus = .Invalid,
     control_word: HollyModule.TextureControlWord = .{},
     tsp_instruction: HollyModule.TSPInstructionWord = @bitCast(@as(u32, 0)), // For debugging
     index: TextureIndex = InvalidTextureIndex,
-    usage: u32 = Unused,
+    usage: u32 = 0, // Current usage for this frame
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
     start_address: u32 = 0,
+    hash: [4]u8 = .{ 0, 0, 0, 0 }, // Well, not really a hash, just the 4 first bytes, but used as a hash.
 };
 
 const PassMetadata = struct {
@@ -587,7 +593,7 @@ pub const Renderer = struct {
 
     fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (0..Renderer.MaxTextures[size_index]) |i| {
-            if (self.texture_metadata[size_index][i].usage != TextureMetadata.Unused and self.texture_metadata[size_index][i].control_word.address == control_word.address) {
+            if (self.texture_metadata[size_index][i].status != .Invalid and self.texture_metadata[size_index][i].control_word.address == control_word.address) {
                 return @intCast(i);
             }
         }
@@ -595,6 +601,7 @@ pub const Renderer = struct {
     }
 
     inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16, twiddled: bool) [4]u8 {
+        // See 3.6.3 Color Data Extension (p149)
         if (twiddled) {
             return bgra_from_16bits_color_twiddled(format, val);
         } else {
@@ -657,10 +664,10 @@ pub const Renderer = struct {
             },
             .ARGB4444 => {
                 return .{
-                    @as(u8, pixel.argb4444.b) << 4 | @as(u8, pixel.argb4444.b) >> 4,
-                    @as(u8, pixel.argb4444.g) << 4 | @as(u8, pixel.argb4444.g) >> 4,
-                    @as(u8, pixel.argb4444.r) << 4 | @as(u8, pixel.argb4444.r) >> 4,
-                    @as(u8, pixel.argb4444.a) << 4 | @as(u8, pixel.argb4444.a) >> 4,
+                    @as(u8, pixel.argb4444.b) << 4 | @as(u8, pixel.argb4444.b),
+                    @as(u8, pixel.argb4444.g) << 4 | @as(u8, pixel.argb4444.g),
+                    @as(u8, pixel.argb4444.r) << 4 | @as(u8, pixel.argb4444.r),
+                    @as(u8, pixel.argb4444.a) << 4 | @as(u8, pixel.argb4444.a),
                 };
             },
             else => {
@@ -749,8 +756,6 @@ pub const Renderer = struct {
             }
         }
 
-        const start_addr = if (texture_control_word.vq_compressed == 1) vq_index_addr else addr;
-
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
@@ -766,7 +771,7 @@ pub const Renderer = struct {
                             .ARGB1555, .RGB565, .ARGB4444 => {
                                 //                  Macro 2*2 Block            Pixel within the block
                                 const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                                self.bgra_scratch_pad()[pixel_index] = bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)), true);
+                                self.bgra_scratch_pad()[pixel_index] = bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)), twiddled);
                             },
                             else => {
                                 renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{texture_control_word.pixel_format});
@@ -860,69 +865,75 @@ pub const Renderer = struct {
             }
         }
 
-        // Search for an unused texture index.
+        // Search for an available texture index.
+        var texture_index: TextureIndex = InvalidTextureIndex;
         for (0..Renderer.MaxTextures[size_index]) |i| {
-            if (self.texture_metadata[size_index][i].usage == TextureMetadata.Unused) {
-                self.texture_metadata[size_index][i] = .{
-                    .control_word = texture_control_word,
-                    .tsp_instruction = tsp_instruction,
-                    .index = @intCast(i),
-                    .usage = 0,
-                    // NOTE: This is used for UV calculation in the shaders.
-                    //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
-                    .size = .{ alloc_u_size, alloc_v_size },
-                    .start_address = start_addr,
-                };
-
-                // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
-                // FIXME: We should do the same the stride textures when u_size < alloc_u_size.
-                for (0..u_size / v_size) |part| {
-                    self._gctx.queue.writeTexture(
-                        .{
-                            .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
-                            .origin = .{ .y = @intCast(v_size * part), .z = @intCast(i) },
-                        },
-                        .{
-                            .bytes_per_row = u_size * 4,
-                            .rows_per_image = v_size,
-                        },
-                        .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
-                        u8,
-                        self._scratch_pad,
-                    );
-                }
-
-                if (texture_control_word.mip_mapped == 1) {
-                    // TODO: Here we'd want to generate mipmaps.
-                    //       See zgpu.generateMipmaps, maybe?
-                }
-
-                // Write to VRAM at the texture address a signpost value to detect if it has been overwritten (and our GPU texture is thus outdated).
-                // FIXME: Make sure this won't cause synchronization issues (Lock?).
-                gpu.vram[start_addr + 0] = 0xc0;
-                gpu.vram[start_addr + 1] = 0xff;
-                gpu.vram[start_addr + 2] = 0xee;
-                gpu.vram[start_addr + 3] = 0x0f;
-
-                return @intCast(i);
+            // Prefer slots that have never been used to keep textures in the cache for as long as possible.
+            if (self.texture_metadata[size_index][i].status == .Invalid) {
+                texture_index = @as(TextureIndex, @intCast(i));
+                break;
+            }
+            // This texture wasn't used in the last frame, we'll use it there are no invalid (never used) slots.
+            if (self.texture_metadata[size_index][i].status == .Unused and texture_index == InvalidTextureIndex) {
+                texture_index = @as(TextureIndex, @intCast(i));
             }
         }
 
-        @panic("Out of textures slot");
+        if (texture_index == InvalidTextureIndex) {
+            @panic("Out of textures slot");
+        }
+
+        self.texture_metadata[size_index][texture_index] = .{
+            .status = .Used,
+            .control_word = texture_control_word,
+            .tsp_instruction = tsp_instruction,
+            .index = texture_index,
+            .usage = 0,
+            // NOTE: This is used for UV calculation in the shaders.
+            //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
+            .size = .{ alloc_u_size, alloc_v_size },
+            .start_address = addr,
+            .hash = .{ gpu.vram[addr], gpu.vram[addr + 1], gpu.vram[addr + 2], gpu.vram[addr + 3] },
+        };
+
+        // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
+        // FIXME: We should do the same the stride textures when u_size < alloc_u_size.
+        for (0..u_size / v_size) |part| {
+            self._gctx.queue.writeTexture(
+                .{
+                    .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
+                    .origin = .{ .y = @intCast(v_size * part), .z = @intCast(texture_index) },
+                },
+                .{
+                    .bytes_per_row = u_size * 4,
+                    .rows_per_image = v_size,
+                },
+                .{ .width = u_size, .height = v_size, .depth_or_array_layers = 1 },
+                u8,
+                self._scratch_pad,
+            );
+        }
+
+        if (texture_control_word.mip_mapped == 1) {
+            // TODO: Here we'd want to generate mipmaps.
+            //       See zgpu.generateMipmaps, maybe?
+        }
+
+        return texture_index;
     }
 
     fn reset_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
-                if (self.texture_metadata[j][i].usage != TextureMetadata.Unused) {
+                if (self.texture_metadata[j][i].status != .Invalid) {
                     self.texture_metadata[j][i].usage = 0;
-                    if (gpu.vram[self.texture_metadata[j][i].start_address + 0] != 0xc0 or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 1] != 0xff or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 2] != 0xee or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 3] != 0x0f)
+                    if (gpu.vram[self.texture_metadata[j][i].start_address + 0] != self.texture_metadata[j][i].hash[0] or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 1] != self.texture_metadata[j][i].hash[1] or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 2] != self.texture_metadata[j][i].hash[2] or
+                        gpu.vram[self.texture_metadata[j][i].start_address + 3] != self.texture_metadata[j][i].hash[3])
                     {
                         // Texture appears to have changed in memory. Force re-upload.
-                        self.texture_metadata[j][i].usage = TextureMetadata.Unused;
+                        self.texture_metadata[j][i].status = .Invalid;
                     }
                 }
             }
@@ -932,8 +943,8 @@ pub const Renderer = struct {
     fn check_texture_usage(self: *Renderer) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
-                if (self.texture_metadata[j][i].usage == 0) {
-                    self.texture_metadata[j][i].usage = TextureMetadata.Unused;
+                if (self.texture_metadata[j][i].status != .Invalid) {
+                    self.texture_metadata[j][i].status = if (self.texture_metadata[j][i].usage == 0) .Unused else .Used;
                 }
             }
         }

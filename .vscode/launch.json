@@ -25,7 +25,11 @@
 			"type": "cppvsdbg",
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
-			"args": [],
+			"args": [
+				"-g",
+				"bin/[GDI] Crazy Taxi (US)[10S 51035]/Crazy Taxi v1.004 (1999)(Sega)(NTSC)(US)[!][10S 51035].gdi",
+				"--skip-bios"
+			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
 			"preLaunchTask": "build-release-fast"
