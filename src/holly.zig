@@ -608,6 +608,20 @@ const ModifierVolume = packed struct(u256) {
     _ignored: u192,
 };
 
+const ModifierVolumeParameter = packed struct(u512) {
+    parameter_control_word: ParameterControlWord,
+    ax: f32,
+    ay: f32,
+    az: f32,
+    bx: f32,
+    by: f32,
+    bz: f32,
+    cx: f32,
+    cy: f32,
+    cz: f32,
+    _ignored: u192,
+};
+
 pub const PackedColor = packed struct(u32) {
     b: u8,
     g: u8,
@@ -1158,6 +1172,9 @@ pub const Holly = struct {
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
                     holly_log.debug(termcolor.yellow("  TODO: Tile Accelerator Soft Reset"), .{});
+                    self._ta_command_buffer_index = 0;
+                    self._ta_list_type = null;
+                    self._ta_current_polygon = null;
                 }
                 if (sr.PipelineSoftReset == 1) {
                     holly_log.debug(termcolor.yellow("  TODO: Pipeine Soft Reset"), .{});
@@ -1278,17 +1295,18 @@ pub const Holly = struct {
                     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
                 }
 
-                // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
-                const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
-                global_parameter.*.isp_tsp_instruction.texture = global_parameter.*.parameter_control_word.obj_control.texture;
-                global_parameter.*.isp_tsp_instruction.offset = global_parameter.*.parameter_control_word.obj_control.offset;
-                global_parameter.*.isp_tsp_instruction.gouraud = global_parameter.*.parameter_control_word.obj_control.gouraud;
-                global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
-
-                if (self._ta_list_type == .OpaqueModifierVolume or self._ta_list_type == .TranslucentModifierVolume) {
-                    holly_log.debug(termcolor.red("  Unimplemented OpaqueModifierVolume/TranslucentModifierVolume"), .{});
-                    self._ta_current_polygon = null;
+                if (self._ta_list_type.? == .OpaqueModifierVolume) {
+                    // TODO: Do something with that modifier volume.
+                } else if (self._ta_list_type.? == .TranslucentModifierVolume) {
+                    // TODO
                 } else {
+                    // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
+                    const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
+                    global_parameter.*.isp_tsp_instruction.texture = global_parameter.*.parameter_control_word.obj_control.texture;
+                    global_parameter.*.isp_tsp_instruction.offset = global_parameter.*.parameter_control_word.obj_control.offset;
+                    global_parameter.*.isp_tsp_instruction.gouraud = global_parameter.*.parameter_control_word.obj_control.gouraud;
+                    global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
+
                     const format = obj_control_to_polygon_format(parameter_control_word.obj_control);
                     if (self._ta_command_buffer_index < polygon_format_size(format)) return;
 
@@ -1311,10 +1329,19 @@ pub const Holly = struct {
             },
             .VertexParameter => {
                 var display_list = &self.ta_display_lists[@intFromEnum(self._ta_list_type.?)];
-                if (self._ta_current_polygon == null) {
-                    holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
-                    //@panic("No current polygon");
+
+                if (self._ta_list_type.? == .OpaqueModifierVolume) {
+                    // TODO: Do something with that modifier volume parameter.
+                    if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
+                } else if (self._ta_list_type.? == .TranslucentModifierVolume) {
+                    // TODO
+                    if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
                 } else {
+                    if (self._ta_current_polygon == null) {
+                        holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
+                        @panic("No current polygon");
+                    }
+
                     const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
                     switch (self._ta_current_polygon.?) {
                         .Sprite => {
@@ -1355,10 +1382,7 @@ pub const Holly = struct {
                         },
                     }
 
-                    //std.debug.print("vertex_parameters: {any}\n", .{self._ta_current_polygon_vertex_parameters.getLast()});
-
                     if (parameter_control_word.end_of_strip == 1) {
-                        // std.debug.print("  End of Strip - Length: {X:0>8}\n", .{self._ta_current_polygon_vertex_parameters.items.len});
                         display_list.vertex_strips.append(.{
                             .polygon = self._ta_current_polygon.?,
                             .verter_parameter_index = display_list.next_first_vertex_parameters_index,
@@ -1371,6 +1395,7 @@ pub const Holly = struct {
             },
             _ => {
                 holly_log.err(termcolor.red("    Invalid parameter type: {d}."), .{parameter_control_word.parameter_type});
+                @panic("Invalid parameter type");
             },
         }
         // Command has been handled, reset buffer.

@@ -1430,6 +1430,21 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Floating Color, Textured 16bit UV
+                        .Type6 => |v| {
+                            try vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .r = v.base_r,
+                                .g = v.base_g,
+                                .b = v.base_b,
+                                .a = if (use_alpha) v.base_a else 1.0,
+                                .u = @bitCast(@as(u32, v.uv.u) << 16),
+                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .tex = tex,
+                            });
+                        },
                         // Intensity
                         .Type7 => |v| {
                             // TODO: Offset intensity
