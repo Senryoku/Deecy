@@ -114,10 +114,31 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             // Returns: number of read bytes if successful, -1 if read failed
 
             const start = dc.cpu.R(4).*;
-            const len = dc.cpu.R(6).*;
             const dest = (dc.cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
+            const len = dc.cpu.R(6).*;
             @memcpy(dc.ram[dest .. dest + len], dc.flash[start .. start + len]);
             dc.cpu.R(0).* = len;
+        },
+        2 => {
+            // Write data to the system flashrom.
+            //   r4 = write start position, in bytes from the start of the flashrom
+            //   r5 = pointer to source buffer
+            //   r6 = number of bytes to write
+            // Returns: number of written bytes if successful, -1 if write failed
+            const start = dc.cpu.R(4).*;
+            const source = (dc.cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
+            const len = dc.cpu.R(6).*;
+            @memcpy(dc.flash[start .. start + len], dc.ram[source .. source + len]);
+            dc.cpu.R(0).* = len;
+        },
+        3 => {
+            // FlashROM Delete
+            // Return a flashrom partition to all ones, so that it may be rewritten. Danger Will Robinson: ALL data in the entire partition will be lost.
+            //     r4 = offset of the start of the partition you want to delete, in bytes from the start of the flashrom
+            // Returns: zero if successful, -1 if delete failed
+            const start = dc.cpu.R(4).*;
+            std.log.warn("  Unimplemented FLASHROM_DELETE (R4={X:0>8})", .{start});
+            dc.cpu.R(0).* = 0xFFFFFFFF;
         },
         else => {
             std.log.err("  syscall_flashrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
