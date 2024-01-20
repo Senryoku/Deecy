@@ -1026,7 +1026,7 @@ pub const Holly = struct {
     ta_display_lists: [5]DisplayList = undefined,
 
     _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined,
-    _tmp_cycles: u64 = 0,
+    _tmp_cycles: u32 = 0,
     _pixel: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) !Holly {
@@ -1100,19 +1100,21 @@ pub const Holly = struct {
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
         const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
         const cycles_per_pixel = 7; // FIXME: Approximation. ~200/27.
-        while (self._tmp_cycles >= cycles_per_pixel) {
-            self._tmp_cycles -= cycles_per_pixel;
-            self._pixel += 1;
+
+        if (self._tmp_cycles >= cycles_per_pixel) {
+            const start_pixel = self._tmp_cycles;
+            self._pixel += self._tmp_cycles / cycles_per_pixel;
+            self._tmp_cycles %= cycles_per_pixel;
 
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
-            if (self._pixel == spg_hblank.hbstart) {
+            if (start_pixel < spg_hblank.hbstart and spg_hblank.hbstart <= self._pixel) {
                 spg_status.*.hblank = 1;
             }
-            if (self._pixel == spg_hblank.hbend) {
+            if (start_pixel < spg_hblank.hbend and spg_hblank.hbend <= self._pixel) {
                 spg_status.*.hblank = 0;
             }
-            if (self._pixel == spg_hblank_int.hblank_in_interrupt) {
+            if (start_pixel < spg_hblank_int.hblank_in_interrupt and spg_hblank_int.hblank_in_interrupt <= self._pixel) {
                 switch (spg_hblank_int.hblank_int_mode) {
                     0 => {
                         // Output when the display line is the value indicated by line_comp_val.
