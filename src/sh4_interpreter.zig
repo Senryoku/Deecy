@@ -1648,6 +1648,18 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     cpu.FR(opcode.nmd.n + 1).* = @cos(angle);
 }
 
+pub fn fcnvds_DRn_FPUL(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 1);
+    std.debug.assert(opcode.nmd.n & 1 == 0);
+    cpu.fpul = @bitCast(@as(f32, @floatCast(cpu.DR(opcode.nmd.n >> 1).*)));
+}
+
+pub fn fcnvsd_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
+    std.debug.assert(cpu.fpscr.pr == 1);
+    std.debug.assert(opcode.nmd.n & 1 == 0);
+    cpu.DR(opcode.nmd.n >> 1).* = @floatCast(@as(f32, @bitCast(cpu.fpul)));
+}
+
 pub fn syscall_sysinfo(cpu: *SH4, _: Instr) void {
     syscall.syscall_sysinfo(cpu._dc.?);
 }
