@@ -268,6 +268,7 @@ pub const Renderer = struct {
 
     passes: [5]PassMetadata = undefined,
 
+    read_framebuffer_enabled: bool = false,
     max_depth: f32 = 1.0,
 
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
@@ -1021,6 +1022,8 @@ pub const Renderer = struct {
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
 
+        self.read_framebuffer_enabled = FB_R_CTRL.enable;
+
         // Enabled: We have to copy some data from VRAM.
         if (FB_R_CTRL.enable) {
             // TODO: Find a way to avoid unecessary uploads?
@@ -1547,7 +1550,7 @@ pub const Renderer = struct {
             defer encoder.release();
 
             // Convert Framebuffer from native 640*480 to window resolution
-            {
+            if (self.read_framebuffer_enabled) {
                 const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                 const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
@@ -1585,7 +1588,7 @@ pub const Renderer = struct {
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                     .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                    .load_op = .load,
+                    .load_op = if (self.read_framebuffer_enabled) .load else .clear,
                     .store_op = .store,
                 }};
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{

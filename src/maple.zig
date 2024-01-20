@@ -210,12 +210,28 @@ const Controller = struct {
     }
 };
 
+const GetMemoryInformationResponse = packed struct {
+    total_size: u16,
+    partition_number: u16,
+    system_area_block_number: u16,
+    fat_area_block_number: u16,
+    number_of_fat_area_blocks: u16,
+    file_information_block_number: u16,
+    number_of_file_information_blocks: u16,
+    volume_icon: u8,
+    _reserved: u8 = 0,
+    save_area_block_number: u16,
+    number_of_save_area_blocks: u16,
+    _reserved_for_execution_file: u32 = 0,
+    _reserved2: u16 = 0,
+};
+
 const VMU = struct {
     capabilities: FunctionCodesMask = VMUCapabilities,
     subcapabilities: [3]FunctionCodesMask = .{
-        @bitCast(@as(u32, 0b01111110_01111110_00111111_01000000)), // FIXME: This is wrong (at least because of endianess, maybe more)
-        @bitCast(@as(u32, 0b00000000_00000101_00010000_00000000)),
-        @bitCast(@as(u32, 0b00000000_00001111_01000001_00000000)),
+        @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)), // FIXME: This is wrong (at least because of endianess, maybe more)
+        @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)),
+        @bitCast(@as(u32, 0b00000000_01000001_00001111_00000000)),
     },
 
     pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
@@ -225,6 +241,32 @@ const VMU = struct {
             .SubFunctionCodesMasks = self.subcapabilities,
         };
         return r;
+    }
+
+    pub fn get_memory_info(self: *const @This()) GetMemoryInformationResponse {
+        _ = self;
+
+        return GetMemoryInformationResponse{
+            .total_size = 0x00FF,
+            .partition_number = 0x0000,
+            .system_area_block_number = 0x00FF,
+            .fat_area_block_number = 0x00FE,
+            .number_of_fat_area_blocks = 0x0001,
+            .file_information_block_number = 0x00FD,
+            .number_of_file_information_blocks = 0x000D,
+            .volume_icon = 0,
+            .save_area_block_number = 0x00C8,
+            .number_of_save_area_blocks = 0x001F,
+        };
+    }
+
+    pub fn get_block_data(self: *const @This(), partition: u8, phase: u8, block_num: u8) [512]u8 {
+        _ = self;
+        _ = partition;
+        _ = phase;
+        _ = block_num;
+
+        return std.mem.zeroes([512]u8);
     }
 };
 
@@ -297,23 +339,58 @@ const MaplePort = struct {
                             //},
                         }
                     },
-                    .GetMemoryInformation => {
-                        maple_log.warn(termcolor.yellow("  Badly implemented GetMemoryInformation command!"), .{});
-                        // FIXME: Temp Hack for testing Sonic Adventure (It won't go further without a properly implemented memory card, but will if we tell it its there then gaslight it into saying it doesn't support this command.)
-                        if (true) {
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                        } else {
-                            std.debug.assert(command.payload_length == 2);
-                            const function_type = data[2];
-                            const partition_number = data[3];
-                            maple_log.warn(termcolor.yellow("    Function type: {any} Partition number: {any}"), .{ function_type, partition_number });
+                    .GetMemoryInformation => { // Named GetMediaInfo in the documentation
+                        std.debug.assert(command.payload_length == 2);
 
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 3 }));
-                            // TODO
-                            dc.cpu.write32(return_addr + 4, 0x00000000);
-                            dc.cpu.write32(return_addr + 4, 0x00000000);
-                            dc.cpu.write32(return_addr + 4, 0x00000000);
+                        const function_type = data[2];
+                        const partition_number = data[3];
+
+                        maple_log.warn(termcolor.yellow("  GetMemoryInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
+
+                        switch ((target.?)) {
+                            .VMU => |v| {
+                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0x07 }));
+                                dc.cpu.write32(return_addr + 4, @bitCast(FunctionCodesMask{ .storage = 1 }));
+                                @memcpy(@as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..@sizeOf(GetMemoryInformationResponse)], @as([*]const u8, @ptrCast(&v.get_memory_info()))[0..@sizeOf(GetMemoryInformationResponse)]);
+                            },
+                            else => {
+                                maple_log.err("Unimplemented GetMemoryInformation for target: {any}", .{target.?});
+                            },
                         }
+                    },
+                    .BlockRead => {
+                        const function_type = data[2];
+                        std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
+                        const partition: u8 = @truncate(data[3] >> 24 & 0xFF);
+                        const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
+                        const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
+                        maple_log.warn(termcolor.yellow("BlockRead Unimplemented! Partition: {any} Phase: {any} Block: {any}"), .{ partition, phase, block_num });
+
+                        const response = switch (target.?) {
+                            .VMU => |v| v.get_block_data(partition, phase, block_num),
+                            else => {
+                                @panic("Unimplemented BlockRead for specified target.");
+                            },
+                        };
+
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 1 + response.len / 4 }));
+                        dc.cpu.write32(return_addr + 4, function_type);
+                        const ptr: [*]u8 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 8)));
+                        @memcpy(ptr[0..response.len], response[0..response.len]);
+                    },
+                    .BlockWrite => {
+                        const function_type = data[2];
+                        std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
+                        const partition: u8 = @truncate(data[3] >> 24 & 0xFF);
+                        const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
+                        const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
+                        const write_data = data[4 .. 4 + command.payload_length - 2];
+                        _ = write_data;
+                        maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2}, Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, partition, phase, block_num });
+
+                        // TODO!
+
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                     else => {
                         maple_log.warn(termcolor.yellow("Unimplemented command: {}"), .{command.command});

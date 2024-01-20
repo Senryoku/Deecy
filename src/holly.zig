@@ -303,8 +303,15 @@ pub const ListType = enum(u3) {
     _,
 };
 
+const UserClipUsage = enum(u2) {
+    Disable,
+    Reserved,
+    InsideEnabled,
+    OutsideEnabled,
+};
+
 pub const GroupControl = packed struct(u8) {
-    user_clip: u2,
+    user_clip: UserClipUsage,
     strip_len: u2,
     _: u3,
     en: u1,
@@ -1014,6 +1021,7 @@ pub const Holly = struct {
     _ta_list_type: ?ListType = null,
 
     _ta_current_polygon: ?Polygon = null,
+    _ta_user_clip_usage: UserClipUsage = .Disable,
 
     ta_display_lists: [5]DisplayList = undefined,
 
@@ -1262,6 +1270,7 @@ pub const Holly = struct {
         }
 
         switch (parameter_control_word.parameter_type) {
+            // Control Parameters
             .EndOfList => {
                 if (self._ta_list_type != null) { // Apprently this happens?... Why would a game do this?
                     // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
@@ -1286,13 +1295,20 @@ pub const Holly = struct {
             .ObjectListSet => {
                 self.handle_object_list_set();
             },
+            // Global Parameters
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
-                if (self._ta_list_type != parameter_control_word.list_type) {
-                    holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
+                // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
+                //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
+                // if (self._ta_list_type != parameter_control_word.list_type) {
+                //     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
+                // }
+
+                if (parameter_control_word.group_control.en == 1) {
+                    self._ta_user_clip_usage = parameter_control_word.group_control.user_clip;
                 }
 
                 if (self._ta_list_type.? == .OpaqueModifierVolume) {
@@ -1327,6 +1343,7 @@ pub const Holly = struct {
                 }
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
             },
+            // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
                 var display_list = &self.ta_display_lists[@intFromEnum(self._ta_list_type.?)];
 
@@ -1462,7 +1479,7 @@ pub const Holly = struct {
     }
 
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
-        holly_log.info("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
+        holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 

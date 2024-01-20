@@ -269,9 +269,6 @@ pub const AICA = struct {
                     aica_log.info("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
                     if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).*.SCPU == 1) {
                         aica_log.info(termcolor.green("SCPU interrupt"), .{});
-                        self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.SCPU) << 2) |
-                            (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.SCPU) << 1) |
-                            (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.SCPU) << 0);
                         self.events.append(.{ .event_type = .ExternalInterrupt, .cycles = 0 }) catch unreachable;
                     }
                 } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
@@ -283,6 +280,9 @@ pub const AICA = struct {
                     aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
                     self.arm7.running = false;
                 }
+            },
+            .INTClear => {
+                aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
             },
             else => {},
         }

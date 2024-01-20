@@ -47,7 +47,7 @@ fn main(
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);
 
-    output.uv = vec2<f32>(1.0, v_size / u_size) * uv ;
+    output.uv = vec2<f32>(1.0, v_size / u_size) * uv;
     output.tex = tex;
 
     return output;
