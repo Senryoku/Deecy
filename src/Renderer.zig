@@ -49,6 +49,18 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
+// FIXME: Is it bad? Yes.
+// TODO: Vectorize
+fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u32 {
+    var r: u32 = 0;
+    var addr = (start + 4) & 0xFFFFFFC;
+    while (addr < end & 0xFFFFFFC) {
+        r ^= @as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
+        addr += 4;
+    }
+    return r;
+}
+
 const fRGBA = struct {
     r: f32,
     g: f32,
@@ -115,7 +127,8 @@ const TextureMetadata = struct {
     size: [2]u16 = .{ 0, 0 },
     uv_offset: [2]f32 = .{ 0, 0 },
     start_address: u32 = 0,
-    hash: [4]u8 = .{ 0, 0, 0, 0 }, // Well, not really a hash, just the 4 first bytes, but used as a hash.
+    end_address: u32 = 0,
+    hash: u32 = 0,
 };
 
 const DrawCall = struct {
@@ -941,6 +954,12 @@ pub const Renderer = struct {
             @panic("Out of textures slot");
         }
 
+        const end_address = addr + switch (texture_control_word.pixel_format) {
+            .Palette4BPP => u_size * v_size / 2,
+            .Palette8BPP => u_size * v_size,
+            else => 2 * u_size * v_size,
+        };
+
         self.texture_metadata[size_index][texture_index] = .{
             .status = .Used,
             .control_word = texture_control_word,
@@ -951,7 +970,8 @@ pub const Renderer = struct {
             //       In the case of stride textures, we still need to use the power of two allocation size for UV calculation, not the actual texture size.
             .size = .{ alloc_u_size, alloc_v_size },
             .start_address = addr,
-            .hash = .{ gpu.vram[addr], gpu.vram[addr + 1], gpu.vram[addr + 2], gpu.vram[addr + 3] },
+            .end_address = end_address,
+            .hash = texture_hash(gpu, addr, end_address),
         };
 
         // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
@@ -985,11 +1005,7 @@ pub const Renderer = struct {
             for (0..Renderer.MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].status != .Invalid) {
                     self.texture_metadata[j][i].usage = 0;
-                    if (gpu.vram[self.texture_metadata[j][i].start_address + 0] != self.texture_metadata[j][i].hash[0] or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 1] != self.texture_metadata[j][i].hash[1] or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 2] != self.texture_metadata[j][i].hash[2] or
-                        gpu.vram[self.texture_metadata[j][i].start_address + 3] != self.texture_metadata[j][i].hash[3])
-                    {
+                    if (texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash) {
                         // Texture appears to have changed in memory. Force re-upload.
                         self.texture_metadata[j][i].status = .Invalid;
                     }
