@@ -54,70 +54,6 @@ const BlockCache = struct {
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
         return self.blocks.get(address);
     }
-
-    pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
-        var ctx = start_ctx;
-
-        var emitter = Emitter.init(self.buffer[self.cursor..]);
-
-        var jb = JITBlock.init(self._allocator);
-        defer jb.deinit();
-
-        // We'll be using these callee saved registers, push 'em to the stack.
-        try jb.push(.{ .reg = .SavedRegister0 });
-        try jb.push(.{ .reg = .SavedRegister1 }); // NOTE: Not needed anymore, but we need to align the stack to 16 bytes, so might as well.
-
-        try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
-
-        var index: u32 = 0;
-        while (true) {
-            const instr = instructions[index];
-
-            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
-
-            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, &ctx, @bitCast(instr));
-
-            emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
-            index += 1;
-            ctx.address += 2;
-
-            if (branch) {
-                if (ctx.delay_slot != null) {
-                    const delay_slot = instructions[index];
-                    const brach_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
-                    std.debug.assert(!brach_delay_slot);
-                    emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
-                }
-                break;
-            }
-        }
-
-        // Crude appromixation, better purging slightly too often than crashing.
-        // Also feels better than checking the length at each insertion.
-        if (self.cursor + 4 * 32 + 8 * 4 * emitter.block_size >= BlockBufferSize) {
-            return error.JITCacheFull;
-        }
-
-        // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
-        // cpu.pc += 2;
-        if (ctx.outdated_pc) {
-            try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.ReturnRegister, .{ .imm = 2 });
-            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
-        }
-
-        // Restore callee saved registers.
-        try jb.pop(.{ .reg = .SavedRegister1 });
-        try jb.pop(.{ .reg = .SavedRegister0 });
-
-        try emitter.emit_block(&jb);
-        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
-
-        self.cursor += emitter.block_size;
-
-        try self.blocks.put(start_ctx.address, emitter.block);
-        return self.get(start_ctx.address).?;
-    }
 };
 
 pub const JITContext = struct {
@@ -155,11 +91,11 @@ pub const SH4JIT = struct {
             if (block == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try (self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
+                block = try (self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.block_cache.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
+                        break :retry self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
                     } else break :retry err;
                 });
             }
@@ -176,6 +112,70 @@ pub const SH4JIT = struct {
             cpu._pending_cycles = 0;
             return cycles;
         }
+    }
+
+    pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
+        var ctx = start_ctx;
+
+        var emitter = Emitter.init(self.block_cache.buffer[self.block_cache.cursor..]);
+
+        var jb = JITBlock.init(self._allocator);
+        defer jb.deinit();
+
+        // We'll be using these callee saved registers, push 'em to the stack.
+        try jb.push(.{ .reg = .SavedRegister0 });
+        try jb.push(.{ .reg = .SavedRegister1 }); // NOTE: Not needed anymore, but we need to align the stack to 16 bytes, so might as well.
+
+        try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
+
+        var index: u32 = 0;
+        while (true) {
+            const instr = instructions[index];
+
+            sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
+
+            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, &ctx, @bitCast(instr));
+
+            emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
+            index += 1;
+            ctx.address += 2;
+
+            if (branch) {
+                if (ctx.delay_slot != null) {
+                    const delay_slot = instructions[index];
+                    const brach_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
+                    std.debug.assert(!brach_delay_slot);
+                    emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
+                }
+                break;
+            }
+        }
+
+        // Crude appromixation, better purging slightly too often than crashing.
+        // Also feels better than checking the length at each insertion.
+        if (self.block_cache.cursor + 4 * 32 + 8 * 4 * emitter.block_size >= BlockBufferSize) {
+            return error.JITCacheFull;
+        }
+
+        // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
+        // cpu.pc += 2;
+        if (ctx.outdated_pc) {
+            try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
+            try jb.add(.ReturnRegister, .{ .imm = 2 });
+            try jb.mov(.{ .mem = .{ .reg = .SavedRegister0, .offset = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+        }
+
+        // Restore callee saved registers.
+        try jb.pop(.{ .reg = .SavedRegister1 });
+        try jb.pop(.{ .reg = .SavedRegister0 });
+
+        try emitter.emit_block(&jb);
+        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
+
+        self.block_cache.cursor += emitter.block_size;
+
+        try self.block_cache.blocks.put(start_ctx.address, emitter.block);
+        return self.block_cache.get(start_ctx.address).?;
     }
 };
 
