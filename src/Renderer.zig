@@ -95,16 +95,6 @@ const Vertex = struct {
     uv_offset: [2]f32 = .{ 0, 0 },
 };
 
-const Polygon = struct {
-    vertices: std.ArrayList(Vertex),
-
-    pub fn init(allocator: std.mem.Allocator) Polygon {
-        return .{
-            .vertices = std.ArrayList(Vertex).init(allocator),
-        };
-    }
-};
-
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
@@ -271,6 +261,7 @@ pub const Renderer = struct {
     read_framebuffer_enabled: bool = false,
     max_depth: f32 = 1.0,
 
+    vertices: std.ArrayList(Vertex) = undefined,
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
@@ -634,6 +625,7 @@ pub const Renderer = struct {
             .depth_texture = depth.texture,
             .depth_texture_view = depth.view,
 
+            .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
@@ -652,6 +644,7 @@ pub const Renderer = struct {
             pass.deinit();
         }
 
+        self.vertices.deinit();
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot of resources to destroy.
     }
@@ -1217,8 +1210,7 @@ pub const Renderer = struct {
     }
 
     pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
-        var vertices = std.ArrayList(Vertex).init(self._allocator);
-        defer vertices.deinit();
+        self.vertices.clearRetainingCapacity();
 
         self.reset_texture_usage(gpu);
         defer self.check_texture_usage();
@@ -1229,10 +1221,14 @@ pub const Renderer = struct {
 
         for (&self.passes) |*pass| {
             pass.pass_type = pass.pass_type;
-            // FIXME: We probably want to retain capacity of the individual draw calls here,
-            //        We'll probably reuse the same combinaison of samplers frame after frame,
-            //        and we'll save some allocations by doing this.
-            pass.draw_calls.clearRetainingCapacity();
+
+            // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
+            //             which is okay, I think. However this might become problematic down the line.
+            //             We're saving a lot of allocations this way, but there's probably a better way to do it.
+            for (pass.draw_calls.values()) |*draw_call| {
+                draw_call.start_index = 0;
+                draw_call.index_count = 0;
+            }
         }
 
         // TODO: Handle Modifier Volumes
@@ -1243,7 +1239,7 @@ pub const Renderer = struct {
             const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
 
             for (0..display_list.vertex_strips.items.len) |idx| {
-                const start: u32 = @intCast(vertices.items.len);
+                const start: u32 = @intCast(self.vertices.items.len);
 
                 // Generic Parameters
                 var parameter_control_word: HollyModule.ParameterControlWord = undefined;
@@ -1357,7 +1353,7 @@ pub const Renderer = struct {
                             // Sanity checks.
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(!textured);
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1372,7 +1368,7 @@ pub const Renderer = struct {
                         .Type1 => |v| {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
                             std.debug.assert(!textured);
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1388,7 +1384,7 @@ pub const Renderer = struct {
                             // TODO: Offset color
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(textured);
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1404,7 +1400,7 @@ pub const Renderer = struct {
                         // Packed Color, Textured 16bit UV
                         .Type4 => |v| {
                             // TODO: Offset color
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1420,7 +1416,7 @@ pub const Renderer = struct {
                         // Floating Color, Textured
                         .Type5 => |v| {
                             // TODO: Offset color
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1435,7 +1431,7 @@ pub const Renderer = struct {
                         },
                         // Floating Color, Textured 16bit UV
                         .Type6 => |v| {
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1453,7 +1449,7 @@ pub const Renderer = struct {
                             // TODO: Offset intensity
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1469,7 +1465,7 @@ pub const Renderer = struct {
                         .Type8 => |v| {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
-                            try vertices.append(.{
+                            try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1492,7 +1488,7 @@ pub const Renderer = struct {
                                 v.tex = tex;
                                 self.max_depth = @max(self.max_depth, 1.0 / v.z);
 
-                                try vertices.append(v.*);
+                                try self.vertices.append(v.*);
                             }
                         },
                         else => {
@@ -1501,12 +1497,12 @@ pub const Renderer = struct {
                         },
                     }
 
-                    self.max_depth = @max(self.max_depth, 1.0 / vertices.getLast().z);
+                    self.max_depth = @max(self.max_depth, 1.0 / self.vertices.getLast().z);
                 }
 
                 // Triangle Strips
-                if (vertices.items.len - start < 3) {
-                    renderer_log.err("Not enough vertices in strip: {d} vertices.", .{vertices.items.len - start});
+                if (self.vertices.items.len - start < 3) {
+                    renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
                 } else {
                     const draw_call_index = sampler;
 
@@ -1516,7 +1512,7 @@ pub const Renderer = struct {
                         draw_call = self.passes[@intFromEnum(list_type)].draw_calls.getPtr(draw_call_index);
                     }
 
-                    for (start..vertices.items.len) |i| {
+                    for (start..self.vertices.items.len) |i| {
                         try draw_call.?.indices.append(@intCast(FirstVertex + i));
                     }
                     try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
@@ -1525,8 +1521,8 @@ pub const Renderer = struct {
         }
 
         // Send everything to the GPU
-        if (vertices.items.len > 0) {
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, vertices.items);
+        if (self.vertices.items.len > 0) {
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
 
             var index = FirstIndex;
             for (&self.passes) |*pass| {
@@ -1638,8 +1634,10 @@ pub const Renderer = struct {
                     );
 
                     for (self.passes[@intFromEnum(list_type)].draw_calls.values()) |draw_call| {
-                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                        if (draw_call.index_count > 0) {
+                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                            pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                        }
                     }
                 }
             }
