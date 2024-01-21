@@ -955,9 +955,9 @@ pub const Renderer = struct {
         }
 
         const end_address = addr + switch (texture_control_word.pixel_format) {
-            .Palette4BPP => u_size * v_size / 2,
-            .Palette8BPP => u_size * v_size,
-            else => 2 * u_size * v_size,
+            .Palette4BPP => @as(u32, u_size) * v_size / 2,
+            .Palette8BPP => @as(u32, u_size) * v_size,
+            else => 2 * @as(u32, u_size) * v_size,
         };
 
         self.texture_metadata[size_index][texture_index] = .{
