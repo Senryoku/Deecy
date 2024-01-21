@@ -80,14 +80,26 @@ const SavedRegisters = if (builtin.os.tag == .windows) [_]Registers{
     Registers.RSP,
 } else @compileError("Unsupported ABI");
 
+const PatchableJump = struct {
+    source: u32,
+    address_to_patch: u32,
+};
+
 pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
 
-    pub fn init(block_buffer: []u8) @This() {
+    jumps_to_patch: std.AutoHashMap(u32, PatchableJump) = undefined,
+
+    pub fn init(allocator: std.mem.Allocator, block_buffer: []u8) @This() {
         return .{
             .block = BasicBlock.init(block_buffer),
+            .jumps_to_patch = std.AutoHashMap(u32, PatchableJump).init(allocator),
         };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.jumps_to_patch.deinit();
     }
 
     pub fn get_reg(reg: JIT.Register) Registers {
@@ -107,11 +119,18 @@ pub const Emitter = struct {
     pub fn emit_block(self: *@This(), jb: *const JITBlock) !void {
         self.emit_block_prologue();
         for (0..jb.instructions.items.len) |i| {
+            if (self.jumps_to_patch.get(@intCast(i))) |jump| {
+                const rel: u32 = @intCast(self.block_size - jump.source);
+                std.debug.print("Patching jump from {d} to {d} (rel: {d}) (instr {d})\n", .{ jump.source, self.block_size, rel, i });
+                @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                _ = self.jumps_to_patch.remove(@intCast(i));
+            }
+
             switch (jb.instructions.items[i]) {
                 .Break => {
                     if (builtin.mode == .Debug) {
                         try self.emit_byte(0xCC);
-                    } else std.debug.print("[x64_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
+                    } else std.debug.print("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
                 },
                 .FunctionCall => |function| {
                     try self.native_call(function);
@@ -143,8 +162,23 @@ pub const Emitter = struct {
                 .Add => |a| {
                     try self.add(a.dst, a.src);
                 },
+                .And => |a| {
+                    try self.and_(a.dst, a.src);
+                },
+                .Cmp => |a| {
+                    try self.cmp(a.lhs, a.rhs);
+                },
+                .Jmp => |j| {
+                    std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
+                    std.debug.print("Jump from {d} to {d}\n", .{ i, i + j.dst.rel });
+                    try self.jmp(j.condition, @intCast(i + j.dst.rel));
+                },
                 //else => @panic("Unhandled JIT instruction"),
             }
+        }
+        if (self.jumps_to_patch.count() > 0) {
+            std.debug.print("Jumps left to patch: {}\n", .{self.jumps_to_patch.count()});
+            @panic("Wut?");
         }
         self.emit_block_epilogue();
     }
@@ -218,38 +252,38 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.reg) });
+                        try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
                         const opcode = 0x89;
                         if (dst_m.size == 16) // Operand size prefix
                             try self.emit(u8, 0x66);
                         try self.emit(u8, opcode);
                         const modrm: MODRM = .{
-                            .mod = if (dst_m.offset == 0) 0b00 else 0b10,
+                            .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
                             .reg_opcode = encode(src_reg),
-                            .r_m = encode(dst_m.reg),
+                            .r_m = encode(dst_m.base),
                         };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(dst_m.reg) == 0b100) {
+                        if (encode(dst_m.base) == 0b100) {
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                         }
-                        if (dst_m.offset != 0)
-                            try self.emit(u32, dst_m.offset);
+                        if (dst_m.displacement != 0)
+                            try self.emit(u32, dst_m.displacement);
                     },
                     .imm32 => |imm| {
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.reg) });
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
                         const modrm: MODRM = .{
-                            .mod = if (dst_m.offset == 0) 0b00 else 0b10,
+                            .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
                             .reg_opcode = 0,
-                            .r_m = encode(dst_m.reg),
+                            .r_m = encode(dst_m.base),
                         };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(dst_m.reg) == 0b100)
+                        if (encode(dst_m.base) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        if (dst_m.offset != 0)
-                            try self.emit(u32, dst_m.offset);
+                        if (dst_m.displacement != 0)
+                            try self.emit(u32, dst_m.displacement);
                         try self.emit(u32, imm);
                     },
                     else => return error.InvalidMovSource,
@@ -264,22 +298,49 @@ pub const Emitter = struct {
                         try self.mov_reg_imm(dst_reg, imm);
                     },
                     .mem => |src_m| {
-                        try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
-                        const opcode = 0x8B;
-                        if (src_m.size == 16) // Operand size prefix
-                            try self.emit(u8, 0x66);
-                        try self.emit(u8, opcode);
-                        const modrm: MODRM = .{
-                            .mod = if (src_m.offset == 0) 0b00 else 0b10,
-                            .reg_opcode = encode(dst.reg),
-                            .r_m = encode(src_m.reg),
-                        };
-                        try self.emit(u8, @bitCast(modrm));
-                        // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(src_m.reg) == 0b100)
-                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        if (src_m.offset != 0)
-                            try self.emit(u32, src_m.offset);
+                        if (src_m.index != null) {
+                            if (src_m.displacement != 0) {
+                                return error.MovIndexWithDisplacementNotSupported;
+                            }
+                            try self.emit_rex_if_needed(.{
+                                .w = src_m.size == 64,
+                                .r = need_rex(dst_reg),
+                                .x = need_rex(src_m.index.?),
+                                .b = need_rex(src_m.base),
+                            });
+                            const opcode = 0x8B;
+                            try self.emit(u8, opcode);
+                            const modrm: MODRM = .{
+                                .mod = 0b01,
+                                .reg_opcode = encode(dst.reg),
+                                .r_m = 0b100, // FIXME: I don't know what I'm doing :D
+                            };
+                            try self.emit(u8, @bitCast(modrm));
+                            const sib: SIB = .{
+                                .scale = 0,
+                                .index = encode(src_m.index.?),
+                                .base = encode(src_m.base),
+                            };
+                            try self.emit(u8, @bitCast(sib));
+                            try self.emit(u8, 0x00); // Zero displacement
+                        } else {
+                            try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                            const opcode = 0x8B;
+                            if (src_m.size == 16) // Operand size prefix
+                                try self.emit(u8, 0x66);
+                            try self.emit(u8, opcode);
+                            const modrm: MODRM = .{
+                                .mod = if (src_m.displacement == 0) 0b00 else 0b10,
+                                .reg_opcode = encode(dst.reg),
+                                .r_m = encode(src_m.base),
+                            };
+                            try self.emit(u8, @bitCast(modrm));
+                            // NOTE: ESP/R12-based addressing need a SIB byte.
+                            if (encode(src_m.base) == 0b100)
+                                try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                            if (src_m.displacement != 0)
+                                try self.emit(u32, src_m.displacement);
+                        }
                     },
                     else => return error.InvalidMovSource,
                 }
@@ -294,7 +355,7 @@ pub const Emitter = struct {
                 switch (src) {
                     .mem => |src_m| {
                         // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_m.reg) });
+                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
                         try self.emit(u8, 0x0F);
                         switch (src_m.size) {
                             8 => try self.emit(u8, 0xBE),
@@ -302,16 +363,16 @@ pub const Emitter = struct {
                             else => return error.UnsupportedMovsxSourceSize,
                         }
                         const modrm: MODRM = .{
-                            .mod = if (src_m.offset == 0) 0b00 else 0b10,
+                            .mod = if (src_m.displacement == 0) 0b00 else 0b10,
                             .reg_opcode = encode(dst.reg),
-                            .r_m = encode(src_m.reg),
+                            .r_m = encode(src_m.base),
                         };
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(src_m.reg) == 0b100)
+                        if (encode(src_m.base) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        if (src_m.offset != 0)
-                            try self.emit(u32, src_m.offset);
+                        if (src_m.displacement != 0)
+                            try self.emit(u32, src_m.displacement);
                     },
                     else => return error.InvalidMovsxSource,
                 }
@@ -339,6 +400,70 @@ pub const Emitter = struct {
             },
             else => return error.InvalidSource,
         }
+    }
+
+    pub fn and_(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
+        switch (src) {
+            .imm32 => |imm| {
+                if (dst == .ReturnRegister) {
+                    try self.emit(u8, 0x25);
+                    try self.emit(u32, imm);
+                } else {
+                    try self.emit_rex_if_needed(.{ .r = need_rex(dst) });
+                    try self.emit(u8, 0x81);
+                    const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = 0 };
+                    try self.emit(u8, @bitCast(modrm));
+                    try self.emit(u32, imm);
+                }
+            },
+            else => return error.InvalidAndSource,
+        }
+    }
+
+    pub fn cmp(self: *@This(), lhs: JIT.Register, rhs: JIT.Operand) !void {
+        switch (rhs) {
+            .imm32 => |imm| {
+                if (get_reg(lhs) == .RAX) {
+                    try self.emit(u8, 0x3D);
+                    try self.emit(u32, imm);
+                } else return error.UnsupportedCmpRHS;
+            },
+            else => return error.UnsupportedCmpRHS,
+        }
+    }
+
+    pub fn jmp(self: *@This(), condition: JIT.Condition, dst_instruction_index: u32) !void {
+        // TODO: Support more destination than just immediate relative.
+        //       Support different sizes of rel (rel8 in particular).
+
+        var address = self.block_size;
+
+        switch (condition) {
+            .Always => {
+                try self.emit(u8, 0xE9);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .Equal => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x82);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .NotEqual => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x85);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+        }
+
+        std.debug.print("Pushing jump {any} to {d}\n", .{ condition, dst_instruction_index });
+
+        try self.jumps_to_patch.put(dst_instruction_index, .{
+            .source = self.block_size,
+            .address_to_patch = address,
+        });
     }
 
     pub fn native_call(self: *@This(), function: *const anyopaque) !void {

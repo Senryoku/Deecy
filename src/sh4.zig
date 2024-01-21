@@ -937,6 +937,10 @@ pub const SH4 = struct {
         ))).*;
     }
 
+    pub noinline fn _out_of_line_read32(self: @This(), virtual_addr: addr_t) u32 {
+        return read32(self, virtual_addr);
+    }
+
     pub inline fn read32(self: @This(), virtual_addr: addr_t) u32 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
