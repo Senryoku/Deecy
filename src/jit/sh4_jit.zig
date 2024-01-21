@@ -206,7 +206,7 @@ fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest
 // Load a u32 from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4) !void {
     try load_register(block, ctx, .ReturnRegister, guest_reg);
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x0C000000 } } });
+    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1F000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
