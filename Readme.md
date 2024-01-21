@@ -19,6 +19,7 @@
 -   Renderer:
     - Handle and generate Mipmaps.
     - Order independent transparency.
+    - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
       
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
@@ -36,7 +37,7 @@
 -   DreamcastDevBoxSystemArchitecture.pdf
 -   Dreamcast Programming by Marcus Comstedt : https://mc.pp.se/dc/
 -   Boot ROM disassembly by Lars Olsson (https://lars-olsson.sizious.com/, originally https://www.ludd.ltu.se/~jlo/dc/)
-
+-   AICA ARM7 Core tester by snickerbockers: https://github.com/snickerbockers/dc-arm7wrestler/
 -   Reicast https://github.com/skmp/reicast-emulator
 
 ## Dependencies
