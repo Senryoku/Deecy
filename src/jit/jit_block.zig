@@ -8,6 +8,9 @@ pub const InstructionType = enum {
     Push,
     Pop,
     Add,
+    And,
+    Cmp,
+    Jmp,
 };
 
 pub const Register = enum {
@@ -22,6 +25,12 @@ pub const Register = enum {
     SavedRegister3,
 };
 
+pub const Condition = enum {
+    Always,
+    Equal,
+    NotEqual,
+};
+
 const OperandType = enum {
     reg,
     imm32,
@@ -34,8 +43,9 @@ pub const Operand = union(OperandType) {
     imm32: u32,
     imm: u64,
     mem: struct {
-        reg: Register,
-        offset: u32,
+        base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
+        index: ?Register = null,
+        displacement: u32 = 0,
         size: u8,
     },
 };
@@ -48,6 +58,21 @@ pub const Instruction = union(InstructionType) {
     Push: Operand,
     Pop: Operand,
     Add: struct { dst: Register, src: Operand },
+    And: struct { dst: Register, src: Operand },
+    Cmp: struct { lhs: Register, rhs: Operand },
+    Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+};
+
+const PatchableJump = struct {
+    source_index: usize,
+    block: *JITBlock,
+
+    pub fn patch(self: *@This()) void {
+        switch (self.block.instructions.items[self.source_index]) {
+            .Jmp => |*jmp| jmp.dst.rel = @intCast(self.block.instructions.items.len - self.source_index),
+            else => unreachable,
+        }
+    }
 };
 
 pub const JITBlock = struct {
@@ -89,5 +114,15 @@ pub const JITBlock = struct {
 
     pub fn add(self: *@This(), dst: Register, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
+    }
+
+    // Forward Jump
+    pub fn jmp(self: *@This(), condition: Condition) !PatchableJump {
+        try self.instructions.append(.{ .Jmp = .{ .condition = condition, .dst = .{ .rel = 0x00C0FFEE } } });
+
+        return .{
+            .source_index = self.instructions.items.len - 1,
+            .block = self,
+        };
     }
 };
