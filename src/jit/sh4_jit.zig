@@ -132,11 +132,8 @@ pub const SH4JIT = struct {
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
-
             sh4_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].name });
-
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, &ctx, @bitCast(instr));
-
             emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             index += 1;
             ctx.address += 2;
@@ -144,9 +141,10 @@ pub const SH4JIT = struct {
             if (branch) {
                 if (ctx.delay_slot != null) {
                     const delay_slot = instructions[index];
+                    sh4_jit_log.debug("  [{X:0>8}]   {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].name });
                     const brach_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
-                    std.debug.assert(!brach_delay_slot);
                     emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
+                    std.debug.assert(!brach_delay_slot);
                 }
                 break;
             }
@@ -215,7 +213,6 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
-    //try block.append(.{ .Break = 0 });
     try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = 32 } });
     var to_end = try block.jmp(.Always);
 
@@ -242,7 +239,6 @@ pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // try block.append(.{ .Break = 0 });
     try load_mem(block, ctx, .ReturnRegister, instr.nmd.m);
     try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
     return false;

@@ -121,7 +121,6 @@ pub const Emitter = struct {
         for (0..jb.instructions.items.len) |i| {
             if (self.jumps_to_patch.get(@intCast(i))) |jump| {
                 const rel: u32 = @intCast(self.block_size - jump.source);
-                std.debug.print("Patching jump from {d} to {d} (rel: {d}) (instr {d})\n", .{ jump.source, self.block_size, rel, i });
                 @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
                 _ = self.jumps_to_patch.remove(@intCast(i));
             }
@@ -170,7 +169,6 @@ pub const Emitter = struct {
                 },
                 .Jmp => |j| {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
-                    std.debug.print("Jump from {d} to {d}\n", .{ i, i + j.dst.rel });
                     try self.jmp(j.condition, @intCast(i + j.dst.rel));
                 },
                 //else => @panic("Unhandled JIT instruction"),
@@ -178,7 +176,7 @@ pub const Emitter = struct {
         }
         if (self.jumps_to_patch.count() > 0) {
             std.debug.print("Jumps left to patch: {}\n", .{self.jumps_to_patch.count()});
-            @panic("Wut?");
+            @panic("Error: Unpatched jumps!");
         }
         self.emit_block_epilogue();
     }
@@ -457,8 +455,6 @@ pub const Emitter = struct {
                 try self.emit(u32, 0x00C0FFEE);
             },
         }
-
-        std.debug.print("Pushing jump {any} to {d}\n", .{ condition, dst_instruction_index });
 
         try self.jumps_to_patch.put(dst_instruction_index, .{
             .source = self.block_size,
