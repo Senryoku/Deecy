@@ -12,14 +12,15 @@
 
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
+-   VMU/Storage
 
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
-  - Handle ClampUV and FlipUV, idealy using appropriate samplers and adressing modes.
-  - Handle and generate Mipmaps.
-
-  - Ikaruga need some sort of MMU support :( 
+    - Handle and generate Mipmaps.
+    - Order independent transparency.
+      
+- Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
     The fact that the issue arise before issuing a pref instruction with the MMU on lead me to think there's more to it.
 
