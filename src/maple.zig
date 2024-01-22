@@ -380,13 +380,12 @@ const MaplePort = struct {
                     },
                     .BlockWrite => {
                         const function_type = data[2];
-                        std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
                         const partition: u8 = @truncate(data[3] >> 24 & 0xFF);
                         const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
                         const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
                         const write_data = data[4 .. 4 + command.payload_length - 2];
                         _ = write_data;
-                        maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2}, Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, partition, phase, block_num });
+                        maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
 
                         // TODO!
 
