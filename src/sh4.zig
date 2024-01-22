@@ -45,7 +45,7 @@ const SR = packed struct(u32) {
     _r3: u1 = 0,
 };
 
-const FPSCR = packed struct(u32) {
+pub const FPSCR = packed struct(u32) {
     rm: u2 = 1, // Rounding mode
     inexact: bool = false,
     underflow: bool = false,
@@ -338,6 +338,14 @@ pub const SH4 = struct {
         self.sr = @bitCast(@as(u32, @bitCast(value)) & 0x700083F3);
     }
 
+    pub inline fn set_fpscr(self: *@This(), value: u32) void {
+        const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
+        if (new_value.fr != self.fpscr.fr) {
+            std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
+        }
+        self.fpscr = new_value;
+    }
+
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         return @constCast(self).operand_cache(T, virtual_addr).*;
     }
@@ -404,25 +412,25 @@ pub const SH4 = struct {
     }
 
     pub inline fn FR(self: *@This(), r: u4) *f32 {
-        return &self.fp_banks[self.fpscr.fr].fr[r];
+        return &self.fp_banks[0].fr[r];
     }
 
     pub inline fn DR(self: *@This(), r: u4) *f64 {
         std.debug.assert(r < 8);
-        return &self.fp_banks[self.fpscr.fr].dr[r];
+        return &self.fp_banks[0].dr[r];
     }
     pub inline fn XF(self: *@This(), r: u4) *f32 {
-        return &self.fp_banks[self.fpscr.fr +% 1].fr[r];
+        return &self.fp_banks[1].fr[r];
     }
 
     pub inline fn XD(self: *@This(), r: u4) *f64 {
         std.debug.assert(r < 8);
-        return &self.fp_banks[self.fpscr.fr +% 1].dr[r];
+        return &self.fp_banks[1].dr[r];
     }
 
     pub inline fn QR(self: *@This(), r: u4) *f32 {
         std.debug.assert(r < 4);
-        return &self.fp_banks[self.fpscr.fr].qr[r];
+        return &self.fp_banks[0].qr[r];
     }
 
     fn jump_to_interrupt(self: *@This()) void {

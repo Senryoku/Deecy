@@ -1087,13 +1087,13 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
 }
 pub fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
-    cpu.fpscr = @bitCast(cpu.R(opcode.nmd.n).* & 0x003FFFFF);
+    cpu.set_fpscr(cpu.R(opcode.nmd.n).*);
 }
 pub fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
 pub fn ldsl_at_Rn_inc_FPSCR(cpu: *SH4, opcode: Instr) void {
-    cpu.fpscr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*) & 0x003FFFFF);
+    cpu.set_fpscr(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn stsl_FPSCR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
@@ -1118,7 +1118,9 @@ pub fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
 // Inverts the FR bit in floating-point register FPSCR.
 pub fn frchg(cpu: *SH4, _: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
-    cpu.fpscr.fr +%= 1;
+    var new_fpscr = cpu.fpscr;
+    new_fpscr.fr +%= 1;
+    cpu.set_fpscr(@bitCast(new_fpscr));
 }
 pub fn fschg(cpu: *SH4, _: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
