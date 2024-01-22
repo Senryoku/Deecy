@@ -534,6 +534,7 @@ pub fn main() !void {
             zgui.end();
 
             if (zgui.begin("Renderer", .{})) {
+                zgui.text("Min Depth: {d: >4.2}", .{renderer.min_depth});
                 zgui.text("Max Depth: {d: >4.2}", .{renderer.max_depth});
                 if (zgui.collapsingHeader("Textures", .{})) {
                     const static = struct {

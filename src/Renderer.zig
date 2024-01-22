@@ -272,7 +272,8 @@ pub const Renderer = struct {
     passes: [5]PassMetadata = undefined,
 
     read_framebuffer_enabled: bool = false,
-    max_depth: f32 = 1.0,
+    min_depth: f32 = std.math.floatMax(f32),
+    max_depth: f32 = 0.0,
 
     vertices: std.ArrayList(Vertex) = undefined,
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
@@ -1199,6 +1200,7 @@ pub const Renderer = struct {
                 .tex = tex,
             };
             // FIXME: We should probably render the background in a separate pass with depth test disabled.
+            self.min_depth = @min(self.min_depth, 1 / vertices[i].z);
             self.max_depth = @max(self.max_depth, 1 / vertices[i].z);
         }
         vertices[3] = Vertex{
@@ -1231,7 +1233,8 @@ pub const Renderer = struct {
         self.reset_texture_usage(gpu);
         defer self.check_texture_usage();
 
-        self.max_depth = 1.0;
+        self.min_depth = std.math.floatMax(f32);
+        self.max_depth = 0.0;
 
         self.update_background(gpu);
 
@@ -1502,6 +1505,7 @@ pub const Renderer = struct {
                                 v.b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0;
                                 v.a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0;
                                 v.tex = tex;
+                                self.min_depth = @min(self.min_depth, 1.0 / v.z);
                                 self.max_depth = @max(self.max_depth, 1.0 / v.z);
 
                                 try self.vertices.append(v.*);
@@ -1513,6 +1517,7 @@ pub const Renderer = struct {
                         },
                     }
 
+                    self.min_depth = @min(self.min_depth, 1.0 / self.vertices.getLast().z);
                     self.max_depth = @max(self.max_depth, 1.0 / self.vertices.getLast().z);
                 }
 
@@ -1625,7 +1630,8 @@ pub const Renderer = struct {
 
                 // Set uniforms
                 const mem = gctx.uniformsAllocate([4]f32, 1);
-                mem.slice[0][0] = self.max_depth;
+                mem.slice[0][0] = self.min_depth;
+                mem.slice[0][1] = self.max_depth;
                 pass.setBindGroup(0, bind_group, &.{mem.offset});
 
                 // Draw background
