@@ -225,9 +225,40 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
     not_branch.patch();
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
+    // Address is already loaded into .ArgRegister1
     try block.call(&sh4.SH4._out_of_line_read32);
     if (dest != .ReturnRegister)
         try block.mov(.{ .reg = dest }, .{ .reg = .ReturnRegister });
+
+    to_end.patch();
+}
+
+fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register) !void {
+    if (value != .ArgRegister2)
+        try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
+    try load_register(block, ctx, .ArgRegister1, dest_guest_reg);
+    if (displacement != 0)
+        try block.add(.ArgRegister1, .{ .imm32 = displacement });
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
+    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1F000000 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
+    var not_branch = try block.jmp(.NotEqual);
+    // We're in RAM!
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
+    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x00FFFFFF } } });
+    const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
+    try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
+
+    try block.mov(.{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = 32 } }, .{ .reg = .ArgRegister2 });
+    var to_end = try block.jmp(.Always);
+
+    not_branch.patch();
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
+    // Address is already loaded into .ArgRegister1
+    // Value is already loaded into .ArgRegister2
+    try block.call(&sh4.SH4._out_of_line_write32);
+    if (value != .ReturnRegister)
+        try block.mov(.{ .reg = value }, .{ .reg = .ReturnRegister });
 
     to_end.patch();
 }
@@ -250,10 +281,23 @@ pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister);
+    return false;
+}
+
 pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
     try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d);
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    return false;
+}
+
+pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const d = bit_manip.zero_extend(instr.nmd.d) << 2;
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, d, .ReturnRegister);
     return false;
 }
 

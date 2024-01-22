@@ -1131,6 +1131,10 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
+    pub noinline fn _out_of_line_write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        write32(self, virtual_addr, value);
+    }
+
     pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
         if (virtual_addr >= 0xE0000000) {
             // P4
