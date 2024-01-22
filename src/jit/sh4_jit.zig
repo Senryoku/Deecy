@@ -201,9 +201,15 @@ fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest
     try block.mov(.{ .reg = host_reg }, get_reg_mem(guest_reg));
 }
 
+fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT.Register) !void {
+    try block.mov(get_reg_mem(guest_reg), .{ .reg = host_reg });
+}
+
 // Load a u32 from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4) !void {
+fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32) !void {
     try load_register(block, ctx, .ArgRegister1, guest_reg);
+    if (displacement != 0)
+        try block.add(.ArgRegister1, .{ .imm32 = displacement });
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
     try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1F000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
@@ -239,8 +245,22 @@ pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m);
-    try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0);
+    try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    return false;
+}
+
+pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const d = bit_manip.zero_extend(instr.nmd.d) << 2;
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d);
+    try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    return false;
+}
+
+pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
+    try block.add(.ReturnRegister, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
 
