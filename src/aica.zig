@@ -417,12 +417,12 @@ pub const AICA = struct {
         const aica_addr = dc.read_hw_register(u32, .SB_ADSTAG);
         const root_bus_addr = dc.read_hw_register(u32, .SB_ADSTAR);
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
-        var len = len_reg & 0x7FFFFFFF;
+        const len_in_bytes = len_reg & 0x7FFFFFFF;
         const direction = dc.read_hw_register(u32, .SB_ADDIR);
         aica_log.info(" AICA G2-DMA Start!", .{});
         aica_log.debug("   AICA Address: 0x{X:0>8}", .{aica_addr});
         aica_log.debug("   Root Bus Address: 0x{X:0>8}", .{root_bus_addr});
-        aica_log.debug("   Length: 0x{X:0>8} (0x{X:0>8})", .{ len_reg, len });
+        aica_log.debug("   Length: 0x{X:0>8} (0x{X:0>8})", .{ len_reg, len_in_bytes });
         aica_log.debug("   Direction: 0x{X:0>8}", .{direction});
         aica_log.debug("   Trigger Select: 0x{X:0>8}", .{dc.read_hw_register(u32, .SB_ADTSEL)});
         aica_log.debug("   Enable: 0x{X:0>8}", .{enabled});
@@ -438,17 +438,17 @@ pub const AICA = struct {
         }
 
         // FIXME: I have no idea how to correctly handle this error case.
-        if (aica_addr + 4 * len >= 0x00A00000) {
-            aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8} (Manually kept in bounds)"), .{ aica_addr, len, aica_addr + 4 * len });
-            len = (0x00A00000 - aica_addr) / 4;
+        if (aica_addr + len_in_bytes >= 0x00A00000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ aica_addr, len_in_bytes, aica_addr + len_in_bytes });
         }
-        if (root_bus_addr + 4 * len >= 0x0D000000) {
-            aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8} (Manually kept in bounds)"), .{ root_bus_addr, len, root_bus_addr + 4 * len });
-            len = (0x0D000000 - root_bus_addr) / 4;
+        if (root_bus_addr + len_in_bytes >= 0x0D000000) {
+            aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ root_bus_addr, len_in_bytes, root_bus_addr + len_in_bytes });
         }
 
         const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
         const physical_aica_addr = &self.wave_memory[aica_addr - 0x00800000];
+
+        const len_in_u32 = len_in_bytes / 4;
 
         // TODO: This might raise some exceptions, if the addresses are wrong.
 
@@ -456,12 +456,12 @@ pub const AICA = struct {
             // DMA transfer from the Root Bus to a G2 device
             const src = physical_root_addr;
             const dst = physical_aica_addr;
-            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len], @as([*]u32, @ptrCast(@alignCast(src)))[0..len]);
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len_in_u32], @as([*]u32, @ptrCast(@alignCast(src)))[0..len_in_u32]);
         } else {
             // DMA transfer from a G2 device to the Root Bus
             const src = physical_aica_addr;
             const dst = physical_root_addr;
-            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len], @as([*]u32, @ptrCast(@alignCast(src)))[0..len]);
+            @memcpy(@as([*]u32, @ptrCast(@alignCast(dst)))[0..len_in_u32], @as([*]u32, @ptrCast(@alignCast(src)))[0..len_in_u32]);
         }
 
         // Signals the DMA is in progress
@@ -469,7 +469,7 @@ pub const AICA = struct {
         dc.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
 
         // Schedule the end of the transfer interrupt
-        self.events.append(.{ .event_type = .EndOfDMA, .cycles = 10 * len }) catch unreachable; // FIXME: Compute the actual cycle count.
+        self.events.append(.{ .event_type = .EndOfDMA, .cycles = 10 * len_in_bytes }) catch unreachable; // FIXME: Compute the actual cycle count.
     }
 
     fn end_dma(_: *AICA, dc: *Dreamcast) void {
