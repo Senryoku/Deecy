@@ -64,6 +64,8 @@ pub const JITContext = struct {
     delay_slot: ?u32 = null,
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
+
+    fpscr_sz: u1,
 };
 
 pub const SH4JIT = struct {
@@ -91,11 +93,11 @@ pub const SH4JIT = struct {
             if (block == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try (self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
+                block = try (self.compile(.{ .address = pc, .dc = cpu._dc.?, .fpscr_sz = cpu.fpscr.sz }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
+                        break :retry self.compile(.{ .address = pc, .dc = cpu._dc.?, .fpscr_sz = cpu.fpscr.sz }, instructions);
                     } else break :retry err;
                 });
             }
@@ -194,6 +196,10 @@ pub fn interpreter_fallback_branch(block: *JITBlock, ctx: *JITContext, instr: sh
 
 fn get_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4, .size = 32 } };
+}
+
+fn get_fp_reg_mem(r: u4) JIT.Operand {
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + @as(u32, r) * 4, .size = 32 } };
 }
 
 fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest_reg: u4) !void {
@@ -305,6 +311,31 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
     try block.add(.ReturnRegister, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    return false;
+}
+
+pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // We assume the instruction will always be used in the same context.
+    if (ctx.fpscr_sz == 0) {
+        try block.append(.{ .Break = 1 });
+        // cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+        try load_mem(block, ctx, .ReturnRegister, instr.nmd.m);
+        try block.mov(get_fp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+        // cpu.R(opcode.nmd.m).* += 4;
+        try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+        try block.add(.ReturnRegister, .{ .imm32 = 4 });
+        try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
+    } else {
+        _ = try interpreter_fallback(block, ctx, instr);
+    }
+
+    return false;
+}
+
+pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // NOTE: FPSCR.sz can be changed by other means, but I hope games don't use them!
+    _ = try interpreter_fallback(block, ctx, instr);
+    ctx.fpscr_sz +%= 1;
     return false;
 }
 
