@@ -327,17 +327,17 @@ pub const AICA = struct {
     }
 
     pub fn read8_from_arm(self: *const AICA, addr: u32) u8 {
-        // I think the AICA might try to access out of bounds here.
-        if (addr >= 0x00200000) {
-            std.debug.print(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}\n"), .{addr});
+        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
+            aica_log.err(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
+            return 0;
         }
         return self.read_register(u8, addr);
     }
 
     pub fn read32_from_arm(self: *const AICA, addr: u32) u32 {
-        // I think the AICA might try to access out of bounds here.
-        if (addr >= 0x00200000) {
-            std.debug.print(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}\n"), .{addr});
+        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
+            aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
+            return 0;
         }
         return self.read_register(u32, addr);
     }
@@ -401,10 +401,10 @@ pub const AICA = struct {
 
         if (self.arm7.running and !DisableARMCore) {
             self._cycles_counter += cycles;
-            // FIXME: We're not acutally counter ARM7 cycles here (unless all instructions are 1 cycle :^)).
+            // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
             while (self._cycles_counter >= ARM7CycleRatio) {
                 self._cycles_counter -= ARM7CycleRatio;
-                //aica_log.debug("arm7: [{X:0>8}] {X:0>8} - {s}", .{ self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]) });
+                // aica_log.debug("arm7: [{X:0>8}] {X:0>8} - {s}", .{ self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]) });
                 self.arm7.tick();
             }
         }
