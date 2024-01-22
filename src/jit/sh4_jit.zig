@@ -160,7 +160,7 @@ pub const SH4JIT = struct {
         // cpu.pc += 2;
         if (ctx.outdated_pc) {
             try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.ReturnRegister, .{ .imm = 2 });
+            try jb.add(.ReturnRegister, .{ .imm32 = 2 });
             try jb.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
         }
 

@@ -250,9 +250,10 @@ pub const Dreamcast = struct {
     }
 
     pub fn tick_jit(self: *@This()) u32 {
-        // FIXME: Using try here makes the function always return 0.
-        //        Compiler bug?
-        const cycles = self.sh4_jit.execute(&self.cpu) catch unreachable;
+        const cycles = self.sh4_jit.execute(&self.cpu) catch |err| {
+            std.debug.panic("JIT error: {}", .{err});
+            @panic("JIT Error");
+        };
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);

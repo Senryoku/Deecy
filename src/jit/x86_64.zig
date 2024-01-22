@@ -388,7 +388,7 @@ pub const Emitter = struct {
                 const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) };
                 try self.emit(u8, @bitCast(modrm));
             },
-            .imm => |imm| {
+            .imm32 => |imm| {
                 try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
                 try self.emit(u8, 0x81); // ADD r/m32, imm32
                 const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0, .r_m = encode(dst) };
