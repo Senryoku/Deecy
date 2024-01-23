@@ -339,6 +339,31 @@ pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // We assume the instruction will always be used in the same context.
+    if (ctx.fpscr_sz == 0) {
+        try block.append(.{ .Break = 1 });
+        // cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+        try load_mem(block, ctx, .ReturnRegister, instr.nmd.m);
+        try block.mov(get_fp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+        // cpu.R(opcode.nmd.m).* += 4;
+        try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+        try block.add(.ReturnRegister, .{ .imm32 = 4 });
+        try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
+    } else {
+        _ = try interpreter_fallback(block, ctx, instr);
+    }
+
+    return false;
+}
+
+pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // NOTE: FPSCR.sz can be changed by other means, but I hope games don't use them!
+    _ = try interpreter_fallback(block, ctx, instr);
+    ctx.fpscr_sz +%= 1;
+    return false;
+}
+
 pub fn mova_atdispPC_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
