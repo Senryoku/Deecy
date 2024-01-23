@@ -1250,6 +1250,10 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
+    pub noinline fn _out_of_line_write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+        write64(self, virtual_addr, value);
+    }
+
     pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
         // This isn't efficient, but avoids repeating all the logic of write32.
         self.write32(virtual_addr, @truncate(value));

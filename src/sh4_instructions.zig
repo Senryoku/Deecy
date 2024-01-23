@@ -204,9 +204,9 @@ pub const Opcodes: [217]OpcodeDescription = .{
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
     .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.fmovs_at_rm_frn },
-    .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false },
+    .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_rn },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_at_rm_inc_frn },
-    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
+    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_dec_rn },
     .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
 

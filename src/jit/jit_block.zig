@@ -8,6 +8,7 @@ pub const InstructionType = enum {
     Push,
     Pop,
     Add,
+    Sub,
     And,
     Cmp,
     Jmp,
@@ -58,6 +59,7 @@ pub const Instruction = union(InstructionType) {
     Push: Operand,
     Pop: Operand,
     Add: struct { dst: Register, src: Operand },
+    Sub: struct { dst: Register, src: Operand },
     And: struct { dst: Register, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
@@ -114,6 +116,9 @@ pub const JITBlock = struct {
 
     pub fn add(self: *@This(), dst: Register, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
+    }
+    pub fn sub(self: *@This(), dst: Register, src: Operand) !void {
+        try self.instructions.append(.{ .Sub = .{ .dst = dst, .src = src } });
     }
 
     // Forward Jump
