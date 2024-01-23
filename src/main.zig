@@ -649,7 +649,10 @@ pub fn main() !void {
                         }
                     }
                 } else {
-                    _ = dc.tick_jit();
+                    for (0..32) |_| {
+                        _ = dc.tick_jit();
+                        if (dc.gpu.render_start) break;
+                    }
                 }
             }
         }
