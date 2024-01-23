@@ -347,22 +347,31 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
-pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
         .Zero => {
-            // cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+            // FRn = [Rm]
             try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
             try block.mov(get_fp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
-            // cpu.R(opcode.nmd.m).* += 4;
-            try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-            try block.add(.ReturnRegister, .{ .imm32 = 4 });
-            try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
         },
         .One => {
             try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 64);
             try block.mov(get_dfp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+        },
+        .Unknown => {
+            _ = try interpreter_fallback(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
+pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero, .One => {
+            _ = try fmovs_at_rm_frn(block, ctx, instr);
+            // Inc Rm
             try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-            try block.add(.ReturnRegister, .{ .imm32 = 8 });
+            try block.add(.ReturnRegister, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
             try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
         },
         .Unknown => {

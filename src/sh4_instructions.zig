@@ -203,7 +203,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = interpreter.trapa_imm, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.fmovs_at_rm_frn },
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_at_rm_inc_frn },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
