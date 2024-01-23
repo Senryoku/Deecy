@@ -253,7 +253,6 @@ pub const Emitter = struct {
                         if (dst_m.index != null) {
                             if (dst_m.displacement != 0) // TODO
                                 return error.MovIndexWithDisplacementNotSupported;
-
                             try self.emit_rex_if_needed(.{
                                 .w = dst_m.size == 64,
                                 .r = need_rex(src_reg),

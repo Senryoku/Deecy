@@ -1004,6 +1004,10 @@ pub const SH4 = struct {
         ))).*;
     }
 
+    pub noinline fn _out_of_line_read64(self: @This(), virtual_addr: addr_t) u64 {
+        return read64(self, virtual_addr);
+    }
+
     pub inline fn read64(self: @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
 

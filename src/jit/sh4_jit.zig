@@ -225,6 +225,11 @@ fn get_fp_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + @as(u32, r) * 4, .size = 32 } };
 }
 
+fn get_dfp_reg_mem(r: u4) JIT.Operand {
+    const bank: u32 = if ((r & 1) == 1) @sizeOf([16]f32) else 0;
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + bank + @as(u32, r >> 1) * 8, .size = 64 } };
+}
+
 fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest_reg: u4) !void {
     // We could use this to cache register into host saved registers.
     try block.mov(.{ .reg = host_reg }, get_reg_mem(guest_reg));
@@ -234,8 +239,8 @@ fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT
     try block.mov(get_reg_mem(guest_reg), .{ .reg = host_reg });
 }
 
-// Load a u32 from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32) !void {
+// Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
+fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, guest_reg);
     if (displacement != 0)
         try block.add(.ArgRegister1, .{ .imm32 = displacement });
@@ -249,13 +254,18 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = 32 } });
+    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = size } });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     // Address is already loaded into .ArgRegister1
-    try block.call(&sh4.SH4._out_of_line_read32);
+    if (size == 32) {
+        try block.call(&sh4.SH4._out_of_line_read32);
+    } else if (size == 64) {
+        try block.call(&sh4.SH4._out_of_line_read64);
+    } else @compileError("load_mem: Unsupported size.");
+
     if (dest != .ReturnRegister)
         try block.mov(.{ .reg = dest }, .{ .reg = .ReturnRegister });
 
@@ -305,7 +315,7 @@ pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0);
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
@@ -318,7 +328,7 @@ pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 
 pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
-    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d);
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d, 32);
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
@@ -341,7 +351,7 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
     switch (ctx.fpscr_sz) {
         .Zero => {
             // cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
-            try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0);
+            try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
             try block.mov(get_fp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
             // cpu.R(opcode.nmd.m).* += 4;
             try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
@@ -349,7 +359,11 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
             try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
         },
         .One => {
-            _ = try interpreter_fallback(block, ctx, instr);
+            try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 64);
+            try block.mov(get_dfp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+            try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+            try block.add(.ReturnRegister, .{ .imm32 = 8 });
+            try block.mov(get_reg_mem(instr.nmd.m), .{ .reg = .ReturnRegister });
         },
         .Unknown => {
             _ = try interpreter_fallback(block, ctx, instr);
