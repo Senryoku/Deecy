@@ -265,9 +265,9 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvds_DRn_FPUL, .name = "fcnvds DRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvsd_FPUL_DRn, .name = "fcnvsd FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
-    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4, .jit_emit_fn = sh4_jit.lds_rn_FPSCR },
     .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_FPSCR, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_FPSCR, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .jit_emit_fn = sh4_jit.ldsl_at_rn_inc_FPSCR },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPSCR_at_Rn_dec, .name = "sts.l FPSCR,@-Rn", .privileged = false },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPUL, .name = "lds Rn,FPUL", .privileged = false },
     .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPUL_Rn, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
