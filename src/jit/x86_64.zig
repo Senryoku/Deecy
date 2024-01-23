@@ -161,6 +161,9 @@ pub const Emitter = struct {
                 .Add => |a| {
                     try self.add(a.dst, a.src);
                 },
+                .Sub => |a| {
+                    try self.sub(a.dst, a.src);
+                },
                 .And => |a| {
                     try self.and_(a.dst, a.src);
                 },
@@ -253,7 +256,6 @@ pub const Emitter = struct {
                         if (dst_m.index != null) {
                             if (dst_m.displacement != 0) // TODO
                                 return error.MovIndexWithDisplacementNotSupported;
-
                             try self.emit_rex_if_needed(.{
                                 .w = dst_m.size == 64,
                                 .r = need_rex(src_reg),
@@ -415,13 +417,32 @@ pub const Emitter = struct {
                 const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) };
                 try self.emit(u8, @bitCast(modrm));
             },
-            .imm32 => |imm| {
+            .imm32 => |imm32| {
                 try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
                 try self.emit(u8, 0x81); // ADD r/m32, imm32
-                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0, .r_m = encode(dst) };
+                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst) };
                 try self.emit(u8, @bitCast(modrm));
-                //try self.emit(@TypeOf(imm), imm); // FIXME
-                try self.emit(u32, @truncate(imm));
+                try self.emit(u32, imm32);
+            },
+            else => return error.InvalidSource,
+        }
+    }
+
+    pub fn sub(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
+        // FIXME: Handle different sizes. We expect a u32 immediate.
+        switch (src) {
+            .reg => |src_reg| {
+                try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
+                try self.emit(u8, 0x81);
+                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) };
+                try self.emit(u8, @bitCast(modrm));
+            },
+            .imm32 => |imm32| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
+                try self.emit(u8, 0x81);
+                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0b101, .r_m = encode(dst) };
+                try self.emit(u8, @bitCast(modrm));
+                try self.emit(u32, imm32);
             },
             else => return error.InvalidSource,
         }

@@ -203,10 +203,10 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = interpreter.trapa_imm, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7 },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0 },
-    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false },
-    .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false },
-    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false },
+    .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.fmovs_at_rm_frn },
+    .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_rn },
+    .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_at_rm_inc_frn },
+    .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_dec_rn },
     .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false },
 
@@ -265,16 +265,16 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvds_DRn_FPUL, .name = "fcnvds DRn,FPUL", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
     .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvsd_FPUL_DRn, .name = "fcnvsd FPUL,DRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
 
-    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4 },
+    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 4, .jit_emit_fn = sh4_jit.lds_rn_FPSCR },
     .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
-    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_FPSCR, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
+    .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_FPSCR, .name = "lds.l @Rn+,FPSCR", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .jit_emit_fn = sh4_jit.ldsl_at_rn_inc_FPSCR },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPSCR_at_Rn_dec, .name = "sts.l FPSCR,@-Rn", .privileged = false },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPUL, .name = "lds Rn,FPUL", .privileged = false },
     .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPUL_Rn, .name = "sts FPUL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
     .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_FPUL, .name = "lds.l @Rn+,FPUL", .privileged = false },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPUL_at_Rn_dec, .name = "sts.l FPUL,@-Rn", .privileged = false },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = interpreter.frchg, .name = "frchg", .privileged = false },
-    .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = interpreter.fschg, .name = "fschg", .privileged = false },
+    .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = interpreter.fschg, .name = "fschg", .privileged = false, .jit_emit_fn = sh4_jit.fschg },
 };
 
 pub fn init_jump_table() void {

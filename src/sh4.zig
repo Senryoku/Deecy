@@ -1004,6 +1004,10 @@ pub const SH4 = struct {
         ))).*;
     }
 
+    pub noinline fn _out_of_line_read64(self: @This(), virtual_addr: addr_t) u64 {
+        return read64(self, virtual_addr);
+    }
+
     pub inline fn read64(self: @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
@@ -1244,6 +1248,10 @@ pub const SH4 = struct {
         @as(*u32, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
+    }
+
+    pub noinline fn _out_of_line_write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
+        write64(self, virtual_addr, value);
     }
 
     pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {

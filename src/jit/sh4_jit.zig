@@ -51,9 +51,21 @@ const BlockCache = struct {
         self.blocks.clearRetainingCapacity();
     }
 
-    pub fn get(self: *@This(), address: u32) ?BasicBlock {
-        return self.blocks.get(address);
+    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
+        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
+        return self.blocks.get(key);
     }
+
+    pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) !void {
+        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
+        try self.blocks.put(key, block);
+    }
+};
+
+const JITBitState = enum {
+    Zero,
+    One,
+    Unknown,
 };
 
 pub const JITContext = struct {
@@ -64,6 +76,9 @@ pub const JITContext = struct {
     delay_slot: ?u32 = null,
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
+
+    fpscr_sz: JITBitState,
+    fpscr_pr: JITBitState,
 };
 
 pub const SH4JIT = struct {
@@ -87,15 +102,25 @@ pub const SH4JIT = struct {
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             const pc = cpu.pc & 0x1FFFFFFF;
-            var block = self.block_cache.get(pc);
+            var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
             if (block == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try (self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions) catch |err| retry: {
+                block = try (self.compile(.{
+                    .address = pc,
+                    .dc = cpu._dc.?,
+                    .fpscr_sz = if (cpu.fpscr.sz == 1) .One else .Zero,
+                    .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
+                }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.compile(.{ .address = pc, .dc = cpu._dc.? }, instructions);
+                        break :retry self.compile(.{
+                            .address = pc,
+                            .dc = cpu._dc.?,
+                            .fpscr_sz = if (cpu.fpscr.sz == 1) .One else .Zero,
+                            .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
+                        }, instructions);
                     } else break :retry err;
                 });
             }
@@ -173,8 +198,8 @@ pub const SH4JIT = struct {
 
         self.block_cache.cursor += emitter.block_size;
 
-        try self.block_cache.blocks.put(start_ctx.address, emitter.block);
-        return self.block_cache.get(start_ctx.address).?;
+        try self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
+        return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr))).?;
     }
 };
 
@@ -196,6 +221,15 @@ fn get_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4, .size = 32 } };
 }
 
+fn get_fp_reg_mem(r: u4) JIT.Operand {
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + @as(u32, r) * 4, .size = 32 } };
+}
+
+fn get_dfp_reg_mem(r: u4) JIT.Operand {
+    const bank: u32 = if ((r & 1) == 1) @sizeOf([16]f32) else 0;
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + bank + @as(u32, r >> 1) * 8, .size = 64 } };
+}
+
 fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest_reg: u4) !void {
     // We could use this to cache register into host saved registers.
     try block.mov(.{ .reg = host_reg }, get_reg_mem(guest_reg));
@@ -205,8 +239,8 @@ fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT
     try block.mov(get_reg_mem(guest_reg), .{ .reg = host_reg });
 }
 
-// Load a u32 from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32) !void {
+// Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
+fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, guest_reg);
     if (displacement != 0)
         try block.add(.ArgRegister1, .{ .imm32 = displacement });
@@ -220,20 +254,25 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = 32 } });
+    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = size } });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     // Address is already loaded into .ArgRegister1
-    try block.call(&sh4.SH4._out_of_line_read32);
+    if (size == 32) {
+        try block.call(&sh4.SH4._out_of_line_read32);
+    } else if (size == 64) {
+        try block.call(&sh4.SH4._out_of_line_read64);
+    } else @compileError("load_mem: Unsupported size.");
+
     if (dest != .ReturnRegister)
         try block.mov(.{ .reg = dest }, .{ .reg = .ReturnRegister });
 
     to_end.patch();
 }
 
-fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register) !void {
+fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register, comptime size: u32) !void {
     if (value != .ArgRegister2)
         try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
     try load_register(block, ctx, .ArgRegister1, dest_guest_reg);
@@ -249,14 +288,18 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
-    try block.mov(.{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = 32 } }, .{ .reg = .ArgRegister2 });
+    try block.mov(.{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = size } }, .{ .reg = .ArgRegister2 });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     // Address is already loaded into .ArgRegister1
     // Value is already loaded into .ArgRegister2
-    try block.call(&sh4.SH4._out_of_line_write32);
+    if (size == 32) {
+        try block.call(&sh4.SH4._out_of_line_write32);
+    } else if (size == 64) {
+        try block.call(&sh4.SH4._out_of_line_write64);
+    } else @compileError("store_mem: Unsupported size.");
     if (value != .ReturnRegister)
         try block.mov(.{ .reg = value }, .{ .reg = .ReturnRegister });
 
@@ -276,20 +319,20 @@ pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0);
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
 
 pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-    try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister);
+    try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister, 32);
     return false;
 }
 
 pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
-    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d);
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d, 32);
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
@@ -297,7 +340,7 @@ pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
     try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-    try store_mem(block, ctx, instr.nmd.n, d, .ReturnRegister);
+    try store_mem(block, ctx, instr.nmd.n, d, .ReturnRegister, 32);
     return false;
 }
 
@@ -305,6 +348,98 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
     try block.add(.ReturnRegister, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    return false;
+}
+
+pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero => {
+            // FRn = [Rm]
+            try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
+            try block.mov(get_fp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+        },
+        .One => {
+            try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 64);
+            try block.mov(get_dfp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+        },
+        .Unknown => {
+            _ = try interpreter_fallback(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
+pub fn fmovs_frm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero => {
+            // [Rn] = FRm
+            try block.mov(.{ .reg = .ReturnRegister }, get_fp_reg_mem(instr.nmd.m));
+            try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister, 32);
+        },
+        .One => {
+            try block.mov(.{ .reg = .ReturnRegister }, get_dfp_reg_mem(instr.nmd.m));
+            try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister, 64);
+        },
+        .Unknown => {
+            _ = try interpreter_fallback(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
+pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero, .One => {
+            _ = try fmovs_at_rm_frn(block, ctx, instr);
+            // Inc Rm
+            try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+            try block.add(.ReturnRegister, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try store_register(block, ctx, instr.nmd.m, .ReturnRegister);
+        },
+        .Unknown => {
+            _ = try interpreter_fallback(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
+pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero, .One => {
+            // Dec Rn
+            try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
+            try block.sub(.ReturnRegister, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+            _ = try fmovs_frm_at_rn(block, ctx, instr);
+        },
+        .Unknown => {
+            _ = try interpreter_fallback(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
+pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    _ = try interpreter_fallback(block, ctx, instr);
+    ctx.fpscr_sz = .Unknown;
+    ctx.fpscr_pr = .Unknown;
+    return false;
+}
+
+pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    _ = try interpreter_fallback(block, ctx, instr);
+    ctx.fpscr_sz = .Unknown;
+    ctx.fpscr_pr = .Unknown;
+    return false;
+}
+
+pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    _ = try interpreter_fallback(block, ctx, instr);
+    switch (ctx.fpscr_sz) {
+        .Zero => ctx.fpscr_sz = .One,
+        .One => ctx.fpscr_sz = .Zero,
+        else => {},
+    }
     return false;
 }
 
