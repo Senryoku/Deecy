@@ -157,7 +157,6 @@ pub const AICA = struct {
         @memset(r.regs, 0);
         @memset(r.wave_memory, 0);
         r.arm7 = arm7.ARM7.init(r.wave_memory);
-        r.arm7.reset_pipeline();
 
         r.get_reg(u32, .MasterVolume).* = 0x10;
 
