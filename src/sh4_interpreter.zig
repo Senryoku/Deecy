@@ -798,7 +798,11 @@ pub fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
             cpu.R(opcode.nmd.n).* = 0xFFFFFFFF;
         }
     } else {
-        cpu.R(opcode.nmd.n).* >>= @intCast(((~shift) & 0x1F) + 1);
+        if (cpu.R(opcode.nmd.n).* & 0x80000000 == 0) {
+            cpu.R(opcode.nmd.n).* >>= @intCast(((~shift) & 0x1F) + 1);
+        } else {
+            cpu.R(opcode.nmd.n).* = ~((~cpu.R(opcode.nmd.n).*) >> @intCast(((~shift) & 0x1F) + 1));
+        }
     }
 }
 pub fn shal_Rn(cpu: *SH4, opcode: Instr) void {
