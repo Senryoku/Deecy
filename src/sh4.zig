@@ -9,18 +9,21 @@ const termcolor = @import("termcolor.zig");
 pub const sh4_log = std.log.scoped(.sh4);
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
+
 const mmu = @import("./mmu.zig");
-const MemoryRegisters = @import("MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
-const P4MemoryRegister = MemoryRegisters.P4MemoryRegister;
+pub const P4 = @import("./sh4_p4.zig");
+pub const P4Register = P4.P4Register;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
-const init_jump_table = @import("sh4_instructions.zig").init_jump_table;
 
 const addr_t = common.addr_t;
 
 const sh4_instructions = @import("sh4_instructions.zig");
+const init_jump_table = sh4_instructions.init_jump_table;
 const sh4_disassembly = @import("sh4_disassembly.zig");
+
+const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const SR = packed struct(u32) {
     t: bool = undefined, // True/False condition or carry/borrow bit.
@@ -351,7 +354,7 @@ pub const SH4 = struct {
     }
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
-        std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).ora == 1);
+        std.debug.assert(self.read_p4_register(P4.CCR, .CCR).ora == 1);
         std.debug.assert(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF);
 
         // NOTE: The operand cache as RAM (8K) is split into two 4K areas and the correct addressing changes depending on the CCR.OIX bit.
@@ -364,15 +367,15 @@ pub const SH4 = struct {
                 // We can't easily assert for the CCR.OIX == 0 case since there are many contiguous ranges, and in practice most adresses can be
                 // used in a contiguous manner. Only the first and last 4K area cannot.
                 // Ranges like 0x7C003000-0x7C004FFF (Area 2 then Area 1) are not contiguous, but won't repeat, so they **might** be fine?...
-                std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 1 or (virtual_addr >= 0x7C001000 and virtual_addr <= 0x7FFFF000));
+                std.debug.assert(self.read_p4_register(P4.CCR, .CCR).oix == 1 or (virtual_addr >= 0x7C001000 and virtual_addr <= 0x7FFFF000));
                 // This checks the only contiguous range when CCR.OIX = 1.
-                std.debug.assert(self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 0 or (virtual_addr >= 0x7DFFF000 and virtual_addr <= 0x7E000FFF));
+                std.debug.assert(self.read_p4_register(P4.CCR, .CCR).oix == 0 or (virtual_addr >= 0x7DFFF000 and virtual_addr <= 0x7E000FFF));
             }
 
             return @alignCast(@ptrCast(&self._operand_cache[virtual_addr & 0x3FFF]));
         } else {
             // Correct addressing, in case we end up needing it.
-            if (self.read_p4_register(MemoryRegisters.CCR, .CCR).oix == 0) {
+            if (self.read_p4_register(P4.CCR, .CCR).oix == 0) {
                 // 0x7C00_0000 - 0x7C00_0FFF : RAM Area 1
                 // 0x7C00_1000 - 0x7C00_1FFF : RAM Area 1
                 // 0x7C00_2000 - 0x7C00_2FFF : RAM Area 2
@@ -391,11 +394,11 @@ pub const SH4 = struct {
         }
     }
 
-    pub inline fn read_p4_register(self: *const @This(), comptime T: type, r: P4MemoryRegister) T {
+    pub inline fn read_p4_register(self: *const @This(), comptime T: type, r: P4Register) T {
         return @constCast(self).p4_register_addr(T, @intFromEnum(r)).*;
     }
 
-    pub inline fn p4_register(self: *@This(), comptime T: type, r: P4MemoryRegister) *T {
+    pub inline fn p4_register(self: *@This(), comptime T: type, r: P4Register) *T {
         return self.p4_register_addr(T, @intFromEnum(r));
     }
 
@@ -463,7 +466,7 @@ pub const SH4 = struct {
 
         const offset = 0x600; // TODO
         const UserBreak = false; // TODO
-        if (self.dc.read_p4_register(MemoryRegisters.BRCR, .BRCR).ubde == 1 and UserBreak) {
+        if (self.dc.read_p4_register(HardwareRegisters.BRCR, .BRCR).ubde == 1 and UserBreak) {
             self.pc = self.dbr;
         } else {
             self.pc = self.vbr + offset;
@@ -550,15 +553,15 @@ pub const SH4 = struct {
         // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
         // into TCNT, and the count-down continues (auto-reload function).
         const timers = .{
-            .{ .counter = P4MemoryRegister.TCNT0, .control = P4MemoryRegister.TCR0, .constant = P4MemoryRegister.TCOR0, .interrupt = Interrupt.TUNI0 },
-            .{ .counter = P4MemoryRegister.TCNT1, .control = P4MemoryRegister.TCR1, .constant = P4MemoryRegister.TCOR1, .interrupt = Interrupt.TUNI1 },
-            .{ .counter = P4MemoryRegister.TCNT2, .control = P4MemoryRegister.TCR2, .constant = P4MemoryRegister.TCOR2, .interrupt = Interrupt.TUNI2 },
+            .{ .counter = P4Register.TCNT0, .control = P4Register.TCR0, .constant = P4Register.TCOR0, .interrupt = Interrupt.TUNI0 },
+            .{ .counter = P4Register.TCNT1, .control = P4Register.TCR1, .constant = P4Register.TCOR1, .interrupt = Interrupt.TUNI1 },
+            .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2, .interrupt = Interrupt.TUNI2 },
         };
 
         inline for (0..3) |i| {
             if ((TSTR >> @intCast(i)) & 0x1 == 1) {
                 const tcnt = self.p4_register(u32, timers[i].counter);
-                const tcr = self.p4_register(MemoryRegisters.TCR, timers[i].control);
+                const tcr = self.p4_register(P4.TCR, timers[i].control);
 
                 self.timer_cycle_counter[i] += cycles;
 
@@ -618,7 +621,7 @@ pub const SH4 = struct {
     pub fn start_dmac(self: *@This(), channel: u32) void {
         std.debug.assert(channel == 2); // TODO: Implement others? It is needed?
 
-        const chcr = self.read_p4_register(MemoryRegisters.CHCR, .CHCR2);
+        const chcr = self.read_p4_register(P4.CHCR, .CHCR2);
 
         sh4_log.debug(" CHCR: {any}", .{chcr});
 
@@ -700,7 +703,7 @@ pub const SH4 = struct {
         self.p4_register(u32, .SAR2).* += len;
         self.p4_register(u32, .DAR2).* += len;
         self.p4_register(u32, .DMATCR2).* = 0;
-        self.p4_register(MemoryRegisters.CHCR, .CHCR2).*.te = 1;
+        self.p4_register(P4.CHCR, .CHCR2).*.te = 1;
     }
 
     fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
@@ -848,7 +851,7 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
-                    sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
+                    sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
@@ -861,7 +864,7 @@ pub const SH4 = struct {
             if (addr >= 0x005F7000 and addr <= 0x005F709C) {
                 return self._dc.?.gdrom.read_register(u8, addr);
             } else {
-                sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, MemoryRegisters.getRegisterName(addr) });
+                sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, P4.getP4RegisterName(addr) });
             }
         }
 
@@ -876,7 +879,7 @@ pub const SH4 = struct {
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
-                @intFromEnum(P4MemoryRegister.RFCR) => {
+                @intFromEnum(P4Register.RFCR) => {
                     // Hack: This is the Refresh Count Register, related to DRAM control.
                     //       If don't think its proper emulation is needed, but it's accessed by the bios,
                     //       probably for synchronization purposes. I assume returning a contant value to pass this check
@@ -885,7 +888,7 @@ pub const SH4 = struct {
                     return 0x0011;
                     // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                 },
-                @intFromEnum(P4MemoryRegister.PDTRA) => {
+                @intFromEnum(P4Register.PDTRA) => {
                     // Note: I have absolutely no idea what's going on here.
                     //       This is directly taken from Flycast, which already got it from Chankast.
                     //       This is needed for the bios to work properly, without it, it will
@@ -913,14 +916,14 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                @intFromEnum(P4MemoryRegister.PMCR1) => {
+                @intFromEnum(P4Register.PMCR1) => {
                     return 0;
                 },
-                @intFromEnum(P4MemoryRegister.PMCR2) => {
+                @intFromEnum(P4Register.PMCR2) => {
                     return 0;
                 },
                 else => {
-                    sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
+                    sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
                         @constCast(&self)._get_memory(addr),
                     ))).* });
                 },
@@ -933,7 +936,7 @@ pub const SH4 = struct {
             if (addr >= 0x005F7000 and addr <= 0x005F709C) {
                 return self._dc.?.gdrom.read_register(u16, addr);
             } else {
-                sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, MemoryRegisters.getRegisterName(virtual_addr) });
+                sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, P4.getP4RegisterName(virtual_addr) });
             }
         }
         if (addr >= 0x00710000 and addr <= 0x00710008) {
@@ -954,7 +957,7 @@ pub const SH4 = struct {
 
         switch (virtual_addr) {
             0xFF000000...0xFFFFFFFF => {
-                sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
+                sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
                     @constCast(&self)._get_memory(addr),
                 ))).* });
             },
@@ -967,7 +970,7 @@ pub const SH4 = struct {
         switch (addr) {
             0x005F6800...0x005F7FFF => {
                 switch (addr) {
-                    @intFromEnum(MemoryRegister.SB_ADSUSP), @intFromEnum(MemoryRegister.SB_E1SUSP), @intFromEnum(MemoryRegister.SB_E2SUSP), @intFromEnum(MemoryRegister.SB_DDSUSP) => {
+                    @intFromEnum(HardwareRegister.SB_ADSUSP), @intFromEnum(HardwareRegister.SB_E1SUSP), @intFromEnum(HardwareRegister.SB_E2SUSP), @intFromEnum(HardwareRegister.SB_DDSUSP) => {
                         // DMA status, always report transfer possible and not in progress.
                         //    Bit 5: DMA Request Input State
                         //      0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
@@ -975,13 +978,13 @@ pub const SH4 = struct {
                         //    Bit 4: DMA Suspend or DMA Stop
                         //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
                         //      1: DMA transfer has ended, or is stopped due to a suspen
-                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(&self)._get_memory(addr),
                         ))).* });
                         return 0x30;
                     },
                     else => {
-                        sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                        sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(&self)._get_memory(addr),
                         ))).* });
                     },
@@ -1034,17 +1037,17 @@ pub const SH4 = struct {
                     // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
                     return;
                 },
-                @intFromEnum(P4MemoryRegister.SCFTDR2) => {
+                @intFromEnum(P4Register.SCFTDR2) => {
                     sh4_log.warn(termcolor.yellow("Write8 to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
                     // Immediately mark transfer as complete.
                     //   Or rather, attempts to, this is not enough.
-                    const SCFSR2 = self.p4_register(MemoryRegisters.SCFSR2, .SCFSR2);
+                    const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
                     SCFSR2.*.tend = 1;
                     // FIXME: The serial interface is not implemented at all.
                     return;
                 },
                 else => {
-                    sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                 },
             }
         } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
@@ -1060,7 +1063,7 @@ pub const SH4 = struct {
                     return self._dc.?.gdrom.write_register(u8, addr, value);
                 },
                 else => {
-                    sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, P4.getP4RegisterName(addr), value });
                 },
             }
         }
@@ -1080,33 +1083,33 @@ pub const SH4 = struct {
 
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
-                @intFromEnum(P4MemoryRegister.RTCSR), @intFromEnum(P4MemoryRegister.RTCNT), @intFromEnum(P4MemoryRegister.RTCOR) => {
+                @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
                     std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                     self.p4_register_addr(u16, addr).* = (value & 0xFF);
                     return;
                 },
-                @intFromEnum(P4MemoryRegister.RFCR) => {
+                @intFromEnum(P4Register.RFCR) => {
                     std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                     self.p4_register_addr(u16, addr).* = (value & 0b11_11111111);
                     return;
                 },
                 // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                @intFromEnum(P4MemoryRegister.PMCR1) => {
+                @intFromEnum(P4Register.PMCR1) => {
                     sh4_log.warn("Write to non implemented P4 register PMCR1: {X:0>4}.", .{value});
                     return;
                 },
-                @intFromEnum(P4MemoryRegister.PMCR2) => {
+                @intFromEnum(P4Register.PMCR2) => {
                     sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
                     return;
                 },
                 // Serial Interface
-                @intFromEnum(P4MemoryRegister.SCFSR2) => {
+                @intFromEnum(P4Register.SCFSR2) => {
                     // Writable bits can only be cleared.
                     self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                     return;
                 },
                 else => {
-                    sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                    sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                 },
             }
         } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
@@ -1120,7 +1123,7 @@ pub const SH4 = struct {
                     return self._dc.?.gdrom.write_register(u16, addr, value);
                 },
                 else => {
-                    sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                    sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, P4.getP4RegisterName(addr), value });
                 },
             }
         }
@@ -1149,7 +1152,7 @@ pub const SH4 = struct {
             if (virtual_addr >= 0xFF000000) {
                 switch (virtual_addr) {
                     else => {
-                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, MemoryRegisters.getP4RegisterName(virtual_addr), value });
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                     },
                 }
             }
@@ -1161,7 +1164,7 @@ pub const SH4 = struct {
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
             0x005F6800...0x005F7FFF => {
-                const reg: MemoryRegister = @enumFromInt(addr);
+                const reg: HardwareRegister = @enumFromInt(addr);
                 // Hardware registers
                 switch (reg) {
                     .SB_SFRES => {
@@ -1223,7 +1226,7 @@ pub const SH4 = struct {
                         return;
                     },
                     else => {
-                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, MemoryRegisters.getRegisterName(addr), value });
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), value });
                     },
                 }
             },
@@ -1264,10 +1267,10 @@ pub const SH4 = struct {
     // NOTE: This is dead code, the MMU is not emulated and utlb_entries are not in this struct anymore (reducing the size of the struct helps a lot with performance).
 
     pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
-        const asid = self.dc.read_p4_register(mmu.PTEH, MemoryRegister.PTEH).asid;
+        const asid = self.dc.read_p4_register(mmu.PTEH, HardwareRegister.PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        const shared_access = self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).sv == 0 or self.sr.md == 0;
+        const shared_access = self.dc.read_p4_register(mmu.MMUCR, HardwareRegister.MMUCR).sv == 0 or self.sr.md == 0;
         var found: ?mmu.UTLBEntry = null;
         for (self.utlb_entries) |entry| {
             if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
@@ -1285,7 +1288,7 @@ pub const SH4 = struct {
 
     pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
         std.debug.assert(virtual_addr & 0xE0000000 == 0 or virtual_addr & 0xE0000000 == 0x60000000);
-        if (self.dc.read_p4_register(mmu.MMUCR, MemoryRegister.MMUCR).at == 0) return virtual_addr;
+        if (self.dc.read_p4_register(mmu.MMUCR, HardwareRegister.MMUCR).at == 0) return virtual_addr;
 
         const entry = try mmu_utlb_match(self, virtual_addr);
 

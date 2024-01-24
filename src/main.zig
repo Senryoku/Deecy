@@ -5,9 +5,9 @@ const common = @import("./common.zig");
 const arm7 = @import("arm7");
 const termcolor = @import("./termcolor.zig");
 const sh4 = @import("./sh4.zig");
+const P4Register = sh4.P4Register;
 const sh4_disassembly = @import("./sh4_disassembly.zig");
-const MemoryRegisters = @import("./MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
+const HardwareRegisters = @import("./hardware_registers.zig");
 const Dreamcast = @import("./dreamcast.zig").Dreamcast;
 const GDI = @import("./gdi.zig").GDI;
 const Holly = @import("./holly.zig");
@@ -325,14 +325,14 @@ pub fn main() !void {
                 }
 
                 const timers = .{
-                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT0, .control = MemoryRegisters.P4MemoryRegister.TCR0, .constant = MemoryRegisters.P4MemoryRegister.TCOR0 },
-                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT1, .control = MemoryRegisters.P4MemoryRegister.TCR1, .constant = MemoryRegisters.P4MemoryRegister.TCOR1 },
-                    .{ .counter = MemoryRegisters.P4MemoryRegister.TCNT2, .control = MemoryRegisters.P4MemoryRegister.TCR2, .constant = MemoryRegisters.P4MemoryRegister.TCOR2 },
+                    .{ .counter = P4Register.TCNT0, .control = P4Register.TCR0, .constant = P4Register.TCOR0 },
+                    .{ .counter = P4Register.TCNT1, .control = P4Register.TCR1, .constant = P4Register.TCOR1 },
+                    .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2 },
                 };
                 const TSTR = dc.cpu.read_p4_register(u32, .TSTR);
                 inline for (0..3) |i| {
                     zgui.beginGroup();
-                    const control = dc.cpu.read_p4_register(MemoryRegisters.TCR, timers[i].control);
+                    const control = dc.cpu.read_p4_register(sh4.P4.TCR, timers[i].control);
                     zgui.text("Timer {d:0>1}: Enabled: {any}", .{ i, ((TSTR >> i) & 1) == 1 });
                     zgui.text("  0x{X:0>8}/0x{X:0>8}", .{ dc.cpu.read_p4_register(u32, timers[i].counter), dc.cpu.read_p4_register(u32, timers[i].constant) });
                     zgui.text("  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} ICPE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.icpe, control.unf });

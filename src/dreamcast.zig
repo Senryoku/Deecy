@@ -4,9 +4,8 @@ const common = @import("common.zig");
 const addr_t = common.addr_t;
 const termcolor = @import("termcolor.zig");
 
-const MemoryRegisters = @import("MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
-const P4MemoryRegister = MemoryRegisters.P4MemoryRegister;
+const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
@@ -230,10 +229,10 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
     }
 
-    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: MemoryRegister) T {
+    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
         return @constCast(self).hw_register_addr(T, @intFromEnum(r)).*;
     }
-    pub inline fn hw_register(self: *@This(), comptime T: type, r: MemoryRegister) *T {
+    pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
     pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
@@ -277,15 +276,15 @@ pub const Dreamcast = struct {
 
     // TODO: Add helpers for external interrupts and errors.
 
-    pub fn raise_normal_interrupt(self: *@This(), int: MemoryRegisters.SB_ISTNRM) void {
+    pub fn raise_normal_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM) void {
         self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
 
         self.check_sb_interrupts();
     }
 
-    pub fn raise_external_interrupt(self: *@This(), int: MemoryRegisters.SB_ISTEXT) void {
+    pub fn raise_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
         self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
-        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(MemoryRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
 
         self.check_sb_interrupts();
     }

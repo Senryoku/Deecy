@@ -4,8 +4,8 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const holly_log = std.log.scoped(.holly);
 
-const MemoryRegisters = @import("MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
+const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const termcolor = @import("termcolor.zig");
 
@@ -1005,7 +1005,7 @@ pub const DisplayList = struct {
 
 const ScheduledInterrupt = struct {
     cycles: u32,
-    int: MemoryRegisters.SB_ISTNRM,
+    int: HardwareRegisters.SB_ISTNRM,
 };
 
 pub const Holly = struct {
@@ -1171,7 +1171,7 @@ pub const Holly = struct {
         }
     }
 
-    pub fn schedule_interrupt(self: *@This(), cycles: u32, int: MemoryRegisters.SB_ISTNRM) void {
+    pub fn schedule_interrupt(self: *@This(), cycles: u32, int: HardwareRegisters.SB_ISTNRM) void {
         self._scheduled_interrupts.appendAssumeCapacity(.{ .cycles = cycles, .int = int });
     }
 

@@ -7,8 +7,8 @@ const GDI = @import("gdi.zig").GDI;
 const SH4 = @import("sh4.zig").SH4;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
-const MemoryRegisters = @import("MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
+const HardwareRegisters = @import("hardware_registers.zig");
+const MemoryRegister = HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
 

@@ -1,8 +1,8 @@
 const std = @import("std");
 const termcolor = @import("termcolor.zig");
 
-const MemoryRegisters = @import("MemoryRegisters.zig");
-const MemoryRegister = MemoryRegisters.MemoryRegister;
+const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
@@ -221,7 +221,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
         5 => {
             // DMA END?
             std.log.debug("  GDROM_DMA_END (R7={d})", .{dc.cpu.R(7).*});
-            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_ISTNRM), @bitCast(MemoryRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
+            dc.cpu.write32(@intFromEnum(HardwareRegister.SB_ISTNRM), @bitCast(HardwareRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
             dc.cpu.R(0).* = 0;
         },
         9 => {
@@ -258,8 +258,8 @@ pub fn syscall_misc(dc: *Dreamcast) void {
     switch (dc.cpu.R(4).*) {
         0 => {
             // Normal Init
-            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
-            dc.cpu.write32(@intFromEnum(MemoryRegister.SB_IML2NRM), 0);
+            dc.cpu.write32(@intFromEnum(HardwareRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
+            dc.cpu.write32(@intFromEnum(HardwareRegister.SB_IML2NRM), 0);
             dc.cpu.R(0).* = 0x00C0BEBC;
             dc.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC;
         },
