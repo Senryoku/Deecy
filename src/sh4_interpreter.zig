@@ -674,7 +674,7 @@ pub fn xorImmR0(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
-    const tmp = !((cpu.R(opcode.nmd.n).* & 0x80000000) == 0);
+    const tmp = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
     cpu.R(opcode.nmd.n).* <<= 1;
     if (cpu.sr.t) {
         cpu.R(opcode.nmd.n).* |= 0x00000001;
@@ -777,7 +777,7 @@ test "rotcr" {
 }
 
 pub fn rotl_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
     cpu.R(opcode.nmd.n).* = std.math.rotl(u32, cpu.R(opcode.nmd.n).*, 1);
 }
 pub fn rotr_Rn(cpu: *SH4, opcode: Instr) void {
@@ -814,7 +814,7 @@ pub fn shal_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn shar_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 1) == 1);
 
-    const tmp = !((cpu.R(opcode.nmd.n).* & 0x80000000) == 0);
+    const tmp = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
 
     cpu.R(opcode.nmd.n).* >>= 1;
 
@@ -836,7 +836,7 @@ pub fn shld_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 pub fn shll(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = !((cpu.R(opcode.nmd.n).* & 0x80000000) == 0);
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
     cpu.R(opcode.nmd.n).* <<= 1;
 }
 pub fn shll2(cpu: *SH4, opcode: Instr) void {
