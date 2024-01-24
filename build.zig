@@ -1,10 +1,5 @@
 const std = @import("std");
 
-const zgui = @import("libs/zig-gamedev/libs/zgui/build.zig");
-const zglfw = @import("libs/zig-gamedev/libs/zglfw/build.zig");
-const zgpu = @import("libs/zig-gamedev/libs/zgpu/build.zig");
-const zpool = @import("libs/zig-gamedev/libs/zpool/build.zig");
-
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
@@ -21,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // FIXME: This should be exported by the arm7 build script, probably.
-    const arm7_module = b.createModule(.{ .source_file = .{ .path = "libs/arm7/src/arm7.zig" } });
+    const arm7_module = b.createModule(.{ .root_source_file = .{ .path = "libs/arm7/src/arm7.zig" } });
 
     const exe = b.addExecutable(.{
         .name = "Katana",
@@ -31,22 +26,23 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    exe.addModule("arm7", arm7_module);
 
-    const zgui_pkg = zgui.package(b, target, optimize, .{
-        .options = .{ .backend = .glfw_wgpu },
+    // FIXME: No idea why the default exported packages are not populated correctly, the samples works fine.
+    const zglfw_pkg = @import("zglfw").package(b, target, optimize, .{});
+    const zpool_pkg = @import("zpool").package(b, target, optimize, .{});
+    const zgpu_pkg = @import("zgpu").package(b, target, optimize, .{
+        .options = .{},
+        .deps = .{ .zpool = zpool_pkg, .zglfw = zglfw_pkg },
     });
-
-    zgui_pkg.link(exe);
-
-    const zglfw_pkg = zglfw.package(b, target, optimize, .{});
-    const zpool_pkg = zpool.package(b, target, optimize, .{});
-    const zgpu_pkg = zgpu.package(b, target, optimize, .{
-        .deps = .{ .zpool = zpool_pkg.zpool, .zglfw = zglfw_pkg.zglfw },
+    const zgui_pkg = @import("zgui").package(b, target, optimize, .{
+        .options = .{ .backend = .glfw_wgpu },
     });
 
     zglfw_pkg.link(exe);
     zgpu_pkg.link(exe);
+    zgui_pkg.link(exe);
+
+    exe.root_module.addImport("arm7", arm7_module);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -84,7 +80,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
-    interpreter_perf.addModule("arm7", arm7_module);
+    interpreter_perf.root_module.addImport("arm7", arm7_module);
     const run_perf_tests = b.addRunArtifact(interpreter_perf);
     const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
     interpreter_perf_step.dependOn(&run_perf_tests.step);
@@ -97,7 +93,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
-    jit_perf.addModule("arm7", arm7_module);
+    jit_perf.root_module.addImport("arm7", arm7_module);
     const run_jit_perf_tests = b.addRunArtifact(jit_perf);
     const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
     jit_perf_step.dependOn(&run_jit_perf_tests.step);
@@ -121,7 +117,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    unit_tests.addModule("arm7", arm7_module);
+    unit_tests.root_module.addImport("arm7", arm7_module);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
