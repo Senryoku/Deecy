@@ -8,7 +8,7 @@ const SH4 = @import("sh4.zig").SH4;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const HardwareRegisters = @import("hardware_registers.zig");
-const MemoryRegister = HardwareRegisters.HardwareRegister;
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
 
@@ -208,7 +208,7 @@ pub const GDROM = struct {
 
     pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
-        switch (@as(MemoryRegister, @enumFromInt(addr))) {
+        switch (@as(HardwareRegister, @enumFromInt(addr))) {
             .GD_AlternateStatus_DeviceControl => {
                 gdrom_log.debug("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
@@ -280,7 +280,7 @@ pub const GDROM = struct {
 
     pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
-        switch (@as(MemoryRegister, @enumFromInt(addr))) {
+        switch (@as(HardwareRegister, @enumFromInt(addr))) {
             .GD_Status_Command => {
                 self.status_register.check = 0;
                 self.error_register = .{};

@@ -147,6 +147,18 @@ pub fn main() !void {
         @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
         @memcpy(first_read[name_end .. name_end + 2], ";1");
         syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]) + 2047) / 2048;
+
+        // FIXME: Hacks.
+        // NOPs for DC Checker, skips serial check
+
+        // dc.cpu.write16(0x0C0196DA, 0x9);
+        // dc.cpu.write16(0x0C0196EC, 0x9);
+
+        // DC CHECKER for Repair v2.050
+        if (std.mem.count(u8, gdi_path.?, "DC CHECKER for Repair v2.050") > 0) {
+            dc.cpu.write16(0x0C018F54, 0x9);
+            dc.cpu.write16(0x0C018F42, 0x9);
+        }
     } else {
         if (skip_bios) {
             // Boot to menu
@@ -155,15 +167,6 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     }
-
-    // NOPs for DC Checker, skips serial check
-
-    // dc.cpu.write16(0x0C0196DA, 0x9);
-    // dc.cpu.write16(0x0C0196EC, 0x9);
-
-    // DC CHECKER for Repair v2.050
-    dc.cpu.write16(0x0C018F54, 0x9);
-    dc.cpu.write16(0x0C018F42, 0x9);
 
     try zglfw.init();
     defer zglfw.terminate();

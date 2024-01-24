@@ -19,7 +19,6 @@ const Interrupt = Interrupts.Interrupt;
 const addr_t = common.addr_t;
 
 const sh4_instructions = @import("sh4_instructions.zig");
-const init_jump_table = sh4_instructions.init_jump_table;
 const sh4_disassembly = @import("sh4_disassembly.zig");
 
 const HardwareRegisters = @import("hardware_registers.zig");
@@ -175,7 +174,7 @@ pub const SH4 = struct {
         //   I ignore them in read16/write16.
         sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
 
-        init_jump_table();
+        sh4_instructions.init_jump_table();
 
         sh4.reset();
 
