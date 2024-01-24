@@ -836,7 +836,7 @@ pub fn shld_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 pub fn shll(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) == 1);
+    cpu.sr.t = !((cpu.R(opcode.nmd.n).* & 0x80000000) == 0);
     cpu.R(opcode.nmd.n).* <<= 1;
 }
 pub fn shll2(cpu: *SH4, opcode: Instr) void {
