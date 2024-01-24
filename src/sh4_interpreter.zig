@@ -786,18 +786,19 @@ pub fn rotr_Rn(cpu: *SH4, opcode: Instr) void {
 }
 // Arithmetically shifts the contents of general register Rn. General register Rm specifies the shift direction and the number of bits to be shifted.
 pub fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    const sign = cpu.R(opcode.nmd.m).* & 0x80000000;
+    const shift = cpu.R(opcode.nmd.m).*;
+    const sign = shift & 0x80000000;
 
     if (sign == 0) {
-        cpu.R(opcode.nmd.n).* <<= @intCast(cpu.R(opcode.nmd.m).* & 0x1F);
-    } else if (cpu.R(opcode.nmd.m).* & 0x1F == 0) {
+        cpu.R(opcode.nmd.n).* <<= @intCast(shift & 0x1F);
+    } else if (shift & 0x1F == 0) {
         if (cpu.R(opcode.nmd.n).* & 0x80000000 == 0) {
             cpu.R(opcode.nmd.n).* = 0;
         } else {
             cpu.R(opcode.nmd.n).* = 0xFFFFFFFF;
         }
     } else {
-        cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.n).* >> @intCast((~cpu.R(opcode.nmd.m).* & 0x1F) + 1);
+        cpu.R(opcode.nmd.n).* >>= @intCast(((~shift) & 0x1F) + 1);
     }
 }
 pub fn shal_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1401,6 +1402,36 @@ pub fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
+const FloatType = enum {
+    SignalingNaN,
+    QuietNaN,
+    PositiveInfinity,
+    PositiveNormalized,
+    PositiveDenormalized,
+    PositiveZero,
+    NegativeZero,
+    NegativeDenormalized,
+    NegativeNormalized,
+    NegativeInfinity,
+};
+
+pub fn data_type_of(f: f32) FloatType {
+    return switch (@as(u32, @bitCast(f))) {
+        0x7FFFFFFF...0x7FC00000 => .SignalingNaN,
+        0x7FBFFFFF...0x7F800001 => .QuietNaN,
+        0x7F800000 => .PositiveInfinity,
+        0x7F7FFFFF...0x00800000 => .PositiveNormalized,
+        0x007FFFFF...0x00000001 => .PositiveDenormalized,
+        0x00000000 => .PositiveZero,
+        0x80000000 => .NegativeZero,
+        0x80000001...0x807FFFFF => .NegativeDenormalized,
+        0x80800000...0xFF7FFFFF => .NegativeNormalized,
+        0xFF800000 => .NegativeInfinity,
+        0xFF800001...0xFFBFFFFF => .QuietNaN,
+        0xFFC00000...0xFFFFFFFF => .SignalingNaN,
+    };
+}
+
 pub fn fldi0_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.pr == 1) @panic("Illegal instruction");
     cpu.FR(opcode.nmd.n).* = 0.0;
@@ -1490,10 +1521,18 @@ pub fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.pr == 0) {
-        cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
+        if (cpu.FR(opcode.nmd.n).* < 0) {
+            cpu.FR(opcode.nmd.n).* = std.math.nan(f32);
+        } else {
+            cpu.FR(opcode.nmd.n).* = @sqrt(cpu.FR(opcode.nmd.n).*);
+        }
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @sqrt(cpu.DR(opcode.nmd.n >> 1).*);
+        if (cpu.DR(opcode.nmd.n >> 1).* < 0) {
+            cpu.DR(opcode.nmd.n >> 1).* = std.math.nan(f64);
+        } else {
+            cpu.DR(opcode.nmd.n >> 1).* = @sqrt(cpu.DR(opcode.nmd.n >> 1).*);
+        }
     }
 }
 pub fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
