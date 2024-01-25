@@ -902,10 +902,10 @@ pub const Renderer = struct {
                                 const pixel_idx = 2 * v * u_size + 2 * u;
                                 const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
                                 const halfwords = [4]u16{
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 0]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 2]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 4]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx + 6]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 0]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 2]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 4]))).*),
+                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 6]))).*),
                                 };
                                 const texels_0_1: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
                                 const texels_2_3: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
