@@ -665,7 +665,12 @@ pub const Renderer = struct {
 
     fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (0..Renderer.MaxTextures[size_index]) |i| {
-            if (self.texture_metadata[size_index][i].status != .Invalid and self.texture_metadata[size_index][i].control_word.address == control_word.address) {
+            if (self.texture_metadata[size_index][i].status != .Invalid and
+                // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
+                //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
+                //       This is pretty wasteful, but I hope this will be okay.
+                @as(u32, @bitCast(self.texture_metadata[size_index][i].control_word)) == @as(u32, @bitCast(control_word)))
+            {
                 return @intCast(i);
             }
         }
@@ -865,8 +870,7 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => {
-                    // FIXME: SoulCalibur has broken 8BPP textures. Looks like it packs multiple textures with different palettes into a single one, maybe?
-                    //        That's kinda weird. Should I add the palette to the cache key?
+                    // FIXME: SoulCalibur has broken 8BPP textures. Not sure why yet.
 
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     // NOTE: I'm not sure if this is garanteed to still be correct, I might have to check it when the palette is set (when the program writes to PALETTE_RAM).
