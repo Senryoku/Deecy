@@ -37,6 +37,13 @@ pub const YUV422 = packed struct(u32) {
     y1: u8,
 };
 
+pub const YUV420 = packed struct(u32) {
+    u: u8,
+    y0: u8,
+    v: u8,
+    y1: u8,
+};
+
 pub const RGBA = packed struct(u32) {
     a: u8,
     b: u8,
@@ -278,6 +285,17 @@ pub const TA_ALLOC_CTRL = packed struct(u32) {
     _r4: u2,
     OPB_Mode: u1,
     _r5: u15,
+};
+
+pub const TA_YUV_TEX_CTRL = packed struct(u32) {
+    u_size: u6, // Actual size in pixels is 16 * (u_size + 1)
+    _r0: u2,
+    v_size: u6,
+    _r1: u2,
+    tex: u1, // 0: One texture of [(YUV_U_Size + 1) * 16] pixels (H) × [(YUV_V_Size + 1) * 16] pixels (V) ; 1 : [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of 16 texels (H) × 16 texels (V)
+    _r2: u7,
+    format: u1, // 0: YUV420, 1: YUV422
+    _r3: u7,
 };
 
 pub const ParameterType = enum(u3) {
@@ -1474,10 +1492,51 @@ pub const Holly = struct {
         }
     }
 
-    pub fn ta_fifo_yuv_converter_path(self: *@This()) void {
-        _ = self;
-        holly_log.err(termcolor.red("  Unimplemented ta_fifo_yuv_converter_path"), .{});
-        @panic("Unimplemented ta_fifo_yuv_converter_path");
+    pub fn ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
+        const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
+        const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
+        holly_log.info("ta_fifo_yuv_converter_path: tex_base={X:0>8}, data.len={X:0>8}\n    ctrl={any}", .{ data.len, tex_base, ctrl });
+        if (ctrl.format == 0) {
+            if (ctrl.tex == 0) {
+                var addr = tex_base;
+                var offset: u32 = 0;
+                for (0..ctrl.v_size + 1) |v| {
+                    _ = v;
+
+                    for (0..ctrl.u_size + 1) |u| {
+                        _ = u;
+
+                        //var pixels: [8 * 16]YUV420 = undefined;
+                        // FIXME: Should not copy directly, but convert it to YUV422
+                        var pixels: [*]YUV420 = @alignCast(@ptrCast(&self.vram[addr]));
+                        for (0..8 * 8) |i| {
+                            pixels[2 * i].u = data[offset + i];
+                            pixels[2 * i + 1].u = data[offset + i];
+                        }
+                        offset += 8 * 8;
+                        for (0..8 * 8) |i| {
+                            pixels[2 * i].v = data[offset + i];
+                            pixels[2 * i + 1].v = data[offset + i];
+                        }
+                        offset += 8 * 8;
+                        for (0..8 * 16) |idx| {
+                            // FIXME: This is wrong, Y value are arranged in 8*8 blocks
+                            pixels[idx].y0 = data[offset];
+                            pixels[idx].y1 = data[offset + 1];
+                            offset += 2;
+                        }
+
+                        addr += 8 * 16 * @sizeOf(YUV420);
+                    }
+                }
+                // FIXME: Delay is arbitrary.
+                self.schedule_interrupt(200, .{ .EoT_YUV = 1 });
+            } else {
+                @panic("ta_fifo_yuv_converter_path: Unimplemented tex=1");
+            }
+        } else {
+            @panic("ta_fifo_yuv_converter_path: Unimplemented format");
+        }
     }
 
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {

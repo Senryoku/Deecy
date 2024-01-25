@@ -674,7 +674,8 @@ pub const SH4 = struct {
             }
             // YUV Converter Path
             if (dst_addr >= 0x10800000 and dst_addr < 0x11000000 or dst_addr >= 0x12800000 and dst_addr < 0x13000000) {
-                self._dc.?.gpu.ta_fifo_yuv_converter_path();
+                var src: [*]u8 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                self._dc.?.gpu.ta_fifo_yuv_converter_path(src[0..byte_len]);
             }
             // Direct Texture Path
             if (dst_addr >= 0x11000000 and dst_addr < 0x12000000 or dst_addr >= 0x13000000 and dst_addr < 0x14000000) {
