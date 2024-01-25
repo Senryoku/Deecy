@@ -893,20 +893,11 @@ pub const Renderer = struct {
                 },
                 .YUV422 => {
                     if (twiddled) {
-                        // FIXME: Given the data arangement suggested by the docs, I suspect I'll have to process 2x2 blocks in the twiddled case.
-                        //        Still completely wrong, but at least it shouldn't crash because of alignment issues.
-                        //     bit    63-48       47-32       31-16       15-0
-                        //          Y1V (1,1)   Y1V (1,0)   Y0U (0,1)   Y0U (0,0)
                         for (0..v_size / 2) |v| {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = 2 * v * u_size + 2 * u;
                                 const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                                const halfwords = [4]u16{
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 0]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 2]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 4]))).*),
-                                    @bitCast(@as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx + 6]))).*),
-                                };
+                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx])))[0..4];
                                 const texels_0_1: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
                                 const texels_2_3: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
                                 const colors_0 = HollyModule.yuv_to_rgba(texels_0_1);
