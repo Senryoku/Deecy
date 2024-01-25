@@ -151,9 +151,10 @@ pub fn main() !void {
 
         // FIXME: Hacks.
         // NOPs for DC Checker, skips serial check
-
-        // dc.cpu.write16(0x0C0196DA, 0x9);
-        // dc.cpu.write16(0x0C0196EC, 0x9);
+        if (std.mem.count(u8, gdi_path.?, "Loop Checker version 1.00") > 0) {
+            dc.cpu.write16(0x0C0196DA, 0x9);
+            dc.cpu.write16(0x0C0196EC, 0x9);
+        }
 
         // DC CHECKER for Repair v2.050
         if (std.mem.count(u8, gdi_path.?, "DC CHECKER for Repair v2.050") > 0) {
