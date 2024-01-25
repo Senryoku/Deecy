@@ -336,7 +336,8 @@ pub const AICA = struct {
     pub fn read32_from_arm(self: *const AICA, addr: u32) u32 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
-            return 0;
+            @panic("AICA read32 from ARM out of bounds address");
+            //return 0;
         }
         return self.read_register(u32, addr);
     }

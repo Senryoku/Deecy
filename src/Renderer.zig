@@ -88,23 +88,31 @@ fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipma
 const TextureIndex = u32;
 const InvalidTextureIndex = std.math.maxInt(TextureIndex);
 
-const VertexTextureInfo = struct {
+const VertexTextureInfo = packed struct {
     index: TextureIndex,
     shading: ShadingInstructions,
 };
 
-const Vertex = struct {
+const Vertex = packed struct {
     x: f32,
     y: f32,
     z: f32,
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+    base_color: packed struct {
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+    },
+    offset_color: packed struct {
+        r: f32 = 0,
+        g: f32 = 0,
+        b: f32 = 0,
+        a: f32 = 0,
+    } = .{},
     u: f32 = 0.0,
     v: f32 = 0.0,
     tex: VertexTextureInfo,
-    uv_offset: [2]f32 = .{ 0, 0 },
+    uv_offset: packed struct { u: f32 = 0, v: f32 = 0 } = .{},
 };
 
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
@@ -314,10 +322,11 @@ pub const Renderer = struct {
 
         const vertex_attributes = [_]wgpu.VertexAttribute{
             .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "r"), .shader_location = 1 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 2 },
-            .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 3 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 4 },
+            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
+            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
+            .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
         };
         const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
             .array_stride = @sizeOf(Vertex),
@@ -1193,10 +1202,12 @@ pub const Renderer = struct {
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
                 .z = @bitCast(vp[2]),
-                .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
-                .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
-                .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
-                .a = if (use_alpha) @as(f32, @floatFromInt(base_color.a)) / 255.0 else 1.0,
+                .base_color = .{
+                    .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
+                    .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
+                    .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
+                    .a = if (use_alpha) @as(f32, @floatFromInt(base_color.a)) / 255.0 else 1.0,
+                },
                 .u = u,
                 .v = v,
                 .tex = tex,
@@ -1210,11 +1221,7 @@ pub const Renderer = struct {
             .y = vertices[2].y,
             .z = vertices[2].z,
             // NOTE: I have no idea how the color is computed, looking at the boot menu, this seems right.
-            .r = vertices[2].r,
-            .g = vertices[2].g,
-            .b = vertices[2].b,
-            .a = vertices[2].a,
-
+            .base_color = vertices[2].base_color,
             .u = vertices[2].u,
             .v = vertices[1].v,
             .tex = tex,
@@ -1338,6 +1345,7 @@ pub const Renderer = struct {
                 }
 
                 const use_alpha = tsp_instruction.use_alpha == 1;
+                const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
 
                 const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
                 const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
@@ -1378,10 +1386,12 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                .base_color = .{
+                                    .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
+                                    .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
+                                    .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
+                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                },
                                 .tex = tex,
                             });
                         },
@@ -1393,26 +1403,35 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = v.r,
-                                .g = v.g,
-                                .b = v.b,
-                                .a = if (use_alpha) v.a else 1.0,
+                                .base_color = .{
+                                    .r = v.r,
+                                    .g = v.g,
+                                    .b = v.b,
+                                    .a = if (use_alpha) v.a else 1.0,
+                                },
                                 .tex = tex,
                             });
                         },
                         // Packed Color, Textured 32bit UV
                         .Type3 => |v| {
-                            // TODO: Offset color
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                .base_color = .{
+                                    .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
+                                    .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
+                                    .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
+                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = @as(f32, @floatFromInt(v.offset_color.r)) / 255.0,
+                                    .g = @as(f32, @floatFromInt(v.offset_color.g)) / 255.0,
+                                    .b = @as(f32, @floatFromInt(v.offset_color.b)) / 255.0,
+                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.offset_color.a)) / 255.0 else 1.0,
+                                } else .{},
                                 .u = v.u,
                                 .v = v.v,
                                 .tex = tex,
@@ -1420,15 +1439,22 @@ pub const Renderer = struct {
                         },
                         // Packed Color, Textured 16bit UV
                         .Type4 => |v| {
-                            // TODO: Offset color
                             try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
-                                .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
-                                .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
-                                .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                .base_color = .{
+                                    .r = @as(f32, @floatFromInt(v.base_color.r)) / 255.0,
+                                    .g = @as(f32, @floatFromInt(v.base_color.g)) / 255.0,
+                                    .b = @as(f32, @floatFromInt(v.base_color.b)) / 255.0,
+                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.base_color.a)) / 255.0 else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = @as(f32, @floatFromInt(v.offset_color.r)) / 255.0,
+                                    .g = @as(f32, @floatFromInt(v.offset_color.g)) / 255.0,
+                                    .b = @as(f32, @floatFromInt(v.offset_color.b)) / 255.0,
+                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.offset_color.a)) / 255.0 else 1.0,
+                                } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                                 .tex = tex,
@@ -1436,15 +1462,22 @@ pub const Renderer = struct {
                         },
                         // Floating Color, Textured
                         .Type5 => |v| {
-                            // TODO: Offset color
                             try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = v.base_r,
-                                .g = v.base_g,
-                                .b = v.base_b,
-                                .a = if (use_alpha) v.base_a else 1.0,
+                                .base_color = .{
+                                    .r = v.base_r,
+                                    .g = v.base_g,
+                                    .b = v.base_b,
+                                    .a = if (use_alpha) v.base_a else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = v.offset_r,
+                                    .g = v.offset_g,
+                                    .b = v.offset_b,
+                                    .a = if (use_alpha) v.offset_a else 1.0,
+                                } else .{},
                                 .u = v.u,
                                 .v = v.v,
                                 .tex = tex,
@@ -1456,10 +1489,18 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = v.base_r,
-                                .g = v.base_g,
-                                .b = v.base_b,
-                                .a = if (use_alpha) v.base_a else 1.0,
+                                .base_color = .{
+                                    .r = v.base_r,
+                                    .g = v.base_g,
+                                    .b = v.base_b,
+                                    .a = if (use_alpha) v.base_a else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = v.offset_r,
+                                    .g = v.offset_g,
+                                    .b = v.offset_b,
+                                    .a = if (use_alpha) v.offset_a else 1.0,
+                                } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                                 .tex = tex,
@@ -1467,22 +1508,30 @@ pub const Renderer = struct {
                         },
                         // Intensity
                         .Type7 => |v| {
-                            // TODO: Offset intensity
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = v.base_intensity * face_color.r,
-                                .g = v.base_intensity * face_color.g,
-                                .b = v.base_intensity * face_color.b,
-                                .a = if (use_alpha) face_color.a else 1.0,
+                                .base_color = .{
+                                    .r = v.base_intensity * face_color.r,
+                                    .g = v.base_intensity * face_color.g,
+                                    .b = v.base_intensity * face_color.b,
+                                    .a = if (use_alpha) face_color.a else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = v.offset_intensity * face_offset_color.r,
+                                    .g = v.offset_intensity * face_offset_color.g,
+                                    .b = v.offset_intensity * face_offset_color.b,
+                                    .a = if (use_alpha) face_offset_color.a else 1.0,
+                                } else .{},
                                 .u = v.u,
                                 .v = v.v,
                                 .tex = tex,
                             });
                         },
+                        // Intensity, 16bit UV
                         .Type8 => |v| {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
@@ -1490,10 +1539,18 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .r = v.base_intensity * face_color.r,
-                                .g = v.base_intensity * face_color.g,
-                                .b = v.base_intensity * face_color.b,
-                                .a = if (use_alpha) face_color.a else 1.0,
+                                .base_color = .{
+                                    .r = v.base_intensity * face_color.r,
+                                    .g = v.base_intensity * face_color.g,
+                                    .b = v.base_intensity * face_color.b,
+                                    .a = if (use_alpha) face_color.a else 1.0,
+                                },
+                                .offset_color = if (use_offset) .{
+                                    .r = v.offset_intensity * face_offset_color.r,
+                                    .g = v.offset_intensity * face_offset_color.g,
+                                    .b = v.offset_intensity * face_offset_color.b,
+                                    .a = if (use_alpha) face_offset_color.a else 1.0,
+                                } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                                 .tex = tex,
@@ -1502,10 +1559,18 @@ pub const Renderer = struct {
                         .SpriteType0, .SpriteType1 => {
                             var vs = gen_sprite_vertices(vertex);
                             for (&vs) |*v| {
-                                v.r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0;
-                                v.g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0;
-                                v.b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0;
-                                v.a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0;
+                                v.base_color.r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0;
+                                v.base_color.g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0;
+                                v.base_color.b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0;
+                                v.base_color.a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0;
+                                // FIXME: This is wrong.
+                                //if (use_offset)
+                                //    v.offset_color = .{
+                                //        .r = @as(f32, @floatFromInt(sprite_offset_color.r)) / 255.0,
+                                //        .g = @as(f32, @floatFromInt(sprite_offset_color.g)) / 255.0,
+                                //        .b = @as(f32, @floatFromInt(sprite_offset_color.b)) / 255.0,
+                                //        .a = if (use_alpha) @as(f32, @floatFromInt(sprite_offset_color.a)) / 255.0 else 1.0,
+                                //    };
                                 v.tex = tex;
                                 self.min_depth = @min(self.min_depth, 1.0 / v.z);
                                 self.max_depth = @max(self.max_depth, 1.0 / v.z);

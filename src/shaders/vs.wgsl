@@ -3,9 +3,10 @@
  
 struct VertexOut {
      @builtin(position) position_clip: vec4<f32>,
-     @location(0) color: vec4<f32>,
-     @location(1) uv: vec2<f32>,
-     @location(2) @interpolate(flat) tex: vec2<u32>,
+     @location(0) base_color: vec4<f32>,
+     @location(1) offset_color: vec4<f32>,
+     @location(2) uv: vec2<f32>,
+     @location(3) @interpolate(flat) tex: vec2<u32>,
  }
 
 fn tex_size(idx: u32) -> f32 {
@@ -25,10 +26,11 @@ fn tex_size(idx: u32) -> f32 {
 @vertex
 fn main(
     @location(0) position: vec3<f32>,
-    @location(1) color: vec4<f32>,
-    @location(2) uv: vec2<f32>,
-    @location(3) tex: vec2<u32>, // Texture index and Texture control word
-    @location(4) uv_offset: vec2<f32>, // TODO
+    @location(1) base_color: vec4<f32>,
+    @location(2) offset_color: vec4<f32>,
+    @location(3) uv: vec2<f32>,
+    @location(4) tex: vec2<u32>, // Texture index and Texture control word
+    @location(5) uv_offset: vec2<f32>, // TODO
 ) -> VertexOut {
     var output: VertexOut;
 
@@ -42,7 +44,8 @@ fn main(
     output.position_clip.z = (1.0 / position.z) / depth_min_max[1]; // Remap to the [0.0..1.0] range used by WGPU
     output.position_clip.w = 1.0;
 
-    output.color = color;
+    output.base_color = base_color;
+    output.offset_color = offset_color;
 
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);

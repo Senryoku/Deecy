@@ -31,14 +31,11 @@ fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
 
 @fragment
 fn main(
-    @location(0) color: vec4<f32>,
-    @location(1) uv: vec2<f32>,
-    @location(2) @interpolate(flat) tex: vec2<u32>,
+    @location(0) base_color: vec4<f32>,
+    @location(1) offset_color: vec4<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) @interpolate(flat) tex: vec2<u32>,
 ) -> @location(0) vec4<f32> {
-
-    // TODO
-    let offset_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-
     let tex_color = tex_sample(uv, tex[1], tex[0]);
 
     if (tex[1] & 1) == 1 {
@@ -54,25 +51,25 @@ fn main(
             }
             // Modulate
             case 1 : {
-                let rgb = color.rgb * tex_color.rgb + offset_color.rgb;
+                let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
                 let a = tex_a;
                 return vec4<f32>(rgb, a);
             }
             // Decal Alpha
             case 2 : {
-                let rgb = tex_a * tex_color.rgb + (1.0 - tex_a) * color.rgb + offset_color.rgb;
-                let a = color.a;
+                let rgb = tex_a * tex_color.rgb + (1.0 - tex_a) * base_color.rgb + offset_color.rgb;
+                let a = base_color.a;
                 return vec4<f32>(rgb, a);
             }
             // Modulate Alpha
             case 3 : {
-                let rgb = color.rgb * tex_color.rgb + offset_color.rgb;
-                let a = color.a * tex_a;
+                let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
+                let a = base_color.a * tex_a;
                 return vec4<f32>(rgb, a);
             }
-            default: { return color; }
+            default: { return base_color + offset_color; }
         }
     }
 
-    return color;
+    return base_color + offset_color;
 }
