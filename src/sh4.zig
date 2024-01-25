@@ -1151,8 +1151,17 @@ pub const SH4 = struct {
             }
             if (virtual_addr >= 0xFF000000) {
                 switch (virtual_addr) {
+                    @intFromEnum(P4Register.CCR) => {
+                        const ccr: P4.CCR = @bitCast(value);
+                        if (ccr.ici == 1) {
+                            // Instruction cache invalidation
+                            // We'll use it as a clue to flush our JIT cache.
+                            sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
+                            self._dc.?.sh4_jit.block_cache.reset();
+                        }
+                    },
                     else => {
-                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
+                        sh4_log.debug("  Write32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                     },
                 }
             }
