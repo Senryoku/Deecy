@@ -236,7 +236,7 @@ pub const AICA = struct {
 
     pub fn write_register(self: *AICA, comptime T: type, addr: u32, value: T) void {
         const local_addr = addr & 0x0000FFFF;
-        aica_log.info("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
+        aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
             .MasterVolume => {
                 aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
@@ -380,7 +380,7 @@ pub const AICA = struct {
                 if (timer.value == 0xFF) {
                     self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
                     if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
-                        aica_log.info("Timer {d} interrupt.", .{i});
+                        aica_log.debug("Timer {d} interrupt.", .{i});
                         if (i == 0) {
                             self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 2) |
                                 (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
@@ -439,9 +439,11 @@ pub const AICA = struct {
         // FIXME: I have no idea how to correctly handle this error case.
         if (aica_addr + len_in_bytes >= 0x00A00000) {
             aica_log.err(termcolor.red("AICA DMA out of bounds! AICA Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ aica_addr, len_in_bytes, aica_addr + len_in_bytes });
+            return;
         }
         if (root_bus_addr + len_in_bytes >= 0x0D000000) {
             aica_log.err(termcolor.red("AICA DMA out of bounds! Root Bus Address: 0x{X:0>8}, length: 0x{X:0>8} => 0x{X:0>8}"), .{ root_bus_addr, len_in_bytes, root_bus_addr + len_in_bytes });
+            return;
         }
 
         const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
