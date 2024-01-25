@@ -865,8 +865,12 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => {
+                    // FIXME: SoulCalibur has broken 8BPP textures. Looks like it packs multiple textures with different palettes into a single one, maybe?
+                    //        That's kinda weird. Should I add the palette to the cache key?
+
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                    const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11; // NOTE: I'm not sure if this is garanteed to still be correct, I might have to check it when the palette is set (when the program writes to PALETTE_RAM).
+                    // NOTE: I'm not sure if this is garanteed to still be correct, I might have to check it when the palette is set (when the program writes to PALETTE_RAM).
+                    const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
                     const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
                     for (0..v_size) |v| {
