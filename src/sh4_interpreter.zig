@@ -1395,14 +1395,26 @@ pub fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
-        @panic("Unimplemented");
+        if (opcode.nmd.n & 0x1 == 0) {
+            // fmov.d	@(R0,Rm),DRn
+            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+        } else {
+            // fmov.d	@(R0,Rm),XDn
+            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+        }
     }
 }
 pub fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
-        @panic("Unimplemented");
+        if (opcode.nmd.n & 0x1 == 0) {
+            // fmov.d	DRm,@(R0,Rn)
+            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+        } else {
+            // fmov.d	XDm,@(R0,Rn)
+            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+        }
     }
 }
 
