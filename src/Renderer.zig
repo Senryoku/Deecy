@@ -230,7 +230,7 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
 }
 
 pub const Renderer = struct {
-    pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 128, 32, 8, 2 }; // Max texture count for each size. FIXME: Not sure what are good values.
+    pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
@@ -879,7 +879,8 @@ pub const Renderer = struct {
 
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     // NOTE: I'm not sure if this is garanteed to still be correct, I might have to check it when the palette is set (when the program writes to PALETTE_RAM).
-                    const palette_ctrl_ram = gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11;
+                    //       But the docs also says "Only one format can be specified per screen, in the PAL_RAM_CTRL register".
+                    const palette_ctrl_ram: u2 = @truncate(gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11);
                     const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
                     for (0..v_size) |v| {
@@ -888,17 +889,13 @@ pub const Renderer = struct {
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
                             const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                            const offset = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
+                            const offset: u10 = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
                                     self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]), twiddled);
                                 },
                                 0x3 => { // ARGB8888
-                                    @panic("Unsupported palette_ctrl_ram ARGB8888");
-                                },
-                                else => {
-                                    renderer_log.err(termcolor.red("Invalid palette_ctrl_ram value {any}"), .{palette_ctrl_ram});
-                                    @panic("Invalid palette_ctrl_ram value");
+                                    self.bgra_scratch_pad()[pixel_idx] = @bitCast(palette_ram[palette_selector + offset]);
                                 },
                             }
                         }
@@ -956,6 +953,7 @@ pub const Renderer = struct {
         }
 
         if (texture_index == InvalidTextureIndex) {
+            renderer_log.err(termcolor.red("Out of textures slot (size: {d})"), .{size_index});
             @panic("Out of textures slot");
         }
 
