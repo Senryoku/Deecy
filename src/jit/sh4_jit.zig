@@ -244,8 +244,10 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try load_register(block, ctx, .ArgRegister1, guest_reg);
     if (displacement != 0)
         try block.add(.ArgRegister1, .{ .imm32 = displacement });
+
+    // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1F000000 } } });
+    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
@@ -273,13 +275,15 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 }
 
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register, comptime size: u32) !void {
-    if (value != .ArgRegister2)
-        try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
     try load_register(block, ctx, .ArgRegister1, dest_guest_reg);
     if (displacement != 0)
         try block.add(.ArgRegister1, .{ .imm32 = displacement });
+    if (value != .ArgRegister2)
+        try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
+
+    // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1F000000 } } });
+    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
