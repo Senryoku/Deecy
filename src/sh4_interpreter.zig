@@ -1465,7 +1465,6 @@ pub fn fabs_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @abs(cpu.FR(opcode.nmd.n).*);
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        std.debug.assert(opcode.nmd.m & 0x1 == 0);
         cpu.DR(opcode.nmd.n >> 1).* = @abs(cpu.DR(opcode.nmd.n >> 1).*);
     }
 }
@@ -1474,7 +1473,6 @@ pub fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        std.debug.assert(opcode.nmd.m & 0x1 == 0);
         cpu.DR(opcode.nmd.n >> 1).* = -cpu.DR(opcode.nmd.n >> 1).*;
     }
 }
