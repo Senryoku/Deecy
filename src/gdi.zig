@@ -95,6 +95,10 @@ const Track = struct {
     pub fn get_directory_record(self: *const @This(), offset: usize) *const DirectoryRecord {
         return @ptrCast(@alignCast(self.data.ptr + offset));
     }
+
+    pub fn header_size(self: *const @This()) u32 {
+        return if (self.format == 2352) 0x10 else 0;
+    }
 };
 
 pub const SectorHeader = extern struct {
@@ -174,7 +178,7 @@ pub const GDI = struct {
     }
 
     pub fn get_primary_volume_descriptor(self: *const @This()) *const PVD {
-        const offset = 0x10 * self.tracks.items[2].format + 0x10; // 16th sector + skip sector header
+        const offset = 0x10 * self.tracks.items[2].format + self.tracks.items[2].header_size(); // 16th sector + skip sector header
         return @ptrCast(@alignCast(self.tracks.items[2].data.ptr + offset));
     }
 
@@ -192,10 +196,7 @@ pub const GDI = struct {
         const root_track = try self.get_corresponding_track(root_directory_lba);
         const sector_start = (root_directory_lba - root_track.offset) * root_track.format;
 
-        const header = root_track.data[sector_start .. sector_start + 0x10];
-        std.debug.assert(header[0x0F] == 1); // We only support mode 1 right now.
-
-        var curr_offset = sector_start + 0x10; // Skip 16 bytes header.
+        var curr_offset = sector_start + self.tracks.items[2].header_size(); // Skip header if any.
         // TODO: Handle directories, and not just root files.
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
@@ -210,14 +211,27 @@ pub const GDI = struct {
     pub fn load_sectors(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
         const sector_start = (lba - GDI_SECTOR_OFFSET - track.offset) * track.format;
-        const header = track.data[sector_start .. sector_start + 0x10];
-        std.debug.assert(header[0x0F] == 1); // We only support mode 1 right now.
-        var offset = sector_start + 0x10;
-        if (track.format == 2352) {
+        if (track.format == 2048) {
+            var offset = sector_start;
             var copied: u32 = 0;
             var remaining: u32 = length;
             while (remaining > 0) {
                 const chunk_size = @min(remaining, 2048);
+                @memcpy(dest[copied .. copied + chunk_size], track.data[offset .. offset + chunk_size]);
+                copied += chunk_size;
+                remaining -= chunk_size;
+                offset += 2048;
+            }
+            return copied;
+        } else if (track.format == 2352) {
+            const header = track.data[sector_start .. sector_start + 0x10];
+            var offset = sector_start + 0x10;
+            std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
+            const size: u32 = if (header[0x0F] == 1) 2048 else 2336;
+            var copied: u32 = 0;
+            var remaining: u32 = length;
+            while (remaining > 0) {
+                const chunk_size = @min(remaining, size);
                 @memcpy(dest[copied .. copied + chunk_size], track.data[offset .. offset + chunk_size]);
                 copied += chunk_size;
                 remaining -= chunk_size;
