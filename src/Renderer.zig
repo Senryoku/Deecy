@@ -764,15 +764,20 @@ pub const Renderer = struct {
 
         const texture_control_register = gpu._get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
 
-        const twiddled = texture_control_word.scan_order == 0;
+        const is_paletted = texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP;
+
+        const scan_order = if (is_paletted) 0 else texture_control_word.scan_order;
+        const stride_select = if (is_paletted) 0 else texture_control_word.stride_select;
+
+        const twiddled = scan_order == 0;
         const size_index = tsp_instruction.texture_u_size;
 
         // NOTE: This is used by stride textures. Stride textures actual size can be smaller than their allocated size, but UV calculation are still done with it.
         const alloc_u_size = (@as(u16, 8) << tsp_instruction.texture_u_size);
         const alloc_v_size = (@as(u16, 8) << tsp_instruction.texture_v_size);
 
-        const u_size: u16 = if (texture_control_word.scan_order == 1 and texture_control_word.stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
-        const v_size: u16 = if (texture_control_word.scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
+        const u_size: u16 = if (scan_order == 1 and stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
+        const v_size: u16 = if (scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
 
         @memset(self._scratch_pad, 0);
 
