@@ -158,19 +158,86 @@ const DrawCall = struct {
     }
 };
 
-const PassMetadata = struct {
-    pass_type: HollyModule.ListType,
+fn translate_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor {
+    return switch (factor) {
+        .Zero => .zero,
+        .One => .one,
+        .SourceAlpha => .src_alpha,
+        .InverseSourceAlpha => .one_minus_src_alpha,
+        .DestAlpha => .dst_alpha,
+        .InverseDestAlpha => .one_minus_dst_alpha,
+        else => @panic("Invalid blend factor"),
+    };
+}
+
+fn translate_src_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor {
+    return switch (factor) {
+        .OtherColor => .dst,
+        .InverseOtherColor => .one_minus_dst,
+        else => translate_blend_factor(factor),
+    };
+}
+
+fn translate_dst_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor {
+    return switch (factor) {
+        .OtherColor => .src,
+        .InverseOtherColor => .one_minus_src,
+        else => translate_blend_factor(factor),
+    };
+}
+
+// NOTE: Holly assumes 1/z depth values, we re-invert them in the vertex shader,
+//       so we also need to invert the compare modes; this is not a mistake.
+fn translate_depth_compare_mode(mode: HollyModule.DepthCompareMode) wgpu.CompareFunction {
+    return switch (mode) {
+        .Never => .never,
+        .Less => .greater,
+        .Equal => .equal,
+        .LessEqual => .greater_equal,
+        .Greater => .less,
+        .NotEqual => .not_equal,
+        .GreaterEqual => .less_equal,
+        .Always => .always,
+    };
+}
+
+const PipelineKey = struct {
+    src_blend_factor: wgpu.BlendFactor,
+    dst_blend_factor: wgpu.BlendFactor,
+    depth_compare: wgpu.CompareFunction,
+    depth_write_enabled: bool,
+};
+
+const PipelineMetadata = struct {
     draw_calls: std.AutoArrayHashMap(u32, DrawCall),
 
-    pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
+    pub fn init(allocator: std.mem.Allocator) PipelineMetadata {
         return .{
-            .pass_type = pass_type,
             .draw_calls = std.AutoArrayHashMap(u32, DrawCall).init(allocator),
         };
     }
 
     fn deinit(self: *@This()) void {
         self.draw_calls.deinit();
+    }
+};
+
+const PassMetadata = struct {
+    pass_type: HollyModule.ListType,
+    pipelines: std.AutoArrayHashMap(PipelineKey, PipelineMetadata),
+
+    pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
+        return .{
+            .pass_type = pass_type,
+            .pipelines = std.AutoArrayHashMap(PipelineKey, PipelineMetadata).init(allocator),
+        };
+    }
+
+    fn deinit(self: *@This()) void {
+        for (self.pipelines.values()) |*pipeline| {
+            pipeline.deinit();
+        }
+        self.pipelines.deinit();
     }
 };
 
@@ -253,9 +320,13 @@ pub const Renderer = struct {
     blit_vertex_buffer: zgpu.BufferHandle,
     blit_index_buffer: zgpu.BufferHandle,
 
-    opaque_pipeline: zgpu.RenderPipelineHandle,
-    punchthrough_pipeline: zgpu.RenderPipelineHandle,
-    translucent_pipeline: zgpu.RenderPipelineHandle,
+    pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
+    bind_group_layout: zgpu.BindGroupLayoutHandle,
+    sampler_bind_group_layout: zgpu.BindGroupLayoutHandle,
+    pipeline_layout: zgpu.PipelineLayoutHandle,
+    vertex_shader_module: wgpu.ShaderModule,
+    fragment_shader_module: wgpu.ShaderModule,
+
     bind_group: zgpu.BindGroupHandle,
 
     vertex_buffer: zgpu.BufferHandle,
@@ -296,6 +367,72 @@ pub const Renderer = struct {
         });
     }
 
+    fn get_or_put_pipeline(self: *Renderer, key: PipelineKey) !zgpu.RenderPipelineHandle {
+        if (self.pipelines.get(key)) |pl|
+            return pl;
+
+        renderer_log.info("Creating Pipeline: {any}", .{key});
+
+        const vertex_attributes = [_]wgpu.VertexAttribute{
+            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
+            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
+            .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
+            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
+        };
+        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+            .array_stride = @sizeOf(Vertex),
+            .attribute_count = vertex_attributes.len,
+            .attributes = &vertex_attributes,
+        }};
+
+        const color_targets = [_]wgpu.ColorTargetState{.{
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .blend = &wgpu.BlendState{
+                .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
+                .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero }, // FIXME: Not sure about this.
+            },
+        }};
+
+        const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = self.vertex_shader_module,
+                .entry_point = "main",
+                .buffer_count = vertex_buffers.len,
+                .buffers = &vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_strip,
+                .strip_index_format = .uint32,
+            },
+            .depth_stencil = &wgpu.DepthStencilState{
+                .format = .depth32_float,
+                .depth_write_enabled = key.depth_write_enabled,
+                .depth_compare = key.depth_compare,
+            },
+            .fragment = &wgpu.FragmentState{
+                .module = self.fragment_shader_module,
+                .entry_point = "main",
+                .target_count = color_targets.len,
+                .targets = &color_targets,
+            },
+        };
+
+        const pl = self._gctx.createRenderPipeline(self.pipeline_layout, pipeline_descriptor);
+
+        if (!self._gctx.isResourceValid(pl)) {
+            renderer_log.err("Error creating pipeline.", .{});
+            renderer_log.err("{any}", .{pipeline_descriptor});
+        }
+
+        try self.pipelines.putNoClobber(key, pl);
+
+        return pl;
+    }
+
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
         // Write to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
@@ -320,20 +457,6 @@ pub const Renderer = struct {
 
         const resized_framebuffer = Renderer.create_resized_frammebuffer_texture(gctx);
 
-        const vertex_attributes = [_]wgpu.VertexAttribute{
-            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
-            .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
-        };
-        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-            .array_stride = @sizeOf(Vertex),
-            .attribute_count = vertex_attributes.len,
-            .attributes = &vertex_attributes,
-        }};
-
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
             zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
@@ -348,128 +471,10 @@ pub const Renderer = struct {
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
         });
-        defer gctx.releaseResource(bind_group_layout);
         const pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout });
-        defer gctx.releaseResource(pipeline_layout);
 
-        const vs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
-        defer vs_module.release();
-
-        const fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
-        defer fs_module.release();
-
-        const opaque_pipeline = opaque_pl: {
-            const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
-                    .color = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                },
-            }};
-
-            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = vs_module,
-                    .entry_point = "main",
-                    .buffer_count = vertex_buffers.len,
-                    .buffers = &vertex_buffers,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_strip,
-                    .strip_index_format = .uint32,
-                },
-                .depth_stencil = &wgpu.DepthStencilState{
-                    .format = .depth32_float,
-                    .depth_write_enabled = true,
-                    .depth_compare = .less_equal,
-                },
-                .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
-                    .entry_point = "main",
-                    .target_count = color_targets.len,
-                    .targets = &color_targets,
-                },
-            };
-            break :opaque_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-        };
-
-        const punchthrough_pipeline = punchthrough_pl: {
-            const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
-                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
-                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                },
-            }};
-
-            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = vs_module,
-                    .entry_point = "main",
-                    .buffer_count = vertex_buffers.len,
-                    .buffers = &vertex_buffers,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_strip,
-                    .strip_index_format = .uint32,
-                },
-                .depth_stencil = &wgpu.DepthStencilState{
-                    .format = .depth32_float,
-                    .depth_write_enabled = true,
-                    .depth_compare = .less_equal,
-                },
-                .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
-                    .entry_point = "main",
-                    .target_count = color_targets.len,
-                    .targets = &color_targets,
-                },
-            };
-            break :punchthrough_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-        };
-
-        const translucent_pipeline = transluscent_pl: {
-            const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
-                    // FIXME: These actually depends on the polygon, not sure how I'll handle that yet.
-                    .color = .{ .operation = .add, .src_factor = .src_alpha, .dst_factor = .one_minus_src_alpha },
-                    // FIXME: And this is probably just wrong.
-                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                },
-            }};
-
-            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = vs_module,
-                    .entry_point = "main",
-                    .buffer_count = vertex_buffers.len,
-                    .buffers = &vertex_buffers,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_strip,
-                    .strip_index_format = .uint32,
-                },
-                .depth_stencil = &wgpu.DepthStencilState{
-                    .format = .depth32_float,
-                    .depth_write_enabled = false,
-                    .depth_compare = .less_equal,
-                },
-                .fragment = &wgpu.FragmentState{
-                    .module = fs_module,
-                    .entry_point = "main",
-                    .target_count = color_targets.len,
-                    .targets = &color_targets,
-                },
-            };
-            break :transluscent_pl gctx.createRenderPipeline(pipeline_layout, pipeline_descriptor);
-        };
+        const vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+        const fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
 
         const blit_bind_group_layout = create_blit_bind_group_layout(gctx);
         defer gctx.releaseResource(blit_bind_group_layout);
@@ -631,9 +636,12 @@ pub const Renderer = struct {
             .resized_framebuffer_texture = resized_framebuffer.texture,
             .resized_framebuffer_texture_view = resized_framebuffer.view,
 
-            .opaque_pipeline = opaque_pipeline,
-            .punchthrough_pipeline = punchthrough_pipeline,
-            .translucent_pipeline = translucent_pipeline,
+            .pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
+            .bind_group_layout = bind_group_layout,
+            .sampler_bind_group_layout = sampler_bind_group_layout,
+            .pipeline_layout = pipeline_layout,
+            .vertex_shader_module = vertex_shader_module,
+            .fragment_shader_module = fragment_shader_module,
 
             .bind_group = bind_group,
             .sampler_bind_groups = sampler_bind_groups,
@@ -670,6 +678,10 @@ pub const Renderer = struct {
         self.vertices.deinit();
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot of resources to destroy.
+        self.vertex_shader_module.release();
+        self.fragment_shader_module.release();
+        self._gctx.releaseResource(self.bind_group_layout);
+        self._gctx.releaseResource(self.pipeline_layout);
     }
 
     fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
@@ -1253,9 +1265,12 @@ pub const Renderer = struct {
             // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
             //             which is okay, I think. However this might become problematic down the line.
             //             We're saving a lot of allocations this way, but there's probably a better way to do it.
-            for (pass.draw_calls.values()) |*draw_call| {
-                draw_call.start_index = 0;
-                draw_call.index_count = 0;
+            var it = pass.pipelines.iterator();
+            while (it.next()) |pipeline| {
+                for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
+                    draw_call.start_index = 0;
+                    draw_call.index_count = 0;
+                }
             }
         }
 
@@ -1592,12 +1607,29 @@ pub const Renderer = struct {
                 if (self.vertices.items.len - start < 3) {
                     renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
                 } else {
+                    const pipeline_key = PipelineKey{
+                        .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
+                        .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
+                        .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
+                        .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                    };
+
+                    var pipeline = self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key) orelse put: {
+                        try self.passes[@intFromEnum(list_type)].pipelines.put(pipeline_key, PipelineMetadata.init(self._allocator));
+                        break :put self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key).?;
+                    };
+
+                    //if (isp_tsp_instruction.depth_compare_mode != .Greater and isp_tsp_instruction.depth_compare_mode != .GreaterEqual)
+                    //    std.debug.print("Depth_compare_mode {any}\n", .{isp_tsp_instruction.depth_compare_mode});
+                    //if (list_type == .Translucent and (tsp_instruction.src_alpha_instr != .SourceAlpha or tsp_instruction.dst_alpha_instr != .InverseSourceAlpha))
+                    //    std.debug.print("src_alpha_instr {any} ; dst_alpha_instr {any}\n", .{ tsp_instruction.src_alpha_instr, tsp_instruction.dst_alpha_instr });
+
                     const draw_call_index = sampler;
 
-                    var draw_call = self.passes[@intFromEnum(list_type)].draw_calls.getPtr(draw_call_index);
+                    var draw_call = pipeline.draw_calls.getPtr(draw_call_index);
                     if (draw_call == null) {
-                        try self.passes[@intFromEnum(list_type)].draw_calls.put(draw_call_index, DrawCall.init(self._allocator, sampler));
-                        draw_call = self.passes[@intFromEnum(list_type)].draw_calls.getPtr(draw_call_index);
+                        try pipeline.draw_calls.put(draw_call_index, DrawCall.init(self._allocator, sampler));
+                        draw_call = pipeline.draw_calls.getPtr(draw_call_index);
                     }
 
                     for (start..self.vertices.items.len) |i| {
@@ -1614,19 +1646,22 @@ pub const Renderer = struct {
 
             var index = FirstIndex;
             for (&self.passes) |*pass| {
-                for (pass.draw_calls.values()) |*draw_call| {
-                    draw_call.start_index = index;
-                    draw_call.index_count = @intCast(draw_call.indices.items.len);
-                    self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, index * @sizeOf(u32), u32, draw_call.indices.items);
-                    index += @intCast(draw_call.indices.items.len);
+                var it = pass.pipelines.iterator();
+                while (it.next()) |entry| {
+                    for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
+                        draw_call.start_index = index;
+                        draw_call.index_count = @intCast(draw_call.indices.items.len);
+                        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, index * @sizeOf(u32), u32, draw_call.indices.items);
+                        index += @intCast(draw_call.indices.items.len);
 
-                    draw_call.indices.clearRetainingCapacity();
+                        draw_call.indices.clearRetainingCapacity();
+                    }
                 }
             }
         }
     }
 
-    pub fn render(self: *Renderer) void {
+    pub fn render(self: *Renderer) !void {
         const gctx = self._gctx;
 
         const commands = commands: {
@@ -1702,30 +1737,36 @@ pub const Renderer = struct {
                 pass.setBindGroup(0, bind_group, &.{mem.offset});
 
                 // Draw background
-                pass.setPipeline(gctx.lookupResource(self.opaque_pipeline).?);
+                const background_pipeline = try self.get_or_put_pipeline(.{
+                    .src_blend_factor = .one,
+                    .dst_blend_factor = .zero,
+                    .depth_compare = .always,
+                    .depth_write_enabled = false,
+                });
+                pass.setPipeline(gctx.lookupResource(background_pipeline).?);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
-                // FIXME: Draw the passes in order.
-                //          Opaque
-                //          Punch Through (Same as opaque, but discarding pixels with alpha = 0.0, I think)
-                //          Opaque (and Punch Through) Modifier Volume
-                //          Translucent
-                //          Translucent Modifier Volume:
+                // Draw the passes in order.
+                //   Opaque
+                //   Punch Through (Same as opaque, but discarding pixels with alpha = 0.0)
+                //   Opaque (and Punch Through) Modifier Volume
+                //   Translucent
+                //   Translucent Modifier Volume:
                 inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
-                    pass.setPipeline(
-                        switch (list_type) {
-                            .Opaque => gctx.lookupResource(self.opaque_pipeline).?,
-                            .PunchThrough => gctx.lookupResource(self.punchthrough_pipeline).?,
-                            .Translucent => gctx.lookupResource(self.translucent_pipeline).?,
-                            else => unreachable,
-                        },
-                    );
+                    var it = self.passes[@intFromEnum(list_type)].pipelines.iterator();
+                    while (it.next()) |entry| {
+                        // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
+                        if (entry.value_ptr.*.draw_calls.count() > 0) {
+                            const pl = try self.get_or_put_pipeline(entry.key_ptr.*);
+                            pass.setPipeline(gctx.lookupResource(pl).?);
 
-                    for (self.passes[@intFromEnum(list_type)].draw_calls.values()) |draw_call| {
-                        if (draw_call.index_count > 0) {
-                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                            pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                if (draw_call.index_count > 0) {
+                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                }
+                            }
                         }
                     }
                 }

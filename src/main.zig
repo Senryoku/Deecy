@@ -679,7 +679,7 @@ pub fn main() !void {
         }
         // FIXME: We don't need to render everything if the DC did not issued a render_start command, but we still need to render the
         //        direct framebuffer writes. Reverting to rendering everything for now.
-        renderer.render();
+        try renderer.render();
 
         renderer.draw(); //  Blit to screen
 

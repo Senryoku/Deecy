@@ -389,6 +389,17 @@ const ObjectListSet = packed struct(u256) {
 
 // Global Parameter Formats
 
+pub const DepthCompareMode = enum(u3) {
+    Never = 0,
+    Less = 1,
+    Equal = 2,
+    LessEqual = 3,
+    Greater = 4,
+    NotEqual = 5,
+    GreaterEqual = 6,
+    Always = 7,
+};
+
 pub const ISPTSPInstructionWord = packed struct(u32) {
     _: u20,
     dcalc_ctrl: u1,
@@ -399,7 +410,7 @@ pub const ISPTSPInstructionWord = packed struct(u32) {
     texture: u1,
     z_write_disable: u1,
     culling_mode: u2,
-    depth_compare_mode: u3,
+    depth_compare_mode: DepthCompareMode,
 };
 
 pub const TextureShadingInstruction = enum(u2) {
@@ -407,6 +418,17 @@ pub const TextureShadingInstruction = enum(u2) {
     Modulate = 1,
     DecalAlpha = 2,
     ModulateAlpha = 3,
+};
+
+pub const AlphaInstruction = enum(u3) {
+    Zero = 0,
+    One = 1,
+    OtherColor = 2,
+    InverseOtherColor = 3,
+    SourceAlpha = 4,
+    InverseSourceAlpha = 5,
+    DestAlpha = 6,
+    InverseDestAlpha = 7,
 };
 
 pub const TSPInstructionWord = packed struct(u32) {
@@ -424,8 +446,8 @@ pub const TSPInstructionWord = packed struct(u32) {
     fog_control: u2,
     dst_select: u1,
     src_select: u1,
-    dst_alpha_instr: u3,
-    src_alpha_instr: u3,
+    dst_alpha_instr: AlphaInstruction,
+    src_alpha_instr: AlphaInstruction,
 };
 
 pub const TexturePixelFormat = enum(u3) {
