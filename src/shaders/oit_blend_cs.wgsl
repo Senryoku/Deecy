@@ -26,7 +26,8 @@ struct LinkedList {
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read_write> heads: Heads;
 @group(0) @binding(2) var<storage, read_write> linked_list: LinkedList;
-@group(0) @binding(3) var opaque_texture: texture_2d<f32>;
+@group(0) @binding(3) var opaque_texture: texture_2d<f32>; // FIXME: Should be the same as output_texture, but WGPU doesn't support reading from storage textures.
+@group(0) @binding(4) var output_texture: texture_storage_2d<bgra8unorm, write>;
 
 fn get_blend_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
     switch(factor) {
@@ -56,9 +57,9 @@ fn get_dst_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
   }
 } 
 
-@fragment
-fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let frag_coords = vec2<i32>(position.xy);
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let frag_coords = vec2<i32>(global_id.xy);
     let heads_index = u32(frag_coords.y) * uniforms.target_width + u32(frag_coords.x);
 
     // The maximum layers we can process for any pixel
@@ -77,7 +78,7 @@ fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     }
 
     if layer_count == 0u {
-      discard;
+        return;
     }
   
     // sort the fragments by depth
@@ -103,5 +104,5 @@ fn main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         color = src * get_src_factor(layers[i].blend_mode & 7, src, dst) + dst * get_dst_factor((layers[i].blend_mode >> 3) & 7, src, dst);
     }
 
-    return color;
+    textureStore(output_texture, frag_coords, color);
 }

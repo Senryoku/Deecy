@@ -121,7 +121,7 @@ const Vertex = packed struct {
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/fs.wgsl");
 const wgsl_translucent_fs = @embedFile("./shaders/oit_draw_fs.wgsl");
-const wgsl_blend_fs = @embedFile("./shaders/oit_blend_fs.wgsl");
+const wgsl_blend_cs = @embedFile("./shaders/oit_blend_cs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
@@ -344,7 +344,7 @@ pub const Renderer = struct {
 
     opaque_pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
     translucent_pipeline: zgpu.RenderPipelineHandle,
-    blend_pipeline: zgpu.RenderPipelineHandle,
+    blend_pipeline: zgpu.ComputePipelineHandle,
 
     bind_group_layout: zgpu.BindGroupLayoutHandle,
     translucent_bind_group_layout: zgpu.BindGroupLayoutHandle,
@@ -691,44 +691,26 @@ pub const Renderer = struct {
 
         const translucent_pipeline = gctx.createRenderPipeline(translucent_pipeline_layout, pipeline_descriptor);
 
-        const blend_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_blend_fs, "fs");
-        defer blend_fragment_shader_module.release();
+        const blend_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_blend_cs, null);
+        defer blend_compute_module.release();
 
         const blend_bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
-            zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
-            zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
-            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.bufferEntry(0, .{ .compute = true }, .uniform, true, 0),
+            zgpu.bufferEntry(1, .{ .compute = true }, .storage, false, 0),
+            zgpu.bufferEntry(2, .{ .compute = true }, .storage, false, 0),
+            zgpu.textureEntry(3, .{ .compute = true }, .float, .tvdim_2d, false),
+            zgpu.storageTextureEntry(4, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
         });
         const blend_pipeline_layout = gctx.createPipelineLayout(&.{blend_bind_group_layout});
 
-        const blend_color_targets = [_]wgpu.ColorTargetState{.{
-            .format = zgpu.GraphicsContext.swapchain_format,
-        }};
-
-        const blend_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
-                .module = blit_vs_module,
+        const blend_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
+            .compute = .{
+                .module = blend_compute_module,
                 .entry_point = "main",
-                .buffer_count = blit_vertex_buffers.len,
-                .buffers = &blit_vertex_buffers,
-            },
-            .primitive = wgpu.PrimitiveState{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_strip,
-                .strip_index_format = .uint32,
-            },
-            .depth_stencil = null,
-            .fragment = &wgpu.FragmentState{
-                .module = blend_fragment_shader_module,
-                .entry_point = "main",
-                .target_count = blend_color_targets.len,
-                .targets = &blend_color_targets,
             },
         };
 
-        const blend_pipeline = gctx.createRenderPipeline(blend_pipeline_layout, blend_pipeline_descriptor);
+        const blend_pipeline = gctx.createComputePipeline(blend_pipeline_layout, blend_pipeline_descriptor);
 
         var renderer: Renderer = .{
             .blit_pipeline = blit_pipeline,
@@ -1917,9 +1899,19 @@ pub const Renderer = struct {
                     }
                 }
             }
+
+            // FIXME: WGPU doesn't support reading from storage textures... This a bad bad workaround.
+            encoder.copyTextureToTexture(
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
+                .{ .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height },
+            );
+
             {
                 const heads_info = gctx.lookupResourceInfo(self.list_heads_buffer).?;
                 const init_heads_info = gctx.lookupResourceInfo(self.init_list_heads_buffer).?;
+
+                // Clear lists
                 encoder.copyBufferToBuffer(init_heads_info.gpuobj.?, 0, heads_info.gpuobj.?, 0, heads_info.size);
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
@@ -1962,42 +1954,18 @@ pub const Renderer = struct {
                 }
             }
 
-            // FIXME: Use a compute shader to get rid of this copy.
-            encoder.copyTextureToTexture(
-                .{
-                    .texture = gctx.lookupResource(self.resized_framebuffer_texture).?,
-                },
-                .{
-                    .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).?,
-                },
-                .{ .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height },
-            );
-
             {
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                    .load_op = .load,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = null,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
+                const pass = encoder.beginComputePass(null);
                 defer {
                     pass.end();
                     pass.release();
                 }
-
-                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-
+                const num_groups = [2]u32{ @divExact(self._gctx.swapchain_descriptor.width, 8), @divExact(self._gctx.swapchain_descriptor.height, 8) };
                 pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
 
                 pass.setBindGroup(0, gctx.lookupResource(self.blend_bind_group).?, &.{uniform_mem.offset});
 
-                pass.drawIndexed(4, 1, 0, 0, 0);
+                pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
             }
 
             break :commands encoder.finish(null);
@@ -2112,9 +2080,10 @@ pub const Renderer = struct {
     } {
         const resized_framebuffer_texture = gctx.createTexture(.{
             .usage = .{
-                .texture_binding = true,
                 .render_attachment = true,
-                .copy_src = true, // FIXME: Remove this once we moved to compute shaders for the OIT pass.
+                .texture_binding = true,
+                .storage_binding = true,
+                .copy_src = true, // FIXME: This should not be needed (wgpu doesn't support reading from storage textures...)
             },
             .size = .{
                 .width = gctx.swapchain_descriptor.width,
@@ -2167,6 +2136,7 @@ pub const Renderer = struct {
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
+            .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture_view },
         });
     }
 };
