@@ -605,31 +605,38 @@ pub fn main() !void {
                         }
                     }
 
-                    const gamepad: zglfw.Gamepad = .{ .jid = 0 };
-                    const gamepad_state = gamepad.getState();
-                    const gamepad_binds: [9]struct { zglfw.Gamepad.Button, MapleModule.ControllerButtons } = .{
-                        .{ .start, .{ .start = 0 } },
-                        .{ .dpad_up, .{ .up = 0 } },
-                        .{ .dpad_down, .{ .down = 0 } },
-                        .{ .dpad_left, .{ .left = 0 } },
-                        .{ .dpad_right, .{ .right = 0 } },
-                        .{ .a, .{ .a = 0 } },
-                        .{ .b, .{ .b = 0 } },
-                        .{ .x, .{ .x = 0 } },
-                        .{ .y, .{ .y = 0 } },
-                    };
-                    for (gamepad_binds) |keybind| {
-                        const key_status = gamepad_state.buttons[@intFromEnum(keybind[0])];
-                        if (key_status == .press) {
-                            c.press_buttons(keybind[1]);
-                        } else if (key_status == .release) {
-                            c.release_buttons(keybind[1]);
+                    for (0..zglfw.Joystick.maximum_supported) |jid| {
+                        if (zglfw.Joystick.get(@as(zglfw.Joystick.Id, @intCast(jid)))) |joystick| {
+                            if (joystick.asGamepad()) |gamepad| {
+                                const gamepad_state = gamepad.getState();
+                                const gamepad_binds: [9]struct { zglfw.Gamepad.Button, MapleModule.ControllerButtons } = .{
+                                    .{ .start, .{ .start = 0 } },
+                                    .{ .dpad_up, .{ .up = 0 } },
+                                    .{ .dpad_down, .{ .down = 0 } },
+                                    .{ .dpad_left, .{ .left = 0 } },
+                                    .{ .dpad_right, .{ .right = 0 } },
+                                    .{ .a, .{ .a = 0 } },
+                                    .{ .b, .{ .b = 0 } },
+                                    .{ .x, .{ .x = 0 } },
+                                    .{ .y, .{ .y = 0 } },
+                                };
+                                for (gamepad_binds) |keybind| {
+                                    const key_status = gamepad_state.buttons[@intFromEnum(keybind[0])];
+                                    if (key_status == .press) {
+                                        c.press_buttons(keybind[1]);
+                                    } else if (key_status == .release) {
+                                        c.release_buttons(keybind[1]);
+                                    }
+                                }
+                                c.axis[0] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)] * 0.5 + 0.5) * 255));
+                                c.axis[1] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)] * 0.5 + 0.5) * 255));
+                                c.axis[2] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)] * 0.5 + 0.5) * 255));
+                                c.axis[3] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)] * 0.5 + 0.5) * 255));
+
+                                break; // FIXME: We're using the first one available and that's it for now.
+                            }
                         }
                     }
-                    c.axis[0] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)] * 0.5 + 0.5) * 255));
-                    c.axis[1] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)] * 0.5 + 0.5) * 255));
-                    c.axis[2] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)] * 0.5 + 0.5) * 255));
-                    c.axis[3] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)] * 0.5 + 0.5) * 255));
                 },
                 else => {},
             }

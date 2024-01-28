@@ -5,6 +5,7 @@ const renderer_log = std.log.scoped(.renderer);
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 
+const common = @import("common.zig");
 const termcolor = @import("termcolor.zig");
 
 const HollyModule = @import("holly.zig");
@@ -74,7 +75,9 @@ const ShadingInstructions = packed struct(u32) {
     ignore_alpha: u1 = 0,
     tex_u_size: u3,
     tex_v_size: u3,
-    _: u22 = 0,
+    src_blend_factor: HollyModule.AlphaInstruction = .One,
+    dst_blend_factor: HollyModule.AlphaInstruction = .Zero,
+    _: u16 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -117,6 +120,8 @@ const Vertex = packed struct {
 
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/fs.wgsl");
+const wgsl_translucent_fs = @embedFile("./shaders/oit_draw_fs.wgsl");
+const wgsl_blend_fs = @embedFile("./shaders/oit_blend_fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
@@ -304,7 +309,24 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     return r;
 }
 
+const vertex_attributes = [_]wgpu.VertexAttribute{
+    .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
+    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
+    .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
+    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
+};
+const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+    .array_stride = @sizeOf(Vertex),
+    .attribute_count = vertex_attributes.len,
+    .attributes = &vertex_attributes,
+}};
+
 pub const Renderer = struct {
+    pub const MaxAvgFragmentsPerPixel = 3; // In the linked list of fragments for OIT.
+    pub const SizeOfLinkedListNode = 4 * 4 + 4 + 4 + 4;
+
     pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
@@ -320,17 +342,31 @@ pub const Renderer = struct {
     blit_vertex_buffer: zgpu.BufferHandle,
     blit_index_buffer: zgpu.BufferHandle,
 
-    pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
+    opaque_pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
+    translucent_pipeline: zgpu.RenderPipelineHandle,
+    blend_pipeline: zgpu.RenderPipelineHandle,
+
     bind_group_layout: zgpu.BindGroupLayoutHandle,
+    translucent_bind_group_layout: zgpu.BindGroupLayoutHandle,
+    blend_bind_group_layout: zgpu.BindGroupLayoutHandle,
     sampler_bind_group_layout: zgpu.BindGroupLayoutHandle,
+
     pipeline_layout: zgpu.PipelineLayoutHandle,
-    vertex_shader_module: wgpu.ShaderModule,
-    fragment_shader_module: wgpu.ShaderModule,
+    blit_vertex_shader_module: wgpu.ShaderModule,
+    opaque_vertex_shader_module: wgpu.ShaderModule,
+    opaque_fragment_shader_module: wgpu.ShaderModule,
+    translucent_fragment_shader_module: wgpu.ShaderModule,
 
     bind_group: zgpu.BindGroupHandle,
+    translucent_bind_group: zgpu.BindGroupHandle = undefined,
+    blend_bind_group: zgpu.BindGroupHandle = undefined,
 
     vertex_buffer: zgpu.BufferHandle,
     index_buffer: zgpu.BufferHandle,
+
+    list_heads_buffer: zgpu.BufferHandle = undefined,
+    init_list_heads_buffer: zgpu.BufferHandle = undefined,
+    linked_list_buffer: zgpu.BufferHandle = undefined,
 
     texture_arrays: [8]zgpu.TextureHandle,
     texture_array_views: [8]zgpu.TextureViewHandle,
@@ -341,6 +377,10 @@ pub const Renderer = struct {
     // Framebuffer at window resolution to draw on
     resized_framebuffer_texture: zgpu.TextureHandle,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle,
+
+    // FIXME: Remove
+    resized_framebuffer_copy_texture: zgpu.TextureHandle = undefined,
+    resized_framebuffer_copy_texture_view: zgpu.TextureViewHandle = undefined,
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
@@ -367,25 +407,11 @@ pub const Renderer = struct {
         });
     }
 
-    fn get_or_put_pipeline(self: *Renderer, key: PipelineKey) !zgpu.RenderPipelineHandle {
-        if (self.pipelines.get(key)) |pl|
+    fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey) !zgpu.RenderPipelineHandle {
+        if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
         renderer_log.info("Creating Pipeline: {any}", .{key});
-
-        const vertex_attributes = [_]wgpu.VertexAttribute{
-            .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
-            .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
-            .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
-            .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
-        };
-        const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-            .array_stride = @sizeOf(Vertex),
-            .attribute_count = vertex_attributes.len,
-            .attributes = &vertex_attributes,
-        }};
 
         const color_targets = [_]wgpu.ColorTargetState{.{
             .format = zgpu.GraphicsContext.swapchain_format,
@@ -397,7 +423,7 @@ pub const Renderer = struct {
 
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
-                .module = self.vertex_shader_module,
+                .module = self.opaque_vertex_shader_module,
                 .entry_point = "main",
                 .buffer_count = vertex_buffers.len,
                 .buffers = &vertex_buffers,
@@ -414,7 +440,7 @@ pub const Renderer = struct {
                 .depth_compare = key.depth_compare,
             },
             .fragment = &wgpu.FragmentState{
-                .module = self.fragment_shader_module,
+                .module = self.opaque_fragment_shader_module,
                 .entry_point = "main",
                 .target_count = color_targets.len,
                 .targets = &color_targets,
@@ -428,7 +454,7 @@ pub const Renderer = struct {
             renderer_log.err("{any}", .{pipeline_descriptor});
         }
 
-        try self.pipelines.putNoClobber(key, pl);
+        try self.opaque_pipelines.putNoClobber(key, pl);
 
         return pl;
     }
@@ -458,7 +484,7 @@ pub const Renderer = struct {
         const resized_framebuffer = Renderer.create_resized_frammebuffer_texture(gctx);
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .vertex = true }, .uniform, true, 0),
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
             zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(2, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d_array, false),
@@ -473,33 +499,30 @@ pub const Renderer = struct {
         });
         const pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout });
 
-        const vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
-        const fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs");
-
         const blit_bind_group_layout = create_blit_bind_group_layout(gctx);
         defer gctx.releaseResource(blit_bind_group_layout);
         const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
         defer gctx.releaseResource(blit_pipeline_layout);
 
-        const blit_pipeline = blit_pl: {
-            const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
-            defer blit_vs_module.release();
+        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
+        defer blit_vs_module.release();
 
+        const blit_vertex_attributes = [_]wgpu.VertexAttribute{
+            .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
+            .{ .format = .float32x2, .offset = 2 * @sizeOf(f32), .shader_location = 1 },
+        };
+        const blit_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+            .array_stride = 4 * @sizeOf(f32),
+            .attribute_count = blit_vertex_attributes.len,
+            .attributes = &blit_vertex_attributes,
+        }};
+
+        const blit_pipeline = blit_pl: {
             const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
             defer blit_fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
                 .format = zgpu.GraphicsContext.swapchain_format,
-            }};
-
-            const blit_vertex_attributes = [_]wgpu.VertexAttribute{
-                .{ .format = .float32x2, .offset = 0, .shader_location = 0 },
-                .{ .format = .float32x2, .offset = 2 * @sizeOf(f32), .shader_location = 1 },
-            };
-            const blit_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
-                .array_stride = 4 * @sizeOf(f32),
-                .attribute_count = blit_vertex_attributes.len,
-                .attributes = &blit_vertex_attributes,
             }};
 
             const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
@@ -513,7 +536,7 @@ pub const Renderer = struct {
                     .front_face = .ccw,
                     .cull_mode = .none,
                     .topology = .triangle_strip,
-                    .strip_index_format = .uint16,
+                    .strip_index_format = .uint32,
                 },
                 .depth_stencil = null,
                 .fragment = &wgpu.FragmentState{
@@ -540,18 +563,18 @@ pub const Renderer = struct {
         gctx.queue.writeBuffer(gctx.lookupResource(blit_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
 
         // Create an index buffer.
-        const blit_index_data = [_]u16{ 0, 3, 1, 2 };
+        const blit_index_data = [_]u32{ 0, 3, 1, 2 };
         const blit_index_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .index = true },
-            .size = blit_index_data.len * @sizeOf(u16),
+            .size = blit_index_data.len * @sizeOf(u32),
         });
-        gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u16, blit_index_data[0..]);
+        gctx.queue.writeBuffer(gctx.lookupResource(blit_index_buffer).?, 0, u32, blit_index_data[0..]);
 
         var samplers: [256]zgpu.SamplerHandle = undefined;
         var sampler_bind_groups: [256]zgpu.BindGroupHandle = undefined;
 
         for ([_]wgpu.FilterMode{ .nearest, .linear }) |mag_filter| {
-            for ([_]wgpu.FilterMode{ .nearest, wgpu.FilterMode.linear }) |min_filter| {
+            for ([_]wgpu.FilterMode{ .nearest, .linear }) |min_filter| {
                 for ([_]wgpu.MipmapFilterMode{ .nearest, .linear }) |mipmap_filter| {
                     for ([_]wgpu.AddressMode{ .repeat, .mirror_repeat, .clamp_to_edge }) |u_addr_mode| {
                         for ([_]wgpu.AddressMode{ .repeat, .mirror_repeat, .clamp_to_edge }) |v_addr_mode| {
@@ -623,6 +646,90 @@ pub const Renderer = struct {
         // Create a depth texture and its 'view'.
         const depth = create_depth_texture(gctx);
 
+        const translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_translucent_fs, "fs");
+        defer translucent_fragment_shader_module.release();
+
+        const translucent_bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
+            zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
+        });
+        const translucent_pipeline_layout = gctx.createPipelineLayout(&.{
+            bind_group_layout,
+            sampler_bind_group_layout,
+            translucent_bind_group_layout,
+        });
+
+        const opaque_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_vs, "vs");
+
+        const color_targets = [_]wgpu.ColorTargetState{.{
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .write_mask = .{}, // We won't write to the color attachment
+        }};
+
+        const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = opaque_vertex_shader_module,
+                .entry_point = "main",
+                .buffer_count = vertex_buffers.len,
+                .buffers = &vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_strip,
+                .strip_index_format = .uint32,
+            },
+            .depth_stencil = null,
+            .fragment = &wgpu.FragmentState{
+                .module = translucent_fragment_shader_module,
+                .entry_point = "main",
+                .target_count = color_targets.len,
+                .targets = &color_targets,
+            },
+        };
+
+        const translucent_pipeline = gctx.createRenderPipeline(translucent_pipeline_layout, pipeline_descriptor);
+
+        const blend_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_blend_fs, "fs");
+        defer blend_fragment_shader_module.release();
+
+        const blend_bind_group_layout = gctx.createBindGroupLayout(&.{
+            zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
+            zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
+            zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
+            zgpu.textureEntry(3, .{ .fragment = true }, .float, .tvdim_2d, false),
+        });
+        const blend_pipeline_layout = gctx.createPipelineLayout(&.{blend_bind_group_layout});
+
+        const blend_color_targets = [_]wgpu.ColorTargetState{.{
+            .format = zgpu.GraphicsContext.swapchain_format,
+        }};
+
+        const blend_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = blit_vs_module,
+                .entry_point = "main",
+                .buffer_count = blit_vertex_buffers.len,
+                .buffers = &blit_vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_strip,
+                .strip_index_format = .uint32,
+            },
+            .depth_stencil = null,
+            .fragment = &wgpu.FragmentState{
+                .module = blend_fragment_shader_module,
+                .entry_point = "main",
+                .target_count = blend_color_targets.len,
+                .targets = &blend_color_targets,
+            },
+        };
+
+        const blend_pipeline = gctx.createRenderPipeline(blend_pipeline_layout, blend_pipeline_descriptor);
+
         var renderer: Renderer = .{
             .blit_pipeline = blit_pipeline,
             .blit_bind_group = blit_bind_group,
@@ -636,12 +743,21 @@ pub const Renderer = struct {
             .resized_framebuffer_texture = resized_framebuffer.texture,
             .resized_framebuffer_texture_view = resized_framebuffer.view,
 
-            .pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
+            .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
+
+            .translucent_pipeline = translucent_pipeline,
+            .translucent_bind_group_layout = translucent_bind_group_layout,
+
+            .blend_pipeline = blend_pipeline,
+            .blend_bind_group_layout = blend_bind_group_layout,
+
             .bind_group_layout = bind_group_layout,
             .sampler_bind_group_layout = sampler_bind_group_layout,
             .pipeline_layout = pipeline_layout,
-            .vertex_shader_module = vertex_shader_module,
-            .fragment_shader_module = fragment_shader_module,
+            .blit_vertex_shader_module = blit_vs_module,
+            .opaque_vertex_shader_module = opaque_vertex_shader_module,
+            .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
+            .translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_translucent_fs, "fs"),
 
             .bind_group = bind_group,
             .sampler_bind_groups = sampler_bind_groups,
@@ -667,6 +783,26 @@ pub const Renderer = struct {
             renderer.passes[i] = PassMetadata.init(allocator, @enumFromInt(i));
         }
 
+        // FIXME: Remove
+        renderer.resized_framebuffer_copy_texture = gctx.createTexture(.{
+            .usage = .{
+                .texture_binding = true,
+                .copy_dst = true,
+            },
+            .size = .{
+                .width = gctx.swapchain_descriptor.width,
+                .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .mip_level_count = 1, // std.math.log2_int(u32, @max(1024, 1024)) + 1,
+        });
+        renderer.resized_framebuffer_copy_texture_view = gctx.createTextureView(renderer.resized_framebuffer_copy_texture, .{});
+
+        renderer.create_oit_buffers();
+        renderer.create_translucent_bind_group();
+        renderer.create_blend_bind_group();
+
         return renderer;
     }
 
@@ -678,8 +814,8 @@ pub const Renderer = struct {
         self.vertices.deinit();
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot of resources to destroy.
-        self.vertex_shader_module.release();
-        self.fragment_shader_module.release();
+        self.opaque_vertex_shader_module.release();
+        self.opaque_fragment_shader_module.release();
         self._gctx.releaseResource(self.bind_group_layout);
         self._gctx.releaseResource(self.pipeline_layout);
     }
@@ -1383,6 +1519,8 @@ pub const Renderer = struct {
                         .ignore_alpha = tsp_instruction.ignore_texture_alpha,
                         .tex_u_size = tsp_instruction.texture_u_size,
                         .tex_v_size = tsp_instruction.texture_v_size,
+                        .src_blend_factor = tsp_instruction.src_alpha_instr,
+                        .dst_blend_factor = tsp_instruction.dst_alpha_instr,
                     },
                 };
 
@@ -1668,10 +1806,14 @@ pub const Renderer = struct {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
 
+            const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+            const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+
+            const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
+            const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
+
             // Convert Framebuffer from native 640*480 to window resolution
             if (self.read_framebuffer_enabled) {
-                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
@@ -1686,8 +1828,8 @@ pub const Renderer = struct {
 
                 const pass = encoder.beginRenderPass(render_pass_info);
 
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
                 pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
 
@@ -1698,11 +1840,19 @@ pub const Renderer = struct {
                     pass.release();
                 }
             }
+            const bind_group = gctx.lookupResource(self.bind_group).?;
+
+            const uniform_mem = gctx.uniformsAllocate(struct { depth_min: f32, depth_max: f32, max_fragments: u32, target_width: u32 }, 1);
+            uniform_mem.slice[0].depth_min = self.min_depth;
+            uniform_mem.slice[0].depth_max = self.max_depth;
+
+            const screen_width = 640;
+            const screen_height = 480;
+
+            uniform_mem.slice[0].max_fragments = 2 * screen_width * 2 * screen_height * MaxAvgFragmentsPerPixel;
+            uniform_mem.slice[0].target_width = 2 * screen_width; // FIXME: target_width
 
             {
-                const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
-                const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
-                const bind_group = gctx.lookupResource(self.bind_group).?;
                 const depth_view = gctx.lookupResource(self.depth_texture_view).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
@@ -1712,7 +1862,7 @@ pub const Renderer = struct {
                 }};
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
-                    .depth_load_op = .clear, // FIXME: We don't want to clear after the first pass.
+                    .depth_load_op = .clear,
                     .depth_store_op = .store,
                     .depth_clear_value = 1.0,
                 };
@@ -1730,14 +1880,10 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                // Set uniforms
-                const mem = gctx.uniformsAllocate([4]f32, 1);
-                mem.slice[0][0] = self.min_depth;
-                mem.slice[0][1] = self.max_depth;
-                pass.setBindGroup(0, bind_group, &.{mem.offset});
+                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
 
                 // Draw background
-                const background_pipeline = try self.get_or_put_pipeline(.{
+                const background_pipeline = try self.get_or_put_opaque_pipeline(.{
                     .src_blend_factor = .one,
                     .dst_blend_factor = .zero,
                     .depth_compare = .always,
@@ -1753,12 +1899,12 @@ pub const Renderer = struct {
                 //   Opaque (and Punch Through) Modifier Volume
                 //   Translucent
                 //   Translucent Modifier Volume:
-                inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
+                inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough }) |list_type| {
                     var it = self.passes[@intFromEnum(list_type)].pipelines.iterator();
                     while (it.next()) |entry| {
                         // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                         if (entry.value_ptr.*.draw_calls.count() > 0) {
-                            const pl = try self.get_or_put_pipeline(entry.key_ptr.*);
+                            const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*);
                             pass.setPipeline(gctx.lookupResource(pl).?);
 
                             for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
@@ -1770,6 +1916,88 @@ pub const Renderer = struct {
                         }
                     }
                 }
+            }
+            {
+                const heads_info = gctx.lookupResourceInfo(self.list_heads_buffer).?;
+                const init_heads_info = gctx.lookupResourceInfo(self.init_list_heads_buffer).?;
+                encoder.copyBufferToBuffer(init_heads_info.gpuobj.?, 0, heads_info.gpuobj.?, 0, heads_info.size);
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .load_op = .load,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                    .depth_stencil_attachment = null,
+                };
+                const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                const translucent_pass = self.passes[@intFromEnum(HollyModule.ListType.Translucent)];
+
+                pass.setPipeline(gctx.lookupResource(self.translucent_pipeline).?);
+
+                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+
+                pass.setBindGroup(2, gctx.lookupResource(self.translucent_bind_group).?, &.{});
+
+                var it = translucent_pass.pipelines.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.*.draw_calls.count() > 0) {
+                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                            if (draw_call.index_count > 0) {
+                                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // FIXME: Use a compute shader to get rid of this copy.
+            encoder.copyTextureToTexture(
+                .{
+                    .texture = gctx.lookupResource(self.resized_framebuffer_texture).?,
+                },
+                .{
+                    .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).?,
+                },
+                .{ .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height },
+            );
+
+            {
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .load_op = .load,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                    .depth_stencil_attachment = null,
+                };
+                const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+
+                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
+
+                pass.setBindGroup(0, gctx.lookupResource(self.blend_bind_group).?, &.{uniform_mem.offset});
+
+                pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
             break :commands encoder.finish(null);
@@ -1808,7 +2036,7 @@ pub const Renderer = struct {
                 const pass = encoder.beginRenderPass(render_pass_info);
 
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint16, 0, ib_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
                 pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
 
@@ -1860,7 +2088,10 @@ pub const Renderer = struct {
         view: zgpu.TextureViewHandle,
     } {
         const texture = gctx.createTexture(.{
-            .usage = .{ .render_attachment = true },
+            .usage = .{
+                .render_attachment = true,
+                .texture_binding = true,
+            },
             .dimension = .tdim_2d,
             .size = .{
                 .width = gctx.swapchain_descriptor.width,
@@ -1880,7 +2111,11 @@ pub const Renderer = struct {
         view: zgpu.TextureViewHandle,
     } {
         const resized_framebuffer_texture = gctx.createTexture(.{
-            .usage = .{ .texture_binding = true, .render_attachment = true },
+            .usage = .{
+                .texture_binding = true,
+                .render_attachment = true,
+                .copy_src = true, // FIXME: Remove this once we moved to compute shaders for the OIT pass.
+            },
             .size = .{
                 .width = gctx.swapchain_descriptor.width,
                 .height = gctx.swapchain_descriptor.height, // FIXME: Not dynamic.
@@ -1891,5 +2126,47 @@ pub const Renderer = struct {
         });
         const resized_framebuffer_texture_view = gctx.createTextureView(resized_framebuffer_texture, .{});
         return .{ .texture = resized_framebuffer_texture, .view = resized_framebuffer_texture_view };
+    }
+
+    fn create_oit_buffers(self: *@This()) void {
+        const head_size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32);
+        const list_size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode;
+
+        self.list_heads_buffer = self._gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .storage = true },
+            .size = head_size,
+        });
+        self.init_list_heads_buffer = self._gctx.createBuffer(.{
+            .usage = .{ .map_write = true, .copy_src = true },
+            .size = head_size,
+            .mapped_at_creation = true,
+        });
+
+        const init_buffer = self._gctx.lookupResourceInfo(self.init_list_heads_buffer).?.gpuobj.?;
+        const mapped = init_buffer.getMappedRange(u32, 0, head_size / 4);
+        @memset(mapped.?, 0xFFFFFFFF);
+        init_buffer.unmap();
+
+        self.linked_list_buffer = self._gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .storage = true },
+            .size = list_size,
+        });
+    }
+
+    fn create_translucent_bind_group(self: *@This()) void {
+        self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .texture_view_handle = self.depth_texture_view },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode },
+        });
+    }
+
+    fn create_blend_bind_group(self: *@This()) void {
+        self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(u32) },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode },
+            .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
+        });
     }
 };

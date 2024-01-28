@@ -1,15 +1,44 @@
- 
+// https://webgpu.github.io/webgpu-samples/samples/A-buffer 
 
- @group(0) @binding(1) var texture_array_8x8: texture_2d_array<f32>;
- @group(0) @binding(2) var texture_array_16x16: texture_2d_array<f32>;
- @group(0) @binding(3) var texture_array_32x32: texture_2d_array<f32>;
- @group(0) @binding(4) var texture_array_64x64: texture_2d_array<f32>;
- @group(0) @binding(5) var texture_array_128x128: texture_2d_array<f32>;
- @group(0) @binding(6) var texture_array_256x256: texture_2d_array<f32>;
- @group(0) @binding(7) var texture_array_512x512: texture_2d_array<f32>;
- @group(0) @binding(8) var texture_array_1024x1024: texture_2d_array<f32>;
+struct Uniforms {
+    depth_min: f32,
+    depth_max: f32, 
+    max_fragments: u32,
+    target_width: u32,
+};
 
- @group(1) @binding(0) var image_sampler: sampler;
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var texture_array_8x8: texture_2d_array<f32>;
+@group(0) @binding(2) var texture_array_16x16: texture_2d_array<f32>;
+@group(0) @binding(3) var texture_array_32x32: texture_2d_array<f32>;
+@group(0) @binding(4) var texture_array_64x64: texture_2d_array<f32>;
+@group(0) @binding(5) var texture_array_128x128: texture_2d_array<f32>;
+@group(0) @binding(6) var texture_array_256x256: texture_2d_array<f32>;
+@group(0) @binding(7) var texture_array_512x512: texture_2d_array<f32>;
+@group(0) @binding(8) var texture_array_1024x1024: texture_2d_array<f32>;
+
+@group(1) @binding(0) var image_sampler: sampler;
+
+struct Heads {
+  fragment_count: atomic<u32>,
+  data: array<atomic<u32>>
+};
+
+struct LinkedListElement {
+  color: vec4<f32>,
+  depth: f32,
+  blend_mode: u32,
+  next: u32
+};
+
+struct LinkedList {
+  data: array<LinkedListElement>
+};
+
+@group(2) @binding(0) var opaque_depth_texture: texture_depth_2d;
+@group(2) @binding(1) var<storage, read_write> heads: Heads;
+@group(2) @binding(2) var<storage, read_write> linked_list: LinkedList;
+
 
 fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
     // textureSample can't be called in non-uniform context, because of this derivative, I guess.
@@ -31,11 +60,20 @@ fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
 
 @fragment
 fn main(
+    @builtin(position) position: vec4<f32>,
     @location(0) base_color: vec4<f32>,
     @location(1) offset_color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) @interpolate(flat) tex: vec2<u32>,
-) -> @location(0) vec4<f32> {
+) {
+    let frag_coords = vec2<i32>(position.xy);
+    let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
+
+    if position.z > opaque_depth {
+        discard;
+    }
+
+    // Normal rendering
     let tex_color = tex_sample(uv, tex[1], tex[0]);
 
     var final_color: vec4<f32>;
@@ -75,9 +113,21 @@ fn main(
         final_color = base_color + offset_color;
     }
 
-    if final_color.a == 0.0 {
-        discard;
-    }
+    // Add the fragment to the linked list
 
-    return final_color;
+    // The index in the heads buffer corresponding to the head data for the fragment at
+    // the current location.
+    let heads_index = u32(frag_coords.y) * uniforms.target_width + u32(frag_coords.x);
+    
+    // The index in the linkedList buffer at which to store the new fragment
+    let frag_index = atomicAdd(&heads.fragment_count, 1u);
+
+    // If we run out of space to store the fragments, we just lose them
+    if frag_index < uniforms.max_fragments {
+        let last_head = atomicExchange(&heads.data[heads_index], frag_index);
+        linked_list.data[frag_index].depth = position.z;
+        linked_list.data[frag_index].color = final_color;
+        linked_list.data[frag_index].blend_mode = (tex[1] >> 10) & 0x3F;
+        linked_list.data[frag_index].next = last_head;
+    }
 }

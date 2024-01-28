@@ -1,5 +1,12 @@
 
- @group(0) @binding(0) var<uniform> depth_min_max: vec4<f32>;
+struct Uniforms {
+    depth_min: f32,
+    depth_max: f32, 
+    max_fragments: u32,
+    target_width: u32,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
  
 struct VertexOut {
      @builtin(position) position_clip: vec4<f32>,
@@ -41,7 +48,7 @@ fn main(
     output.position_clip.x = position.x * 2.0 / screen_size.x - 1.0;
     output.position_clip.y = position.y * -2.0 / screen_size.y + 1.0;
 
-    output.position_clip.z = (1.0 / position.z) / depth_min_max[1]; // Remap to the [0.0..1.0] range used by WGPU
+    output.position_clip.z = (1.0 / position.z) / uniforms.depth_max; // Remap to the [0.0..1.0] range used by WGPU
     output.position_clip.w = 1.0;
 
     output.base_color = base_color;
