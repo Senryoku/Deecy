@@ -419,7 +419,7 @@ pub const AICA = struct {
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
         const len_in_bytes = len_reg & 0x7FFFFFFF;
         const direction = dc.read_hw_register(u32, .SB_ADDIR);
-        aica_log.info(" AICA G2-DMA Start!", .{});
+        aica_log.debug(" AICA G2-DMA Start!", .{});
         aica_log.debug("   AICA Address: 0x{X:0>8}", .{aica_addr});
         aica_log.debug("   Root Bus Address: 0x{X:0>8}", .{root_bus_addr});
         aica_log.debug("   Length: 0x{X:0>8} (0x{X:0>8})", .{ len_reg, len_in_bytes });
