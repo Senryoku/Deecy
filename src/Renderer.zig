@@ -347,9 +347,6 @@ const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
 }};
 
 pub const Renderer = struct {
-    pub const MaxAvgFragmentsPerPixel = 3; // In the linked list of fragments for OIT.
-    pub const SizeOfLinkedListNode = 4 * 4 + 4 + 4 + 4;
-
     pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
@@ -1838,8 +1835,10 @@ pub const Renderer = struct {
 
             const screen_width = 640;
             const screen_height = 480;
+            _ = screen_height;
 
-            uniform_mem.slice[0].max_fragments = 2 * screen_width * 2 * screen_height * MaxAvgFragmentsPerPixel;
+            const LinkedListNodeSize = 4 * 4 + 4 + 4 + 4;
+            uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / LinkedListNodeSize);
             uniform_mem.slice[0].target_width = 2 * screen_width; // FIXME: target_width
 
             {
@@ -2128,7 +2127,7 @@ pub const Renderer = struct {
 
     fn create_oit_buffers(self: *@This()) void {
         const head_size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32);
-        const list_size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode;
+        const list_size = self.get_max_storage_buffer_binding_size();
 
         self.list_heads_buffer = self._gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .storage = true },
@@ -2155,7 +2154,7 @@ pub const Renderer = struct {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .texture_view_handle = self.depth_texture_view },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
-            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
         });
     }
 
@@ -2163,9 +2162,18 @@ pub const Renderer = struct {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
-            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height * MaxAvgFragmentsPerPixel * SizeOfLinkedListNode },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture_view },
         });
+    }
+
+    fn get_max_storage_buffer_binding_size(_: *const @This()) u64 {
+        // FIXME: No idea why this always fails.
+        // var r: zgpu.wgpu.SupportedLimits = undefined;
+        // if (!self._gctx.device.getLimits(&r))
+        //     renderer_log.err("Failed to get device limits.", .{});
+        // return r.limits.max_storage_buffer_binding_size;
+        return 134217728; // FIXME: Hardcoded 'cause I can't be bothered to make it work correctly right now.
     }
 };
