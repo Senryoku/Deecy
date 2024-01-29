@@ -375,7 +375,6 @@ pub const Renderer = struct {
     blit_vertex_shader_module: wgpu.ShaderModule,
     opaque_vertex_shader_module: wgpu.ShaderModule,
     opaque_fragment_shader_module: wgpu.ShaderModule,
-    translucent_fragment_shader_module: wgpu.ShaderModule,
 
     bind_group: zgpu.BindGroupHandle,
     translucent_bind_group: zgpu.BindGroupHandle = undefined,
@@ -763,7 +762,6 @@ pub const Renderer = struct {
             .blit_vertex_shader_module = blit_vs_module,
             .opaque_vertex_shader_module = opaque_vertex_shader_module,
             .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
-            .translucent_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_translucent_fs, "fs"),
 
             .bind_group = bind_group,
             .sampler_bind_groups = sampler_bind_groups,
