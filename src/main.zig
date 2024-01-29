@@ -183,6 +183,7 @@ pub fn main() !void {
 
     const gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, window, .{
         .present_mode = .mailbox,
+        .required_features = &[_]zgpu.wgpu.FeatureName{.bgra8_unorm_storage},
     });
     defer gctx.destroy(common.GeneralAllocator);
 
@@ -203,6 +204,7 @@ pub fn main() !void {
         window,
         gctx.device,
         @intFromEnum(zgpu.GraphicsContext.swapchain_format),
+        @intFromEnum(zgpu.wgpu.TextureFormat.undef),
     );
     defer zgui.backend.deinit();
 
