@@ -17,9 +17,11 @@
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
-    - Handle and generate Mipmaps.
-    - Order independent transparency.
+    - Modifier Volumes.
+    - User Tile Clip.
+    - Fog.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
+    - Handle and generate Mipmaps.
       
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
