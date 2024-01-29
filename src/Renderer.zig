@@ -299,7 +299,29 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
         },
     }
 
-    const dz = 1.0; // FIXME: There is no 'DZ' in the documentation. It needs to be computed from the plane equation.
+    // dz have to be deduced from the plane equation
+    const ab = [3]f32{
+        r[2].x - r[0].x,
+        r[2].y - r[0].y,
+        r[2].z - r[0].z,
+    };
+    const ac = [3]f32{
+        r[3].x - r[0].x,
+        r[3].y - r[0].y,
+        r[3].z - r[0].z,
+    };
+    const normal = [3]f32{
+        ab[1] * ac[2] - ab[2] * ac[1],
+        ab[2] * ac[0] - ab[0] * ac[2],
+        ab[0] * ac[1] - ab[1] * ac[0],
+    };
+    const plane_equation_coeff = [4]f32{
+        normal[0],
+        normal[1],
+        normal[2],
+        -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
+    };
+    const dz = (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     // Same thing, texture coordinates have to be deduced from other vertices.
     const du = r[0].u + r[3].u - r[2].u;
     const dv = r[0].v + r[3].v - r[2].v;
@@ -1886,7 +1908,7 @@ pub const Renderer = struct {
                 }
             }
 
-            // FIXME: WGPU doesn't support reading from storage textures... This a bad bad workaround.
+            // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
             encoder.copyTextureToTexture(
                 .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
                 .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
