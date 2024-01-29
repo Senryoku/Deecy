@@ -120,8 +120,8 @@ const Vertex = packed struct {
 };
 
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
-const wgsl_fs = @embedFile("./shaders/fs.wgsl");
-const wgsl_translucent_fs = @embedFile("./shaders/oit_draw_fs.wgsl");
+const wgsl_fs = @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
+const wgsl_translucent_fs = @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
 const wgsl_blend_cs = @embedFile("./shaders/oit_blend_cs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
