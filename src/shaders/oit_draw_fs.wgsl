@@ -69,10 +69,32 @@ fn main(
     let frag_coords = vec2<i32>(position.xy);
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
-    if position.z > opaque_depth {
-        discard;
-    }
+    let depth_compare = (tex[1] >> 16) & 0x7;
 
+    // NOTE: Comparisons are inversed compared to Holly's 1/z depth.
+    switch(depth_compare) {
+        case 0: { discard; } // Never
+        case 1: { // Less
+            if position.z < opaque_depth { discard; }
+        }
+        case 2: { // Equal
+            if position.z != opaque_depth { discard; }
+        }
+        case 3: { // Less or Equal
+            if position.z <= opaque_depth { discard; }
+        }
+        case 4: { // Greater
+            if position.z > opaque_depth { discard; }
+        }
+        case 5: { // Not Equal
+            if position.z == opaque_depth { discard; }
+        }
+        case 6: { // Greater or Equal
+            if position.z >= opaque_depth { discard; }
+        }
+        case 7: {} // Always
+        default: {}
+    }
     // Normal rendering
     let tex_color = tex_sample(uv, tex[1], tex[0]);
 

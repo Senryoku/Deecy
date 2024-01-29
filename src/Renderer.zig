@@ -77,7 +77,8 @@ const ShadingInstructions = packed struct(u32) {
     tex_v_size: u3,
     src_blend_factor: HollyModule.AlphaInstruction = .One,
     dst_blend_factor: HollyModule.AlphaInstruction = .Zero,
-    _: u16 = 0,
+    depth_compare: HollyModule.DepthCompareMode,
+    _: u13 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1306,6 +1307,7 @@ pub const Renderer = struct {
                 .ignore_alpha = tsp_instruction.ignore_texture_alpha,
                 .tex_u_size = texture_size_index,
                 .tex_v_size = tsp_instruction.texture_v_size,
+                .depth_compare = isp_tsp_instruction.depth_compare_mode,
             },
         };
 
@@ -1503,6 +1505,7 @@ pub const Renderer = struct {
                         .tex_v_size = tsp_instruction.texture_v_size,
                         .src_blend_factor = tsp_instruction.src_alpha_instr,
                         .dst_blend_factor = tsp_instruction.dst_alpha_instr,
+                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
                     },
                 };
 
@@ -1738,11 +1741,6 @@ pub const Renderer = struct {
                         try self.passes[@intFromEnum(list_type)].pipelines.put(pipeline_key, PipelineMetadata.init(self._allocator));
                         break :put self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key).?;
                     };
-
-                    //if (isp_tsp_instruction.depth_compare_mode != .Greater and isp_tsp_instruction.depth_compare_mode != .GreaterEqual)
-                    //    std.debug.print("Depth_compare_mode {any}\n", .{isp_tsp_instruction.depth_compare_mode});
-                    //if (list_type == .Translucent and (tsp_instruction.src_alpha_instr != .SourceAlpha or tsp_instruction.dst_alpha_instr != .InverseSourceAlpha))
-                    //    std.debug.print("src_alpha_instr {any} ; dst_alpha_instr {any}\n", .{ tsp_instruction.src_alpha_instr, tsp_instruction.dst_alpha_instr });
 
                     const draw_call_index = sampler;
 
