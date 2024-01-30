@@ -406,7 +406,7 @@ pub fn div1(cpu: *SH4, opcode: Instr) void {
     const pRn = cpu.R(opcode.nmd.n);
 
     const prev_q = cpu.sr.q;
-    var Q = (0x80000000 & cpu.R(opcode.nmd.n).*) != 0;
+    var Q = (0x80000000 & pRn.*) != 0;
 
     const Rm = cpu.R(opcode.nmd.m).*;
 
@@ -501,12 +501,15 @@ test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
     try std.testing.expect(cpu.R(1).* == @as(u32, @truncate(dividend / divisor)));
 }
 
-// FIXME: These are not tested at all.
 pub fn dmulsl_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    const r: u64 = @bitCast(@as(i64, cpu.R(opcode.nmd.n).*) * @as(i64, cpu.R(opcode.nmd.m).*));
+    const rn: i32 = @bitCast(cpu.R(opcode.nmd.n).*);
+    const rm: i32 = @bitCast(cpu.R(opcode.nmd.m).*);
+
+    const r: u64 = @bitCast(@as(i64, rn) * @as(i64, rm));
     cpu.mach = @truncate(r >> 32);
     cpu.macl = @truncate(r);
 }
+
 pub fn dmulul_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const r = @as(u64, cpu.R(opcode.nmd.n).*) * @as(u64, cpu.R(opcode.nmd.m).*);
     cpu.mach = @truncate(r >> 32);
@@ -532,6 +535,46 @@ pub fn extub_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn extuw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).* & 0xFFFF;
+}
+
+pub fn macl_at_Rm_inc_at_Rn_inc(cpu: *SH4, opcode: Instr) void {
+    const rn: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    const rm: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+
+    var m: i64 = @as(i64, rn) * @as(i64, rm);
+    m += @as(i64, @bitCast(@as(u64, cpu.mach) << 32 | @as(u64, cpu.macl)));
+
+    const bits: u64 = @bitCast(m);
+    if (cpu.sr.s) {
+        // FIXME: Not sure about this
+        cpu.mach = (cpu.mach & 0xFFFF0000) & (@as(u32, @truncate(bits >> 32)) & 0x0000FFFF);
+        @panic("Unimplemented");
+    } else {
+        cpu.mach = @truncate(bits >> 32);
+    }
+    cpu.macl = @truncate(bits);
+
+    cpu.R(opcode.nmd.n).* += 4;
+    cpu.R(opcode.nmd.m).* += 4;
+}
+
+pub fn macw_at_Rm_inc_at_Rn_inc(cpu: *SH4, opcode: Instr) void {
+    const rn: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.n).*));
+    const rm: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.m).*));
+
+    var m: i64 = @as(i32, rn) * @as(i32, rm);
+    m += @as(i64, @bitCast(@as(u64, cpu.mach) << 32 | @as(u64, cpu.macl)));
+
+    const bits: u64 = @bitCast(m);
+    if (cpu.sr.s) {
+        @panic("Unimplemented");
+    } else {
+        cpu.mach = @truncate(bits >> 32);
+    }
+    cpu.macl = @truncate(bits);
+
+    cpu.R(opcode.nmd.n).* += 2;
+    cpu.R(opcode.nmd.m).* += 2;
 }
 
 pub fn mull_Rm_Rn(cpu: *SH4, opcode: Instr) void {
