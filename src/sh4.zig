@@ -565,7 +565,8 @@ pub const SH4 = struct {
                 self.timer_cycle_counter[i] += cycles;
 
                 const scale = SH4.timer_prescaler(tcr.*.tpsc);
-                if (self.timer_cycle_counter[i] >= scale) {
+                // NOTE: cycles can be > 2 * scale, hence the while; Not exactly efficient, but correct enough for now.
+                while (self.timer_cycle_counter[i] >= scale) {
                     self.timer_cycle_counter[i] -= scale;
 
                     if (tcnt.* == 0) {
