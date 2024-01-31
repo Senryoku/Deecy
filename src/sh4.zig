@@ -840,8 +840,7 @@ pub const SH4 = struct {
                 return self.p4_register_addr(u8, addr);
             },
             else => {
-                sh4_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
-                @panic("Invalid _get_memory");
+                self.panic_debug("Invalid _get_memory @{X:0>8}", .{addr});
             },
         }
     }

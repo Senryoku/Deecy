@@ -449,7 +449,9 @@ pub fn main() !void {
 
             if (zgui.begin("Holly", .{})) {
                 const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
+                const ISP_BACKGND_T = dc.gpu._get_register(u32, .ISP_BACKGND_T).*;
                 zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
+                zgui.text("ISP_BACKGND_T: {X:0>8}", .{ISP_BACKGND_T});
 
                 const FB_C_SOF: u32 = dc.gpu._get_register(u32, .FB_C_SOF).*;
                 const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;

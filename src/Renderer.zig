@@ -1321,18 +1321,20 @@ pub const Renderer = struct {
             var u: f32 = 0;
             var v: f32 = 0;
             var base_color: HollyModule.PackedColor = @bitCast(vp[3]);
-            var offset_color: HollyModule.PackedColor = @bitCast(vp[3]); // TODO
+            var offset_color: HollyModule.PackedColor = .{ .b = 0, .g = 0, .r = 0, .a = 0 };
             if (isp_tsp_instruction.texture == 1) {
                 if (isp_tsp_instruction.uv_16bit == 1) {
                     u = @as(f32, @bitCast(vp[3] >> 16));
                     v = @as(f32, @bitCast(vp[3] & 0xFFFF));
                     base_color = @bitCast(vp[4]);
-                    offset_color = @bitCast(vp[5]);
+                    if (isp_tsp_instruction.offset == 1)
+                        offset_color = @bitCast(vp[5]);
                 } else {
                     u = @bitCast(vp[3]);
                     v = @bitCast(vp[4]);
                     base_color = @bitCast(vp[5]);
-                    offset_color = @bitCast(vp[5]);
+                    if (isp_tsp_instruction.offset == 1)
+                        offset_color = @bitCast(vp[6]);
                 }
             }
             vertices[i] = Vertex{
@@ -1345,6 +1347,12 @@ pub const Renderer = struct {
                     .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
                     .a = if (use_alpha) @as(f32, @floatFromInt(base_color.a)) / 255.0 else 1.0,
                 },
+                .offset_color = .{
+                    .r = @as(f32, @floatFromInt(offset_color.r)) / 255.0,
+                    .g = @as(f32, @floatFromInt(offset_color.g)) / 255.0,
+                    .b = @as(f32, @floatFromInt(offset_color.b)) / 255.0,
+                    .a = if (use_alpha) @as(f32, @floatFromInt(offset_color.a)) / 255.0 else 1.0,
+                },
                 .u = u,
                 .v = v,
                 .tex = tex,
@@ -1353,6 +1361,31 @@ pub const Renderer = struct {
             self.min_depth = @min(self.min_depth, 1 / vertices[i].z);
             self.max_depth = @max(self.max_depth, 1 / vertices[i].z);
         }
+
+        // FIXME: In Crazy Taxi (and 2) and Soulcalibur, the vertices coordinates make no sense, even if the data format seems right:
+        //     40000000 -       2.00
+        //     43820000 -     260.00
+        //     3727C5AC -       0.00
+        //     FF000000 - (Packed color)
+        //     43160000 -     150.00
+        //     40000000 -       2.00
+        //     3727C5AC -       0.00
+        //     FF000000 - (Packed color)
+        //     440C0000 -     560.00
+        //     43820000 -     260.00
+        //     3727C5AC -       0.00
+        //     FF000000 - (Packed color)
+        // There's obviously something I don't understand here.
+        // Overriding the coordinates to cover the screen for now, I'm tired of seeing the broken framebuffer (Oh yeah, that's another bug.)
+        const screen_width: f32 = 640.0; // FIXME: Hack within a hack, hardcording the screen size too.
+        const screen_height: f32 = 480.0;
+        vertices[0].x = 0.0;
+        vertices[0].y = 0.0;
+        vertices[1].x = screen_width;
+        vertices[1].y = 0.0;
+        vertices[2].x = 0.0;
+        vertices[2].y = screen_height;
+
         vertices[3] = Vertex{
             .x = vertices[1].x,
             .y = vertices[2].y,
