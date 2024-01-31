@@ -39,7 +39,7 @@ const Command = enum(u8) {
     Acknowledge = 0x07,
     DataTransfer = 0x08,
     GetCondition = 0x09,
-    GetMemoryInformation = 0x0A,
+    GetMediaInformation = 0x0A,
     BlockRead = 0x0B,
     BlockWrite = 0x0C,
     GetLastError = 0x0D,
@@ -210,7 +210,7 @@ const Controller = struct {
     }
 };
 
-const GetMemoryInformationResponse = packed struct {
+const GetMediaInformationResponse = packed struct {
     total_size: u16,
     partition_number: u16,
     system_area_block_number: u16,
@@ -226,12 +226,19 @@ const GetMemoryInformationResponse = packed struct {
     _reserved2: u16 = 0,
 };
 
+const ScreenFunctionDefinition = packed struct {
+    hv: u8, // Specifies whether the LCD data rows are horizontal or vertical. 0/1 = Horizontal, 2/3 = Vertical
+    wa: u8, // Number of accesses to Block Write
+    bb: u8, // (Number of bytes during Block transmission - 1) / 32
+    pt: u8, // Number of LCD - 1
+};
+
 const VMU = struct {
     capabilities: FunctionCodesMask = VMUCapabilities,
     subcapabilities: [3]FunctionCodesMask = .{
-        @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)), // FIXME: This is wrong (at least because of endianess, maybe more)
-        @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)),
-        @bitCast(@as(u32, 0b00000000_01000001_00001111_00000000)),
+        @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)),
+        @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // One of these is ScreenFunctionDefinition
+        @bitCast(@as(u32, 0b00000000_01000001_00001111_00000000)), // One of these is ScreenFunctionDefinition
     },
 
     pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
@@ -243,21 +250,32 @@ const VMU = struct {
         return r;
     }
 
-    pub fn get_memory_info(self: *const @This()) GetMemoryInformationResponse {
+    // Write Media Info to dest. Returns the payload size in 32-bit words.
+    pub fn get_media_info(self: *const @This(), dest: [*]u8, function: u32, partition_number: u8) u8 {
         _ = self;
+        _ = partition_number;
 
-        return GetMemoryInformationResponse{
-            .total_size = 0x00FF,
-            .partition_number = 0x0000,
-            .system_area_block_number = 0x00FF,
-            .fat_area_block_number = 0x00FE,
-            .number_of_fat_area_blocks = 0x0001,
-            .file_information_block_number = 0x00FD,
-            .number_of_file_information_blocks = 0x000D,
-            .volume_icon = 0,
-            .save_area_block_number = 0x00C8,
-            .number_of_save_area_blocks = 0x001F,
-        };
+        switch (function) {
+            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+                @as(*GetMediaInformationResponse, @alignCast(@ptrCast(dest))).* = .{
+                    .total_size = 0x00FF,
+                    .partition_number = 0x0000,
+                    .system_area_block_number = 0x00FF,
+                    .fat_area_block_number = 0x00FE,
+                    .number_of_fat_area_blocks = 0x0001,
+                    .file_information_block_number = 0x00FD,
+                    .number_of_file_information_blocks = 0x000D,
+                    .volume_icon = 0,
+                    .save_area_block_number = 0x00C8,
+                    .number_of_save_area_blocks = 0x001F,
+                };
+                return @sizeOf(GetMediaInformationResponse) / 4;
+            },
+            else => {
+                maple_log.err("Unimplemented VMU::GetMediaInformation for function: {any}", .{function});
+            },
+        }
+        return 0;
     }
 
     pub fn get_block_data(self: *const @This(), partition: u8, phase: u8, block_num: u8) [512]u8 {
@@ -267,6 +285,49 @@ const VMU = struct {
         _ = block_num;
 
         return std.mem.zeroes([512]u8);
+    }
+
+    fn bw_ascii(val: u1) []const u8 {
+        return switch (val) {
+            0 => "  ",
+            1 => "@@",
+        };
+    }
+
+    pub fn block_write(self: *const @This(), function: u32, partition: u8, phase: u8, block_num: u8, data: []const u32) void {
+        _ = self;
+        _ = partition;
+        switch (function) {
+            @as(u32, @bitCast(FunctionCodesMask{ .screen = 1 })) => {
+                // TODO: Do something with this frame for the LCD.
+                //        - Partition is the screen number, should always be zero.
+                //        - Phase is used if a frame doesn't fit in one message.
+                //        - Block number specify the plane.
+                //       Since the standard VMU is only 48*32 black and white, we can probably ignore both Phase and Block number.
+
+                // Enable for a cute animation in the terminal, and to destroy your framerate :^)
+                if (false) {
+                    std.debug.print("\u{01B}[2J\u{01B}[H  Phase: {any} Block: {any} Data: \n", .{ phase, block_num });
+                    const bytes: [*]const u8 = @ptrCast(data.ptr);
+                    for (0..data.len * 4) |i| {
+                        std.debug.print("{s}{s}{s}{s}{s}{s}{s}{s}", .{
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 0)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 1)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 2)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 3)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 4)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 5)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 6)),
+                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 7)),
+                        });
+                        if ((i + 1) % 6 == 0) {
+                            std.debug.print("\n", .{});
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
     }
 };
 
@@ -339,22 +400,27 @@ const MaplePort = struct {
                             //},
                         }
                     },
-                    .GetMemoryInformation => { // Named GetMediaInfo in the documentation
+                    .GetMediaInformation => {
                         std.debug.assert(command.payload_length == 2);
 
                         const function_type = data[2];
-                        const partition_number = data[3];
+                        const partition_number: u8 = @truncate(data[3] >> 24);
 
-                        maple_log.warn(termcolor.yellow("  GetMemoryInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
+                        maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
 
                         switch ((target.?)) {
                             .VMU => |v| {
-                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0x07 }));
-                                dc.cpu.write32(return_addr + 4, @bitCast(FunctionCodesMask{ .storage = 1 }));
-                                @memcpy(@as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..@sizeOf(GetMemoryInformationResponse)], @as([*]const u8, @ptrCast(&v.get_memory_info()))[0..@sizeOf(GetMemoryInformationResponse)]);
+                                const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
+                                const payload_size = v.get_media_info(dest, function_type, partition_number);
+                                if (payload_size > 0) {
+                                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                                    dc.cpu.write32(return_addr + 4, function_type);
+                                } else {
+                                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                }
                             },
                             else => {
-                                maple_log.err("Unimplemented GetMemoryInformation for target: {any}", .{target.?});
+                                maple_log.err("Unimplemented GetMediaInformation for target: {any}", .{target.?});
                             },
                         }
                     },
@@ -384,10 +450,13 @@ const MaplePort = struct {
                         const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
                         const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
                         const write_data = data[4 .. 4 + command.payload_length - 2];
-                        _ = write_data;
-                        maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
 
-                        // TODO!
+                        switch (target.?) {
+                            .VMU => |v| v.block_write(function_type, partition, phase, block_num, write_data),
+                            else => {
+                                maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
+                            },
+                        }
 
                         dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
