@@ -1,5 +1,6 @@
 const std = @import("std");
 const termcolor = @import("termcolor.zig");
+const common = @import("common.zig");
 
 const maple_log = std.log.scoped(.maple);
 
@@ -36,7 +37,7 @@ const Command = enum(u8) {
     Shutdown = 0x04,
     DeviceInfo = 0x05,
     ExtendedDevice = 0x06,
-    Acknowledge = 0x07,
+    Acknowledge = 0x07, // Named "Device Reply" in some documentation
     DataTransfer = 0x08,
     GetCondition = 0x09,
     GetMediaInformation = 0x0A,
@@ -121,7 +122,7 @@ const LocationWord = packed struct(u32) {
 // Not sure about the order in this, especially around the strings.
 const DeviceInfoPayload = extern struct {
     FunctionCodesMask: FunctionCodesMask align(1),
-    SubFunctionCodesMasks: [3]FunctionCodesMask align(1),
+    SubFunctionCodesMasks: [3]u32 align(1),
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
     DescriptionString: [30]u8 align(1) = .{0} ** 30,
@@ -175,7 +176,7 @@ pub const ControllerButtons = packed struct(u16) {
 
 const Controller = struct {
     capabilities: FunctionCodesMask = .{ .controller = 1 },
-    subcapabilities: [3]FunctionCodesMask = .{ @bitCast(StandardControllerCapabilities), .{}, .{} },
+    subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 },
 
     buttons: ControllerButtons = .{},
     axis: [6]u8 = .{0x80} ** 6,
@@ -215,31 +216,136 @@ const GetMediaInformationResponse = packed struct {
     partition_number: u16,
     system_area_block_number: u16,
     fat_area_block_number: u16,
+
     number_of_fat_area_blocks: u16,
     file_information_block_number: u16,
     number_of_file_information_blocks: u16,
     volume_icon: u8,
     _reserved: u8 = 0,
+
     save_area_block_number: u16,
     number_of_save_area_blocks: u16,
     _reserved_for_execution_file: u32 = 0,
     _reserved2: u16 = 0,
 };
 
-const ScreenFunctionDefinition = packed struct {
-    hv: u8, // Specifies whether the LCD data rows are horizontal or vertical. 0/1 = Horizontal, 2/3 = Vertical
-    wa: u8, // Number of accesses to Block Write
-    bb: u8, // (Number of bytes during Block transmission - 1) / 32
+const StorageFunctionDefinition = packed struct(u32) {
+    pt: u8, // Number of partitions - 1, probably 0
+    bb: u8, // (Number of bytes per block - 1) / 32, probably 0x0F, or Number of bytes per block = 512
+    ra: u4, // Number of accesses needed to read one block
+    wa: u4, // Number of accesses needed to write one block
+    fd: u6 = 0, // Reserved
+    crc: u1, // CRC needed flag
+    rm: u1, // Removable Media
+};
+
+const ScreenFunctionDefinition = packed struct(u32) {
     pt: u8, // Number of LCD - 1
+    bb: u8, // (Number of bytes during Block transmission - 1) / 32
+    wa: u8, // Number of accesses to Block Write
+    hv: u8, // Specifies whether the LCD data rows are horizontal or vertical. 0/1 = Horizontal, 2/3 = Vertical
+};
+
+const FATValue = enum(u16) {
+    DataEnd = 0xFFFA,
+    Unused = 0xFFFC,
+    BlockDamaged = 0xFFFF,
+    _, // # of the next data block.
 };
 
 const VMU = struct {
+    const BlockSize: u32 = 512;
+    const BlockCount = 256;
+    const ReadAccessPerBlock = 1;
+    const WriteAccessPerBlock = 1;
+    const FATBlock = 0x00FE;
+    const SystemBlock = BlockCount - 1;
+
+    backing_file: []const u8 = "userdata/vmu_0.bin", // TODO: Make this customizable.
+
     capabilities: FunctionCodesMask = VMUCapabilities,
-    subcapabilities: [3]FunctionCodesMask = .{
+    subcapabilities: [3]u32 = .{
         @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)),
         @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // One of these is ScreenFunctionDefinition
-        @bitCast(@as(u32, 0b00000000_01000001_00001111_00000000)), // One of these is ScreenFunctionDefinition
+        @bitCast(StorageFunctionDefinition{
+            .crc = 0,
+            .rm = 0,
+            .ra = ReadAccessPerBlock,
+            .wa = WriteAccessPerBlock,
+            .bb = 0x0F,
+            .pt = 0,
+        }),
     },
+    blocks: [][BlockSize]u8 = undefined,
+
+    pub fn init(allocator: std.mem.Allocator) !@This() {
+        var vmu: @This() = .{};
+
+        vmu.blocks = try allocator.alloc([BlockSize]u8, 0x100);
+
+        var new_file = std.fs.cwd().createFile(vmu.backing_file, .{ .exclusive = true }) catch |e| {
+            switch (e) {
+                error.PathAlreadyExists => {
+                    maple_log.info("Loading VMU from file '{s}'.", .{vmu.backing_file});
+                    var file = try std.fs.cwd().openFile(vmu.backing_file, .{});
+                    defer file.close();
+                    _ = try file.readAll(@as([*]u8, @ptrCast(vmu.blocks.ptr))[0 .. vmu.blocks.len * BlockSize]);
+                    return vmu;
+                },
+                else => {
+                    return e;
+                },
+            }
+        };
+        defer new_file.close();
+
+        @memset(vmu.blocks[0xFF][0..0x200], 0);
+        // Fill system area
+        @memset(vmu.blocks[0xFF][0..0x10], 0x55); // Format Information, all 0x55 means formatted.
+        @memcpy(vmu.blocks[0xFF][0x10..0x30], "Volume Label                    "); // Volume Label
+        @memcpy(vmu.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
+        @memset(vmu.blocks[0xFF][0x38..0x40], 0); // Reserved
+
+        @as(*GetMediaInformationResponse, @alignCast(@ptrCast(&vmu.blocks[0xFF][0x40]))).* = .{
+            .total_size = BlockCount - 1,
+            .partition_number = 0x0000,
+            .system_area_block_number = SystemBlock,
+            .fat_area_block_number = 0x00FE,
+            .number_of_fat_area_blocks = 0x0001,
+            .file_information_block_number = 0x00FD,
+            .number_of_file_information_blocks = 0x000D,
+            .volume_icon = 0,
+            .save_area_block_number = 0x00C8,
+            .number_of_save_area_blocks = 0x00C8,
+        };
+
+        // "Format" the device.
+        var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&vmu.blocks[FATBlock][0])));
+        @memset(fat_entries[0..0x100], FATValue.Unused);
+        fat_entries[FATBlock] = FATValue.DataEnd;
+        fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
+
+        try new_file.writeAll(@as([*]u8, @ptrCast(vmu.blocks.ptr))[0 .. vmu.blocks.len * BlockSize]);
+
+        return vmu;
+    }
+
+    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
+        self.save();
+        allocator.free(self.blocks);
+    }
+
+    pub fn save(self: *const @This()) void {
+        maple_log.info("Save VMU to file '{s}'.", .{self.backing_file});
+        var file = std.fs.cwd().openFile(self.backing_file, .{ .mode = .write_only }) catch |err| {
+            maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file, err });
+            return;
+        };
+        defer file.close();
+        file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch |err| {
+            maple_log.err("Failed to save VMU: {any}", .{err});
+        };
+    }
 
     pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
         var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
@@ -258,16 +364,16 @@ const VMU = struct {
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
                 @as(*GetMediaInformationResponse, @alignCast(@ptrCast(dest))).* = .{
-                    .total_size = 0x00FF,
+                    .total_size = BlockCount - 1,
                     .partition_number = 0x0000,
-                    .system_area_block_number = 0x00FF,
-                    .fat_area_block_number = 0x00FE,
+                    .system_area_block_number = SystemBlock,
+                    .fat_area_block_number = FATBlock,
                     .number_of_fat_area_blocks = 0x0001,
                     .file_information_block_number = 0x00FD,
                     .number_of_file_information_blocks = 0x000D,
                     .volume_icon = 0,
                     .save_area_block_number = 0x00C8,
-                    .number_of_save_area_blocks = 0x001F,
+                    .number_of_save_area_blocks = 0x00C8,
                 };
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
@@ -278,13 +384,20 @@ const VMU = struct {
         return 0;
     }
 
-    pub fn get_block_data(self: *const @This(), partition: u8, phase: u8, block_num: u8) [512]u8 {
-        _ = self;
-        _ = partition;
-        _ = phase;
-        _ = block_num;
-
-        return std.mem.zeroes([512]u8);
+    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+        std.debug.assert(partition == 0);
+        switch (function) {
+            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+                const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
+                const len = BlockSize / ReadAccessPerBlock;
+                @memcpy(dest[start .. start + len], self.blocks[block_num][start .. start + len]);
+                return len / 4;
+            },
+            else => {
+                maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function});
+            },
+        }
+        return 0;
     }
 
     fn bw_ascii(val: u1) []const u8 {
@@ -294,9 +407,7 @@ const VMU = struct {
         };
     }
 
-    pub fn block_write(self: *const @This(), function: u32, partition: u8, phase: u8, block_num: u8, data: []const u32) void {
-        _ = self;
-        _ = partition;
+    pub fn block_write(self: *const @This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .screen = 1 })) => {
                 // TODO: Do something with this frame for the LCD.
@@ -326,7 +437,18 @@ const VMU = struct {
                     }
                 }
             },
-            else => {},
+            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+                maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
+
+                std.debug.assert(data.len == BlockSize / 4);
+                const bytes: [*]const u8 = @ptrCast(data.ptr);
+                @memcpy(self.blocks[block_num][0..BlockSize], bytes[0..BlockSize]);
+
+                self.save();
+            },
+            else => {
+                maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function});
+            },
         }
     }
 };
@@ -427,28 +549,33 @@ const MaplePort = struct {
                     .BlockRead => {
                         const function_type = data[2];
                         std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
-                        const partition: u8 = @truncate(data[3] >> 24 & 0xFF);
-                        const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
-                        const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
-                        maple_log.warn(termcolor.yellow("BlockRead Unimplemented! Partition: {any} Phase: {any} Block: {any}"), .{ partition, phase, block_num });
+                        const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
+                        const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
+                        const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
+                        maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
-                        const response = switch (target.?) {
-                            .VMU => |v| v.get_block_data(partition, phase, block_num),
-                            else => {
-                                @panic("Unimplemented BlockRead for specified target.");
+                        const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
+                        const payload_size = switch (target.?) {
+                            .VMU => |v| v.block_read(dest, function_type, partition, block_num, phase),
+                            else => s: {
+                                maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{target.?});
+                                break :s 0;
                             },
                         };
 
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 1 + response.len / 4 }));
-                        dc.cpu.write32(return_addr + 4, function_type);
-                        const ptr: [*]u8 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 8)));
-                        @memcpy(ptr[0..response.len], response[0..response.len]);
+                        if (payload_size > 0) {
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                            dc.cpu.write32(return_addr + 4, function_type);
+                            dc.cpu.write32(return_addr + 8, data[3]); // Header repeating the location.
+                        } else {
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        }
                     },
                     .BlockWrite => {
                         const function_type = data[2];
-                        const partition: u8 = @truncate(data[3] >> 24 & 0xFF);
-                        const phase: u8 = @truncate(data[3] >> 16 & 0xFF);
-                        const block_num: u8 = @truncate(data[3] >> 8 & 0xFF);
+                        const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
+                        const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
+                        const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                         const write_data = data[4 .. 4 + command.payload_length - 2];
 
                         switch (target.?) {
@@ -458,6 +585,9 @@ const MaplePort = struct {
                             },
                         }
 
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    },
+                    .GetLastError => {
                         dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     },
                     else => {
@@ -474,14 +604,21 @@ const MaplePort = struct {
 
 pub const MapleHost = struct {
     ports: [4]MaplePort = .{
-        .{ .main = .{ .Controller = .{} }, .subperipherals = .{ .{ .VMU = .{} }, null, null, null, null } },
+        .{},
         .{},
         .{},
         .{},
     },
 
-    pub fn init() MapleHost {
-        return .{};
+    pub fn init(allocator: std.mem.Allocator) !MapleHost {
+        return .{
+            .ports = .{
+                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ .{ .VMU = try VMU.init(allocator) }, null, null, null, null } },
+                .{},
+                .{},
+                .{},
+            },
+        };
     }
 
     pub fn deinit(self: *MapleHost) void {
