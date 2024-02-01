@@ -1065,7 +1065,7 @@ pub const Holly = struct {
 
     ta_display_lists: [5]DisplayList = undefined,
 
-    _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined,
+    _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined, // NOTE: Remove in favor of DC scheduled interrupts?
     _tmp_cycles: u32 = 0,
     _pixel: u32 = 0,
 

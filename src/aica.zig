@@ -404,7 +404,7 @@ pub const AICA = struct {
             // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
             while (self._cycles_counter >= ARM7CycleRatio) {
                 self._cycles_counter -= ARM7CycleRatio;
-                // aica_log.debug("arm7: [{X:0>8}] {X:0>8} - {s}", .{ self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]) });
+                // aica_log.info("arm7: [{X:0>8}] {X:0>8} - {s}", .{ self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]) });
                 self.arm7.tick();
             }
         }

@@ -26,6 +26,16 @@ const CableType = enum(u16) {
     Composite = 3,
 };
 
+const ScheduledInterrupt = struct {
+    const InterruptType = enum { Normal, External };
+
+    cycles: u32,
+    interrupt: union(InterruptType) {
+        Normal: HardwareRegisters.SB_ISTNRM,
+        External: HardwareRegisters.SB_ISTEXT,
+    },
+};
+
 pub const Dreamcast = struct {
     cpu: SH4,
     gpu: Holly,
@@ -43,6 +53,8 @@ pub const Dreamcast = struct {
     ram: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
+    scheduled_interrupts: std.ArrayList(ScheduledInterrupt),
+
     _allocator: std.mem.Allocator = undefined,
 
     _dummy: [4]u8 align(32) = undefined, // FIXME: Dummy space for non-implemented features
@@ -58,6 +70,7 @@ pub const Dreamcast = struct {
             .sh4_jit = try SH4JIT.init(allocator),
             .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
+            .scheduled_interrupts = std.ArrayList(ScheduledInterrupt).init(allocator),
             ._allocator = allocator,
         };
 
@@ -83,7 +96,10 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.scheduled_interrupts.deinit();
+        //self.sh4_jit.deinit(); // FIXME: munmap doesn't exist on Windows.
         self.gdrom.deinit();
+        self.maple.deinit();
         self.aica.deinit();
         self.gpu.deinit();
         self.cpu.deinit();
@@ -242,6 +258,7 @@ pub const Dreamcast = struct {
 
     pub fn tick(self: *@This(), max_instructions: u8) u32 {
         const cycles = self.cpu.execute(max_instructions);
+        self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
@@ -253,10 +270,56 @@ pub const Dreamcast = struct {
             std.debug.panic("JIT error: {}", .{err});
             @panic("JIT Error");
         };
+        self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         self.aica.update(self, cycles);
         return cycles;
+    }
+
+    // TODO: Add helpers for external interrupts and errors.
+
+    pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
+        self.scheduled_interrupts.append(.{ .cycles = cycles, .interrupt = .{ .Normal = int } }) catch |err| {
+            std.debug.panic("Failed to schedule interrupt: {}", .{err});
+        };
+    }
+
+    pub fn schedule_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT, cycles: u32) void {
+        self.scheduled_interrupts.append(.{ .cycles = cycles, .interrupt = .{ .External = int } }) catch |err| {
+            std.debug.panic("Failed to schedule external interrupt: {}", .{err});
+        };
+    }
+
+    fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
+        if (self.scheduled_interrupts.items.len > 0) {
+            var index: u32 = 0;
+            while (index < self.scheduled_interrupts.items.len) {
+                if (self.scheduled_interrupts.items[index].cycles < cycles) {
+                    switch (self.scheduled_interrupts.items[index].interrupt) {
+                        .Normal => self.raise_normal_interrupt(self.scheduled_interrupts.items[index].interrupt.Normal),
+                        .External => self.raise_external_interrupt(self.scheduled_interrupts.items[index].interrupt.External),
+                    }
+                    _ = self.scheduled_interrupts.swapRemove(index);
+                } else {
+                    self.scheduled_interrupts.items[index].cycles -= cycles;
+                    index += 1;
+                }
+            }
+        }
+    }
+
+    pub fn raise_normal_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM) void {
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
+
+        self.check_sb_interrupts();
+    }
+
+    pub fn raise_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
+        self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
+
+        self.check_sb_interrupts();
     }
 
     fn check_sb_interrupts(self: *@This()) void {
@@ -272,21 +335,6 @@ pub const Dreamcast = struct {
         if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML2EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML2ERR) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
         }
-    }
-
-    // TODO: Add helpers for external interrupts and errors.
-
-    pub fn raise_normal_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM) void {
-        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(int);
-
-        self.check_sb_interrupts();
-    }
-
-    pub fn raise_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
-        self.hw_register(u32, .SB_ISTEXT).* |= @bitCast(int);
-        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
-
-        self.check_sb_interrupts();
     }
 
     // Area 0:

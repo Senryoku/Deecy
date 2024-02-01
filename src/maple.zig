@@ -628,7 +628,7 @@ pub const MapleHost = struct {
     pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
         var idx: u32 = 0;
 
-        defer dc.raise_normal_interrupt(.{ .EoD_Maple = 1 });
+        defer dc.schedule_interrupt(.{ .EoD_Maple = 1 }, 200); // FIXME: Random delay
 
         // A transfer can have a maximum of 1024 words.
         while (idx < 1024) {
