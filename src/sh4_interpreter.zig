@@ -380,6 +380,7 @@ pub fn cmpstr_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const r = cpu.R(opcode.nmd.m).*;
     cpu.sr.t = (l & 0xFF000000 == r & 0xFF000000) or (l & 0x00FF0000 == r & 0x00FF0000) or (l & 0x0000FF00 == r & 0x0000FF00) or (l & 0x000000FF == r & 0x000000FF);
 }
+
 // Performs initial settings for signed division.
 // This instruction is followed by a DIV1 instruction that executes 1-digit division, for example, and repeated division steps are executed to find the quotient.
 pub fn div0s_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -388,11 +389,6 @@ pub fn div0s_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = cpu.sr.q != cpu.sr.m;
 }
 
-pub fn div0u_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented");
-}
 // Performs initial settings for unsigned division.
 // This instruction is followed by a DIV1 instruction that executes 1-digit division, for example,
 // and repeated division steps are executed to find the quotient.
@@ -401,6 +397,7 @@ pub fn div0u(cpu: *SH4, _: Instr) void {
     cpu.sr.q = false;
     cpu.sr.t = false;
 }
+
 // Performs 1-digit division (1-step division) of the 32-bit contents of general register Rn (dividend) by the contents of Rm (divisor)
 pub fn div1(cpu: *SH4, opcode: Instr) void {
     const pRn = cpu.R(opcode.nmd.n);
@@ -499,6 +496,64 @@ test "div1 r3:r1 (64 bits) / r4 (32 bits) = r1 (32 bits)  (unsigned)" {
     rotcl_Rn(&cpu, .{ .nmd = .{ ._ = 0b0100, .n = 1, .m = 0b0010, .d = 0b0100 } }); // rotcl R1
 
     try std.testing.expect(cpu.R(1).* == @as(u32, @truncate(dividend / divisor)));
+}
+
+test "r2 (32 bits) / r0 (32 bits) = r2 (32 bits)  (signed)" {
+    var cpu = try SH4.init(std.testing.allocator, null);
+    defer cpu.deinit();
+
+    // Example from http://shared-ptr.com/sh_insns.html
+
+    for ([_][2]i32{
+        .{ 21685454, 354 },
+        .{ 21685454, -354 },
+        .{ -21685454, -354 },
+        .{ -21685454, 354 },
+        .{ 4544721, 576 },
+        .{ 4544721, -576 },
+        .{ -4544721, -576 },
+        .{ -4544721, 576 },
+        .{ 3574, 258765 },
+        .{ 3574, -258765 },
+        .{ -3574, -258765 },
+        .{ -3574, 258765 },
+    }) |pair| {
+        const dividend: i32 = pair[0];
+        const divisor: i32 = pair[1];
+
+        cpu.R(2).* = @bitCast(dividend);
+        cpu.R(0).* = @bitCast(divisor);
+
+        // mov     r2,r3
+        mov_rm_rn(&cpu, .{ .nmd = .{ .n = 3, .m = 2 } });
+        // rotcl   r3
+        rotcl_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = undefined } });
+        // subc    r1,r1     ! Dividend sign-extended to 64 bits (r1:r2)
+        subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 1 } });
+        // mov     #0,r3
+        mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 0 } });
+        // subc    r3,r2     ! If dividend is negative, subtract 1 to convert to one's complement notation
+        subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
+        // div0s   r0,r1     ! Flag initialization
+        div0s_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
+
+        // .rept 32
+        for (0..32) |_| {
+            // rotcl   r2        ! Repeat 32 times
+            rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
+            // div1    r0,r1
+            div1(&cpu, .{ .nmd = .{ .n = 1, .m = 0 } });
+            // .endr
+        }
+
+        // rotcl   r2        ! r2 = quotient (one's complement notation)
+        rotcl_Rn(&cpu, .{ .nmd = .{ .n = 2 } });
+        // addc    r3,r2     ! If MSB of quotient is 1, add 1 to convert to two's complement notation
+        addc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
+        //                   ! r2 = quotient (two's complement notation)
+
+        try std.testing.expect(@as(i32, @bitCast(cpu.R(2).*)) == @divTrunc(dividend, divisor));
+    }
 }
 
 pub fn dmulsl_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -668,7 +723,7 @@ pub fn sub_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn subc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const prev_Rn = cpu.R(opcode.nmd.n).*;
     const diff = prev_Rn -% cpu.R(opcode.nmd.m).*;
-    cpu.R(opcode.nmd.n).* = diff -% (if (cpu.sr.t) @as(u32, @intCast(1)) else 0);
+    cpu.R(opcode.nmd.n).* = diff -% (if (cpu.sr.t) @as(u32, 1) else 0);
     cpu.sr.t = (prev_Rn < diff);
     if (diff < cpu.R(opcode.nmd.n).*)
         cpu.sr.t = true;
