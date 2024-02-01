@@ -1725,8 +1725,13 @@ test "ftrv XMTRX_FVn" {
 
 pub fn fsrra_FRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
-    cpu.FR(opcode.nmd.n).* = 1.0 / @sqrt(cpu.FR(opcode.nmd.n).*);
+    if (cpu.FR(opcode.nmd.n).* <= 0) {
+        cpu.FR(opcode.nmd.n).* = std.math.nan(f32);
+    } else {
+        cpu.FR(opcode.nmd.n).* = 1.0 / @sqrt(cpu.FR(opcode.nmd.n).*);
+    }
 }
+
 pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
     std.debug.assert(opcode.nmd.n & 1 == 0);
