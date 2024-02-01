@@ -1515,21 +1515,15 @@ pub fn flds_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
 pub fn fsts_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
     cpu.FR(opcode.nmd.n).* = @bitCast(cpu.fpul);
 }
+
 pub fn fabs_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.pr == 0) {
-        cpu.FR(opcode.nmd.n).* = @abs(cpu.FR(opcode.nmd.n).*);
-    } else {
-        std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @abs(cpu.DR(opcode.nmd.n >> 1).*);
-    }
+    // This instruction operates only on the high part and thus the operation performed for double and single precision setting is the same. It is not necessary to adjust the FPSRC.PR setting before this instruction.
+    cpu.FR(opcode.nmd.n).* = @bitCast(@as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)) & @as(u32, 0x7FFFFFFF));
 }
+
 pub fn fneg_FRn(cpu: *SH4, opcode: Instr) void {
-    if (cpu.fpscr.pr == 0) {
-        cpu.FR(opcode.nmd.n).* = -cpu.FR(opcode.nmd.n).*;
-    } else {
-        std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = -cpu.DR(opcode.nmd.n >> 1).*;
-    }
+    // See fabs FRn
+    cpu.FR(opcode.nmd.n).* = @bitCast(@as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)) ^ @as(u32, 0x80000000));
 }
 
 pub fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
