@@ -17,6 +17,7 @@
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
+    - Split OIT pass into multiple slices. We're limited by the max storage buffer size for the fragment linked list, and it's already limiting at 2x resolution. 
     - Modifier Volumes.
     - User Tile Clip.
     - Fog.
