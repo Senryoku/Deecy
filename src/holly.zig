@@ -597,6 +597,9 @@ fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
     const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_1_0_1;
     switch (masked) {
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: uv_16bit is supposed to be invalid in this case (Non-textured 16-bit uv doesn't make sense), but Ecco the Dolphin use such polygons? Or am I just receiving bad data?
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: Same thing, offset should be fixed to 0 for non-textured polygons. (Hydro Thunder does this)
+        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: Same thing, offset should be fixed to 0 for non-textured polygons.
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType1,
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,
@@ -986,6 +989,7 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParamet
     const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_0_0_1;
     switch (masked) {
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .PackedColor, .volume = 0, .shadow = 0 })) => return .Type0,
+        @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .PackedColor, .volume = 0, .shadow = 0 })) => return .Type0, // FIXME: uv_16bit is supposed to be invalid here (Non-textured 16-bit uv doesn't make sense). Ecco the Dolphin does this.
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .FloatingColor, .volume = 0, .shadow = 0 })) => return .Type1,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode1, .volume = 0, .shadow = 0 })) => return .Type2,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 0, .col_type = .IntensityMode2, .volume = 0, .shadow = 0 })) => return .Type2,
@@ -1007,7 +1011,7 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParamet
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type14,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type14,
         else => {
-            std.debug.print(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {}"), .{masked});
+            std.debug.print(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {b} {any}"), .{ masked, obj_control });
             @panic("Unimplemented");
         },
     }
