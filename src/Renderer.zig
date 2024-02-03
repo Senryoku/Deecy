@@ -1592,6 +1592,22 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Non-Textured, Intensity
+                        .Type2 => |v| {
+                            std.debug.assert(!textured);
+                            try self.vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = .{
+                                    .r = v.base_intensity * face_color.r,
+                                    .g = v.base_intensity * face_color.g,
+                                    .b = v.base_intensity * face_color.b,
+                                    .a = if (use_alpha) face_color.a else 1.0,
+                                },
+                                .tex = tex,
+                            });
+                        },
                         // Packed Color, Textured 32bit UV
                         .Type3 => |v| {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
