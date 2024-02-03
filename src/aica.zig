@@ -127,7 +127,7 @@ const ScheduledEvents = struct {
     cycles: u32,
 };
 
-const DisableARMCore: bool = true; // FIXME: Temp debug.
+pub const DisableARMCore: bool = false; // FIXME: Temp debug.
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
@@ -325,9 +325,25 @@ pub const AICA = struct {
         }
     }
 
+    fn arm_debug_dump(self: *const @This()) void {
+        var s = @constCast(self);
+        std.debug.print("PC: {X:0>8}\n", .{s.arm7.pc().* - 8});
+        std.debug.print("LR: {X:0>8}\n", .{s.arm7.lr().*});
+        std.debug.print("SP: {X:0>8}\n", .{s.arm7.sp().*});
+
+        for (0..16) |i| {
+            const o: u32 = @truncate(8 + 4 * 16 - 4 * i);
+            std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - o, self.arm7.read(u32, s.arm7.pc().* - o), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - o)) });
+        }
+        std.debug.print(" > [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 8, s.arm7.read(u32, s.arm7.pc().* - 8), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 8)) });
+        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 4, s.arm7.read(u32, s.arm7.pc().* - 4), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 4)) });
+        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 0, s.arm7.read(u32, s.arm7.pc().* - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 0)) });
+    }
+
     pub fn read8_from_arm(self: *const AICA, addr: u32) u8 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
+            self.arm_debug_dump();
             return 0;
         }
         return self.read_register(u8, addr);
@@ -336,6 +352,7 @@ pub const AICA = struct {
     pub fn read32_from_arm(self: *const AICA, addr: u32) u32 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
+            self.arm_debug_dump();
             @panic("AICA read32 from ARM out of bounds address");
             //return 0;
         }
@@ -343,9 +360,17 @@ pub const AICA = struct {
     }
 
     pub fn write8_from_arm(self: *AICA, addr: u32, value: u8) void {
+        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
+            std.debug.print("AICA write8 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+            self.arm_debug_dump();
+        }
         self.write_register(u8, addr, value);
     }
     pub fn write32_from_arm(self: *AICA, addr: u32, value: u32) void {
+        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
+            std.debug.print("AICA write32 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
+            self.arm_debug_dump();
+        }
         self.write_register(u32, addr, value);
     }
 
@@ -404,7 +429,7 @@ pub const AICA = struct {
             // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
             while (self._cycles_counter >= ARM7CycleRatio) {
                 self._cycles_counter -= ARM7CycleRatio;
-                // aica_log.info("arm7: [{X:0>8}] {X:0>8} - {s}", .{ self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]) });
+                //aica_log.info("arm7: ({any}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ self.arm7.cpsr.m, self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp().*, self.arm7.lr().* });
                 self.arm7.tick();
             }
         }
@@ -414,7 +439,7 @@ pub const AICA = struct {
         const enabled = dc.read_hw_register(u32, .SB_ADEN);
         if (enabled == 0) return;
 
-        const aica_addr = dc.read_hw_register(u32, .SB_ADSTAG);
+        var aica_addr = dc.read_hw_register(u32, .SB_ADSTAG);
         const root_bus_addr = dc.read_hw_register(u32, .SB_ADSTAR);
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
         const len_in_bytes = len_reg & 0x7FFFFFFF;
@@ -426,6 +451,12 @@ pub const AICA = struct {
         aica_log.debug("   Direction: 0x{X:0>8}", .{direction});
         aica_log.debug("   Trigger Select: 0x{X:0>8}", .{dc.read_hw_register(u32, .SB_ADTSEL)});
         aica_log.debug("   Enable: 0x{X:0>8}", .{enabled});
+
+        // 0x02800000-0x02A00000 is a mirror of 0x02000000-0x02A00000, I think.
+        // It comes up in Loop Checker G2 DMA test.
+        if (aica_addr >= 0x02800000 and aica_addr < 0x02A00000) {
+            aica_addr -= 0x02000000;
+        }
 
         // NOTE: Wrong start adresses should raise exception, but we don't emulate them, yet.
         if (aica_addr < 0x00800000 or aica_addr >= 0x00A00000) {

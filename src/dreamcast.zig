@@ -14,7 +14,8 @@ const SH4 = @import("sh4.zig").SH4;
 const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
 const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
-const AICA = @import("aica.zig").AICA;
+const AICAModule = @import("aica.zig");
+const AICA = AICAModule.AICA;
 const MapleHost = @import("maple.zig").MapleHost;
 const GDROM = @import("GDRom.zig").GDROM;
 
@@ -83,9 +84,22 @@ pub const Dreamcast = struct {
         const bytes_read = try boot_file.readAll(dc.boot);
         std.debug.assert(bytes_read == 0x200000);
 
+        // FIXME: Hack to bypass some checks I'm failling to emulate.
+        //        Pretty sure this is linked to the GD ROM, bios is waiting on something here.
+        //        Insert a nop instead of the branch.
+        dc.boot[0x077B] = 0x00;
+        dc.boot[0x077A] = 0x09;
+
         // Load Flash
         dc.flash = try dc._allocator.alloc(u8, 0x20000);
-        var flash_file = try std.fs.cwd().openFile("./bin/dc_flash.bin", .{});
+
+        var flash_file = std.fs.cwd().openFile("./userdata/flash.bin", .{}) catch |err| f: {
+            if (err == error.FileNotFound) {
+                dc_log.info("Loading default flash ROM.", .{});
+                break :f try std.fs.cwd().openFile("./bin/dc_flash.bin", .{});
+            } else return err;
+        };
+
         defer flash_file.close();
         const flash_bytes_read = try flash_file.readAll(dc.flash);
         std.debug.assert(flash_bytes_read == 0x20000);
@@ -96,6 +110,16 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        // Write flash to disk
+        if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
+            defer file.close();
+            _ = file.writeAll(self.flash) catch |err| {
+                dc_log.err("Failed to save user flash: {any}", .{err});
+            };
+        } else |err| {
+            dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ "./userdata/flash.bin", err });
+        }
+
         self.scheduled_interrupts.deinit();
         //self.sh4_jit.deinit(); // FIXME: munmap doesn't exist on Windows.
         self.gdrom.deinit();
@@ -243,6 +267,11 @@ pub const Dreamcast = struct {
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
+
+        // TODO: Initialize AICA ARM7 Code correctly!
+        if (!AICAModule.DisableARMCore) {
+            dc_log.err(termcolor.red("Skipping bios with AICA ARM core enabled: This is not supported and will probably crash!"), .{});
+        }
     }
 
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
@@ -365,6 +394,25 @@ pub const Dreamcast = struct {
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
             self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
+        }
+    }
+
+    pub fn start_gd_dma(self: *@This()) void {
+        if (self.hw_register(u32, .SB_GDEN).* == 1) {
+            const dst_addr = self.read_hw_register(u32, .SB_GDSTAR) & 0x1FFFFFE0;
+            const len = self.read_hw_register(u32, .SB_GDLEN);
+            const direction = self.read_hw_register(u32, .SB_GDDIR);
+
+            if (direction == 0) {
+                dc_log.err(termcolor.red("DMA to GD-ROM not implemented."), .{});
+                return;
+            }
+
+            dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes)", .{ dst_addr, len });
+
+            // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
+            const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
+            std.debug.assert(copied == len);
         }
     }
 

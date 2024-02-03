@@ -33,7 +33,7 @@ pub const std_options = struct {
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .warn },
+        .{ .scope = .gdrom, .level = .debug },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
     };

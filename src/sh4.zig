@@ -618,19 +618,24 @@ pub const SH4 = struct {
         self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
     }
 
-    pub fn start_dmac(self: *@This(), channel: u32) void {
-        std.debug.assert(channel == 2); // TODO: Implement others? It is needed?
+    pub fn start_dmac(self: *@This(), comptime channel: u8) void {
+        const channels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Register, dmatcr: P4Register, dmte: Interrupts.Interrupt } = .{
+            .{ .chcr = .CHCR0, .sar = .SAR0, .dar = .DAR0, .dmatcr = .DMATCR0, .dmte = .DMTE0 },
+            .{ .chcr = .CHCR1, .sar = .SAR1, .dar = .DAR1, .dmatcr = .DMATCR1, .dmte = .DMTE1 },
+            .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2 },
+        };
+        const c = channels[channel];
 
-        const chcr = self.read_p4_register(P4.CHCR, .CHCR2);
+        const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
-        sh4_log.debug(" CHCR: {any}", .{chcr});
+        sh4_log.debug("DMAC ({d}) CHCR: {any}", .{ channel, chcr });
 
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
 
-        const src_addr = self.read_p4_register(u32, .SAR2) & 0x1FFFFFFF;
-        const dst_addr = self.read_p4_register(u32, .DAR2) & 0x1FFFFFFF;
+        const src_addr = self.read_p4_register(u32, c.sar) & 0x1FFFFFFF;
+        const dst_addr = self.read_p4_register(u32, c.dar) & 0x1FFFFFFF;
         const transfer_size: u32 = switch (chcr.ts) {
             0 => 8, // Quadword size
             1 => 1, // Byte
@@ -639,7 +644,7 @@ pub const SH4 = struct {
             4 => 32, // 32-bytes block
             else => @panic("Invalid transfer size"),
         };
-        const len = self.read_p4_register(u32, .DMATCR2);
+        const len = self.read_p4_register(u32, c.dmatcr);
         const byte_len = transfer_size * len;
 
         const dst_stride: i32 = switch (chcr.dm) {
@@ -700,11 +705,11 @@ pub const SH4 = struct {
 
         // TODO: Schedule for later?
         if (chcr.ie == 1)
-            self.request_interrupt(Interrupts.Interrupt.DMTE2);
-        self.p4_register(u32, .SAR2).* += len;
-        self.p4_register(u32, .DAR2).* += len;
-        self.p4_register(u32, .DMATCR2).* = 0;
-        self.p4_register(P4.CHCR, .CHCR2).*.te = 1;
+            self.request_interrupt(c.dmte);
+        self.p4_register(u32, c.sar).* += len;
+        self.p4_register(u32, c.dar).* += len;
+        self.p4_register(u32, c.dmatcr).* = 0;
+        self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
     fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
@@ -793,6 +798,7 @@ pub const SH4 = struct {
                         @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
                     },
                     0x00800000...0x009FFFFF => { // G2 Wave Memory
+                        sh4_log.err("_get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions.", .{ addr, area_0_addr });
                         @panic("_get_memory to AICA Wave Memory. This should be handled in read/write functions.");
                     },
                     0x01000000...0x01FFFFFF => { // Expansion Devices
@@ -978,15 +984,16 @@ pub const SH4 = struct {
                         //    Bit 4: DMA Suspend or DMA Stop
                         //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
                         //      1: DMA transfer has ended, or is stopped due to a suspen
-                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(&self)._get_memory(addr),
                         ))).* });
                         return 0x30;
                     },
                     else => {
-                        sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                            @constCast(&self)._get_memory(addr),
-                        ))).* });
+                        if (addr != 0x005F6900) // SB_ISTNRM is way too spammy
+                            sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                                @constCast(&self)._get_memory(addr),
+                            ))).* });
                     },
                 }
             },
@@ -998,6 +1005,16 @@ pub const SH4 = struct {
             },
             0x00800000...0x00FFFFFF => {
                 return self._dc.?.aica.read_mem(u32, addr);
+            },
+            // Area 0 Mirrors
+            0x02700000...0x02707FE0 => {
+                return self._dc.?.aica.read_register(u32, addr - 0x02000000);
+            },
+            0x02710000...0x02710008 => {
+                return self._dc.?.aica.read_rtc_register(addr - 0x02000000);
+            },
+            0x02800000...0x02FFFFFF => {
+                return self._dc.?.aica.read_mem(u32, addr - 0x02000000);
             },
             else => {},
         }
@@ -1160,6 +1177,13 @@ pub const SH4 = struct {
                             self._dc.?.sh4_jit.block_cache.reset();
                         }
                     },
+                    @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
+                        const chcr: P4.CHCR = @bitCast(value);
+                        if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
+                            sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
+                            @panic("Unimplemented");
+                        }
+                    },
                     else => {
                         sh4_log.debug("  Write32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                     },
@@ -1197,7 +1221,8 @@ pub const SH4 = struct {
                     },
                     .SB_GDST => {
                         if (value == 1) {
-                            sh4_log.err(termcolor.red("Unimplemented {any} DMA (ch0-DMA) initiation!"), .{reg});
+                            sh4_log.info("{any} DMA (ch0-DMA) initiation!", .{reg});
+                            self._dc.?.start_gd_dma();
                             return;
                         }
                     },
@@ -1251,6 +1276,17 @@ pub const SH4 = struct {
             0x00800000...0x00FFFFFF => {
                 return self._dc.?.aica.write_mem(u32, addr, value);
             },
+            // Area 0 Mirrors
+            0x02700000...0x0270FFFF => {
+                return self._dc.?.aica.write_register(u32, addr - 0x02000000, value);
+            },
+            0x02710000...0x02710008 => {
+                return self._dc.?.aica.write_rtc_register(addr - 0x02000000, value);
+            },
+            0x02800000...0x02FFFFFF => {
+                return self._dc.?.aica.write_mem(u32, addr - 0x02000000, value);
+            },
+
             0x10000000...0x13FFFFFF => {
                 return self._dc.?.gpu.write_ta(addr, value);
             },

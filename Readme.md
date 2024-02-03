@@ -7,6 +7,8 @@
 
 ## Things I know I have to do
 
+-   AICA ARM7 state after bios (when skipping bios)
+
 -   ch0-DMA and ch1-DMA?
 -   Sort-DMA? (And the corresponding end interrupt)
 

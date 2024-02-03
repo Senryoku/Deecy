@@ -1377,6 +1377,10 @@ pub const Renderer = struct {
         //     FF000000 - (Packed color)
         // There's obviously something I don't understand here.
         // Overriding the coordinates to cover the screen for now, I'm tired of seeing the broken framebuffer (Oh yeah, that's another bug.)
+        // NOTE: MetalliC's comment about background rendering:
+        //       "it's a bit brainfuck, and I don't think it was documented anywhere how exactly PVR2 background rendered...
+        //        in short - it takes 3 vertices and calculate interpolation, UV, shading etc coefficients as for triangle rendering. but iterate these coefficients to fill the whole screen"
+        //  Example of an effect that my current "solution" will fail to render correctly (Noami example, but there might be some in the DC library too): https://youtu.be/gtIwGUG9iZk?t=127
         const screen_width: f32 = 640.0; // FIXME: Hack within a hack, hardcording the screen size too.
         const screen_height: f32 = 480.0;
         vertices[0].x = 0.0;

@@ -112,9 +112,19 @@ const ControlRegister = packed struct(u8) {
     _: u4 = 0,
 };
 
+const CommandOrData = enum(u1) {
+    Data = 0,
+    Command = 1,
+};
+
+const TransferDirection = enum(u1) {
+    HostToDevice = 0,
+    DeviceToHost = 1,
+};
+
 const InterruptReasonRegister = packed struct(u8) {
-    cod: u1 = 0, // When "0," this field indicates data; when "1," this field indicates a command
-    io: u1 = 0, // When "0," this field indicates the direction of transfer is from the host to the device; when "1," this field indicates the direction of transfer is from the device to the host.
+    cod: CommandOrData = .Data, // When "0," this field indicates data; when "1," this field indicates a command
+    io: TransferDirection = .HostToDevice, // When "0," this field indicates the direction of transfer is from the host to the device; when "1," this field indicates the direction of transfer is from the device to the host.
 
     _: u6 = 0,
 };
@@ -122,6 +132,7 @@ const InterruptReasonRegister = packed struct(u8) {
 const ScheduledEvent = struct {
     cycles: u32,
     status: StatusRegister,
+    interrupt_reason: ?InterruptReasonRegister,
 };
 
 const SPIPacketCommandCode = enum(u8) {
@@ -156,7 +167,7 @@ pub const GDROM = struct {
     interrupt_reason_register: InterruptReasonRegister = .{},
     byte_count: u16 = 0,
 
-    data_queue: std.fifo.LinearFifo(u8, .{ .Static = 2048 }),
+    data_queue: std.fifo.LinearFifo(u8, .{ .Static = 1024 * 2048 }),
 
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = undefined,
@@ -173,9 +184,12 @@ pub const GDROM = struct {
     _next_command_id: u32 = 1,
     _current_command_id: u32 = 0,
 
-    pub fn init(_: std.mem.Allocator) GDROM {
+    _allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator) GDROM {
         var gdrom = GDROM{
-            .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 2048 }).init(),
+            .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 1024 * 2048 }).init(),
+            ._allocator = allocator,
         };
         gdrom.reinit();
         return gdrom;
@@ -196,8 +210,11 @@ pub const GDROM = struct {
         if (self.scheduled_event) |*event| {
             if (event.cycles < cycles) {
                 self.status_register = event.status;
-                if (event.status.drq == 1 and self.control_register.nien == 0) {
-                    dc.raise_external_interrupt(.{ .GDRom = 1 });
+                if (event.interrupt_reason) |reason| {
+                    self.interrupt_reason_register = reason;
+                    if (self.control_register.nien == 0) {
+                        dc.raise_external_interrupt(.{ .GDRom = 1 });
+                    }
                 }
                 self.scheduled_event = null;
             } else {
@@ -226,13 +243,16 @@ pub const GDROM = struct {
                     gdrom_log.warn(termcolor.yellow("  Error: Read to Data while data_queue is empty (@{X:0>8})."), .{addr});
                     return 0;
                 }
-                gdrom_log.debug("  Read({any}) to Data FIFO.", .{T});
-                if (T == u8) {
-                    return self.data_queue.readItem().?;
-                } else if (T == u16) {
+                if (T == u16) {
+                    // Only accessed with 16-bit reads
                     const low = self.data_queue.readItem().?;
                     const high = self.data_queue.readItem().?;
-                    return @as(u16, low) | (@as(u16, high) << 8);
+                    const val: u16 = @as(u16, low) | (@as(u16, high) << 8);
+                    gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
+                    // FIXME: No idea if this is right...
+                    if (self.data_queue.count == 0)
+                        self.status_register.drq = 0;
+                    return val;
                 } else {
                     std.debug.assert(false);
                 }
@@ -294,8 +314,9 @@ pub const GDROM = struct {
                         self.status_register.drq = 0;
                         // The device clears the BSY bit and initiates an interrup
                         self.scheduled_event = .{
-                            .cycles = 20, // FIXME: Random value
-                            .status = .{ .bsy = 0, .drq = 1 },
+                            .cycles = 200, // FIXME: Random value
+                            .status = .{ .bsy = 0, .drq = 0 },
+                            .interrupt_reason = null,
                         };
                         // Always report no errors.
                         self.error_register = .{};
@@ -303,14 +324,13 @@ pub const GDROM = struct {
                     .PacketCommand => {
                         gdrom_log.warn(termcolor.yellow("  Command: PacketCommand - TODO! See cdif131e.pdf"), .{});
                         self.status_register.bsy = 1;
-                        self.interrupt_reason_register.cod = 1;
-                        self.interrupt_reason_register.io = 0;
 
                         self.packet_command_idx = 0;
 
                         self.scheduled_event = .{
-                            .cycles = 20, // FIXME: Random value
+                            .cycles = 200, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
+                            .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
                         };
                     },
                     .IdentifyDevice => {
@@ -338,7 +358,8 @@ pub const GDROM = struct {
                         self.data_queue.writeAssumeCapacity("                ");
 
                         self.scheduled_event = .{
-                            .cycles = 20, // FIXME: Random value
+                            .cycles = 200, // FIXME: Random value
+                            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
                             .status = .{ .bsy = 0, .drq = 1 },
                         };
                     },
@@ -397,9 +418,6 @@ pub const GDROM = struct {
                     self.status_register.drq = 0;
                     gdrom_log.debug("  Received full SPI Command Packet!", .{});
 
-                    self.interrupt_reason_register.io = 1;
-                    self.interrupt_reason_register.cod = 1;
-
                     for (0..6) |i| {
                         gdrom_log.debug("      {X:0>2} {X:0>2}", .{ self.packet_command[2 * i + 0], self.packet_command[2 * i + 1] });
                     }
@@ -436,7 +454,7 @@ pub const GDROM = struct {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan"), .{});
                         },
                         .CDRead => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead"), .{});
+                            self.cd_read();
                         },
                         .CDRead2 => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2"), .{});
@@ -456,8 +474,9 @@ pub const GDROM = struct {
                     }
 
                     self.scheduled_event = .{
-                        .cycles = 20, // FIXME: Random value
+                        .cycles = 200, // FIXME: Random value
                         .status = .{ .bsy = 0, .drq = 1 },
+                        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
                     };
                 }
             },
@@ -537,7 +556,7 @@ pub const GDROM = struct {
         }
 
         if (self.data_queue.count > 0) {
-            gdrom_log.warn("   GetToC - Data queue was not empty ({d})", .{self.data_queue.count});
+            gdrom_log.warn(termcolor.yellow("   GetToC - Data queue was not empty ({d})"), .{self.data_queue.count});
             self.data_queue.discard(self.data_queue.count);
         }
 
@@ -545,7 +564,7 @@ pub const GDROM = struct {
             if (select == 1) {
                 if (self.disk.?.tracks.items.len >= 3) {
                     // Copy ToC directly from the third track. No idea if this is what's expected here.
-                    self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length]);
+                    self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 .. 0x110 + alloc_length]);
 
                     // Debug Dump
                     // const d = self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length];
@@ -623,6 +642,30 @@ pub const GDROM = struct {
         std.debug.assert(self.data_queue.count == alloc_length);
 
         self.byte_count = alloc_length;
+    }
+
+    fn cd_read(self: *@This()) void {
+        const parameter_type = self.packet_command[1] & 0x1;
+        const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
+        const data_select = (self.packet_command[1] >> 4) & 0xF;
+
+        const start_addr = (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4]; // Start FAD
+        // FIXME: Depending on parameter_type, start_addr may be a MSF: Minutes, Seconds, Frame
+        const transfer_length = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
+
+        gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
+
+        // FIXME: Everything else isn't implemented
+        std.debug.assert(parameter_type == 0); // start_addr is a FAD
+        std.debug.assert(expected_data_type == 0b010); // Mode 1
+        std.debug.assert(data_select == 0b0010); // Data (no header or subheader)
+
+        // FIXME: This is extremely inefficient.
+        //        Maybe we could skip the data queue entirely? Will this always be followed by a DMA?
+        const buffer = self._allocator.alloc(u8, 2048 * transfer_length) catch unreachable;
+        defer self._allocator.free(buffer);
+        _ = self.disk.?.load_sectors(start_addr, transfer_length, buffer);
+        self.data_queue.writeAssumeCapacity(buffer);
     }
 
     fn req_secu(self: *@This()) void {
