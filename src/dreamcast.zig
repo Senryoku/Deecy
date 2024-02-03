@@ -272,6 +272,9 @@ pub const Dreamcast = struct {
         if (!AICAModule.DisableARMCore) {
             dc_log.err(termcolor.red("Skipping bios with AICA ARM core enabled: This is not supported and will probably crash!"), .{});
         }
+        // Quick guess from observing the boot rom, probably need a lot more.
+        // FIXME: Actually I don't know if this is needed now that I 'fixed' the FIQ.
+        self.aica.arm7._r[13] = 0xB000; // Fells like a pretty good guess for the stack pointer
     }
 
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
@@ -411,8 +414,12 @@ pub const Dreamcast = struct {
             dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes)", .{ dst_addr, len });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
+            //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
             std.debug.assert(copied == len);
+
+            self.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+            self.raise_external_interrupt(.{ .GDRom = 1 });
         }
     }
 

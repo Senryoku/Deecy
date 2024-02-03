@@ -778,7 +778,7 @@ pub const GDROM = struct {
                 self.hle_status = GDROMStatus.Standby;
             },
             else => {
-                gdrom_log.warn(termcolor.yellow("    Unhandled GDROM command {X:0>8} {s}"), .{ self.hle_command, @tagName(self.hle_command) });
+                gdrom_log.warn(termcolor.yellow("    Unhandled GDROM command {any}"), .{self.hle_command});
                 for (0..self.hle_params.len) |i| {
                     gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
                 }

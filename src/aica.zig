@@ -156,7 +156,7 @@ pub const AICA = struct {
         };
         @memset(r.regs, 0);
         @memset(r.wave_memory, 0);
-        r.arm7 = arm7.ARM7.init(r.wave_memory);
+        r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
 
         r.get_reg(u32, .MasterVolume).* = 0x10;
 
@@ -331,6 +331,10 @@ pub const AICA = struct {
         std.debug.print("LR: {X:0>8}\n", .{s.arm7.lr().*});
         std.debug.print("SP: {X:0>8}\n", .{s.arm7.sp().*});
 
+        for (0..8) |i| {
+            std.debug.print("R{d}: {X:0>8}   R{d}: {X:0>8}\n", .{ i, s.arm7.r(@intCast(i)).*, i + 8, s.arm7.r(@intCast(i + 8)).* });
+        }
+
         for (0..16) |i| {
             const o: u32 = @truncate(8 + 4 * 16 - 4 * i);
             std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - o, self.arm7.read(u32, s.arm7.pc().* - o), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - o)) });
@@ -344,7 +348,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
-            return 0;
+            @panic("AICA read8 from ARM out of bounds address");
         }
         return self.read_register(u8, addr);
     }
@@ -354,7 +358,6 @@ pub const AICA = struct {
             aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
             @panic("AICA read32 from ARM out of bounds address");
-            //return 0;
         }
         return self.read_register(u32, addr);
     }
@@ -363,6 +366,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             std.debug.print("AICA write8 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
             self.arm_debug_dump();
+            @panic("AICA write8 from ARM out of bounds address");
         }
         self.write_register(u8, addr, value);
     }
@@ -370,6 +374,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             std.debug.print("AICA write32 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
             self.arm_debug_dump();
+            @panic("AICA write32 from ARM out of bounds address");
         }
         self.write_register(u32, addr, value);
     }
@@ -417,7 +422,7 @@ pub const AICA = struct {
                                 (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
                                 (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0);
                         }
-                        self.arm7.fiq_interrupt();
+                        self.arm7.fast_interrupt_request();
                     }
                     timer.value = 0;
                 } else timer.value += 1;
