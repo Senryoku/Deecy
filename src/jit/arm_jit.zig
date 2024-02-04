@@ -190,6 +190,14 @@ pub const ARM7JIT = struct {
     }
 };
 
+fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
+    try b.mov(.{ .reg = host_register }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } });
+}
+
+fn store_register(b: *JITBlock, arm_reg: u5, host_register: JIT.Register) !void {
+    try b.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } }, .{ .reg = host_register });
+}
+
 fn cpsr_mask(comptime flags: []const []const u8) u32 {
     var mask: u32 = 0;
     inline for (flags) |flag| {
@@ -488,7 +496,78 @@ fn handle_msr(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
-    try interpreter_fallback(b, ctx, instruction);
+
+    // Some fast paths/static decoding.
+    // FIXME: We can handle more cases, and generate better code.
+    if (inst.s == 0 and inst.i == 1 and
+        inst.rd < 8 and inst.rn < 8 and // FIXME: I need to rewrite the way the registers are stored to handle all banked registers
+        (inst.opcode == .AND or
+        // inst.opcode == .EOR or
+        inst.opcode == .SUB or
+        inst.opcode == .RSB or
+        inst.opcode == .ADD or
+        // inst.opcode == .ORR or
+        inst.opcode == .MOV
+    // inst.opcode == .BIC or
+    // inst.opcode == .MVN
+    )) {
+        // op2
+        try b.mov(.{ .reg = .ArgRegister0 }, .{ .imm32 = arm7.interpreter.immediate_shifter_operand(inst.operand2) });
+        switch (inst.opcode) {
+            .AND => {
+                // cpu.r(inst.rd).* = op1 & op2;
+                try load_register(b, .ReturnRegister, inst.rn); // op1
+                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
+                try store_register(b, inst.rd, .ReturnRegister);
+            },
+            //.EOR => {
+            //    try load_register(b, .ReturnRegister, inst.rn);
+            //    try b.append(.{ .Xor = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
+            //    try store_register(b, inst.rd, .ReturnRegister);
+            //},
+            .SUB => {
+                // cpu.r(inst.rd).* = op1 -% op2;
+                try load_register(b, .ReturnRegister, inst.rn);
+                try b.append(.{ .Sub = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
+                try store_register(b, inst.rd, .ReturnRegister);
+            },
+            .RSB => {
+                // cpu.r(inst.rd).* = op2 -% op1;
+                try load_register(b, .ReturnRegister, inst.rn);
+                try b.append(.{ .Sub = .{ .dst = .ArgRegister0, .src = .{ .reg = .ReturnRegister } } });
+                try store_register(b, inst.rd, .ArgRegister0);
+            },
+            .ADD => {
+                // cpu.r(inst.rd).* = op1 +% op2;
+                try load_register(b, .ReturnRegister, inst.rn);
+                try b.append(.{ .Add = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
+                try store_register(b, inst.rd, .ReturnRegister);
+            },
+            //.ORR => {
+            //    try load_register(b, .ReturnRegister, inst.rn);
+            //    try b.append(.{ .Or = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
+            //    try store_register(b, inst.rd, .ReturnRegister);
+            //},
+            .MOV => {
+                try store_register(b, inst.rd, .ArgRegister0);
+            },
+            //.BIC => {
+            //    // cpu.r(inst.rd).* = op1 & ~op2;
+            //    load_register(b, .ReturnRegister, inst.rn);
+            //   try  b.append(.{ .Not = .{ .reg = .ArgRegister0 } });
+            //   try  b.append(.{ .And = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
+            //   try  store_register(b, inst.rd, .ReturnRegister);
+            //},
+            //.MVN => {
+            //    // cpu.r(inst.rd).* = ~op2;
+            //    try b.append(.{ .Not = .{ .reg = .ArgRegister0 } });
+            //    try store_register(b, inst.rd, .ArgRegister0);
+            //},
+            else => @panic("Not implemented"),
+        }
+    } else {
+        try interpreter_fallback(b, ctx, instruction);
+    }
     switch (inst.opcode) {
         .TST, .TEQ, .CMP, .CMN => return false,
         else => return inst.rd == 15,

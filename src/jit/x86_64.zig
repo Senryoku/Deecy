@@ -428,7 +428,7 @@ pub const Emitter = struct {
             .reg => |src_reg| {
                 try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
                 try self.emit(u8, 0x01);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
             },
             .imm32 => |imm32| {
                 try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
@@ -436,7 +436,7 @@ pub const Emitter = struct {
                 try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst) });
                 try self.emit(u32, imm32);
             },
-            else => return error.InvalidSource,
+            else => return error.InvalidAddSource,
         }
     }
 
@@ -445,23 +445,25 @@ pub const Emitter = struct {
         switch (src) {
             .reg => |src_reg| {
                 try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
-                try self.emit(u8, 0x81);
-                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = encode(src_reg) };
-                try self.emit(u8, @bitCast(modrm));
+                try self.emit(u8, 0x29);
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
             },
             .imm32 => |imm32| {
                 try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
                 try self.emit(u8, 0x81);
-                const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = 0b101, .r_m = encode(dst) };
-                try self.emit(u8, @bitCast(modrm));
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b101, .r_m = encode(dst) });
                 try self.emit(u32, imm32);
             },
-            else => return error.InvalidSource,
+            else => return error.InvalidSubSource,
         }
     }
 
     pub fn and_(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
         switch (src) {
+            .reg => |src_reg| {
+                try self.emit(u8, 0x21);
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
+            },
             .imm32 => |imm| {
                 if (dst == .ReturnRegister) {
                     try self.emit(u8, 0x25);
@@ -469,12 +471,9 @@ pub const Emitter = struct {
                 } else {
                     try self.emit_rex_if_needed(.{ .r = need_rex(dst) });
                     try self.emit(u8, 0x81);
-                    const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = 0 };
-                    try self.emit(u8, @bitCast(modrm));
+                    try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(dst) });
                     try self.emit(u32, imm);
-                    // I think the ModRM is wrong there, but I'm also not using this branch.
-                    // .{ .mod = 0b11, .reg_opcode = 0, .r_m = encode(dst) } ?
-                    std.debug.print("You hit an untested part of the emitted! Rejoice! Please double check it, thanks :)\n", .{});
+                    std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
                     // Use this break to debug and make sure the correct instruction is emitted!
                     try self.emit_byte(0xCC);
                     @panic("Untested");
