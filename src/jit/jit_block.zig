@@ -11,6 +11,7 @@ pub const InstructionType = enum {
     Sub,
     And,
     Cmp,
+    BitTest,
     Jmp,
 };
 
@@ -30,10 +31,14 @@ pub const Condition = enum {
     Always,
     Equal,
     NotEqual,
+    Carry,
+    NotCarry,
 };
 
 const OperandType = enum {
     reg,
+    imm8,
+    imm16,
     imm32,
     imm,
     mem,
@@ -41,6 +46,8 @@ const OperandType = enum {
 
 pub const Operand = union(OperandType) {
     reg: Register,
+    imm8: u8,
+    imm16: u16,
     imm32: u32,
     imm: u64,
     mem: struct {
@@ -62,6 +69,7 @@ pub const Instruction = union(InstructionType) {
     Sub: struct { dst: Register, src: Operand },
     And: struct { dst: Register, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
+    BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
 };
 
@@ -129,5 +137,10 @@ pub const JITBlock = struct {
             .source_index = self.instructions.items.len - 1,
             .block = self,
         };
+    }
+
+    // NOTE: offset could also be a register
+    pub fn bit_test(self: *@This(), reg: Register, offset: u8) !void {
+        try self.instructions.append(.{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
     }
 };

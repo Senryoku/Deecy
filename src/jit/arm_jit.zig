@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const termcolor = @import("../termcolor.zig");
+
 const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("jit_block.zig");
@@ -26,6 +28,9 @@ const BlockCache = struct {
     cursor: u32 = 0,
     blocks: std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage),
 
+    min_address: u32 = std.math.maxInt(u32),
+    max_address: u32 = 0,
+
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
@@ -43,16 +48,30 @@ const BlockCache = struct {
         self.blocks.deinit();
     }
 
+    pub fn signal_write(self: *@This(), addr: u32) void {
+        if (addr >= self.min_address and addr <= self.max_address) {
+            self.reset();
+        }
+    }
+
     pub fn reset(self: *@This()) void {
+        arm_jit_log.info(termcolor.blue("Resetting block cache."), .{});
+
         self.cursor = 0;
         self.blocks.clearRetainingCapacity();
+
+        self.min_address = std.math.maxInt(u32);
+        self.max_address = 0;
     }
 
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
         return self.blocks.get(address);
     }
 
-    pub fn put(self: *@This(), address: u32, block: BasicBlock) !void {
+    pub fn put(self: *@This(), address: u32, end_address: u32, block: BasicBlock) !void {
+        self.min_address = @min(self.min_address, address);
+        self.max_address = @max(self.max_address, end_address);
+
         try self.blocks.put(address, block);
     }
 };
@@ -100,9 +119,9 @@ pub const ARM7JIT = struct {
             spent_cycles += @intCast(block.?.cycles);
 
             // Not necessary, just here to allow compatibility with the interpreter if we need it.
-            // (Right now we're always call to the interpreted so this should stay in sync, but once
-            //  we start actually JIT some instructions, we won't keep instruction_pipeline updated)
-            cpu.instruction_pipeline[0] = cpu.pc().* - 4;
+            // (Right now we're always calling to the interpreted so this should stay in sync, but once
+            //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
+            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc().* - 4) & cpu.memory_address_mask]))).*;
         }
 
         return spent_cycles;
@@ -166,60 +185,87 @@ pub const ARM7JIT = struct {
 
         self.block_cache.cursor += emitter.block_size;
 
-        try self.block_cache.put(start_ctx.address, emitter.block);
+        try self.block_cache.put(start_ctx.address, ctx.address, emitter.block);
         return self.block_cache.get(start_ctx.address).?;
     }
 };
 
+fn cpsr_mask(comptime flags: []const []const u8) u32 {
+    var mask: u32 = 0;
+    inline for (flags) |flag| {
+        mask |= @as(u32, 1 << @bitOffsetOf(arm7.CPSR, flag));
+    }
+    return mask;
+}
+
+fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
+    try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+    try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = cpsr_mask(flags) } } });
+}
+
+fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
+    try extract_cpsr_flags(b, flags);
+    try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
+    return b.jmp(.Equal);
+}
+
+// Emits code testing the flags in the CPSR and returns a patchable jump meant to point at the next instruction, taken if the condition is not met.
 fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.PatchableJump {
     _ = ctx;
     const condition = arm7.ARM7.get_instr_condition(instruction);
     switch (condition) {
         .EQ => {
             // return cpu.cpsr.z
-            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = @as(u32, 1 << @bitOffsetOf(arm7.CPSR, "z")) } } });
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x00000000 } } });
-            return try b.jmp(.NotEqual);
+            return try test_cpsr_flags(b, &[_][]const u8{"z"}, &[_][]const u8{"z"});
         },
         .NE => {
             // return !cpu.cpsr.z
-            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = @as(u32, 1 << @bitOffsetOf(arm7.CPSR, "z")) } } });
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x00000000 } } });
-            return try b.jmp(.Equal);
+            return try test_cpsr_flags(b, &[_][]const u8{"z"}, &[_][]const u8{});
         },
         .CS => {
             // return cpu.cpsr.c
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"c"}, &[_][]const u8{"c"});
         },
         .CC => {
             // return !cpu.cpsr.c
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"c"}, &[_][]const u8{});
         },
         .MI => {
             // return cpu.cpsr.n
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"n"}, &[_][]const u8{"n"});
         },
         .PL => {
             // return !cpu.cpsr.n
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"n"}, &[_][]const u8{});
         },
         .VS => {
             // return cpu.cpsr.v
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"v"}, &[_][]const u8{"v"});
         },
         .VC => {
             // return !cpu.cpsr.v
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{"v"}, &[_][]const u8{});
         },
         .HI => {
             // return cpu.cpsr.c and !cpu.cpsr.z
-            @panic("Unimplemented");
+            return try test_cpsr_flags(b, &[_][]const u8{ "c", "z" }, &[_][]const u8{"c"});
         },
         .LS => {
             // return !cpu.cpsr.c or cpu.cpsr.z
-            @panic("Unimplemented");
+            std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
+
+            // FIXME: This is untested.
+            try b.append(.{ .Break = 1 });
+
+            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
+            var do_label = try b.jmp(.NotCarry);
+            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            var do_label_2 = try b.jmp(.Carry);
+            const skip_label = try b.jmp(.Always);
+            do_label.patch();
+            do_label_2.patch();
+            return skip_label;
         },
         .GE => {
             // return cpu.cpsr.n == cpu.cpsr.v
@@ -310,11 +356,13 @@ fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bo
 }
 
 fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
-    _ = b;
-    _ = ctx;
-    _ = instruction;
-    arm_jit_log.err("Unimplemented multiply", .{});
-    @panic("Unimplemented multiply");
+    const inst: arm7.MultiplyInstruction = @bitCast(instruction);
+    std.debug.assert(inst.rd != inst.rm);
+    std.debug.assert(inst.rd != 15);
+    std.debug.assert(inst.rm != 15);
+    std.debug.assert(inst.rs != 15);
+    try interpreter_fallback(b, ctx, instruction);
+    return false;
 }
 
 fn handle_multiply_long(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {

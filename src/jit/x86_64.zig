@@ -174,6 +174,9 @@ pub const Emitter = struct {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
                     try self.jmp(j.condition, @intCast(i + j.dst.rel));
                 },
+                .BitTest => |b| {
+                    try self.bit_test(b.reg, b.offset);
+                },
                 //else => @panic("Unhandled JIT instruction"),
             }
         }
@@ -190,8 +193,12 @@ pub const Emitter = struct {
     }
 
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
-        for (0..@sizeOf(T)) |i| {
-            try self.emit_byte(@truncate((value >> @intCast(8 * i)) & 0xFF));
+        if (T == MODRM) {
+            try self.emit_byte(@bitCast(value));
+        } else {
+            for (0..@sizeOf(T)) |i| {
+                try self.emit_byte(@truncate((value >> @intCast(8 * i)) & 0xFF));
+            }
         }
     }
 
@@ -370,7 +377,7 @@ pub const Emitter = struct {
                                 try self.emit(u32, src_m.displacement);
                         }
                     },
-                    // else => return error.InvalidMovSource,
+                    else => return error.InvalidMovSource,
                 }
             },
             else => return error.InvalidMovDestination,
@@ -461,6 +468,12 @@ pub const Emitter = struct {
                     const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(dst), .r_m = 0 };
                     try self.emit(u8, @bitCast(modrm));
                     try self.emit(u32, imm);
+                    // I think the ModRM is wrong there, but I'm also not using this branch.
+                    // .{ .mod = 0b11, .reg_opcode = 0, .r_m = encode(dst) } ?
+                    std.debug.print("You hit an untested part of the emitted! Rejoice! Please double check it, thanks :)\n", .{});
+                    // Use this break to debug and make sure the correct instruction is emitted!
+                    try self.emit_byte(0xCC);
+                    @panic("Untested");
                 }
             },
             else => return error.InvalidAndSource,
@@ -479,9 +492,24 @@ pub const Emitter = struct {
         }
     }
 
+    pub fn bit_test(self: *@This(), reg: JIT.Register, offset: JIT.Operand) !void {
+        // NOTE: We only support 32-bit registers here.
+        switch (offset) {
+            .imm8 => |imm| {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0xBA);
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(reg) });
+                try self.emit(u8, imm);
+            },
+            else => return error.UnsupportedBitTestOffset,
+        }
+    }
+
     pub fn jmp(self: *@This(), condition: JIT.Condition, dst_instruction_index: u32) !void {
         // TODO: Support more destination than just immediate relative.
         //       Support different sizes of rel (rel8 in particular).
+        //         We don't know the size of the jump yet, and we have to reserve enough space
+        //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
 
         var address = self.block_size;
 
@@ -500,6 +528,18 @@ pub const Emitter = struct {
             .NotEqual => {
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, 0x85);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .Carry => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x82);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .NotCarry => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x83);
                 address = self.block_size;
                 try self.emit(u32, 0x00C0FFEE);
             },

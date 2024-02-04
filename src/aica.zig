@@ -216,7 +216,7 @@ pub const AICA = struct {
     }
 
     pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
-        self.arm_jit.block_cache.reset();
+        self.arm_jit.block_cache.signal_write(addr - 0x00800000);
 
         switch (addr) {
             else => {},
@@ -439,7 +439,7 @@ pub const AICA = struct {
             self._arm_cycles_counter += @intCast(cycles);
 
             if (self.enable_arm_jit) {
-                self._arm_cycles_counter -= try self.arm_jit.run_for(&self.arm7, self._arm_cycles_counter);
+                self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
             } else {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
