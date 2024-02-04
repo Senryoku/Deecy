@@ -121,7 +121,7 @@ pub const Dreamcast = struct {
         }
 
         self.scheduled_interrupts.deinit();
-        //self.sh4_jit.deinit(); // FIXME: munmap doesn't exist on Windows.
+        //self.sh4_jit.deinit(); // FIXME: munmap link error on Windows.
         self.gdrom.deinit();
         self.maple.deinit();
         self.aica.deinit();
@@ -136,6 +136,8 @@ pub const Dreamcast = struct {
     pub fn reset(self: *@This()) void {
         self.cpu.reset();
         self.gpu.reset();
+
+        self.sh4_jit.block_cache.reset();
 
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_ISTNRM).* = 0;
@@ -293,7 +295,10 @@ pub const Dreamcast = struct {
         self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
-        self.aica.update(self, cycles);
+        self.aica.update(self, cycles) catch |err| {
+            std.debug.panic("ARM JIT error: {}", .{err});
+            @panic("ARM JIT Error");
+        };
         return cycles;
     }
 
@@ -305,7 +310,10 @@ pub const Dreamcast = struct {
         self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
-        self.aica.update(self, cycles);
+        self.aica.update(self, cycles) catch |err| {
+            std.debug.panic("ARM JIT error: {}", .{err});
+            @panic("ARM JIT Error");
+        };
         return cycles;
     }
 

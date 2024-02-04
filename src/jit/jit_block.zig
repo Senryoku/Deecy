@@ -65,7 +65,7 @@ pub const Instruction = union(InstructionType) {
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
 };
 
-const PatchableJump = struct {
+pub const PatchableJump = struct {
     source_index: usize,
     block: *JITBlock,
 

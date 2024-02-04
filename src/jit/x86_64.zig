@@ -234,13 +234,6 @@ pub const Emitter = struct {
             try self.emit(u8, @bitCast(rex));
     }
 
-    pub fn mov_reg_imm(self: *@This(), dst: JIT.Register, value: u64) !void {
-        // movabs <reg>,<imm64>
-        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst) });
-        try self.emit(u8, 0xB8 + @as(u8, encode(dst)));
-        try self.emit(u64, value);
-    }
-
     pub fn mov_reg_reg(self: *@This(), dst: JIT.Register, src: JIT.Register) !void {
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
@@ -322,7 +315,15 @@ pub const Emitter = struct {
                         try self.mov_reg_reg(dst_reg, reg);
                     },
                     .imm => |imm| {
-                        try self.mov_reg_imm(dst_reg, imm);
+                        // movabs <reg>,<imm64>
+                        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
+                        try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
+                        try self.emit(u64, imm);
+                    },
+                    .imm32 => |imm| {
+                        // mov    <reg>,<imm32>
+                        try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
+                        try self.emit(u32, imm);
                     },
                     .mem => |src_m| {
                         if (src_m.index != null) {
@@ -369,7 +370,7 @@ pub const Emitter = struct {
                                 try self.emit(u32, src_m.displacement);
                         }
                     },
-                    else => return error.InvalidMovSource,
+                    // else => return error.InvalidMovSource,
                 }
             },
             else => return error.InvalidMovDestination,
@@ -492,7 +493,7 @@ pub const Emitter = struct {
             },
             .Equal => {
                 try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x82);
+                try self.emit(u8, 0x84);
                 address = self.block_size;
                 try self.emit(u32, 0x00C0FFEE);
             },

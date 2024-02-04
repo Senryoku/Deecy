@@ -31,6 +31,7 @@ pub const std_options = struct {
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
+        .{ .scope = .arm_jit, .level = .debug },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
@@ -382,6 +383,7 @@ pub fn main() !void {
             zgui.end();
 
             if (zgui.begin("AICA", .{})) {
+                _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
                 zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
                 zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc().*});
                 zgui.beginGroup();
