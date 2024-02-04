@@ -194,8 +194,8 @@ fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
     try b.mov(.{ .reg = host_register }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } });
 }
 
-fn store_register(b: *JITBlock, arm_reg: u5, host_register: JIT.Register) !void {
-    try b.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } }, .{ .reg = host_register });
+fn store_register(b: *JITBlock, arm_reg: u5, value: JIT.Operand) !void {
+    try b.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } }, value);
 }
 
 fn cpsr_mask(comptime flags: []const []const u8) u32 {
@@ -415,11 +415,9 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
 }
 
 fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
-    _ = b;
-    _ = ctx;
-    _ = instruction;
-    arm_jit_log.err("Unimplemented single data swap", .{});
-    @panic("Unimplemented single data swap");
+    const inst: arm7.MRSInstruction = @bitCast(instruction);
+    try interpreter_fallback(b, ctx, instruction);
+    return inst.rd == 15;
 }
 
 fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
@@ -507,18 +505,19 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
         inst.opcode == .RSB or
         inst.opcode == .ADD or
         // inst.opcode == .ORR or
-        inst.opcode == .MOV
-    // inst.opcode == .BIC or
-    // inst.opcode == .MVN
-    )) {
+        inst.opcode == .MOV or
+        inst.opcode == .BIC or
+        inst.opcode == .MVN))
+    {
         // op2
-        try b.mov(.{ .reg = .ArgRegister0 }, .{ .imm32 = arm7.interpreter.immediate_shifter_operand(inst.operand2) });
+        const op2 = JIT.Operand{ .imm32 = arm7.interpreter.immediate_shifter_operand(inst.operand2) };
+
         switch (inst.opcode) {
             .AND => {
                 // cpu.r(inst.rd).* = op1 & op2;
                 try load_register(b, .ReturnRegister, inst.rn); // op1
-                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
-                try store_register(b, inst.rd, .ReturnRegister);
+                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             //.EOR => {
             //    try load_register(b, .ReturnRegister, inst.rn);
@@ -528,20 +527,20 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             .SUB => {
                 // cpu.r(inst.rd).* = op1 -% op2;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
-                try store_register(b, inst.rd, .ReturnRegister);
+                try b.append(.{ .Sub = .{ .dst = .ReturnRegister, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             .RSB => {
                 // cpu.r(inst.rd).* = op2 -% op1;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .ArgRegister0, .src = .{ .reg = .ReturnRegister } } });
-                try store_register(b, inst.rd, .ArgRegister0);
+                try b.append(.{ .Sub = .{ .dst = .ArgRegister0, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = .ArgRegister0 });
             },
             .ADD => {
                 // cpu.r(inst.rd).* = op1 +% op2;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Add = .{ .dst = .ReturnRegister, .src = .{ .reg = .ArgRegister0 } } });
-                try store_register(b, inst.rd, .ReturnRegister);
+                try b.append(.{ .Add = .{ .dst = .ReturnRegister, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             //.ORR => {
             //    try load_register(b, .ReturnRegister, inst.rn);
@@ -549,20 +548,20 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             //    try store_register(b, inst.rd, .ReturnRegister);
             //},
             .MOV => {
-                try store_register(b, inst.rd, .ArgRegister0);
+                try store_register(b, inst.rd, op2);
             },
-            //.BIC => {
-            //    // cpu.r(inst.rd).* = op1 & ~op2;
-            //    load_register(b, .ReturnRegister, inst.rn);
-            //   try  b.append(.{ .Not = .{ .reg = .ArgRegister0 } });
-            //   try  b.append(.{ .And = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
-            //   try  store_register(b, inst.rd, .ReturnRegister);
-            //},
-            //.MVN => {
-            //    // cpu.r(inst.rd).* = ~op2;
-            //    try b.append(.{ .Not = .{ .reg = .ArgRegister0 } });
-            //    try store_register(b, inst.rd, .ArgRegister0);
-            //},
+            .BIC => {
+                // cpu.r(inst.rd).* = op1 & ~op2;
+                try load_register(b, .ReturnRegister, inst.rn);
+                // NOTE: Be careful if we ever support non-immediate op2!
+                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
+                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+            },
+            .MVN => {
+                // cpu.r(inst.rd).* = ~op2;
+                // NOTE: Be careful if we ever support non-immediate op2!
+                try store_register(b, inst.rd, .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) });
+            },
             else => @panic("Not implemented"),
         }
     } else {
