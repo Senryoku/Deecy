@@ -119,7 +119,7 @@ pub const ARM7JIT = struct {
             spent_cycles += @intCast(block.?.cycles);
 
             // Not necessary, just here to allow compatibility with the interpreter if we need it.
-            // (Right now we're always calling to the interpreted so this should stay in sync, but once
+            // (Right now we're always calling to the interpreter so this should stay in sync, but once
             //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
             cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc().* - 4) & cpu.memory_address_mask]))).*;
         }
@@ -206,7 +206,7 @@ fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
 fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
     try extract_cpsr_flags(b, flags);
     try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
-    return b.jmp(.Equal);
+    return b.jmp(.NotEqual);
 }
 
 // Emits code testing the flags in the CPSR and returns a patchable jump meant to point at the next instruction, taken if the condition is not met.
@@ -253,10 +253,7 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
         .LS => {
             // return !cpu.cpsr.c or cpu.cpsr.z
             std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
-
             // FIXME: This is untested.
-            try b.append(.{ .Break = 1 });
-
             try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
             try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
             var do_label = try b.jmp(.NotCarry);
@@ -269,19 +266,81 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
         },
         .GE => {
             // return cpu.cpsr.n == cpu.cpsr.v
-            @panic("Unimplemented");
+            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            // v == 1 and n == 1
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            var do_label_0 = try b.jmp(.Equal);
+            // v == 0 and n == 0
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            var do_label_1 = try b.jmp(.Equal);
+
+            const skip_label = try b.jmp(.Always);
+
+            do_label_0.patch();
+            do_label_1.patch();
+
+            return skip_label;
         },
         .LT => {
             // return cpu.cpsr.n != cpu.cpsr.v
-            @panic("Unimplemented");
+            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            // v == 1 and n == 0
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            var do_label_0 = try b.jmp(.Equal);
+            // v == 0 and n == 1
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            var do_label_1 = try b.jmp(.Equal);
+
+            const skip_label = try b.jmp(.Always);
+
+            do_label_0.patch();
+            do_label_1.patch();
+
+            return skip_label;
         },
         .GT => {
             // return !cpu.cpsr.z and (cpu.cpsr.n == cpu.cpsr.v)
-            @panic("Unimplemented");
+            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            var do_label_0 = try b.jmp(.NotCarry);
+
+            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            // v == 1 and n == 1
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            var do_label_1 = try b.jmp(.Equal);
+            // v == 0 and n == 0
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            var do_label_2 = try b.jmp(.Equal);
+
+            const skip_label = try b.jmp(.Always);
+
+            do_label_0.patch();
+            do_label_1.patch();
+            do_label_2.patch();
+
+            return skip_label;
         },
         .LE => {
             // return cpu.cpsr.z or (cpu.cpsr.n != cpu.cpsr.v)
-            @panic("Unimplemented");
+            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            var do_label_0 = try b.jmp(.Carry);
+
+            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            // v == 1 and n == 0
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            var do_label_1 = try b.jmp(.Equal);
+            // v == 0 and n == 1
+            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            var do_label_2 = try b.jmp(.Equal);
+
+            const skip_label = try b.jmp(.Always);
+
+            do_label_0.patch();
+            do_label_1.patch();
+            do_label_2.patch();
+
+            return skip_label;
         },
         .AL => return null,
         .Invalid => unreachable,

@@ -89,12 +89,15 @@ pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
 
-    jumps_to_patch: std.AutoHashMap(u32, PatchableJump) = undefined,
+    jumps_to_patch: std.AutoHashMap(u32, std.ArrayList(PatchableJump)) = undefined,
+
+    _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, block_buffer: []u8) @This() {
         return .{
             .block = BasicBlock.init(block_buffer),
-            .jumps_to_patch = std.AutoHashMap(u32, PatchableJump).init(allocator),
+            .jumps_to_patch = std.AutoHashMap(u32, std.ArrayList(PatchableJump)).init(allocator),
+            ._allocator = allocator,
         };
     }
 
@@ -119,9 +122,12 @@ pub const Emitter = struct {
     pub fn emit_block(self: *@This(), jb: *const JITBlock) !void {
         self.emit_block_prologue();
         for (0..jb.instructions.items.len) |i| {
-            if (self.jumps_to_patch.get(@intCast(i))) |jump| {
-                const rel: u32 = @intCast(self.block_size - jump.source);
-                @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+            if (self.jumps_to_patch.get(@intCast(i))) |jumps| {
+                for (jumps.items) |jump| {
+                    const rel: u32 = @intCast(self.block_size - jump.source);
+                    @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                }
+                jumps.deinit();
                 _ = self.jumps_to_patch.remove(@intCast(i));
             }
 
@@ -545,7 +551,11 @@ pub const Emitter = struct {
             },
         }
 
-        try self.jumps_to_patch.put(dst_instruction_index, .{
+        const jumps = try self.jumps_to_patch.getOrPut(dst_instruction_index);
+        if (!jumps.found_existing)
+            jumps.value_ptr.* = std.ArrayList(PatchableJump).init(self._allocator);
+
+        try jumps.value_ptr.*.append(.{
             .source = self.block_size,
             .address_to_patch = address,
         });

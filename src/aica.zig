@@ -439,7 +439,8 @@ pub const AICA = struct {
             self._arm_cycles_counter += @intCast(cycles);
 
             if (self.enable_arm_jit) {
-                self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
+                if (self._arm_cycles_counter >= ARM7CycleRatio)
+                    self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
             } else {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
