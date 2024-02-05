@@ -15,48 +15,69 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
-const HashMapContext = struct {
-    pub fn hash(_: @This(), addr: u32) u64 {
-        return @as(u64, addr) * 2654435761;
-    }
-    pub fn eql(_: @This(), a: u32, b: u32) bool {
-        return a == b;
-    }
-};
-
 const BlockCache = struct {
+    // 0x02200000 possible addresses, but 16bit aligned, multiplied by permutations of (sz, pr)
+    const BlockEntryCount = (0x02200000 >> 1) << 2;
+
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: []?BasicBlock,
+    blocks: []?BasicBlock = undefined,
 
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-        return .{
+
+        var r: @This() = .{
             .buffer = buffer,
-            .blocks = allocator.alloc(?BasicBlock, 0x02200000 >> 1) catch unreachable,
             ._allocator = allocator,
         };
+
+        try r.allocate_blocks();
+
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
-        std.os.munmap(self.buffer);
-        self.blocks.deinit();
+        self._allocator.free(self.buffer);
+
+        std.os.windows.VirtualFree(
+            self.blocks.ptr,
+            @sizeOf(?BasicBlock) * BlockEntryCount,
+            std.os.windows.MEM_DECOMMIT | std.os.windows.MEM_RELEASE,
+        );
     }
 
-    pub fn reset(self: *@This()) void {
+    fn allocate_blocks(self: *@This()) !void {
+        if (@import("builtin").os.tag != .windows) {
+            @compileError("Unsupported OS - Use mmap on Linux here.");
+        }
+
+        const blocks = try std.os.windows.VirtualAlloc(
+            null,
+            @sizeOf(?BasicBlock) * BlockEntryCount,
+            std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
+            std.os.windows.PAGE_READWRITE,
+        );
+        self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+    }
+
+    pub fn reset(self: *@This()) !void {
         self.cursor = 0;
-        @memset(self.blocks, null);
+
+        // FIXME: Can I merely decommit and re-commit it?
+        std.os.windows.VirtualFree(
+            self.blocks.ptr,
+            @sizeOf(?BasicBlock) * BlockEntryCount,
+            std.os.windows.MEM_DECOMMIT | std.os.windows.MEM_RELEASE,
+        );
+
+        try self.allocate_blocks();
     }
 
     inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
-        _ = sz;
-        _ = pr;
-        // FIXME: I'm not actually using sz or pr right now because I doubt this will be a problem,
-        //        and switching to an array for the lookup wastes a lot of memory.
-        return (if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) >> 1;
+        return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
     pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
@@ -119,7 +140,7 @@ pub const SH4JIT = struct {
                     .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
                 }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
-                        self.block_cache.reset();
+                        try self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
                         break :retry self.compile(.{
                             .address = pc,

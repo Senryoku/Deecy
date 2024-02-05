@@ -104,7 +104,7 @@ pub const Dreamcast = struct {
         const flash_bytes_read = try flash_file.readAll(dc.flash);
         std.debug.assert(flash_bytes_read == 0x20000);
 
-        dc.reset();
+        try dc.reset();
 
         return dc;
     }
@@ -121,7 +121,7 @@ pub const Dreamcast = struct {
         }
 
         self.scheduled_interrupts.deinit();
-        //self.sh4_jit.deinit(); // FIXME: munmap link error on Windows.
+        self.sh4_jit.deinit();
         self.gdrom.deinit();
         self.maple.deinit();
         self.aica.deinit();
@@ -133,11 +133,11 @@ pub const Dreamcast = struct {
         self._allocator.free(self.ram);
     }
 
-    pub fn reset(self: *@This()) void {
+    pub fn reset(self: *@This()) !void {
         self.cpu.reset();
         self.gpu.reset();
 
-        self.sh4_jit.block_cache.reset();
+        try self.sh4_jit.block_cache.reset();
 
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_ISTNRM).* = 0;
