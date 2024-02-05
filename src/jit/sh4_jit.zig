@@ -27,7 +27,7 @@ const HashMapContext = struct {
 const BlockCache = struct {
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage),
+    blocks: []?BasicBlock,
 
     _allocator: std.mem.Allocator,
 
@@ -36,7 +36,7 @@ const BlockCache = struct {
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
         return .{
             .buffer = buffer,
-            .blocks = std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator),
+            .blocks = allocator.alloc(?BasicBlock, 0x02200000 >> 1) catch unreachable,
             ._allocator = allocator,
         };
     }
@@ -48,23 +48,29 @@ const BlockCache = struct {
 
     pub fn reset(self: *@This()) void {
         self.cursor = 0;
-        self.blocks.clearRetainingCapacity();
+        @memset(self.blocks, null);
+    }
+
+    inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
+        _ = sz;
+        _ = pr;
+        // FIXME: I'm not actually using sz or pr right now because I doubt this will be a problem,
+        //        and switching to an array for the lookup wastes a lot of memory.
+        return (if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) >> 1;
     }
 
     pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
-        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
-        return self.blocks.get(key);
+        return self.blocks[compute_key(address, sz, pr)];
     }
 
-    pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) !void {
-        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
-        try self.blocks.put(key, block);
+    pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) void {
+        self.blocks[compute_key(address, sz, pr)] = block;
     }
 };
 
-const JITBitState = enum {
-    Zero,
-    One,
+const JITBitState = enum(u2) {
+    Zero = 0,
+    One = 1,
     Unknown,
 };
 
@@ -97,7 +103,7 @@ pub const SH4JIT = struct {
         self.block_cache.deinit();
     }
 
-    pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+    pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
@@ -198,7 +204,7 @@ pub const SH4JIT = struct {
 
         self.block_cache.cursor += emitter.block_size;
 
-        try self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
+        self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
         return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr))).?;
     }
 };
