@@ -503,18 +503,6 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     return false;
 }
 
-pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // cpu.pr = cpu.pc + 4;
-    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
-    // cpu.pc = Rn
-    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.n));
-    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
-
-    ctx.delay_slot = ctx.address + 2;
-    ctx.outdated_pc = false;
-    return true;
-}
-
 fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
     try block.bit_test(.ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
@@ -573,9 +561,35 @@ pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn bsr_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // pr = pc + 4
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
+pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // pr = pc + 4
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    // pc += Rn + 4;
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
+    try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 4 + ctx.address });
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
+pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // cpu.pr = cpu.pc + 4;
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    // cpu.pc = Rn
+    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.n));
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+
     ctx.delay_slot = ctx.address + 2;
     ctx.outdated_pc = false;
     return true;
