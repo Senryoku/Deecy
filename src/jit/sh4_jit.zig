@@ -42,11 +42,7 @@ const BlockCache = struct {
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self.buffer);
 
-        std.os.windows.VirtualFree(
-            self.blocks.ptr,
-            @sizeOf(?BasicBlock) * BlockEntryCount,
-            std.os.windows.MEM_DECOMMIT | std.os.windows.MEM_RELEASE,
-        );
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
     }
 
     fn allocate_blocks(self: *@This()) !void {
@@ -67,11 +63,7 @@ const BlockCache = struct {
         self.cursor = 0;
 
         // FIXME: Can I merely decommit and re-commit it?
-        std.os.windows.VirtualFree(
-            self.blocks.ptr,
-            @sizeOf(?BasicBlock) * BlockEntryCount,
-            std.os.windows.MEM_DECOMMIT | std.os.windows.MEM_RELEASE,
-        );
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
 
         try self.allocate_blocks();
     }
