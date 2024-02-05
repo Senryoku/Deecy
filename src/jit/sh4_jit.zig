@@ -515,25 +515,42 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return true;
 }
 
-pub fn bfs_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    ctx.delay_slot = ctx.address + 2;
-
+fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
     try block.bit_test(.ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
-    var skip_branch = try block.jmp(.Carry);
+    var skip_branch = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-    var to_end = try block.jmp(.Always);
 
+    var to_end = try block.jmp(.Always);
     skip_branch.patch();
-    // Don't execute delay slot twice when not taking the branch.
-    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+
+    if (delay_slot) {
+        ctx.delay_slot = ctx.address + 2;
+        // Don't execute delay slot twice when not taking the branch.
+        try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    } else {
+        try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 2 });
+    }
 
     to_end.patch();
 
     ctx.outdated_pc = false;
     return true;
+}
+
+pub fn bf_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return conditional_branch(block, ctx, instr, false, false);
+}
+pub fn bfs_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return conditional_branch(block, ctx, instr, false, true);
+}
+pub fn bt_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return conditional_branch(block, ctx, instr, true, false);
+}
+pub fn bts_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return conditional_branch(block, ctx, instr, true, true);
 }
 
 pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
