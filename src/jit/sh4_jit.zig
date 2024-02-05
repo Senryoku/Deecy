@@ -352,6 +352,16 @@ pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn movl_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // Rn = [Rm]
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 32);
+    try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    // if(n != m) Rm += 4
+    if (instr.nmd.n != instr.nmd.m)
+        try block.add(guest_reg_mem(instr.nmd.m), .{ .imm32 = 4 });
+    return false;
+}
+
 pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
     try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, d, 32);

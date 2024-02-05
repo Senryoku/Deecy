@@ -44,7 +44,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0010000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.movl_rm_at_rn, .name = "mov.l Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movl_rm_at_rn },
     .{ .code = 0b0110000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_at_rm_inc_rn, .name = "mov.b @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
     .{ .code = 0b0110000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_at_rm_inc_rn, .name = "mov.w @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
-    .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
+    .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movl_at_rm_inc_rn }, // TODO: or 2
     .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
@@ -141,7 +141,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = interpreter.braf_Rn, .name = "braf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.braf_Rn },
     .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bsr_label, .name = "bsr label", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.bsr_label },
     .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = interpreter.bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.bsrf_Rn },
-    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jmp_atRn },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3 },
