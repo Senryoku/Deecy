@@ -190,12 +190,16 @@ pub const ARM7JIT = struct {
     }
 };
 
+fn guest_register(arm_reg: u5) JIT.Operand {
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
+}
+
 fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
-    try b.mov(.{ .reg = host_register }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } });
+    try b.mov(.{ .reg = host_register }, guest_register(arm_reg));
 }
 
 fn store_register(b: *JITBlock, arm_reg: u5, value: JIT.Operand) !void {
-    try b.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } }, value);
+    try b.mov(guest_register(arm_reg), value);
 }
 
 fn cpsr_mask(comptime flags: []const []const u8) u32 {
@@ -208,7 +212,7 @@ fn cpsr_mask(comptime flags: []const []const u8) u32 {
 
 fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
     try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-    try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = cpsr_mask(flags) } } });
+    try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
 }
 
 fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
@@ -515,9 +519,13 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
         switch (inst.opcode) {
             .AND => {
                 // cpu.r(inst.rd).* = op1 & op2;
-                try load_register(b, .ReturnRegister, inst.rn); // op1
-                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = op2 } });
-                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                if (inst.rd == inst.rn) {
+                    try b.append(.{ .And = .{ .dst = guest_register(inst.rd), .src = op2 } });
+                } else {
+                    try load_register(b, .ReturnRegister, inst.rn); // op1
+                    try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
+                    try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                }
             },
             //.EOR => {
             //    try load_register(b, .ReturnRegister, inst.rn);
@@ -554,7 +562,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 // cpu.r(inst.rd).* = op1 & ~op2;
                 try load_register(b, .ReturnRegister, inst.rn);
                 // NOTE: Be careful if we ever support non-immediate op2!
-                try b.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
+                try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
                 try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             .MVN => {

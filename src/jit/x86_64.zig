@@ -458,28 +458,59 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn and_(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
-        switch (src) {
-            .reg => |src_reg| {
-                try self.emit(u8, 0x21);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
-            },
-            .imm32 => |imm| {
-                if (dst == .ReturnRegister) {
-                    try self.emit(u8, 0x25);
-                    try self.emit(u32, imm);
-                } else {
-                    try self.emit_rex_if_needed(.{ .r = need_rex(dst) });
-                    try self.emit(u8, 0x81);
-                    try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(dst) });
-                    try self.emit(u32, imm);
-                    std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
-                    // Use this break to debug and make sure the correct instruction is emitted!
-                    try self.emit_byte(0xCC);
-                    @panic("Untested");
+    pub fn and_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| {
+                        try self.emit(u8, 0x21);
+                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                    },
+                    .imm32 => |imm| {
+                        if (dst_reg == .ReturnRegister) {
+                            try self.emit(u8, 0x25);
+                            try self.emit(u32, imm);
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg) });
+                            try self.emit(u8, 0x81);
+                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(dst_reg) });
+                            try self.emit(u32, imm);
+                            std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
+                            // Use this break to debug and make sure the correct instruction is emitted!
+                            try self.emit_byte(0xCC);
+                            @panic("Untested");
+                        }
+                    },
+                    else => return error.InvalidAndSource,
                 }
             },
-            else => return error.InvalidAndSource,
+            .mem => |dst_m| {
+                switch (src) {
+                    .imm32 => |imm| {
+                        std.debug.assert(dst_m.size == 32);
+                        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+                        try self.emit(u8, 0x81);
+                        try self.emit(MODRM, .{
+                            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement <= 0xFF) 0b01 else 0b10),
+                            .reg_opcode = 4,
+                            .r_m = encode(dst_m.base),
+                        });
+                        if (encode(dst_m.base) == 0b100) // Special case for r12
+                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                        if (dst_m.displacement != 0) {
+                            if (dst_m.displacement <= 0xFF) {
+                                try self.emit(u8, @truncate(dst_m.displacement));
+                            } else {
+                                try self.emit(u32, dst_m.displacement);
+                            }
+                        }
+                        try self.emit(u32, imm);
+                    },
+                    else => return error.InvalidAndSource,
+                }
+            },
+            else => return error.InvalidAndDestination,
         }
     }
 

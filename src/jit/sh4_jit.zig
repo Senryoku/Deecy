@@ -247,12 +247,12 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
@@ -283,12 +283,12 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
 
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 

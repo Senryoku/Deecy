@@ -67,7 +67,7 @@ pub const Instruction = union(InstructionType) {
     Pop: Operand,
     Add: struct { dst: Register, src: Operand },
     Sub: struct { dst: Register, src: Operand },
-    And: struct { dst: Register, src: Operand },
+    And: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
