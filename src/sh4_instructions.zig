@@ -70,7 +70,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.swapb, .name = "swap.b Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.swapw, .name = "swap.w Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000001101, .mask = 0b0000111111110000, .fn_ = interpreter.xtrct_Rm_Rn, .name = "xtrct Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b0011000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.add_rm_rn, .name = "add Rm,Rn", .privileged = false },
+    .{ .code = 0b0011000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.add_rm_rn, .name = "add Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.add_rm_rn },
     .{ .code = 0b0111000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.add_imm_rn, .name = "add #imm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.add_imm_rn },
     .{ .code = 0b0011000000001110, .mask = 0b0000111111110000, .fn_ = interpreter.addc_Rm_Rn, .name = "addc Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000001111, .mask = 0b0000111111110000, .fn_ = interpreter.addv_Rm_Rn, .name = "addv Rm,Rn", .privileged = false },

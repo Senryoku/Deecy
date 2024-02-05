@@ -376,6 +376,12 @@ pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     return false;
 }
 
+pub fn add_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
+    try block.add(guest_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+    return false;
+}
+
 pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = ctx;
     try block.add(guest_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
