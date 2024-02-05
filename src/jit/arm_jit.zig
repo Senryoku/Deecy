@@ -24,9 +24,11 @@ const HashMapContext = struct {
 };
 
 const BlockCache = struct {
+    const BlockEntryCount = 0x200000 >> 2;
+
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: []?BasicBlock,
+    blocks: []?BasicBlock = undefined,
 
     min_address: u32 = std.math.maxInt(u32),
     max_address: u32 = 0,
@@ -36,29 +38,50 @@ const BlockCache = struct {
     pub fn init(allocator: std.mem.Allocator) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-        return .{
+
+        var r: @This() = .{
             .buffer = buffer,
-            .blocks = try allocator.alloc(?BasicBlock, 0x200000 >> 2),
             ._allocator = allocator,
         };
+        try r.allocate_blocks();
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
         std.os.munmap(self.buffer);
-        self._allocator.free(self.blocks);
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
     }
 
     pub fn signal_write(self: *@This(), addr: u32) void {
         if (addr >= self.min_address and addr <= self.max_address) {
-            self.reset();
+            self.reset() catch {
+                arm_jit_log.err("Failed to reset block cache.", .{});
+                @panic("Failed to reset block cache.");
+            };
         }
     }
 
-    pub fn reset(self: *@This()) void {
+    fn allocate_blocks(self: *@This()) !void {
+        if (@import("builtin").os.tag != .windows) {
+            @compileError("Unsupported OS - Use mmap on Linux here.");
+        }
+
+        const blocks = try std.os.windows.VirtualAlloc(
+            null,
+            @sizeOf(?BasicBlock) * BlockEntryCount,
+            std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
+            std.os.windows.PAGE_READWRITE,
+        );
+        self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+    }
+
+    pub fn reset(self: *@This()) !void {
         arm_jit_log.info(termcolor.blue("Resetting block cache."), .{});
 
         self.cursor = 0;
-        @memset(self.blocks, null);
+
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
+        try self.allocate_blocks();
 
         self.min_address = std.math.maxInt(u32);
         self.max_address = 0;
@@ -108,7 +131,7 @@ pub const ARM7JIT = struct {
                 const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
                 block = try (self.compile(.{ .address = pc }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
-                        self.block_cache.reset();
+                        try self.block_cache.reset();
                         arm_jit_log.info("JIT cache purged.", .{});
                         break :retry self.compile(.{ .address = pc }, instructions);
                     } else break :retry err;
