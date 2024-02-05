@@ -217,7 +217,7 @@ pub fn interpreter_fallback_branch(block: *JITBlock, ctx: *JITContext, instr: sh
     return true;
 }
 
-fn get_reg_mem(r: u4) JIT.Operand {
+fn guest_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4, .size = 32 } };
 }
 
@@ -232,11 +232,11 @@ fn get_dfp_reg_mem(r: u4) JIT.Operand {
 
 fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest_reg: u4) !void {
     // We could use this to cache register into host saved registers.
-    try block.mov(.{ .reg = host_reg }, get_reg_mem(guest_reg));
+    try block.mov(.{ .reg = host_reg }, guest_reg_mem(guest_reg));
 }
 
 fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT.Register) !void {
-    try block.mov(get_reg_mem(guest_reg), .{ .reg = host_reg });
+    try block.mov(guest_reg_mem(guest_reg), .{ .reg = host_reg });
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
@@ -311,14 +311,14 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
 }
 
 pub fn mov_rm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
-    try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.m));
-    try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.m));
+    try block.mov(guest_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
 pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
     // FIXME: Should keep the "signess" in the type system?  ---v
-    try block.mov(get_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    try block.mov(guest_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }
 
@@ -350,7 +350,7 @@ pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 
 pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = ctx;
-    try block.add(get_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    try block.add(guest_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }
 
@@ -449,7 +449,7 @@ pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn mova_atdispPC_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
-    try block.mov(get_reg_mem(0), .{ .imm32 = addr });
+    try block.mov(guest_reg_mem(0), .{ .imm32 = addr });
     return false;
 }
 
@@ -465,7 +465,7 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // Load the pointed value
     try block.movsx(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .ReturnRegister, .size = 16 } });
     // Store it into Rn
-    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
+    try block.mov(guest_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
@@ -481,7 +481,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // Load the pointed value
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .ReturnRegister, .size = 32 } });
     // Store it into Rn
-    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
+    try block.mov(guest_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
@@ -489,7 +489,7 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // cpu.pr = cpu.pc + 4;
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     // cpu.pc = Rn
-    try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.n));
+    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.n));
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
     ctx.delay_slot = ctx.address + 2;

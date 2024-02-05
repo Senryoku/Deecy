@@ -543,9 +543,13 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             },
             .ADD => {
                 // cpu.r(inst.rd).* = op1 +% op2;
-                try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Add = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
-                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                if (inst.rd == inst.rn) {
+                    try b.append(.{ .Add = .{ .dst = guest_register(inst.rd), .src = op2 } });
+                } else {
+                    try load_register(b, .ReturnRegister, inst.rn);
+                    try b.append(.{ .Add = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
+                    try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                }
             },
             //.ORR => {
             //    try load_register(b, .ReturnRegister, inst.rn);
