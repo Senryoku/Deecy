@@ -16,7 +16,7 @@ const BlockBufferSize = 2 * 1024 * 1024;
 
 const HashMapContext = struct {
     pub fn hash(_: @This(), addr: u32) u64 {
-        return @as(u64, addr) * 2654435761;
+        return @as(u64, addr >> 2) * 2654435761;
     }
     pub fn eql(_: @This(), a: u32, b: u32) bool {
         return a == b;
@@ -26,7 +26,7 @@ const HashMapContext = struct {
 const BlockCache = struct {
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage),
+    blocks: []?BasicBlock,
 
     min_address: u32 = std.math.maxInt(u32),
     max_address: u32 = 0,
@@ -38,14 +38,14 @@ const BlockCache = struct {
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
         return .{
             .buffer = buffer,
-            .blocks = std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator),
+            .blocks = try allocator.alloc(?BasicBlock, 0x200000 >> 2),
             ._allocator = allocator,
         };
     }
 
     pub fn deinit(self: *@This()) void {
         std.os.munmap(self.buffer);
-        self.blocks.deinit();
+        self._allocator.free(self.blocks);
     }
 
     pub fn signal_write(self: *@This(), addr: u32) void {
@@ -58,21 +58,21 @@ const BlockCache = struct {
         arm_jit_log.info(termcolor.blue("Resetting block cache."), .{});
 
         self.cursor = 0;
-        self.blocks.clearRetainingCapacity();
+        @memset(self.blocks, null);
 
         self.min_address = std.math.maxInt(u32);
         self.max_address = 0;
     }
 
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
-        return self.blocks.get(address);
+        return self.blocks[address >> 2];
     }
 
-    pub fn put(self: *@This(), address: u32, end_address: u32, block: BasicBlock) !void {
+    pub fn put(self: *@This(), address: u32, end_address: u32, block: BasicBlock) void {
         self.min_address = @min(self.min_address, address);
         self.max_address = @max(self.max_address, end_address);
 
-        try self.blocks.put(address, block);
+        self.blocks[address >> 2] = block;
     }
 };
 
@@ -96,7 +96,7 @@ pub const ARM7JIT = struct {
         self.block_cache.deinit();
     }
 
-    pub fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
+    pub noinline fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
         if (!cpu.running) return 0;
 
         var spent_cycles: i32 = 0;
@@ -182,7 +182,7 @@ pub const ARM7JIT = struct {
 
         self.block_cache.cursor += emitter.block_size;
 
-        try self.block_cache.put(start_ctx.address, ctx.address, emitter.block);
+        self.block_cache.put(start_ctx.address, ctx.address, emitter.block);
         return self.block_cache.get(start_ctx.address).?;
     }
 };
