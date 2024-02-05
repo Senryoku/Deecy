@@ -134,7 +134,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000011001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr8, .name = "shlr8 Rn", .privileged = false },
     .{ .code = 0b0100000000101001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr16, .name = "shlr16 Rn", .privileged = false },
     .{ .code = 0b1000101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bf_label, .name = "bf label", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
-    .{ .code = 0b1000111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bfs_label, .name = "bf/s label", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b1000111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bfs_label, .name = "bf/s label", .privileged = false, .jit_emit_fn = sh4_jit.bfs_label },
     .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bt_label, .name = "bt label", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bts_label, .name = "bt/s label", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bra_label, .name = "bra label", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },

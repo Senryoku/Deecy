@@ -960,11 +960,15 @@ pub fn shlr16(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* >>= 16;
 }
 
-inline fn d8_label(cpu: *SH4, opcode: Instr) void {
-    const displacement = sign_extension_u8(opcode.nd8.d);
-    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+pub inline fn d8_disp(addr: u32, opcode: sh4.Instr) u32 {
+    const displacement = bit_manip.sign_extension_u8(opcode.nd8.d);
+    var pc: i32 = @intCast(addr & 0x1FFFFFFF);
     pc += 4 + (displacement * 2);
-    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    return (addr & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+}
+
+inline fn d8_label(cpu: *SH4, opcode: Instr) void {
+    cpu.pc = d8_disp(cpu.pc, opcode);
     // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     cpu.pc -= 2;
 }

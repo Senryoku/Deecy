@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const sh4 = @import("../sh4.zig");
+const sh4_interpreter = @import("../sh4_interpreter.zig");
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = JIT.JITBlock;
@@ -510,6 +511,27 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
     ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
+pub fn bfs_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    ctx.delay_slot = ctx.address + 2;
+
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.bit_test(.ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+    var skip_branch = try block.jmp(.Carry);
+
+    const dest = sh4_interpreter.d8_disp(ctx.address, instr);
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    var to_end = try block.jmp(.Always);
+
+    skip_branch.patch();
+    // Don't execute delay slot twice when not taking the branch.
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+
+    to_end.patch();
+
     ctx.outdated_pc = false;
     return true;
 }

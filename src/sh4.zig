@@ -24,7 +24,7 @@ const sh4_disassembly = @import("sh4_disassembly.zig");
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-const SR = packed struct(u32) {
+pub const SR = packed struct(u32) {
     t: bool = undefined, // True/False condition or carry/borrow bit.
     s: bool = undefined, // Specifies a saturation operation for a MAC instruction
 
