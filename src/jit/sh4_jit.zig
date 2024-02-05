@@ -33,9 +33,7 @@ const BlockCache = struct {
             .buffer = buffer,
             ._allocator = allocator,
         };
-
         try r.allocate_blocks();
-
         return r;
     }
 

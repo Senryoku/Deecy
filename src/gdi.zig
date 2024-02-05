@@ -24,6 +24,10 @@ pub extern "kernel32" fn MapViewOfFile(
     dwNumberOfBytesToMap: std.os.windows.SIZE_T,
 ) callconv(std.os.windows.WINAPI) ?std.os.windows.LPVOID;
 
+pub extern "kernel32" fn UnmapViewOfFile(
+    lpBaseAddress: std.os.windows.LPCVOID,
+) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+
 const DirectoryRecord = extern struct {
     length: u8 align(1),
     extended_length: u8 align(1),
@@ -110,14 +114,17 @@ const Track = struct {
     format: u32, // Sector size
     pregap: u32,
     data: []u8,
+    _mapping_handle: ?*anyopaque = undefined,
     _file_handle: ?*anyopaque = undefined,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (@import("builtin").os.tag != .windows) {
             allocator.free(self.data);
         } else {
-            //  UnmapViewOfFile
-            //  CloseHandle
+            // TODO:
+            UnmapViewOfFile(std.data.ptr);
+            std.os.windows.CloseHandle(self._mapping_handle.?);
+            std.os.windows.CloseHandle(self._file_handle.?);
         }
     }
 
@@ -198,8 +205,6 @@ pub const GDI = struct {
             } else {
                 const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
                 defer self._allocator.free(track_file_path);
-
-                std.debug.print("track_file_path: '{s}'\n", .{track_file_path});
                 const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, track_file_path);
 
                 const file_handle = try std.os.windows.OpenFile(file_path_w.span(), .{
@@ -207,8 +212,8 @@ pub const GDI = struct {
                     .creation = std.os.windows.FILE_OPEN,
                     .io_mode = .blocking,
                 });
-                const handle = CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
-                const ptr = MapViewOfFile(handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
+                const mapping_handle = CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
+                const ptr = MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
                 var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                 _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
 
@@ -219,7 +224,8 @@ pub const GDI = struct {
                     .format = format,
                     .pregap = pregap,
                     .data = @as([*]u8, @ptrCast(ptr))[0..info.RegionSize],
-                    ._file_handle = handle,
+                    ._file_handle = file_handle,
+                    ._mapping_handle = mapping_handle,
                 });
             }
         }
