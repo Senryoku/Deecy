@@ -104,6 +104,11 @@ pub const JITBlock = struct {
         try self.instructions.append(instr);
     }
 
+    // Insert a breakpoint for debugging.
+    pub fn bp(self: *@This()) !void {
+        try self.instructions.append(.{ .Break = 0x01 });
+    }
+
     pub fn call(self: *@This(), func: *const anyopaque) !void {
         try self.instructions.append(.{ .FunctionCall = func });
     }

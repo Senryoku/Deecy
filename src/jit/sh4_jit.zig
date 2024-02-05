@@ -185,9 +185,9 @@ pub const SH4JIT = struct {
                 if (ctx.delay_slot != null) {
                     const delay_slot = instructions[index];
                     sh4_jit_log.debug("  [{X:0>8}]   {s}", .{ ctx.address, sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].name });
-                    const brach_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
+                    const branch_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
                     emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
-                    std.debug.assert(!brach_delay_slot);
+                    std.debug.assert(!branch_delay_slot);
                 }
                 break;
             }
@@ -556,6 +556,17 @@ pub fn bts_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
+pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // pc += Rn + 4;
+    try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
+    try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 4 + ctx.address });
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+
     ctx.delay_slot = ctx.address + 2;
     ctx.outdated_pc = false;
     return true;

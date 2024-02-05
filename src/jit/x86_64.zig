@@ -422,7 +422,7 @@ pub const Emitter = struct {
         }
     }
 
-    // Helper for 0x81 / 0x83 opcodes (Add, And...)
+    // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
     fn mem_dest_imm_src(self: *@This(), opcode: u3, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
         std.debug.assert(dst_m.size == 32);
 
@@ -437,8 +437,10 @@ pub const Emitter = struct {
             .reg_opcode = opcode,
             .r_m = encode(dst_m.base),
         });
+
         if (encode(dst_m.base) == 0b100) // Special case for r12
             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+
         if (dst_m.displacement != 0) {
             if (dst_m.displacement < 0x80) {
                 try self.emit(u8, @truncate(dst_m.displacement));
@@ -446,10 +448,37 @@ pub const Emitter = struct {
                 try self.emit(u32, dst_m.displacement);
             }
         }
+
         if (imm < 0x80) {
             try self.emit(u8, @truncate(imm));
         } else {
             try self.emit(ImmType, imm);
+        }
+    }
+
+    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: JIT.MemOperand, reg: JIT.Register) !void {
+        std.debug.assert(dst_m.size == 32);
+
+        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
+        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+
+        try self.emit(u8, opcode);
+
+        try self.emit(MODRM, .{
+            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
+            .reg_opcode = encode(reg),
+            .r_m = encode(dst_m.base),
+        });
+
+        if (encode(dst_m.base) == 0b100) // Special case for r12
+            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+
+        if (dst_m.displacement != 0) {
+            if (dst_m.displacement < 0x80) {
+                try self.emit(u8, @truncate(dst_m.displacement));
+            } else {
+                try self.emit(u32, dst_m.displacement);
+            }
         }
     }
 
@@ -465,15 +494,24 @@ pub const Emitter = struct {
                     },
                     .imm32 => |imm32| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x81); // ADD r/m32, imm32
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
-                        try self.emit(u32, imm32);
+                        if (imm32 < 0x80) {
+                            try self.emit(u8, 0x83); // ADD r/m32, imm8
+                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
+                            try self.emit(u8, @truncate(imm32));
+                        } else {
+                            try self.emit(u8, 0x81); // ADD r/m32, imm32
+                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
+                            try self.emit(u32, imm32);
+                        }
                     },
                     else => return error.InvalidAddSource,
                 }
             },
             .mem => |dst_m| {
                 switch (src) {
+                    .reg => |src_reg| {
+                        try mem_dest_reg_src(self, 0x01, dst_m, src_reg);
+                    },
                     .imm32 => |imm| {
                         try mem_dest_imm_src(self, 0, dst_m, u32, imm);
                     },
