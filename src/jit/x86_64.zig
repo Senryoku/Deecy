@@ -433,14 +433,14 @@ pub const Emitter = struct {
         try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
 
         try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement <= 0x80) 0b01 else 0b10),
+            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
             .reg_opcode = opcode,
             .r_m = encode(dst_m.base),
         });
         if (encode(dst_m.base) == 0b100) // Special case for r12
             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
         if (dst_m.displacement != 0) {
-            if (dst_m.displacement <= 0x80) {
+            if (dst_m.displacement < 0x80) {
                 try self.emit(u8, @truncate(dst_m.displacement));
             } else {
                 try self.emit(u32, dst_m.displacement);
