@@ -522,7 +522,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
     // Some fast paths/static decoding.
     // FIXME: We can handle more cases, and generate better code.
     if (inst.s == 0 and inst.i == 1 and
-        inst.rd < 8 and inst.rn < 8 and // FIXME: I need to rewrite the way the registers are stored to handle all banked registers
+        inst.rd != 15 and
         (inst.opcode == .AND or
         // inst.opcode == .EOR or
         inst.opcode == .SUB or
