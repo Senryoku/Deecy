@@ -553,6 +553,14 @@ pub fn bts_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return conditional_branch(block, ctx, instr, true, true);
 }
 
+pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const dest = sh4_interpreter.d12_disp(ctx.address, instr);
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
 pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     // cpu.pc = cpu.pr
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });

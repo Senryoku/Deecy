@@ -973,11 +973,15 @@ inline fn d8_label(cpu: *SH4, opcode: Instr) void {
     cpu.pc -= 2;
 }
 
-inline fn d12_label(cpu: *SH4, opcode: Instr) void {
+pub inline fn d12_disp(addr: u32, opcode: Instr) u32 {
     const displacement = sign_extension_u12(opcode.d12.d);
-    var pc: i32 = @intCast(cpu.pc & 0x1FFFFFFF);
+    var pc: i32 = @intCast(addr & 0x1FFFFFFF);
     pc += 4 + (displacement * 2);
-    cpu.pc = (cpu.pc & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+    return (addr & 0xE0000000) | @as(u32, @bitCast(pc & 0x1FFFFFFF));
+}
+
+inline fn d12_label(cpu: *SH4, opcode: Instr) void {
+    cpu.pc = d12_disp(cpu.pc, opcode);
     // -2 to account for the generic, inavoidable pc advancement of the current implementation.
     cpu.pc -= 2;
 }
