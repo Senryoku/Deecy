@@ -139,7 +139,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bts_label, .name = "bt/s label", .privileged = false, .jit_emit_fn = sh4_jit.bts_label },
     .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bra_label, .name = "bra label", .privileged = false, .jit_emit_fn = sh4_jit.bra_label },
     .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = interpreter.braf_Rn, .name = "braf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.braf_Rn },
-    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bsr_label, .name = "bsr label", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
+    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bsr_label, .name = "bsr label", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.bsr_label },
     .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = interpreter.bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
