@@ -31,6 +31,7 @@ pub const std_options = struct {
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
+        .{ .scope = .arm_jit, .level = .debug },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
@@ -245,6 +246,8 @@ pub fn main() !void {
     var last_frame_timestamp = std.time.microTimestamp();
     var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);
 
+    var blit_framebuffer_from_vram = true;
+
     while (!window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -382,6 +385,7 @@ pub fn main() !void {
             zgui.end();
 
             if (zgui.begin("AICA", .{})) {
+                _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
                 zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
                 zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc().*});
                 zgui.beginGroup();
@@ -676,8 +680,16 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
-        renderer.update_framebuffer(&dc.gpu);
+        if (blit_framebuffer_from_vram)
+            renderer.update_framebuffer(&dc.gpu);
+
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
+            // FIXME: I don't how to handle this correctly, but copying the framebuffer from VRAM
+            // is very expensive and useless outside of splash screen/homebrews.
+            // I'm disabling it as soon as we start rendering normally.
+            blit_framebuffer_from_vram = false;
+            renderer.read_framebuffer_enabled = false;
+
             dc.gpu.render_start = false;
             try renderer.update(&dc.gpu);
 
@@ -688,6 +700,7 @@ pub fn main() !void {
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
         }
+
         // FIXME: We don't need to render everything if the DC did not issued a render_start command, but we still need to render the
         //        direct framebuffer writes. Reverting to rendering everything for now.
         try renderer.render();

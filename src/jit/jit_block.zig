@@ -11,6 +11,7 @@ pub const InstructionType = enum {
     Sub,
     And,
     Cmp,
+    BitTest,
     Jmp,
 };
 
@@ -30,25 +31,33 @@ pub const Condition = enum {
     Always,
     Equal,
     NotEqual,
+    Carry,
+    NotCarry,
 };
 
 const OperandType = enum {
     reg,
+    imm8,
+    imm16,
     imm32,
     imm,
     mem,
 };
 
+pub const MemOperand = struct {
+    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
+    index: ?Register = null,
+    displacement: u32 = 0,
+    size: u8,
+};
+
 pub const Operand = union(OperandType) {
     reg: Register,
+    imm8: u8,
+    imm16: u16,
     imm32: u32,
     imm: u64,
-    mem: struct {
-        base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
-        index: ?Register = null,
-        displacement: u32 = 0,
-        size: u8,
-    },
+    mem: MemOperand,
 };
 
 pub const Instruction = union(InstructionType) {
@@ -58,14 +67,15 @@ pub const Instruction = union(InstructionType) {
     Movsx: struct { dst: Operand, src: Operand },
     Push: Operand,
     Pop: Operand,
-    Add: struct { dst: Register, src: Operand },
+    Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Register, src: Operand },
-    And: struct { dst: Register, src: Operand },
+    And: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
+    BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
 };
 
-const PatchableJump = struct {
+pub const PatchableJump = struct {
     source_index: usize,
     block: *JITBlock,
 
@@ -114,7 +124,7 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .Pop = op });
     }
 
-    pub fn add(self: *@This(), dst: Register, src: Operand) !void {
+    pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
     }
     pub fn sub(self: *@This(), dst: Register, src: Operand) !void {
@@ -129,5 +139,10 @@ pub const JITBlock = struct {
             .source_index = self.instructions.items.len - 1,
             .block = self,
         };
+    }
+
+    // NOTE: offset could also be a register
+    pub fn bit_test(self: *@This(), reg: Register, offset: u8) !void {
+        try self.instructions.append(.{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
     }
 };

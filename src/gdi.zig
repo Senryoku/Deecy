@@ -1,6 +1,29 @@
 const std = @import("std");
 const common = @import("common.zig");
 
+pub extern "kernel32" fn OpenFileMappingA(
+    dwDesiredAccess: std.os.windows.DWORD,
+    bInheritHandle: bool,
+    lpName: std.os.windows.LPCSTR,
+) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
+
+pub extern "kernel32" fn CreateFileMappingA(
+    hFile: std.os.windows.HANDLE,
+    lpFileMappingAttributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
+    flProtect: std.os.windows.DWORD,
+    dwMaximumSizeHigh: std.os.windows.DWORD,
+    dwMaximumSizeLow: std.os.windows.DWORD,
+    lpName: ?std.os.windows.LPCSTR,
+) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
+
+pub extern "kernel32" fn MapViewOfFile(
+    hFileMappingObject: std.os.windows.HANDLE,
+    dwDesiredAccess: std.os.windows.DWORD,
+    dwFileOffsetHigh: std.os.windows.DWORD,
+    dwFileOffsetLow: std.os.windows.DWORD,
+    dwNumberOfBytesToMap: std.os.windows.SIZE_T,
+) callconv(std.os.windows.WINAPI) ?std.os.windows.LPVOID;
+
 const DirectoryRecord = extern struct {
     length: u8 align(1),
     extended_length: u8 align(1),
@@ -87,9 +110,15 @@ const Track = struct {
     format: u32, // Sector size
     pregap: u32,
     data: []u8,
+    _file_handle: ?*anyopaque = undefined,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        allocator.free(self.data);
+        if (@import("builtin").os.tag != .windows) {
+            allocator.free(self.data);
+        } else {
+            //  UnmapViewOfFile
+            //  CloseHandle
+        }
     }
 
     pub fn get_directory_record(self: *const @This(), offset: usize) *const DirectoryRecord {
@@ -146,25 +175,53 @@ pub const GDI = struct {
             const filename = vals.next().?;
             const pregap = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
 
-            const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
-            defer self._allocator.free(track_file_path);
-            const track_file = std.fs.cwd().openFile(track_file_path, .{}) catch {
-                std.debug.print("Track File not found: {s}\n", .{track_file_path});
-                return error.TrackFileNotFound;
-            };
-            defer track_file.close();
-
             // NOTE: Use MMAP on non-windows platforms?
-            const track_data = try track_file.readToEndAlloc(self._allocator, 4 * 1024 * 1024 * 1024);
+            if (@import("builtin").os.tag != .windows) {
+                const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
+                defer self._allocator.free(track_file_path);
+                const track_file = std.fs.cwd().openFile(track_file_path, .{}) catch {
+                    std.debug.print("Track File not found: {s}\n", .{track_file_path});
+                    return error.TrackFileNotFound;
+                };
+                defer track_file.close();
 
-            self.tracks.items[num - 1] = (.{
-                .num = num,
-                .offset = offset,
-                .track_type = track_type,
-                .format = format,
-                .pregap = pregap,
-                .data = track_data,
-            });
+                const track_data = try track_file.readToEndAlloc(self._allocator, 4 * 1024 * 1024 * 1024);
+
+                self.tracks.items[num - 1] = (.{
+                    .num = num,
+                    .offset = offset,
+                    .track_type = track_type,
+                    .format = format,
+                    .pregap = pregap,
+                    .data = track_data,
+                });
+            } else {
+                const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
+                defer self._allocator.free(track_file_path);
+
+                std.debug.print("track_file_path: '{s}'\n", .{track_file_path});
+                const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, track_file_path);
+
+                const file_handle = try std.os.windows.OpenFile(file_path_w.span(), .{
+                    .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
+                    .creation = std.os.windows.FILE_OPEN,
+                    .io_mode = .blocking,
+                });
+                const handle = CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
+                const ptr = MapViewOfFile(handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
+                var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
+                _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
+
+                self.tracks.items[num - 1] = (.{
+                    .num = num,
+                    .offset = offset,
+                    .track_type = track_type,
+                    .format = format,
+                    .pregap = pregap,
+                    .data = @as([*]u8, @ptrCast(ptr))[0..info.RegionSize],
+                    ._file_handle = handle,
+                });
+            }
         }
 
         return self;

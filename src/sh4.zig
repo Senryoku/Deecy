@@ -1178,7 +1178,10 @@ pub const SH4 = struct {
                             // Instruction cache invalidation
                             // We'll use it as a clue to flush our JIT cache.
                             sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
-                            self._dc.?.sh4_jit.block_cache.reset();
+                            self._dc.?.sh4_jit.block_cache.reset() catch {
+                                sh4_log.err("Failed to purge JIT cache.", .{});
+                                @panic("Failed to purge JIT cache.");
+                            };
                         }
                     },
                     @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {

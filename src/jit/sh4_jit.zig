@@ -15,56 +15,75 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
-const HashMapContext = struct {
-    pub fn hash(_: @This(), addr: u32) u64 {
-        return @as(u64, addr) * 2654435761;
-    }
-    pub fn eql(_: @This(), a: u32, b: u32) bool {
-        return a == b;
-    }
-};
-
 const BlockCache = struct {
+    // 0x02200000 possible addresses, but 16bit aligned, multiplied by permutations of (sz, pr)
+    const BlockEntryCount = (0x02200000 >> 1) << 2;
+
     buffer: []align(std.mem.page_size) u8,
     cursor: u32 = 0,
-    blocks: std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage),
+    blocks: []?BasicBlock = undefined,
 
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
         try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-        return .{
+
+        var r: @This() = .{
             .buffer = buffer,
-            .blocks = std.HashMap(u32, BasicBlock, HashMapContext, std.hash_map.default_max_load_percentage).init(allocator),
             ._allocator = allocator,
         };
+
+        try r.allocate_blocks();
+
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
-        std.os.munmap(self.buffer);
-        self.blocks.deinit();
+        self._allocator.free(self.buffer);
+
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
     }
 
-    pub fn reset(self: *@This()) void {
+    fn allocate_blocks(self: *@This()) !void {
+        if (@import("builtin").os.tag != .windows) {
+            @compileError("Unsupported OS - Use mmap on Linux here.");
+        }
+
+        const blocks = try std.os.windows.VirtualAlloc(
+            null,
+            @sizeOf(?BasicBlock) * BlockEntryCount,
+            std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
+            std.os.windows.PAGE_READWRITE,
+        );
+        self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+    }
+
+    pub fn reset(self: *@This()) !void {
         self.cursor = 0;
-        self.blocks.clearRetainingCapacity();
+
+        // FIXME: Can I merely decommit and re-commit it?
+        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
+
+        try self.allocate_blocks();
+    }
+
+    inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
+        return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
     pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
-        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
-        return self.blocks.get(key);
+        return self.blocks[compute_key(address, sz, pr)];
     }
 
-    pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) !void {
-        const key = address & 0x1FFFFFFF | (@as(u32, @intCast(sz)) << 30) | (@as(u32, @intCast(pr)) << 31);
-        try self.blocks.put(key, block);
+    pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) void {
+        self.blocks[compute_key(address, sz, pr)] = block;
     }
 };
 
-const JITBitState = enum {
-    Zero,
-    One,
+const JITBitState = enum(u2) {
+    Zero = 0,
+    One = 1,
     Unknown,
 };
 
@@ -97,7 +116,7 @@ pub const SH4JIT = struct {
         self.block_cache.deinit();
     }
 
-    pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+    pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
@@ -113,7 +132,7 @@ pub const SH4JIT = struct {
                     .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
                 }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
-                        self.block_cache.reset();
+                        try self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
                         break :retry self.compile(.{
                             .address = pc,
@@ -185,7 +204,7 @@ pub const SH4JIT = struct {
         // cpu.pc += 2;
         if (ctx.outdated_pc) {
             try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.ReturnRegister, .{ .imm32 = 2 });
+            try jb.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 2 });
             try jb.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
         }
 
@@ -198,7 +217,7 @@ pub const SH4JIT = struct {
 
         self.block_cache.cursor += emitter.block_size;
 
-        try self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
+        self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
         return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr))).?;
     }
 };
@@ -217,7 +236,7 @@ pub fn interpreter_fallback_branch(block: *JITBlock, ctx: *JITContext, instr: sh
     return true;
 }
 
-fn get_reg_mem(r: u4) JIT.Operand {
+fn guest_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, r) * 4, .size = 32 } };
 }
 
@@ -232,27 +251,27 @@ fn get_dfp_reg_mem(r: u4) JIT.Operand {
 
 fn load_register(block: *JITBlock, _: *JITContext, host_reg: JIT.Register, guest_reg: u4) !void {
     // We could use this to cache register into host saved registers.
-    try block.mov(.{ .reg = host_reg }, get_reg_mem(guest_reg));
+    try block.mov(.{ .reg = host_reg }, guest_reg_mem(guest_reg));
 }
 
 fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT.Register) !void {
-    try block.mov(get_reg_mem(guest_reg), .{ .reg = host_reg });
+    try block.mov(guest_reg_mem(guest_reg), .{ .reg = host_reg });
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, guest_reg);
     if (displacement != 0)
-        try block.add(.ArgRegister1, .{ .imm32 = displacement });
+        try block.add(.{ .reg = .ArgRegister1 }, .{ .imm32 = displacement });
 
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
@@ -277,18 +296,18 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, dest_guest_reg);
     if (displacement != 0)
-        try block.add(.ArgRegister1, .{ .imm32 = displacement });
+        try block.add(.{ .reg = .ArgRegister1 }, .{ .imm32 = displacement });
     if (value != .ArgRegister2)
         try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
 
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x1C000000 } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
-    try block.append(.{ .And = .{ .dst = .ReturnRegister, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
 
@@ -311,14 +330,14 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
 }
 
 pub fn mov_rm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
-    try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.m));
-    try block.mov(get_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
+    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.m));
+    try block.mov(guest_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
 pub fn mov_imm_rn(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
     // FIXME: Should keep the "signess" in the type system?  ---v
-    try block.mov(get_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    try block.mov(guest_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }
 
@@ -349,9 +368,8 @@ pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 }
 
 pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
-    try block.add(.ReturnRegister, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
-    try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
+    _ = ctx;
+    try block.add(guest_reg_mem(instr.nmd.n), .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }
 
@@ -397,7 +415,7 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
             _ = try fmovs_at_rm_frn(block, ctx, instr);
             // Inc Rm
             try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-            try block.add(.ReturnRegister, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
             try store_register(block, ctx, instr.nmd.m, .ReturnRegister);
         },
         .Unknown => {
@@ -450,7 +468,7 @@ pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn mova_atdispPC_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
-    try block.mov(get_reg_mem(0), .{ .imm32 = addr });
+    try block.mov(guest_reg_mem(0), .{ .imm32 = addr });
     return false;
 }
 
@@ -466,7 +484,7 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // Load the pointed value
     try block.movsx(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .ReturnRegister, .size = 16 } });
     // Store it into Rn
-    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
+    try block.mov(guest_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
@@ -482,7 +500,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // Load the pointed value
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .ReturnRegister, .size = 32 } });
     // Store it into Rn
-    try block.mov(get_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
+    try block.mov(guest_reg_mem(instr.nd8.n), .{ .reg = .ReturnRegister });
     return false;
 }
 
@@ -490,7 +508,7 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // cpu.pr = cpu.pc + 4;
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     // cpu.pc = Rn
-    try block.mov(.{ .reg = .ReturnRegister }, get_reg_mem(instr.nmd.n));
+    try block.mov(.{ .reg = .ReturnRegister }, guest_reg_mem(instr.nmd.n));
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
     ctx.delay_slot = ctx.address + 2;

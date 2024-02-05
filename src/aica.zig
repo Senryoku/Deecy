@@ -4,6 +4,7 @@ const termcolor = @import("termcolor.zig");
 const aica_log = std.log.scoped(.aica);
 
 const arm7 = @import("arm7");
+const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
@@ -133,6 +134,8 @@ pub const AICA = struct {
     const ARM7CycleRatio = 8;
 
     arm7: arm7.ARM7 = undefined,
+    enable_arm_jit: bool = true,
+    arm_jit: ARM7JIT = undefined,
 
     regs: []u32 = undefined, // All registers are 32-bit afaik
     wave_memory: []u8 align(4) = undefined,
@@ -141,7 +144,7 @@ pub const AICA = struct {
 
     events: std.ArrayList(ScheduledEvents) = undefined,
 
-    _cycles_counter: u32 = 0,
+    _arm_cycles_counter: i32 = 0,
     _timer_counters: [3]u32 = .{0} ** 3,
 
     _allocator: std.mem.Allocator = undefined,
@@ -157,6 +160,7 @@ pub const AICA = struct {
         @memset(r.regs, 0);
         @memset(r.wave_memory, 0);
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
+        r.arm_jit = try ARM7JIT.init(allocator);
 
         r.get_reg(u32, .MasterVolume).* = 0x10;
 
@@ -212,6 +216,8 @@ pub const AICA = struct {
     }
 
     pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
+        self.arm_jit.block_cache.signal_write(addr - 0x00800000);
+
         switch (addr) {
             else => {},
         }
@@ -379,7 +385,7 @@ pub const AICA = struct {
         self.write_register(u32, addr, value);
     }
 
-    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) void {
+    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) !void {
         if (self.events.items.len > 0) {
             var index: u32 = 0;
             while (index < self.events.items.len) {
@@ -430,12 +436,18 @@ pub const AICA = struct {
         }
 
         if (self.arm7.running and !DisableARMCore) {
-            self._cycles_counter += cycles;
-            // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
-            while (self._cycles_counter >= ARM7CycleRatio) {
-                self._cycles_counter -= ARM7CycleRatio;
-                //aica_log.info("arm7: ({any}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ self.arm7.cpsr.m, self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp().*, self.arm7.lr().* });
-                self.arm7.tick();
+            self._arm_cycles_counter += @intCast(cycles);
+
+            if (self.enable_arm_jit) {
+                if (self._arm_cycles_counter >= ARM7CycleRatio)
+                    self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
+            } else {
+                // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
+                while (self._arm_cycles_counter >= ARM7CycleRatio) {
+                    self._arm_cycles_counter -= ARM7CycleRatio;
+                    //aica_log.info("arm7: ({any}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ self.arm7.cpsr.m, self.arm7.pc().* - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp().*, self.arm7.lr().* });
+                    arm7.interpreter.tick(&self.arm7);
+                }
             }
         }
     }
