@@ -387,21 +387,21 @@ pub fn main() !void {
             if (zgui.begin("AICA", .{})) {
                 _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
                 zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
-                zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc().*});
+                zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
                 zgui.beginGroup();
                 for (0..8) |i| {
-                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r(@truncate(i)).* });
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r[i] });
                 }
                 zgui.endGroup();
                 zgui.sameLine(.{});
                 zgui.beginGroup();
                 for (8..16) |i| {
-                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r(@truncate(i)).* });
+                    zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.aica.arm7.r[i] });
                 }
                 zgui.endGroup();
 
                 const range = 32; // In bytes.
-                const pc = 0x00800000 + dc.aica.arm7.pc().* - 4;
+                const pc = 0x00800000 + dc.aica.arm7.pc() - 4;
                 var addr = std.math.clamp(pc, 0x00800000 + range / 2, 0x00A00000 - range);
                 const end_addr = addr + range;
                 while (addr < end_addr) {

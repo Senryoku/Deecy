@@ -124,7 +124,7 @@ pub const ARM7JIT = struct {
 
         var spent_cycles: i32 = 0;
         while (spent_cycles < cycles) {
-            const pc = cpu.pc().* - 4; // Pipelining...
+            const pc = cpu.pc() - 4; // Pipelining...
             var block = self.block_cache.get(pc);
             if (block == null) {
                 arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
@@ -144,7 +144,7 @@ pub const ARM7JIT = struct {
             // Not necessary, just here to allow compatibility with the interpreter if we need it.
             // (Right now we're always calling to the interpreter so this should stay in sync, but once
             //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc().* - 4) & cpu.memory_address_mask]))).*;
+            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() - 4) & cpu.memory_address_mask]))).*;
         }
 
         return spent_cycles;
@@ -211,7 +211,7 @@ pub const ARM7JIT = struct {
 };
 
 fn guest_register(arm_reg: u5) JIT.Operand {
-    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
+    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
 }
 
 fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {

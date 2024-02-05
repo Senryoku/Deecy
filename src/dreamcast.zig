@@ -276,7 +276,7 @@ pub const Dreamcast = struct {
         }
         // Quick guess from observing the boot rom, probably need a lot more.
         // FIXME: Actually I don't know if this is needed now that I 'fixed' the FIQ.
-        self.aica.arm7._r[13] = 0xB000; // Fells like a pretty good guess for the stack pointer
+        self.aica.arm7.r[13] = 0xB000; // Fells like a pretty good guess for the stack pointer
     }
 
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {

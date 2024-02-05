@@ -333,21 +333,21 @@ pub const AICA = struct {
 
     fn arm_debug_dump(self: *const @This()) void {
         var s = @constCast(self);
-        std.debug.print("PC: {X:0>8}\n", .{s.arm7.pc().* - 8});
-        std.debug.print("LR: {X:0>8}\n", .{s.arm7.lr().*});
-        std.debug.print("SP: {X:0>8}\n", .{s.arm7.sp().*});
+        std.debug.print("PC: {X:0>8}\n", .{s.arm7.pc() - 8});
+        std.debug.print("LR: {X:0>8}\n", .{s.arm7.lr()});
+        std.debug.print("SP: {X:0>8}\n", .{s.arm7.sp()});
 
         for (0..8) |i| {
-            std.debug.print("R{d}: {X:0>8}   R{d}: {X:0>8}\n", .{ i, s.arm7.r(@intCast(i)).*, i + 8, s.arm7.r(@intCast(i + 8)).* });
+            std.debug.print("R{d}: {X:0>8}   R{d}: {X:0>8}\n", .{ i, s.arm7.r[i], i + 8, s.arm7.r[i + 8] });
         }
 
         for (0..16) |i| {
             const o: u32 = @truncate(8 + 4 * 16 - 4 * i);
-            std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - o, self.arm7.read(u32, s.arm7.pc().* - o), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - o)) });
+            std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - o, self.arm7.read(u32, s.arm7.pc() - o), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - o)) });
         }
-        std.debug.print(" > [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 8, s.arm7.read(u32, s.arm7.pc().* - 8), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 8)) });
-        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 4, s.arm7.read(u32, s.arm7.pc().* - 4), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 4)) });
-        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc().* - 0, s.arm7.read(u32, s.arm7.pc().* - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc().* - 0)) });
+        std.debug.print(" > [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 8, s.arm7.read(u32, s.arm7.pc() - 8), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 8)) });
+        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 4, s.arm7.read(u32, s.arm7.pc() - 4), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 4)) });
+        std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 0, s.arm7.read(u32, s.arm7.pc() - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 0)) });
     }
 
     pub fn read8_from_arm(self: *const AICA, addr: u32) u8 {
