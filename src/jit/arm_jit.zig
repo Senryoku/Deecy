@@ -148,10 +148,7 @@ pub const ARM7JIT = struct {
             arm_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, arm7.ARM7.disassemble(instr) });
 
             // Update PC. Done before the instruction is executed, emulating fetching.
-            // NOTE: x86 has a "in memory" add instruction, I think.
-            try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + 15 * @sizeOf(u32), .size = 32 } }); // Load PC value
-            try jb.add(.ReturnRegister, .{ .imm32 = 4 }); // PC += 4
-            try jb.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "_r") + 15 * @sizeOf(u32), .size = 32 } }, .{ .reg = .ReturnRegister }); // Store new PC value
+            try jb.add(guest_register(15), .{ .imm32 = 4 }); // PC += 4
 
             var jump = try handle_condition(&jb, &ctx, instr);
 
@@ -547,7 +544,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             .ADD => {
                 // cpu.r(inst.rd).* = op1 +% op2;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Add = .{ .dst = .ReturnRegister, .src = op2 } });
+                try b.append(.{ .Add = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
                 try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             //.ORR => {

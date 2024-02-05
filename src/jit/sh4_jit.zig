@@ -185,7 +185,7 @@ pub const SH4JIT = struct {
         // cpu.pc += 2;
         if (ctx.outdated_pc) {
             try jb.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.ReturnRegister, .{ .imm32 = 2 });
+            try jb.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 2 });
             try jb.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
         }
 
@@ -243,7 +243,7 @@ fn store_register(block: *JITBlock, _: *JITContext, guest_reg: u4, host_reg: JIT
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, guest_reg);
     if (displacement != 0)
-        try block.add(.ArgRegister1, .{ .imm32 = displacement });
+        try block.add(.{ .reg = .ArgRegister1 }, .{ .imm32 = displacement });
 
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
@@ -277,7 +277,7 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register, comptime size: u32) !void {
     try load_register(block, ctx, .ArgRegister1, dest_guest_reg);
     if (displacement != 0)
-        try block.add(.ArgRegister1, .{ .imm32 = displacement });
+        try block.add(.{ .reg = .ArgRegister1 }, .{ .imm32 = displacement });
     if (value != .ArgRegister2)
         try block.mov(.{ .reg = .ArgRegister2 }, .{ .reg = value });
 
@@ -350,7 +350,7 @@ pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 
 pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_register(block, ctx, .ReturnRegister, instr.nmd.n);
-    try block.add(.ReturnRegister, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     try store_register(block, ctx, instr.nmd.n, .ReturnRegister);
     return false;
 }
@@ -397,7 +397,7 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
             _ = try fmovs_at_rm_frn(block, ctx, instr);
             // Inc Rm
             try load_register(block, ctx, .ReturnRegister, instr.nmd.m);
-            try block.add(.ReturnRegister, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
             try store_register(block, ctx, instr.nmd.m, .ReturnRegister);
         },
         .Unknown => {

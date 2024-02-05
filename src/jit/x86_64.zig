@@ -422,21 +422,65 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn add(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
+    // Helper for 0x81 / 0x83 opcodes (Add, And...)
+    fn mem_dest_imm_src(self: *@This(), opcode: u3, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
+        std.debug.assert(dst_m.size == 32);
+
+        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
+        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+
+        // 0x83: ADD r/m32, imm8 - Sign-extended imm8 - Shorter encoding
+        try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
+
+        try self.emit(MODRM, .{
+            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement <= 0x80) 0b01 else 0b10),
+            .reg_opcode = opcode,
+            .r_m = encode(dst_m.base),
+        });
+        if (encode(dst_m.base) == 0b100) // Special case for r12
+            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+        if (dst_m.displacement != 0) {
+            if (dst_m.displacement <= 0x80) {
+                try self.emit(u8, @truncate(dst_m.displacement));
+            } else {
+                try self.emit(u32, dst_m.displacement);
+            }
+        }
+        if (imm < 0x80) {
+            try self.emit(u8, @truncate(imm));
+        } else {
+            try self.emit(ImmType, imm);
+        }
+    }
+
+    pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
         // FIXME: Handle different sizes. We expect a u32 immediate.
-        switch (src) {
-            .reg => |src_reg| {
-                try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
-                try self.emit(u8, 0x01);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
+        switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x01);
+                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                    },
+                    .imm32 => |imm32| {
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
+                        try self.emit(u8, 0x81); // ADD r/m32, imm32
+                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
+                        try self.emit(u32, imm32);
+                    },
+                    else => return error.InvalidAddSource,
+                }
             },
-            .imm32 => |imm32| {
-                try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
-                try self.emit(u8, 0x81); // ADD r/m32, imm32
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst) });
-                try self.emit(u32, imm32);
+            .mem => |dst_m| {
+                switch (src) {
+                    .imm32 => |imm| {
+                        try mem_dest_imm_src(self, 0, dst_m, u32, imm);
+                    },
+                    else => return error.InvalidAddSource,
+                }
             },
-            else => return error.InvalidAddSource,
+            else => return error.InvalidAddDestination,
         }
     }
 
@@ -487,25 +531,7 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .imm32 => |imm| {
-                        std.debug.assert(dst_m.size == 32);
-                        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
-                        try self.emit(u8, 0x81);
-                        try self.emit(MODRM, .{
-                            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement <= 0xFF) 0b01 else 0b10),
-                            .reg_opcode = 4,
-                            .r_m = encode(dst_m.base),
-                        });
-                        if (encode(dst_m.base) == 0b100) // Special case for r12
-                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                        if (dst_m.displacement != 0) {
-                            if (dst_m.displacement <= 0xFF) {
-                                try self.emit(u8, @truncate(dst_m.displacement));
-                            } else {
-                                try self.emit(u32, dst_m.displacement);
-                            }
-                        }
-                        try self.emit(u32, imm);
+                        try mem_dest_imm_src(self, 4, dst_m, u32, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
