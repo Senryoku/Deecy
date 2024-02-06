@@ -248,8 +248,8 @@ pub const SH4JIT = struct {
 
         try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
 
-        if (start_ctx.address == 0x0C0083F8)
-            try jb.bp();
+        //if (start_ctx.address == 0x0C009144)
+        //    try jb.bp();
 
         var index: u32 = 0;
         while (true) {

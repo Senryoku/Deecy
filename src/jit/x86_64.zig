@@ -493,8 +493,6 @@ pub const Emitter = struct {
     }
 
     pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        std.debug.print("add {any}, {any}\n", .{ dst, src });
-        const before = self.block_size;
         // FIXME: Handle different sizes. We expect a u32 immediate.
         switch (dst) {
             .reg => |dst_reg| {
@@ -532,7 +530,6 @@ pub const Emitter = struct {
             },
             else => return error.InvalidAddDestination,
         }
-        std.debug.print("{X:0>2}\n", .{self.block.buffer[before..self.block_size]});
     }
 
     pub fn sub(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
