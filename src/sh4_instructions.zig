@@ -8,6 +8,12 @@ const JITBlock = @import("jit/jit_block.zig").JITBlock;
 
 pub var JumpTable: [0x10000]u8 = .{1} ** 0x10000;
 
+const CacheAccess = struct {
+    r0: bool = false,
+    rn: bool = false,
+    rm: bool = false,
+};
+
 const OpcodeDescription = struct {
     code: u16,
     mask: u16,
@@ -18,6 +24,8 @@ const OpcodeDescription = struct {
     latency_cycles: u5 = 1,
 
     jit_emit_fn: *const fn (*JITBlock, *sh4_jit.JITContext, sh4.Instr) anyerror!bool = sh4_jit.interpreter_fallback,
+
+    access: struct { r: CacheAccess = .{}, w: CacheAccess = .{} } = .{},
 };
 
 pub const Opcodes: [217]OpcodeDescription = .{
@@ -36,11 +44,11 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = interpreter.mova_atdispPC_R0, .name = "mova @(d:8,PC),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.mova_atdispPC_R0 },
     .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movw_atdispPC_Rn, .name = "mov.w @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atdispPC_Rn },
     .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_atdispPC_Rn, .name = "mov.l @(d:8,PC),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atdispPC_Rn },
-    .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
-    .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = interpreter.movw_at_rm_rn, .name = "mov.w @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
+    .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_at_rm_rn, .name = "mov.b @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.interpreter_fallback_cached, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = interpreter.movw_at_rm_rn, .name = "mov.w @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn_read_rm },
     .{ .code = 0b0110000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.movl_at_rm_rn, .name = "mov.l @Rm,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_at_rm_rn },
-    .{ .code = 0b0010000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_rm_at_rn, .name = "mov.b Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b0010000000000001, .mask = 0b0000111111110000, .fn_ = interpreter.movw_rm_at_rn, .name = "mov.w Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_rm_at_rn, .name = "mov.b Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.interpreter_fallback_read_rn_rm },
+    .{ .code = 0b0010000000000001, .mask = 0b0000111111110000, .fn_ = interpreter.movw_rm_at_rn, .name = "mov.w Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.interpreter_fallback_read_rn_rm },
     .{ .code = 0b0010000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.movl_rm_at_rn, .name = "mov.l Rm,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movl_rm_at_rn },
     .{ .code = 0b0110000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_at_rm_inc_rn, .name = "mov.b @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 }, // TODO: or 2
     .{ .code = 0b0110000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_at_rm_inc_rn, .name = "mov.w @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movw_at_rm_inc_rn }, // TODO: or 2
@@ -117,6 +125,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0010000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.xorRmRn, .name = "xor Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn_read_rm },
     .{ .code = 0b1100101000000000, .mask = 0b0000000011111111, .fn_ = interpreter.xorImmR0, .name = "xor #imm,R0", .privileged = false },
     .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
+
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = interpreter.rotcl_Rn, .name = "rotcl Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
     .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = interpreter.rotcr_Rn, .name = "rotcr Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
     .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = interpreter.rotl_Rn, .name = "rotl Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
@@ -133,6 +142,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000001001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr2, .name = "shlr2 Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
     .{ .code = 0b0100000000011001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr8, .name = "shlr8 Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
     .{ .code = 0b0100000000101001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr16, .name = "shlr16 Rn", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_write_rn },
+
     .{ .code = 0b1000101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bf_label, .name = "bf label", .privileged = false, .jit_emit_fn = sh4_jit.bf_label },
     .{ .code = 0b1000111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bfs_label, .name = "bf/s label", .privileged = false, .jit_emit_fn = sh4_jit.bfs_label },
     .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bt_label, .name = "bt label", .privileged = false, .jit_emit_fn = sh4_jit.bt_label },
@@ -144,6 +154,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jmp_atRn },
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
+
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .jit_emit_fn = sh4_jit.interpreter_fallback_but_i_wont_read_or_write_to_gpr_i_swear },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_but_i_wont_read_or_write_to_gpr_i_swear },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrt, .name = "clrt", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_but_i_wont_read_or_write_to_gpr_i_swear },
@@ -210,7 +221,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_rn },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_at_rm_inc_frn },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_dec_rn },
-    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.interpreter_fallback_but_i_wont_write_to_gpr_i_swear },
+    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.interpreter_fallback_read_rn_rm_r0 },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false, .jit_emit_fn = sh4_jit.interpreter_fallback_but_i_wont_write_to_gpr_i_swear },
 
     // Handled by single precision version - Switched by SR register sz flag

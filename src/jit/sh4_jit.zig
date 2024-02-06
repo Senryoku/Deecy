@@ -197,31 +197,40 @@ pub const JITContext = struct {
         }
     }
 
-    pub fn commit_and_invalidate_cached_register(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+    fn get_cached_register(self: *@This(), guest_reg: u4) ?*@TypeOf(self.host_registers[0]) {
         for (&self.host_registers) |*reg| {
             if (reg.guest) |r| {
                 if (r == guest_reg) {
-                    if (reg.modified)
-                        try block.mov(
-                            guest_reg_memory(r),
-                            .{ .reg = reg.host },
-                        );
-                    reg.guest = null;
-                    return;
+                    return reg;
                 }
             }
         }
+        return null;
     }
 
+    // Means this will be overwritten outside of the JIT
+    pub fn invalidate_cached_register(self: *@This(), guest_reg: u4) !void {
+        if (self.get_cached_register(guest_reg)) |reg| {
+            reg.guest = null;
+        }
+    }
     pub fn commit_cached_register(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
-        for (&self.host_registers) |*reg| {
-            if (reg.guest) |r| {
-                if (r == guest_reg and reg.modified)
-                    return block.mov(
-                        guest_reg_memory(r),
-                        .{ .reg = reg.host },
-                    );
-            }
+        if (self.get_cached_register(guest_reg)) |reg| {
+            if (reg.modified)
+                return block.mov(
+                    guest_reg_memory(reg.guest.?),
+                    .{ .reg = reg.host },
+                );
+        }
+    }
+    pub fn commit_and_invalidate_cached_register(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+        if (self.get_cached_register(guest_reg)) |reg| {
+            if (reg.modified)
+                try block.mov(
+                    guest_reg_memory(reg.guest.?),
+                    .{ .reg = reg.host },
+                );
+            reg.guest = null;
         }
     }
 };
@@ -390,6 +399,57 @@ inline fn call_interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !void {
 
 // We need pointers to all of these functions, can't really refactor that mess sadly.
 
+pub fn interpreter_fallback_cached(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    var cache_access = sh4_instructions.Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(instr))]].access;
+
+    // We don't want to invalidate or commit the same register twice.
+
+    if (instr.nmd.n != 0 and instr.nmd.m != 0) {
+        if (cache_access.r.r0 and cache_access.w.r0) {
+            try ctx.commit_and_invalidate_cached_register(block, 0);
+        } else if (cache_access.w.r0) {
+            try ctx.invalidate_cached_register(0);
+        } else if (cache_access.r.r0) {
+            try ctx.commit_cached_register(block, 0);
+        }
+    }
+
+    // We also don't want to miss a constraint.
+    if (instr.nmd.n == 0) {
+        cache_access.r.rn = cache_access.r.rn or cache_access.r.r0;
+        cache_access.w.rn = cache_access.w.rn or cache_access.w.r0;
+    }
+    if (instr.nmd.m == 0) {
+        cache_access.r.rm = cache_access.r.rm or cache_access.r.r0;
+        cache_access.w.rm = cache_access.w.rm or cache_access.w.r0;
+    }
+    if (instr.nmd.n == instr.nmd.m) {
+        cache_access.r.rn = cache_access.r.rn or cache_access.r.rm;
+        cache_access.w.rn = cache_access.w.rn or cache_access.w.rm;
+    }
+
+    if (cache_access.r.rn and cache_access.w.rn) {
+        try ctx.commit_and_invalidate_cached_register(block, instr.nmd.n);
+    } else if (cache_access.w.rn) {
+        try ctx.invalidate_cached_register(instr.nmd.n);
+    } else if (cache_access.r.rn) {
+        try ctx.commit_cached_register(block, instr.nmd.n);
+    }
+
+    if (instr.nmd.m != instr.nmd.n) {
+        if (cache_access.r.rm and cache_access.w.rm) {
+            try ctx.commit_and_invalidate_cached_register(block, instr.nmd.m);
+        } else if (cache_access.w.rm) {
+            try ctx.invalidate_cached_register(instr.nmd.m);
+        } else if (cache_access.r.rm) {
+            try ctx.commit_cached_register(block, instr.nmd.m);
+        }
+    }
+
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
 pub fn interpreter_fallback_but_i_wont_read_or_write_to_gpr_i_swear(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
     try call_interpreter_fallback(block, instr);
     return false;
@@ -403,16 +463,23 @@ pub fn interpreter_fallback_read_rn_rm(block: *JITBlock, ctx: *JITContext, instr
     return false;
 }
 
-pub fn interpreter_fallback_read_rn_rm_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn interpreter_fallback_read_rm_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.commit_cached_register(block, 0);
     try ctx.commit_cached_register(block, instr.nmd.m);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_read_rn_rm_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_cached_register(block, 0);
+    try ctx.commit_cached_register(block, instr.nmd.n);
     try ctx.commit_cached_register(block, instr.nmd.m);
     try call_interpreter_fallback(block, instr);
     return false;
 }
 
 pub fn interpreter_fallback_read_write_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try ctx.commit_and_invalidate_cached_register(block, instr.nmd.m);
+    try ctx.commit_and_invalidate_cached_register(block, instr.nmd.n);
     try call_interpreter_fallback(block, instr);
     return false;
 }
