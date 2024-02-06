@@ -660,7 +660,12 @@ pub const Emitter = struct {
                 if (get_reg(lhs) == .RAX) {
                     try self.emit(u8, 0x3D);
                     try self.emit(u32, imm);
-                } else return error.UnsupportedCmpLHS;
+                } else {
+                    try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(lhs) });
+                    try self.emit(u8, 0x81);
+                    try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 7, .r_m = encode(lhs) });
+                    try self.emit(u32, imm);
+                }
             },
             else => return error.UnsupportedCmpRHS,
         }

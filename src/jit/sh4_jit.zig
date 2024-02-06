@@ -691,13 +691,17 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
 }
 
 pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // TODO: Optimize when n == m
     // sr.t = (Rm & Rn) == 0
-    const rn = load_register(block, ctx, instr.nmd.n);
-    const rm = load_register(block, ctx, instr.nmd.m);
-    try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = rn });
-    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .reg = rm } } });
-    try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0 } } });
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = load_register(block, ctx, instr.nmd.n);
+        try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .imm32 = 0 } } });
+    } else {
+        const rn = load_register(block, ctx, instr.nmd.n);
+        const rm = load_register(block, ctx, instr.nmd.m);
+        try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = rn });
+        try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .reg = rm } } });
+        try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0 } } });
+    }
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
     var set_t = try block.jmp(.Equal);
     // Clear T
