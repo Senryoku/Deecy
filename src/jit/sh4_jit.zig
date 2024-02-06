@@ -99,19 +99,21 @@ pub const JITContext = struct {
     fpscr_sz: JITBitState,
     fpscr_pr: JITBitState,
 
-    host_registers: [5]struct { host: JIT.Register, last_access: u32, guest: ?u4 } = .{
-        .{ .host = .SavedRegister1, .last_access = 0, .guest = null },
-        .{ .host = .SavedRegister2, .last_access = 0, .guest = null },
-        .{ .host = .SavedRegister3, .last_access = 0, .guest = null },
-        .{ .host = .SavedRegister4, .last_access = 0, .guest = null },
-        .{ .host = .SavedRegister5, .last_access = 0, .guest = null },
+    host_registers: [5]struct { host: JIT.Register, last_access: u32, modified: bool, guest: ?u4 } = .{
+        .{ .host = .SavedRegister1, .last_access = 0, .modified = false, .guest = null },
+        .{ .host = .SavedRegister2, .last_access = 0, .modified = false, .guest = null },
+        .{ .host = .SavedRegister3, .last_access = 0, .modified = false, .guest = null },
+        .{ .host = .SavedRegister4, .last_access = 0, .modified = false, .guest = null },
+        .{ .host = .SavedRegister5, .last_access = 0, .modified = false, .guest = null },
     },
 
     pub fn guest_reg_memory(guest_reg: u4) JIT.Operand {
         return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, guest_reg) * 4, .size = 32 } };
     }
 
-    pub fn guest_reg_cache(self: *@This(), block: *JITBlock, guest_reg: u4, comptime load: bool) JIT.Register {
+    // load: If not already in cache, will load the value from memory.
+    // modified: Mark the cached value as modified, ensuring it will be written back to memory.
+    pub fn guest_reg_cache(self: *@This(), block: *JITBlock, guest_reg: u4, comptime load: bool, comptime modified: bool) JIT.Register {
         for (&self.host_registers) |*hreg| {
             hreg.last_access += 1;
         }
@@ -120,6 +122,7 @@ pub const JITContext = struct {
         for (&self.host_registers) |*hreg| {
             if (hreg.guest == guest_reg) {
                 hreg.last_access = 0;
+                if (modified) hreg.modified = true;
                 return hreg.host;
             }
         }
@@ -136,19 +139,20 @@ pub const JITContext = struct {
                 }
             }
             // No. Commit to memory and evict the oldest.
-            // FIXME: Track modifications and write only if actually needed.
-            block.mov(
-                guest_reg_memory(lru.guest.?),
-                .{ .reg = lru.host },
-            ) catch |err| {
-                sh4_jit_log.err("Error emitting JIT instruction: {}", .{err});
-                @panic("Error emitting JIT instruction");
-            };
+            if (lru.modified)
+                block.mov(
+                    guest_reg_memory(lru.guest.?),
+                    .{ .reg = lru.host },
+                ) catch |err| {
+                    sh4_jit_log.err("Error emitting JIT instruction: {}", .{err});
+                    @panic("Error emitting JIT instruction");
+                };
             break :s lru;
         };
 
         slot.guest = guest_reg;
         slot.last_access = 0;
+        slot.modified = modified;
         if (load)
             block.mov(.{ .reg = slot.host }, guest_reg_memory(guest_reg)) catch |err| {
                 sh4_jit_log.err("Error emitting JIT instruction: {}", .{err});
@@ -157,13 +161,23 @@ pub const JITContext = struct {
         return slot.host;
     }
 
+    pub fn mark_modified(self: *@This(), guest_reg: u4) void {
+        for (&self.host_registers) |*hreg| {
+            if (hreg.guest == guest_reg) {
+                hreg.modified = true;
+                return;
+            }
+        }
+    }
+
     pub fn commit_cached_registers(self: *@This(), block: *JITBlock) !void {
         for (&self.host_registers) |*reg| {
             if (reg.guest) |r| {
-                try block.mov(
-                    guest_reg_memory(r),
-                    .{ .reg = reg.host },
-                );
+                if (reg.modified)
+                    try block.mov(
+                        guest_reg_memory(r),
+                        .{ .reg = reg.host },
+                    );
                 reg.guest = null;
             }
         }
@@ -345,17 +359,21 @@ fn get_dfp_reg_mem(r: u4) JIT.Operand {
 }
 
 // Returns a host register contained the requested guest register.
-fn load_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Register {
-    return ctx.guest_reg_cache(block, guest_reg, true);
+fn load_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
+    return ctx.guest_reg_cache(block, guest_reg, true, false);
+}
+
+fn load_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
+    return ctx.guest_reg_cache(block, guest_reg, true, true);
 }
 
 fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.Operand) !void {
-    try block.mov(.{ .reg = ctx.guest_reg_cache(block, guest_reg, false) }, value);
+    try block.mov(.{ .reg = ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, displacement: u32, comptime size: u32) !void {
-    const src_guest_reg_location = try load_register(block, ctx, guest_reg);
+    const src_guest_reg_location = load_register(block, ctx, guest_reg);
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .reg = src_guest_reg_location });
     if (displacement != 0)
         try block.add(.{ .reg = .ArgRegister1 }, .{ .imm32 = displacement });
@@ -390,7 +408,7 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 }
 
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacement: u32, value: JIT.Register, comptime size: u32) !void {
-    const dest_guest_reg_location = try load_register(block, ctx, dest_guest_reg);
+    const dest_guest_reg_location = load_register(block, ctx, dest_guest_reg);
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .reg = dest_guest_reg_location });
 
     if (displacement != 0)
@@ -426,7 +444,7 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
 }
 
 pub fn mov_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
+    const rm = load_register(block, ctx, instr.nmd.m);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = rm });
     return false;
 }
@@ -444,7 +462,7 @@ pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 }
 
 pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
+    const rm = load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, 0, rm, 32);
     return false;
 }
@@ -455,7 +473,7 @@ pub fn movl_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
     try store_register(block, ctx, instr.nmd.n, .{ .reg = .ReturnRegister });
     // if(n != m) Rm += 4
     if (instr.nmd.n != instr.nmd.m) {
-        const rm = try load_register(block, ctx, instr.nmd.m);
+        const rm = load_register_for_writing(block, ctx, instr.nmd.m);
         try block.add(.{ .reg = rm }, .{ .imm32 = 4 });
     }
     return false;
@@ -469,21 +487,21 @@ pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 }
 
 pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
+    const rm = load_register(block, ctx, instr.nmd.m);
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
     try store_mem(block, ctx, instr.nmd.n, d, rm, 32);
     return false;
 }
 
 pub fn add_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rn = try load_register(block, ctx, instr.nmd.n);
-    const rm = try load_register(block, ctx, instr.nmd.m);
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = load_register(block, ctx, instr.nmd.m);
     try block.add(.{ .reg = rn }, .{ .reg = rm });
     return false;
 }
 
 pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     return false;
 }
@@ -529,7 +547,7 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
         .Zero, .One => {
             _ = try fmovs_at_rm_frn(block, ctx, instr);
             // Inc Rm
-            const rm = try load_register(block, ctx, instr.nmd.m);
+            const rm = load_register_for_writing(block, ctx, instr.nmd.m);
             try block.add(.{ .reg = rm }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
         },
         .Unknown => {
@@ -543,7 +561,7 @@ pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
     switch (ctx.fpscr_sz) {
         .Zero, .One => {
             // Dec Rn
-            const rn = try load_register(block, ctx, instr.nmd.n);
+            const rn = load_register_for_writing(block, ctx, instr.nmd.n);
             try block.sub(rn, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
             _ = try fmovs_frm_at_rn(block, ctx, instr);
         },
@@ -665,7 +683,7 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pc += Rn + 4;
-    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rn = load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = rn });
     try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 4 + ctx.address });
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
@@ -689,7 +707,7 @@ pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pr = pc + 4
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     // pc += Rn + 4;
-    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rn = load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = rn });
     try block.add(.{ .reg = .ReturnRegister }, .{ .imm32 = 4 + ctx.address });
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
@@ -701,7 +719,7 @@ pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn jmp_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pc = Rn
-    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rn = load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
 
     ctx.delay_slot = ctx.address + 2;
@@ -713,7 +731,7 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // cpu.pr = cpu.pc + 4;
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     // cpu.pc = Rn
-    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rn = load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
 
     ctx.delay_slot = ctx.address + 2;
