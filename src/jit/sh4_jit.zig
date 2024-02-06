@@ -314,9 +314,6 @@ pub const SH4JIT = struct {
 
         try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the SH4
 
-        //if (start_ctx.address == 0x0C009144)
-        //    try jb.bp();
-
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
@@ -651,19 +648,18 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
     try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .reg = rm } } });
     var set_t = try block.jmp(.Above);
     // Clear T
-    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = ~@as(u32, 1) } } });
+    // NOTE: We could use the sign extended version with an immediate of 0xFE here for a shorter encoding, but the emitter doesn't support it yet.
+    try block.append(.{ .And = .{ .dst = .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
     var end = try block.jmp(.Always);
     // Set T
     set_t.patch();
-    try block.append(.{ .Or = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 1 } } });
+    try block.append(.{ .Or = .{ .dst = .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "t") } } });
     end.patch();
-    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = .ReturnRegister });
     return false;
 }
 
