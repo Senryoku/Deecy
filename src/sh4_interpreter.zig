@@ -341,6 +341,7 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
+    std.debug.print(termcolor.red("Unimplemented addv Rm, Rn\n"), .{});
     @panic("Unimplemented");
 }
 
