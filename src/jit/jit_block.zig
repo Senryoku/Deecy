@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const InstructionType = enum {
+    Nop,
     Break, // For Debugging
     FunctionCall,
     Mov,
@@ -64,6 +65,7 @@ pub const Operand = union(OperandType) {
 };
 
 pub const Instruction = union(InstructionType) {
+    Nop: u8, // Usefull to patch out instructions without having to rewrite the entire block.
     Break: u8, // FIXME: Could be void, but I don't know how to initialize a void value :')
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },

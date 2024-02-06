@@ -99,6 +99,7 @@ pub const JITContext = struct {
     fpscr_sz: JITBitState,
     fpscr_pr: JITBitState,
 
+    highest_saved_register_used: u8 = 0,
     host_registers: [5]struct { host: JIT.Register, last_access: u32, modified: bool, guest: ?u4 } = .{
         .{ .host = .SavedRegister1, .last_access = 0, .modified = false, .guest = null },
         .{ .host = .SavedRegister2, .last_access = 0, .modified = false, .guest = null },
@@ -130,8 +131,9 @@ pub const JITContext = struct {
         var slot = s: {
             var lru = &self.host_registers[0];
             // Do we have a free slot?
-            for (&self.host_registers) |*hreg| {
+            for (&self.host_registers, 0..) |*hreg, idx| {
                 if (hreg.guest == null) {
+                    self.highest_saved_register_used = @max(self.highest_saved_register_used, @as(u8, @intCast(idx)));
                     break :s hreg;
                 }
                 if (hreg.last_access > lru.last_access) {
@@ -254,7 +256,8 @@ pub const SH4JIT = struct {
         try jb.push(.{ .reg = .SavedRegister0 });
         try jb.push(.{ .reg = .SavedRegister1 }); // NOTE: We need to align the stack to 16 bytes. Used in load_mem().
 
-        // FIXME: Turn those into NOP if they're not used.
+        const optional_saved_register_offset = jb.instructions.items.len;
+        // We'll turn those into NOP if they're not used.
         try jb.push(.{ .reg = .SavedRegister2 });
         try jb.push(.{ .reg = .SavedRegister3 });
         try jb.push(.{ .reg = .SavedRegister4 });
@@ -311,11 +314,20 @@ pub const SH4JIT = struct {
         try ctx.commit_cached_registers(&jb);
 
         // Restore callee saved registers.
-        // FIXME: Turn those into NOP if they're not used.
-        try jb.pop(.{ .reg = .SavedRegister5 });
-        try jb.pop(.{ .reg = .SavedRegister4 });
-        try jb.pop(.{ .reg = .SavedRegister3 });
-        try jb.pop(.{ .reg = .SavedRegister2 });
+        if (ctx.highest_saved_register_used >= 3) {
+            try jb.pop(.{ .reg = .SavedRegister5 });
+            try jb.pop(.{ .reg = .SavedRegister4 });
+        } else {
+            jb.instructions.items[optional_saved_register_offset + 2] = .{ .Nop = 1 };
+            jb.instructions.items[optional_saved_register_offset + 3] = .{ .Nop = 1 };
+        }
+        if (ctx.highest_saved_register_used >= 1) {
+            try jb.pop(.{ .reg = .SavedRegister3 });
+            try jb.pop(.{ .reg = .SavedRegister2 });
+        } else {
+            jb.instructions.items[optional_saved_register_offset + 0] = .{ .Nop = 1 };
+            jb.instructions.items[optional_saved_register_offset + 1] = .{ .Nop = 1 };
+        }
 
         try jb.pop(.{ .reg = .SavedRegister1 });
         try jb.pop(.{ .reg = .SavedRegister0 });

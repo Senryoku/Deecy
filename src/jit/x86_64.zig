@@ -139,6 +139,7 @@ pub const Emitter = struct {
             x86_64_emitter_log.debug("[{d: >4}] {any}", .{ i, jb.instructions.items[i] });
 
             switch (jb.instructions.items[i]) {
+                .Nop => {},
                 .Break => {
                     if (builtin.mode == .Debug) {
                         try self.emit_byte(0xCC);
