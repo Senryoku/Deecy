@@ -277,6 +277,7 @@ pub const SH4JIT = struct {
                         }, instructions);
                     } else break :retry err;
                 });
+                sh4_jit_log.debug("Compiled: {X:0>2}", .{block.?.buffer});
             }
             block.?.execute(cpu);
 
@@ -319,7 +320,7 @@ pub const SH4JIT = struct {
             const instr = instructions[index];
             sh4_jit_log.debug(" [{X:0>8}] {s} {s}", .{
                 ctx.address,
-                if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_branch) "!" else " ",
+                if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
             const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, &ctx, @bitCast(instr));
@@ -332,7 +333,7 @@ pub const SH4JIT = struct {
                     const delay_slot = instructions[index];
                     sh4_jit_log.debug(" [{X:0>8}] {s}  {s}", .{
                         ctx.address,
-                        if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_branch) "!" else " ",
+                        if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                         try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
                     });
                     const branch_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
@@ -799,7 +800,6 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
 pub fn and_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
-    try block.bp();
     try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
     return false;
 }
@@ -936,6 +936,20 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     // cpu.pc = cpu.pr
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
+
+    ctx.delay_slot = ctx.address + 2;
+    ctx.outdated_pc = false;
+    return true;
+}
+
+pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    // call set_sr
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
+    try block.mov(.{ .reg = .ArgRegister1 }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });
+    try block.call(sh4.SH4.set_sr);
+    // pc = spc
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "spc"), .size = 32 } });
     try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
 
     ctx.delay_slot = ctx.address + 2;

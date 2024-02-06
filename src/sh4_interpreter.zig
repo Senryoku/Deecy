@@ -1312,6 +1312,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         }
     }
 }
+
 // Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.
 pub fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
@@ -1319,15 +1320,16 @@ pub fn rte(cpu: *SH4, _: Instr) void {
     cpu.pc = cpu.spc;
     cpu.pc -= 2; // Execute will add 2
     execute_delay_slot(cpu, delay_slot);
-
-    //cpu.debug_trace = false;
 }
+
 pub fn sets(cpu: *SH4, _: Instr) void {
     cpu.sr.s = true;
 }
+
 pub fn sett(cpu: *SH4, _: Instr) void {
     cpu.sr.t = true;
 }
+
 pub fn sleep(cpu: *SH4, _: Instr) void {
     const standby_control_register = cpu.read_p4_register(u8, .STBCR);
     if ((standby_control_register & 0b1000_0000) == 0b1000_0000) {

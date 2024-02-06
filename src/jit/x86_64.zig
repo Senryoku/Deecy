@@ -87,6 +87,9 @@ const PatchableJump = struct {
     address_to_patch: u32,
 };
 
+// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
+const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
+
 pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
@@ -145,15 +148,9 @@ pub const Emitter = struct {
                         try self.emit_byte(0xCC);
                     } else std.debug.print("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
                 },
-                .FunctionCall => |function| {
-                    try self.native_call(function);
-                },
-                .Mov => |m| {
-                    try self.mov(m.dst, m.src);
-                },
-                .Movsx => |m| {
-                    try self.movsx(m.dst, m.src);
-                },
+                .FunctionCall => |function| try self.native_call(function),
+                .Mov => |m| try self.mov(m.dst, m.src),
+                .Movsx => |m| try self.movsx(m.dst, m.src),
                 .Push => |reg_or_imm| {
                     switch (reg_or_imm) {
                         .reg => |reg| {
@@ -172,21 +169,11 @@ pub const Emitter = struct {
                         else => return error.UnimplementedPushImmediate,
                     }
                 },
-                .Add => |a| {
-                    try self.add(a.dst, a.src);
-                },
-                .Sub => |a| {
-                    try self.sub(a.dst, a.src);
-                },
-                .And => |a| {
-                    try self.and_(a.dst, a.src);
-                },
-                .Or => |a| {
-                    try self.or_(a.dst, a.src);
-                },
-                .Cmp => |a| {
-                    try self.cmp(a.lhs, a.rhs);
-                },
+                .Add => |a| try self.add(a.dst, a.src),
+                .Sub => |a| try self.sub(a.dst, a.src),
+                .And => |a| try self.and_(a.dst, a.src),
+                .Or => |a| try self.or_(a.dst, a.src),
+                .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .Jmp => |j| {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
                     try self.jmp(j.condition, @intCast(i + j.dst.rel));
@@ -455,7 +442,7 @@ pub const Emitter = struct {
     }
 
     // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
-    fn mem_dest_imm_src(self: *@This(), opcode: u3, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
+    fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
@@ -466,7 +453,7 @@ pub const Emitter = struct {
 
         try self.emit(MODRM, .{
             .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
-            .reg_opcode = opcode,
+            .reg_opcode = @intFromEnum(reg_opcode),
             .r_m = encode(dst_m.base),
         });
 
@@ -514,6 +501,20 @@ pub const Emitter = struct {
         }
     }
 
+    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: JIT.Register, imm32: u32) !void {
+        // Register is always 32bits
+        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
+        if (imm32 < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
+            try self.emit(u8, 0x83); // OP r/m32, imm8
+            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(u8, @truncate(imm32));
+        } else {
+            try self.emit(u8, 0x81); // OP r/m32, imm32
+            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(u32, imm32);
+        }
+    }
+
     pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
         // FIXME: Handle different sizes. We expect a u32 immediate.
         switch (dst) {
@@ -525,16 +526,11 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-                        if (imm32 < 0x80) {
-                            try self.emit(u8, 0x83); // ADD r/m32, imm8
-                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
-                            try self.emit(u8, @truncate(imm32));
-                        } else {
-                            try self.emit(u8, 0x81); // ADD r/m32, imm32
-                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b000, .r_m = encode(dst_reg) });
+                        if (get_reg(dst_reg) == .RAX and imm32 >= 0x80) {
+                            // ADD EAX, imm32
+                            try self.emit(u8, 0x05);
                             try self.emit(u32, imm32);
-                        }
+                        } else try reg_dest_imm_src(self, .Add, dst_reg, imm32);
                     },
                     else => return error.InvalidAddSource,
                 }
@@ -545,7 +541,7 @@ pub const Emitter = struct {
                         try mem_dest_reg_src(self, 0x01, dst_m, src_reg);
                     },
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, 0, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, .Add, dst_m, u32, imm);
                     },
                     else => return error.InvalidAddSource,
                 }
@@ -563,10 +559,10 @@ pub const Emitter = struct {
                 try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
             },
             .imm32 => |imm32| {
-                try self.emit_rex_if_needed(.{ .b = need_rex(dst) });
-                try self.emit(u8, 0x81);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 0b101, .r_m = encode(dst) });
-                try self.emit(u32, imm32);
+                if (get_reg(dst) == .RAX and imm32 >= 0x80) {
+                    try self.emit(u8, 0x2D);
+                    try self.emit(u32, imm32);
+                } else try reg_dest_imm_src(self, .Sub, dst, imm32);
             },
             else => return error.InvalidSubSource,
         }
@@ -582,19 +578,10 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm| {
-                        if (dst_reg == .ReturnRegister) {
+                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
                             try self.emit(u8, 0x25);
                             try self.emit(u32, imm);
-                        } else {
-                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg) });
-                            try self.emit(u8, 0x81);
-                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(dst_reg) });
-                            try self.emit(u32, imm);
-                            std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
-                            // Use this break to debug and make sure the correct instruction is emitted!
-                            try self.emit_byte(0xCC);
-                            @panic("Untested");
-                        }
+                        } else try reg_dest_imm_src(self, .And, dst_reg, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
@@ -602,7 +589,7 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, 4, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, .And, dst_m, u32, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
@@ -616,23 +603,15 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src_reg), .b = need_rex(dst) });
                         try self.emit(u8, 0x09);
                         try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm| {
-                        if (dst_reg == .ReturnRegister) {
+                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
                             try self.emit(u8, 0x0D);
                             try self.emit(u32, imm);
-                        } else {
-                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg) });
-                            try self.emit(u8, 0x81);
-                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 1, .r_m = encode(dst_reg) });
-                            try self.emit(u32, imm);
-                            std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
-                            // Use this break to debug and make sure the correct instruction is emitted!
-                            try self.emit_byte(0xCC);
-                            @panic("Untested");
-                        }
+                        } else try reg_dest_imm_src(self, .Or, dst_reg, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
@@ -640,7 +619,7 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, 1, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, .Or, dst_m, u32, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
@@ -657,15 +636,10 @@ pub const Emitter = struct {
                 try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
             },
             .imm32 => |imm| {
-                if (get_reg(lhs) == .RAX) {
+                if (get_reg(lhs) == .RAX and imm >= 0x80) {
                     try self.emit(u8, 0x3D);
                     try self.emit(u32, imm);
-                } else {
-                    try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(lhs) });
-                    try self.emit(u8, 0x81);
-                    try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 7, .r_m = encode(lhs) });
-                    try self.emit(u32, imm);
-                }
+                } else try reg_dest_imm_src(self, .Cmp, lhs, imm);
             },
             else => return error.UnsupportedCmpRHS,
         }
