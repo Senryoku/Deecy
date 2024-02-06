@@ -172,7 +172,7 @@ pub const JITContext = struct {
         }
     }
 
-    pub fn commit_cached_registers(self: *@This(), block: *JITBlock) !void {
+    pub fn commit_and_invalidate_all_cached_registers(self: *@This(), block: *JITBlock) !void {
         for (&self.host_registers) |*reg| {
             if (reg.guest) |r| {
                 if (reg.modified)
@@ -181,6 +181,46 @@ pub const JITContext = struct {
                         .{ .reg = reg.host },
                     );
                 reg.guest = null;
+            }
+        }
+    }
+
+    pub fn commit_all_cached_registers(self: *@This(), block: *JITBlock) !void {
+        for (&self.host_registers) |*reg| {
+            if (reg.guest) |r| {
+                if (reg.modified)
+                    try block.mov(
+                        guest_reg_memory(r),
+                        .{ .reg = reg.host },
+                    );
+            }
+        }
+    }
+
+    pub fn commit_and_invalidate_cached_register(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+        for (&self.host_registers) |*reg| {
+            if (reg.guest) |r| {
+                if (r == guest_reg) {
+                    if (reg.modified)
+                        try block.mov(
+                            guest_reg_memory(r),
+                            .{ .reg = reg.host },
+                        );
+                    reg.guest = null;
+                    return;
+                }
+            }
+        }
+    }
+
+    pub fn commit_cached_register(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+        for (&self.host_registers) |*reg| {
+            if (reg.guest) |r| {
+                if (r == guest_reg and reg.modified)
+                    return block.mov(
+                        guest_reg_memory(r),
+                        .{ .reg = reg.host },
+                    );
             }
         }
     }
@@ -311,7 +351,7 @@ pub const SH4JIT = struct {
             try jb.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = .ReturnRegister });
         }
 
-        try ctx.commit_cached_registers(&jb);
+        try ctx.commit_and_invalidate_all_cached_registers(&jb);
 
         // Restore callee saved registers.
         if (ctx.highest_saved_register_used >= 3) {
@@ -342,11 +382,81 @@ pub const SH4JIT = struct {
     }
 };
 
-pub fn interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try ctx.commit_cached_registers(block);
+inline fn call_interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !void {
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .imm = @as(u16, @bitCast(instr)) });
     try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+}
+
+// We need pointers to all of these functions, can't really refactor that mess sadly.
+
+pub fn interpreter_fallback_but_i_wont_read_or_write_to_gpr_i_swear(block: *JITBlock, _: *JITContext, instr: sh4.Instr) !bool {
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+// Instruction will only read a subset of register (Rn, Rm and/or R0), without modifying any GPR
+pub fn interpreter_fallback_read_rn_rm(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_cached_register(block, instr.nmd.n);
+    try ctx.commit_cached_register(block, instr.nmd.m);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_read_rn_rm_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_cached_register(block, 0);
+    try ctx.commit_cached_register(block, instr.nmd.m);
+    try ctx.commit_cached_register(block, instr.nmd.m);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_read_write_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_and_invalidate_cached_register(block, instr.nmd.m);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_write_rn_read_rm(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_and_invalidate_cached_register(block, instr.nmd.n);
+    try ctx.commit_cached_register(block, instr.nmd.m);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_read_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_cached_register(block, instr.nmd.n);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_write_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_and_invalidate_cached_register(block, instr.nmd.n);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_read_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_cached_register(block, 0);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_write_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_and_invalidate_cached_register(block, 0);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback_but_i_wont_write_to_gpr_i_swear(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_all_cached_registers(block);
+    try call_interpreter_fallback(block, instr);
+    return false;
+}
+
+pub fn interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try ctx.commit_and_invalidate_all_cached_registers(block);
+    try call_interpreter_fallback(block, instr);
     return false;
 }
 
