@@ -735,6 +735,8 @@ pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 
 pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // FIXME: This is buggy, and I have no clue why. It (sometimes) causes weird behavior is Soulcalibur. The interpreter fallback doesn't seem to have this issue.
+    //        Might be another cache invalidation issue...
+
     //  try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     //  try load_mem(block, ctx, .ArgRegister1, instr.nmd.n, 0, 32);
     //  try block.call(sh4.SH4.set_fpscr);
