@@ -675,7 +675,7 @@ pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
             try block.mov(get_dfp_reg_mem(instr.nmd.n), .{ .reg = .ReturnRegister });
         },
         .Unknown => {
-            _ = try interpreter_fallback(block, ctx, instr);
+            _ = try interpreter_fallback_cached(block, ctx, instr);
         },
     }
     return false;
@@ -693,7 +693,7 @@ pub fn fmovs_frm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
             try store_mem(block, ctx, instr.nmd.n, 0, .ReturnRegister, 64);
         },
         .Unknown => {
-            _ = try interpreter_fallback(block, ctx, instr);
+            _ = try interpreter_fallback_cached(block, ctx, instr);
         },
     }
     return false;
@@ -708,7 +708,7 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
             try block.add(.{ .reg = rm }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
         },
         .Unknown => {
-            _ = try interpreter_fallback(block, ctx, instr);
+            _ = try interpreter_fallback_cached(block, ctx, instr);
         },
     }
     return false;
@@ -723,28 +723,28 @@ pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
             _ = try fmovs_frm_at_rn(block, ctx, instr);
         },
         .Unknown => {
-            _ = try interpreter_fallback(block, ctx, instr);
+            _ = try interpreter_fallback_cached(block, ctx, instr);
         },
     }
     return false;
 }
 
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback(block, ctx, instr);
+    _ = try interpreter_fallback_cached(block, ctx, instr);
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
     return false;
 }
 
 pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback(block, ctx, instr);
+    _ = try interpreter_fallback_cached(block, ctx, instr);
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
     return false;
 }
 
 pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback(block, ctx, instr);
+    _ = try interpreter_fallback_cached(block, ctx, instr);
     switch (ctx.fpscr_sz) {
         .Zero => ctx.fpscr_sz = .One,
         .One => ctx.fpscr_sz = .Zero,
