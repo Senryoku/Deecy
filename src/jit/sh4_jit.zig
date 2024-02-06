@@ -549,7 +549,7 @@ pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
     try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .reg = rm } } });
-    var set_t = try block.jmp(.Greater);
+    var set_t = try block.jmp(.Above);
     // Clear T
     try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = ~@as(u32, 1) } } });
     var end = try block.jmp(.Always);

@@ -728,6 +728,12 @@ pub const Emitter = struct {
                 address = self.block_size;
                 try self.emit(u32, 0x00C0FFEE);
             },
+            .Above => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x87);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
         }
 
         const jumps = try self.jumps_to_patch.getOrPut(dst_instruction_index);

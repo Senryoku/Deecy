@@ -38,8 +38,9 @@ pub const Condition = enum {
     NotEqual,
     Carry,
     NotCarry,
-    Greater,
+    Greater, // Signed Values
     GreaterEqual,
+    Above, // Unsigned Values
 };
 
 const OperandType = enum {
