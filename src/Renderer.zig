@@ -116,7 +116,6 @@ const Vertex = packed struct {
     u: f32 = 0.0,
     v: f32 = 0.0,
     tex: VertexTextureInfo,
-    uv_offset: packed struct { u: f32 = 0, v: f32 = 0 } = .{},
 };
 
 const wgsl_vs = @embedFile("./shaders/vs.wgsl");
@@ -139,7 +138,6 @@ const TextureMetadata = struct {
     index: TextureIndex = InvalidTextureIndex,
     usage: u32 = 0, // Current usage for this frame
     size: [2]u16 = .{ 0, 0 },
-    uv_offset: [2]f32 = .{ 0, 0 },
     start_address: u32 = 0,
     end_address: u32 = 0,
     hash: u32 = 0,
@@ -338,7 +336,6 @@ const vertex_attributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
     .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
-    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "uv_offset"), .shader_location = 5 },
 };
 const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
     .array_stride = @sizeOf(Vertex),

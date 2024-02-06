@@ -37,7 +37,6 @@ fn main(
     @location(2) offset_color: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) tex: vec2<u32>, // Texture index and Texture control word
-    @location(5) uv_offset: vec2<f32>, // TODO
 ) -> VertexOut {
     var output: VertexOut;
 
