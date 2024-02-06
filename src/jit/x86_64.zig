@@ -640,7 +640,7 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, 4, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, 1, dst_m, u32, imm);
                     },
                     else => return error.InvalidAndSource,
                 }
