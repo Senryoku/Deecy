@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const InstructionType = enum {
+    Nop,
     Break, // For Debugging
     FunctionCall,
     Mov,
@@ -10,6 +11,7 @@ pub const InstructionType = enum {
     Add,
     Sub,
     And,
+    Or,
     Cmp,
     BitTest,
     Jmp,
@@ -25,6 +27,9 @@ pub const Register = enum {
     SavedRegister1,
     SavedRegister2,
     SavedRegister3,
+    SavedRegister4,
+    SavedRegister5,
+    SavedRegister6,
 };
 
 pub const Condition = enum {
@@ -33,6 +38,9 @@ pub const Condition = enum {
     NotEqual,
     Carry,
     NotCarry,
+    Greater, // Signed Values
+    GreaterEqual,
+    Above, // Unsigned Values
 };
 
 const OperandType = enum {
@@ -61,6 +69,7 @@ pub const Operand = union(OperandType) {
 };
 
 pub const Instruction = union(InstructionType) {
+    Nop: u8, // Usefull to patch out instructions without having to rewrite the entire block.
     Break: u8, // FIXME: Could be void, but I don't know how to initialize a void value :')
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },
@@ -70,6 +79,7 @@ pub const Instruction = union(InstructionType) {
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Register, src: Operand },
     And: struct { dst: Operand, src: Operand },
+    Or: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
