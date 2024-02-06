@@ -544,6 +544,23 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    const rn = load_register(block, ctx, instr.nmd.n);
+    const rm = load_register(block, ctx, instr.nmd.m);
+    try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .reg = rm } } });
+    var set_t = try block.jmp(.Greater);
+    // Clear T
+    try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = ~@as(u32, 1) } } });
+    var end = try block.jmp(.Always);
+    // Set T
+    set_t.patch();
+    try block.append(.{ .Or = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 1 } } });
+    end.patch();
+    try block.mov(.{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = .ReturnRegister });
+    return false;
+}
+
 pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
         .Zero => {

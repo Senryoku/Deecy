@@ -181,6 +181,9 @@ pub const Emitter = struct {
                 .And => |a| {
                     try self.and_(a.dst, a.src);
                 },
+                .Or => |a| {
+                    try self.or_(a.dst, a.src);
+                },
                 .Cmp => |a| {
                     try self.cmp(a.lhs, a.rhs);
                 },
@@ -607,13 +610,56 @@ pub const Emitter = struct {
         }
     }
 
+    pub fn or_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| {
+                        try self.emit(u8, 0x09);
+                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                    },
+                    .imm32 => |imm| {
+                        if (dst_reg == .ReturnRegister) {
+                            try self.emit(u8, 0x0D);
+                            try self.emit(u32, imm);
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg) });
+                            try self.emit(u8, 0x81);
+                            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 1, .r_m = encode(dst_reg) });
+                            try self.emit(u32, imm);
+                            std.debug.print("\n\nYou hit an untested part of the emitter! Rejoice! Please double check it, thanks :)\n\n", .{});
+                            // Use this break to debug and make sure the correct instruction is emitted!
+                            try self.emit_byte(0xCC);
+                            @panic("Untested");
+                        }
+                    },
+                    else => return error.InvalidAndSource,
+                }
+            },
+            .mem => |dst_m| {
+                switch (src) {
+                    .imm32 => |imm| {
+                        try mem_dest_imm_src(self, 4, dst_m, u32, imm);
+                    },
+                    else => return error.InvalidAndSource,
+                }
+            },
+            else => return error.InvalidAndDestination,
+        }
+    }
+
     pub fn cmp(self: *@This(), lhs: JIT.Register, rhs: JIT.Operand) !void {
         switch (rhs) {
+            .reg => |rhs_reg| {
+                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(rhs_reg), .b = need_rex(lhs) });
+                try self.emit(u8, 0x39);
+                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
+            },
             .imm32 => |imm| {
                 if (get_reg(lhs) == .RAX) {
                     try self.emit(u8, 0x3D);
                     try self.emit(u32, imm);
-                } else return error.UnsupportedCmpRHS;
+                } else return error.UnsupportedCmpLHS;
             },
             else => return error.UnsupportedCmpRHS,
         }
@@ -667,6 +713,18 @@ pub const Emitter = struct {
             .NotCarry => {
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, 0x83);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .Greater => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x8F);
+                address = self.block_size;
+                try self.emit(u32, 0x00C0FFEE);
+            },
+            .GreaterEqual => {
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, 0x8D);
                 address = self.block_size;
                 try self.emit(u32, 0x00C0FFEE);
             },

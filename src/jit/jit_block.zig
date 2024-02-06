@@ -11,6 +11,7 @@ pub const InstructionType = enum {
     Add,
     Sub,
     And,
+    Or,
     Cmp,
     BitTest,
     Jmp,
@@ -37,6 +38,8 @@ pub const Condition = enum {
     NotEqual,
     Carry,
     NotCarry,
+    Greater,
+    GreaterEqual,
 };
 
 const OperandType = enum {
@@ -75,6 +78,7 @@ pub const Instruction = union(InstructionType) {
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Register, src: Operand },
     And: struct { dst: Operand, src: Operand },
+    Or: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Register, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },

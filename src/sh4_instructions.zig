@@ -78,7 +78,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0011000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.cmpeq_Rm_Rn, .name = "cmp/eq Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.cmphs_Rm_Rn, .name = "cmp/hs Rm,Rn", .privileged = false },
     .{ .code = 0b0011000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.cmpge_Rm_Rn, .name = "cmp/ge Rm,Rn", .privileged = false },
-    .{ .code = 0b0011000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.cmphi_Rm_Rn, .name = "cmp/hi Rm,Rn", .privileged = false },
+    .{ .code = 0b0011000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.cmphi_Rm_Rn, .name = "cmp/hi Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.cmphi_Rm_Rn },
     .{ .code = 0b0011000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.cmpgt_Rm_Rn, .name = "cmp/gt Rm,Rn", .privileged = false },
     .{ .code = 0b0100000000010101, .mask = 0b0000111100000000, .fn_ = interpreter.cmppl_Rn, .name = "cmp/pl Rn", .privileged = false },
     .{ .code = 0b0100000000010001, .mask = 0b0000111100000000, .fn_ = interpreter.cmppz_Rn, .name = "cmp/pz Rn", .privileged = false },
