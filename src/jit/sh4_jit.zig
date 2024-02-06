@@ -473,11 +473,15 @@ fn get_dfp_reg_mem(r: u4) JIT.Operand {
     return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "fp_banks") + bank + @as(u32, r >> 1) * 8, .size = 64 } };
 }
 
+// NOTE: Ideally we'd use the type system to ensure the return values of the two following functions are
+//       used correctly (i.e. never write to a register returned by load_register), but I think this would
+//       require updating JITBlock and might hinder its genericity? (It's already pretty specific...)
+
 // Returns a host register contained the requested guest register.
 fn load_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
     return ctx.guest_reg_cache(block, guest_reg, true, false);
 }
-
+// Returns a host register contained the requested guest register and mark it as modified (we plan on writing to it).
 fn load_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
     return ctx.guest_reg_cache(block, guest_reg, true, true);
 }
@@ -789,6 +793,14 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .ReturnRegister, .size = 32 } });
     // Store it into Rn
     try store_register(block, ctx, instr.nd8.n, .{ .reg = .ReturnRegister });
+    return false;
+}
+
+pub fn and_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = load_register(block, ctx, instr.nmd.m);
+    try block.bp();
+    try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
     return false;
 }
 

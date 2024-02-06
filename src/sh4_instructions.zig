@@ -111,7 +111,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0011000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.sub_Rm_Rn, .name = "sub Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0011000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.subc_Rm_Rn, .name = "subc Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.unimplemented, .name = "subv Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.and_Rm_Rn, .name = "and Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.and_Rm_Rn, .name = "and Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.and_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1100100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.and_imm_R0, .name = "and #imm,R0", .privileged = false, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
     .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "and.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.not_Rm_Rn, .name = "not Rm,Rn", .privileged = false, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
