@@ -112,6 +112,17 @@ pub const JITContext = struct {
         return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "r") + @as(u32, guest_reg) * 4, .size = 32 } };
     }
 
+    fn get_cached_register(self: *@This(), guest_reg: u4) ?*@TypeOf(self.host_registers[0]) {
+        for (&self.host_registers) |*reg| {
+            if (reg.guest) |r| {
+                if (r == guest_reg) {
+                    return reg;
+                }
+            }
+        }
+        return null;
+    }
+
     // load: If not already in cache, will load the value from memory.
     // modified: Mark the cached value as modified, ensuring it will be written back to memory.
     pub fn guest_reg_cache(self: *@This(), block: *JITBlock, guest_reg: u4, comptime load: bool, comptime modified: bool) JIT.Register {
@@ -120,12 +131,10 @@ pub const JITContext = struct {
         }
 
         // Is it already cached?
-        for (&self.host_registers) |*hreg| {
-            if (hreg.guest == guest_reg) {
-                hreg.last_access = 0;
-                if (modified) hreg.modified = true;
-                return hreg.host;
-            }
+        if (self.get_cached_register(guest_reg)) |hreg| {
+            hreg.last_access = 0;
+            if (modified) hreg.modified = true;
+            return hreg.host;
         }
 
         var slot = s: {
@@ -163,15 +172,6 @@ pub const JITContext = struct {
         return slot.host;
     }
 
-    pub fn mark_modified(self: *@This(), guest_reg: u4) void {
-        for (&self.host_registers) |*hreg| {
-            if (hreg.guest == guest_reg) {
-                hreg.modified = true;
-                return;
-            }
-        }
-    }
-
     pub fn commit_and_invalidate_all_cached_registers(self: *@This(), block: *JITBlock) !void {
         for (&self.host_registers) |*reg| {
             if (reg.guest) |r| {
@@ -195,17 +195,6 @@ pub const JITContext = struct {
                     );
             }
         }
-    }
-
-    fn get_cached_register(self: *@This(), guest_reg: u4) ?*@TypeOf(self.host_registers[0]) {
-        for (&self.host_registers) |*reg| {
-            if (reg.guest) |r| {
-                if (r == guest_reg) {
-                    return reg;
-                }
-            }
-        }
-        return null;
     }
 
     // Means this will be overwritten outside of the JIT
@@ -735,14 +724,25 @@ pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
 }
 
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback_cached(block, ctx, instr);
+    const rn = load_register(block, ctx, instr.nmd.n);
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
+    try block.mov(.{ .reg = .ArgRegister1 }, .{ .reg = rn });
+    try block.call(sh4.SH4.set_fpscr);
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
     return false;
 }
 
 pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // FIXME: This is buggy, and I have no clue why. It (sometimes) causes weird behavior is Soulcalibur. The interpreter fallback doesn't seem to have this issue.
+    //  try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
+    //  try load_mem(block, ctx, .ArgRegister1, instr.nmd.n, 0, 32);
+    //  try block.call(sh4.SH4.set_fpscr);
+    //  const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    //  try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+
     _ = try interpreter_fallback_cached(block, ctx, instr);
+
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
     return false;
@@ -801,6 +801,25 @@ pub fn and_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
     try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
+    return false;
+}
+
+pub fn and_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = load_register_for_writing(block, ctx, 0);
+    try block.append(.{ .And = .{ .dst = .{ .reg = r0 }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
+    return false;
+}
+
+pub fn or_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = load_register(block, ctx, instr.nmd.m);
+    try block.append(.{ .Or = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
+    return false;
+}
+
+pub fn or_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = load_register_for_writing(block, ctx, 0);
+    try block.append(.{ .Or = .{ .dst = .{ .reg = r0 }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
     return false;
 }
 
@@ -944,6 +963,11 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
 }
 
 pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    // We might change GPR banks.
+    for (0..8) |i| {
+        try ctx.commit_and_invalidate_cached_register(block, @intCast(i));
+    }
+
     // call set_sr
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     try block.mov(.{ .reg = .ArgRegister1 }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });

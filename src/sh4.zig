@@ -331,7 +331,7 @@ pub const SH4 = struct {
         self.pc = 0xAC008300; // Start address of IP.bin Licence screen
     }
 
-    pub inline fn set_sr(self: *@This(), value: SR) void {
+    pub fn set_sr(self: *@This(), value: SR) void {
         const prev_rb = if (self.sr.md == 1) self.sr.rb else 0;
         const new_rb = if (value.md == 1) value.rb else 0;
         if (new_rb != prev_rb) {
@@ -340,7 +340,7 @@ pub const SH4 = struct {
         self.sr = @bitCast(@as(u32, @bitCast(value)) & 0x700083F3);
     }
 
-    pub inline fn set_fpscr(self: *@This(), value: u32) void {
+    pub fn set_fpscr(self: *@This(), value: u32) void {
         const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
         if (new_value.fr != self.fpscr.fr) {
             std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);

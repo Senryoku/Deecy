@@ -743,7 +743,7 @@ pub fn not_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn or_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* |= cpu.R(opcode.nmd.m).*;
 }
-pub fn or_imm_r0(cpu: *SH4, opcode: Instr) void {
+pub fn or_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
 pub fn orb_imm_at_R0_gbr(cpu: *SH4, opcode: Instr) void {
