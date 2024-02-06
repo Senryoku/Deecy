@@ -1292,8 +1292,14 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             //               The full address also includes the sq bit.
             const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
             std.log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
-            inline for (0..8) |i| {
-                cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+
+            // pref is often used to send commands to the GPU, we can optimize this use case.
+            if (ext_addr >= 0x10000000 and ext_addr < 0x10800000 or ext_addr >= 0x12000000 and ext_addr < 0x12800000) {
+                cpu._dc.?.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
+            } else {
+                inline for (0..8) |i| {
+                    cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+                }
             }
         }
     } else {
