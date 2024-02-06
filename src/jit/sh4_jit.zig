@@ -99,7 +99,8 @@ pub const JITContext = struct {
     fpscr_sz: JITBitState,
     fpscr_pr: JITBitState,
 
-    host_registers: [4]struct { host: JIT.Register, last_access: u32, guest: ?u4 } = .{
+    host_registers: [5]struct { host: JIT.Register, last_access: u32, guest: ?u4 } = .{
+        .{ .host = .SavedRegister1, .last_access = 0, .guest = null },
         .{ .host = .SavedRegister2, .last_access = 0, .guest = null },
         .{ .host = .SavedRegister3, .last_access = 0, .guest = null },
         .{ .host = .SavedRegister4, .last_access = 0, .guest = null },
@@ -368,9 +369,8 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
     try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
-
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = size } });
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .imm = ram_addr });
+    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .ArgRegister0, .index = .ReturnRegister, .size = size } });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
@@ -407,9 +407,8 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
     try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = .SavedRegister1 }, .{ .imm = ram_addr }); // FIXME: I'm using a saved register here because right now I know it's not used, this might be worth it to keep it at all times!
-
-    try block.mov(.{ .mem = .{ .base = .SavedRegister1, .index = .ReturnRegister, .size = size } }, .{ .reg = .ArgRegister2 });
+    try block.mov(.{ .reg = .ArgRegister0 }, .{ .imm = ram_addr });
+    try block.mov(.{ .mem = .{ .base = .ArgRegister0, .index = .ReturnRegister, .size = size } }, .{ .reg = .ArgRegister2 });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
