@@ -407,7 +407,9 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     // Address is already loaded into .ArgRegister1
-    if (size == 32) {
+    if (size == 16) {
+        try block.call(&sh4.SH4._out_of_line_read16);
+    } else if (size == 32) {
         try block.call(&sh4.SH4._out_of_line_read32);
     } else if (size == 64) {
         try block.call(&sh4.SH4._out_of_line_read64);
@@ -445,7 +447,7 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
 
     try block.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
     // Address is already loaded into .ArgRegister1
-    // Value is already loaded into .ArgRegister2
+    //   Value is already loaded into .ArgRegister2
     if (size == 32) {
         try block.call(&sh4.SH4._out_of_line_write32);
     } else if (size == 64) {
@@ -476,6 +478,20 @@ pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, 0, rm, 32);
+    return false;
+}
+
+pub fn movw_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // Rn = [Rm]
+    try load_mem(block, ctx, .ReturnRegister, instr.nmd.m, 0, 16);
+    // Sign extend
+    try block.movsx(.{ .reg = .ReturnRegister }, .{ .reg = .ReturnRegister });
+    try store_register(block, ctx, instr.nmd.n, .{ .reg = .ReturnRegister });
+    // if(n != m) Rm += 2
+    if (instr.nmd.n != instr.nmd.m) {
+        const rm = load_register_for_writing(block, ctx, instr.nmd.m);
+        try block.add(.{ .reg = rm }, .{ .imm32 = 2 });
+    }
     return false;
 }
 

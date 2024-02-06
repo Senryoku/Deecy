@@ -414,17 +414,35 @@ pub const Emitter = struct {
                             16 => try self.emit(u8, 0xBF),
                             else => return error.UnsupportedMovsxSourceSize,
                         }
-                        const modrm: MODRM = .{
+                        try self.emit(MODRM, .{
                             .mod = if (src_m.displacement == 0) 0b00 else 0b10,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_m.base),
-                        };
-                        try self.emit(u8, @bitCast(modrm));
+                        });
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(src_m.base) == 0b100)
                             try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
                         if (src_m.displacement != 0)
                             try self.emit(u32, src_m.displacement);
+                    },
+                    .reg => |src_reg| {
+
+                        // FIXME: We only support sign extending from 16-bits to 32-bits right now.
+                        //        Registers don't currently have a size and we can't express other instructions!
+                        const src_size = 16;
+
+                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x0F);
+                        switch (src_size) {
+                            8 => try self.emit(u8, 0xBE),
+                            16 => try self.emit(u8, 0xBF),
+                            else => return error.UnsupportedMovsxSourceSize,
+                        }
+                        try self.emit(MODRM, .{
+                            .mod = 0b11,
+                            .reg_opcode = encode(dst.reg),
+                            .r_m = encode(src_reg),
+                        });
                     },
                     else => return error.InvalidMovsxSource,
                 }

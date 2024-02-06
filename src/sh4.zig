@@ -883,6 +883,10 @@ pub const SH4 = struct {
         ))).*;
     }
 
+    pub noinline fn _out_of_line_read16(self: @This(), virtual_addr: addr_t) u16 {
+        return read16(self, virtual_addr);
+    }
+
     pub inline fn read16(self: @This(), virtual_addr: addr_t) u16 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
