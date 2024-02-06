@@ -25,6 +25,9 @@ pub const Register = enum {
     SavedRegister1,
     SavedRegister2,
     SavedRegister3,
+    SavedRegister4,
+    SavedRegister5,
+    SavedRegister6,
 };
 
 pub const Condition = enum {

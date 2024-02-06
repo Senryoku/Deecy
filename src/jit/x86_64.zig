@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
+
 const BasicBlock = @import("basic_block.zig").BasicBlock;
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
@@ -65,9 +67,9 @@ const SavedRegisters = if (builtin.os.tag == .windows) [_]Registers{
     Registers.R13,
     Registers.R14,
     Registers.R15,
-    Registers.RDI,
-    Registers.RSI,
     Registers.RBX,
+    Registers.RSI,
+    Registers.RDI,
     Registers.RBP,
     Registers.RSP,
 } else if (builtin.os.tag == .linux) [_]Registers{
@@ -116,6 +118,9 @@ pub const Emitter = struct {
             .SavedRegister1 => SavedRegisters[1],
             .SavedRegister2 => SavedRegisters[2],
             .SavedRegister3 => SavedRegisters[3],
+            .SavedRegister4 => SavedRegisters[4],
+            .SavedRegister5 => SavedRegisters[5],
+            .SavedRegister6 => SavedRegisters[6],
         };
     }
 
@@ -130,6 +135,8 @@ pub const Emitter = struct {
                 jumps.deinit();
                 _ = self.jumps_to_patch.remove(@intCast(i));
             }
+
+            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ i, jb.instructions.items[i] });
 
             switch (jb.instructions.items[i]) {
                 .Break => {
@@ -339,43 +346,45 @@ pub const Emitter = struct {
                         try self.emit(u32, imm);
                     },
                     .mem => |src_m| {
-                        if (src_m.index != null) {
+                        if (src_m.index) |index| {
                             if (src_m.displacement != 0) {
                                 return error.MovIndexWithDisplacementNotSupported;
                             }
                             try self.emit_rex_if_needed(.{
                                 .w = src_m.size == 64,
                                 .r = need_rex(dst_reg),
-                                .x = need_rex(src_m.index.?),
+                                .x = need_rex(index),
                                 .b = need_rex(src_m.base),
                             });
                             const opcode = 0x8B;
                             try self.emit(u8, opcode);
-                            const modrm: MODRM = .{
+                            try self.emit(MODRM, .{
                                 .mod = 0b01,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = 0b100, // FIXME: I don't know what I'm doing :D
-                            };
-                            try self.emit(u8, @bitCast(modrm));
+                            });
                             const sib: SIB = .{
                                 .scale = 0,
-                                .index = encode(src_m.index.?),
+                                .index = encode(index),
                                 .base = encode(src_m.base),
                             };
                             try self.emit(u8, @bitCast(sib));
                             try self.emit(u8, 0x00); // Zero displacement
                         } else {
-                            try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                            try self.emit_rex_if_needed(.{
+                                .w = src_m.size == 64,
+                                .r = need_rex(dst_reg),
+                                .b = need_rex(src_m.base),
+                            });
                             const opcode = 0x8B;
                             if (src_m.size == 16) // Operand size prefix
                                 try self.emit(u8, 0x66);
                             try self.emit(u8, opcode);
-                            const modrm: MODRM = .{
+                            try self.emit(MODRM, .{
                                 .mod = if (src_m.displacement == 0) 0b00 else 0b10,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = encode(src_m.base),
-                            };
-                            try self.emit(u8, @bitCast(modrm));
+                            });
                             // NOTE: ESP/R12-based addressing need a SIB byte.
                             if (encode(src_m.base) == 0b100)
                                 try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
@@ -483,6 +492,8 @@ pub const Emitter = struct {
     }
 
     pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        std.debug.print("add {any}, {any}\n", .{ dst, src });
+        const before = self.block_size;
         // FIXME: Handle different sizes. We expect a u32 immediate.
         switch (dst) {
             .reg => |dst_reg| {
@@ -520,6 +531,7 @@ pub const Emitter = struct {
             },
             else => return error.InvalidAddDestination,
         }
+        std.debug.print("{X:0>2}\n", .{self.block.buffer[before..self.block_size]});
     }
 
     pub fn sub(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
