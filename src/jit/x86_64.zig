@@ -331,8 +331,8 @@ pub const Emitter = struct {
             },
             .reg => |dst_reg| {
                 switch (src) {
-                    .reg => |reg| {
-                        try self.mov_reg_reg(dst_reg, reg);
+                    .reg => |src_reg| {
+                        try self.mov_reg_reg(dst_reg, src_reg);
                     },
                     .imm => |imm| {
                         // movabs <reg>,<imm64>
@@ -342,6 +342,7 @@ pub const Emitter = struct {
                     },
                     .imm32 => |imm| {
                         // mov    <reg>,<imm32>
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
                         try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
                         try self.emit(u32, imm);
                     },
