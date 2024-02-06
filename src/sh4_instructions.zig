@@ -47,7 +47,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_at_rm_inc_rn, .name = "mov.l @Rm+,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movl_at_rm_inc_rn }, // TODO: or 2
     .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_rm_at_rn_dec, .name = "mov.b Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_rm_at_rn_dec, .name = "mov.w Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
-    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_rm_at_rn_dec, .name = "mov.l Rm,@-Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.movl_rm_at_rn_dec },
     .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = interpreter.movb_at_disp_Rm_R0, .name = "mov.b @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = interpreter.movw_at_disp_Rm_R0, .name = "mov.w @(disp,Rm),R0", .privileged = false, .issue_cycles = 1, .latency_cycles = 2 },
     .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_at_disp_Rm_Rn, .name = "mov.l @(disp,Rm),Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_at_disp_rm_rn },
