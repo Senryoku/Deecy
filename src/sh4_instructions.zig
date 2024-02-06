@@ -111,7 +111,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.or_imm_r0, .name = "or #imm,R0", .privileged = false },
     .{ .code = 0b1100111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.orb_imm_at_R0_gbr, .name = "or.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4 },
     .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = interpreter.tasb_at_Rn, .name = "tas.b @Rn", .privileged = false, .issue_cycles = 5, .latency_cycles = 5 },
-    .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.tst_Rm_Rn, .name = "tst Rm,Rn", .privileged = false },
+    .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.tst_Rm_Rn, .name = "tst Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.tst_Rm_Rn },
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = interpreter.tst_imm_r0, .name = "tst #imm,R0", .privileged = false },
     .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "tst.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 3, .latency_cycles = 3 },
     .{ .code = 0b0010000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.xorRmRn, .name = "xor Rm,Rn", .privileged = false },

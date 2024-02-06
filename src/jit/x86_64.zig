@@ -577,6 +577,7 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, 0x21);
                         try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
