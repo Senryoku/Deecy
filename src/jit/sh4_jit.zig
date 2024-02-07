@@ -8,12 +8,11 @@ const JIT = @import("jit_block.zig");
 const JITBlock = JIT.JITBlock;
 
 const Architecture = @import("x86_64.zig");
-const Emitter = Architecture.Emitter;
 const ReturnRegister = Architecture.ReturnRegister;
 const ArgRegisters = Architecture.ArgRegisters;
 const SavedRegisters = Architecture.SavedRegisters;
 
-const BasicBlock = @import("basic_block.zig").BasicBlock;
+const BasicBlock = @import("basic_block.zig");
 
 const sh4_instructions = @import("../sh4_instructions.zig");
 
@@ -28,7 +27,7 @@ const BlockCache = struct {
     const BlockEntryCount = (0x02200000 >> 1) << 2;
 
     buffer: []align(std.mem.page_size) u8,
-    cursor: u32 = 0,
+    cursor: usize = 0,
     blocks: []?BasicBlock = undefined,
 
     _allocator: std.mem.Allocator,
@@ -291,24 +290,23 @@ pub const SH4JIT = struct {
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
         var ctx = start_ctx;
 
-        var emitter = Emitter.init(self._allocator, self.block_cache.buffer[self.block_cache.cursor..]);
-        defer emitter.deinit();
-
-        var jb = JITBlock.init(self._allocator);
-        defer jb.deinit();
+        var b = JITBlock.init(self._allocator);
+        defer b.deinit();
 
         // We'll be using these callee saved registers, push 'em to the stack.
-        try jb.push(.{ .reg = SavedRegisters[0] });
-        try jb.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes. Used in load_mem().
+        try b.push(.{ .reg = SavedRegisters[0] });
+        try b.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes. Used in load_mem().
 
-        const optional_saved_register_offset = jb.instructions.items.len;
+        const optional_saved_register_offset = b.instructions.items.len;
         // We'll turn those into NOP if they're not used.
-        try jb.push(.{ .reg = SavedRegisters[2] });
-        try jb.push(.{ .reg = SavedRegisters[3] });
-        try jb.push(.{ .reg = SavedRegisters[4] });
-        try jb.push(.{ .reg = SavedRegisters[5] });
+        try b.push(.{ .reg = SavedRegisters[2] });
+        try b.push(.{ .reg = SavedRegisters[3] });
+        try b.push(.{ .reg = SavedRegisters[4] });
+        try b.push(.{ .reg = SavedRegisters[5] });
 
-        try jb.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
+        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
+
+        var cycles: u32 = 0;
 
         var index: u32 = 0;
         while (true) {
@@ -318,8 +316,8 @@ pub const SH4JIT = struct {
                 if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
-            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&jb, &ctx, @bitCast(instr));
-            emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
+            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&b, &ctx, @bitCast(instr));
+            cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
             index += 1;
             ctx.address += 2;
 
@@ -331,8 +329,8 @@ pub const SH4JIT = struct {
                         if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                         try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
                     });
-                    const branch_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&jb, &ctx, @bitCast(delay_slot));
-                    emitter.block.cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
+                    const branch_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
+                    cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
                     std.debug.assert(!branch_delay_slot);
                 }
                 break;
@@ -341,46 +339,45 @@ pub const SH4JIT = struct {
 
         // Crude appromixation, better purging slightly too often than crashing.
         // Also feels better than checking the length at each insertion.
-        if (self.block_cache.cursor + 4 * 32 + 8 * 4 * emitter.block_size >= BlockBufferSize) {
+        if (self.block_cache.cursor + 4 * 32 + 8 * 4 * b.instructions.items.len >= BlockBufferSize) {
             return error.JITCacheFull;
         }
 
         // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
         // cpu.pc += 2;
         if (ctx.outdated_pc) {
-            try jb.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
-            try jb.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
-            try jb.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
+            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
+            try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
         }
 
-        try ctx.commit_and_invalidate_all_cached_registers(&jb);
+        try ctx.commit_and_invalidate_all_cached_registers(&b);
 
         // Restore callee saved registers.
         if (ctx.highest_saved_register_used >= 3) {
-            try jb.pop(.{ .reg = SavedRegisters[5] });
-            try jb.pop(.{ .reg = SavedRegisters[4] });
+            try b.pop(.{ .reg = SavedRegisters[5] });
+            try b.pop(.{ .reg = SavedRegisters[4] });
         } else {
-            jb.instructions.items[optional_saved_register_offset + 2] = .Nop;
-            jb.instructions.items[optional_saved_register_offset + 3] = .Nop;
+            b.instructions.items[optional_saved_register_offset + 2] = .Nop;
+            b.instructions.items[optional_saved_register_offset + 3] = .Nop;
         }
         if (ctx.highest_saved_register_used >= 1) {
-            try jb.pop(.{ .reg = SavedRegisters[3] });
-            try jb.pop(.{ .reg = SavedRegisters[2] });
+            try b.pop(.{ .reg = SavedRegisters[3] });
+            try b.pop(.{ .reg = SavedRegisters[2] });
         } else {
-            jb.instructions.items[optional_saved_register_offset + 0] = .Nop;
-            jb.instructions.items[optional_saved_register_offset + 1] = .Nop;
+            b.instructions.items[optional_saved_register_offset + 0] = .Nop;
+            b.instructions.items[optional_saved_register_offset + 1] = .Nop;
         }
 
-        try jb.pop(.{ .reg = SavedRegisters[1] });
-        try jb.pop(.{ .reg = SavedRegisters[0] });
+        try b.pop(.{ .reg = SavedRegisters[1] });
+        try b.pop(.{ .reg = SavedRegisters[0] });
 
-        try emitter.emit_block(&jb);
-        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
+        var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        self.block_cache.cursor += block.buffer.len;
+        block.cycles = cycles;
 
-        self.block_cache.cursor += emitter.block_size;
-
-        self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), emitter.block);
-        return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr))).?;
+        self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
+        return block;
     }
 };
 

@@ -3,55 +3,9 @@ const builtin = @import("builtin");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
-const BasicBlock = @import("basic_block.zig").BasicBlock;
+const BasicBlock = @import("basic_block.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
-
-pub const Register = enum(u4) {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-    RSP = 4,
-    RBP = 5,
-    RSI = 6,
-    RDI = 7,
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
-};
-
-const REX = packed struct(u8) {
-    b: bool = false,
-    x: bool = false,
-    r: bool = false,
-    w: bool = false,
-    _: u4 = 0b0100,
-};
-
-const Mod = enum(u2) {
-    indirect = 0b00, // Register indirect, or SIB without displacement (r/m = 0b100), or Displacement only (r/m = 0b101)
-    disp8 = 0b01, // 8-bit displacement
-    disp32 = 0b10, // 32-bit displacement
-    reg = 0b11,
-};
-
-const MODRM = packed struct(u8) {
-    r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
-    reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
-    mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
-};
-
-const SIB = packed struct(u8) {
-    base: u3,
-    index: u3,
-    scale: u2,
-};
 
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
@@ -100,6 +54,122 @@ const PatchableJump = struct {
 // RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
 const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
 
+pub const Condition = enum {
+    Always,
+    Equal,
+    NotEqual,
+    Carry,
+    NotCarry,
+    Greater, // Signed Values
+    GreaterEqual,
+    Above, // Unsigned Values
+};
+
+pub const MemOperand = struct {
+    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
+    index: ?Register = null,
+    displacement: u32 = 0,
+    size: u8,
+};
+
+const OperandType = enum {
+    reg,
+    imm8,
+    imm16,
+    imm32,
+    imm,
+    mem,
+};
+
+pub const Operand = union(OperandType) {
+    reg: Register,
+    imm8: u8,
+    imm16: u16,
+    imm32: u32,
+    imm: u64,
+    mem: MemOperand,
+};
+
+pub const InstructionType = enum {
+    Nop,
+    Break, // For Debugging
+    FunctionCall,
+    Mov,
+    Movsx, // Mov with sign extension
+    Push,
+    Pop,
+    Add,
+    Sub,
+    And,
+    Or,
+    Cmp,
+    BitTest,
+    Jmp,
+};
+
+pub const Instruction = union(InstructionType) {
+    Nop, // Usefull to patch out instructions without having to rewrite the entire block.
+    Break,
+    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
+    Mov: struct { dst: Operand, src: Operand },
+    Movsx: struct { dst: Operand, src: Operand },
+    Push: Operand,
+    Pop: Operand,
+    Add: struct { dst: Operand, src: Operand },
+    Sub: struct { dst: Operand, src: Operand },
+    And: struct { dst: Operand, src: Operand },
+    Or: struct { dst: Operand, src: Operand },
+    Cmp: struct { lhs: Operand, rhs: Operand },
+    BitTest: struct { reg: Register, offset: Operand },
+    Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+};
+
+pub const Register = enum(u4) {
+    RAX = 0,
+    RCX = 1,
+    RDX = 2,
+    RBX = 3,
+    RSP = 4,
+    RBP = 5,
+    RSI = 6,
+    RDI = 7,
+    R8 = 8,
+    R9 = 9,
+    R10 = 10,
+    R11 = 11,
+    R12 = 12,
+    R13 = 13,
+    R14 = 14,
+    R15 = 15,
+};
+
+const REX = packed struct(u8) {
+    b: bool = false,
+    x: bool = false,
+    r: bool = false,
+    w: bool = false,
+    _: u4 = 0b0100,
+};
+
+const Mod = enum(u2) {
+    indirect = 0b00, // Register indirect, or SIB without displacement (r/m = 0b100), or Displacement only (r/m = 0b101)
+    disp8 = 0b01, // 8-bit displacement
+    disp32 = 0b10, // 32-bit displacement
+    reg = 0b11,
+};
+
+const MODRM = packed struct(u8) {
+    r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
+    reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
+    mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
+};
+
+const SIB = packed struct(u8) {
+    base: u3,
+    index: u3,
+    scale: u2,
+};
+
 pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
@@ -120,21 +190,20 @@ pub const Emitter = struct {
         self.jumps_to_patch.deinit();
     }
 
-    pub fn emit_block(self: *@This(), jb: *const JITBlock) !void {
-        self.emit_block_prologue();
-        for (0..jb.instructions.items.len) |i| {
-            if (self.jumps_to_patch.get(@intCast(i))) |jumps| {
+    pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
+        for (instructions, 0..) |instr, idx| {
+            if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
                     const rel: u32 = @intCast(self.block_size - jump.source);
                     @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
                 }
                 jumps.deinit();
-                _ = self.jumps_to_patch.remove(@intCast(i));
+                _ = self.jumps_to_patch.remove(@intCast(idx));
             }
 
-            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ i, jb.instructions.items[i] });
+            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-            switch (jb.instructions.items[i]) {
+            switch (instr) {
                 .Nop => {},
                 .Break => {
                     if (builtin.mode == .Debug) {
@@ -169,7 +238,7 @@ pub const Emitter = struct {
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .Jmp => |j| {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
-                    try self.jmp(j.condition, @intCast(i + j.dst.rel));
+                    try self.jmp(j.condition, @intCast(idx + j.dst.rel));
                 },
                 .BitTest => |b| {
                     try self.bit_test(b.reg, b.offset);
@@ -181,7 +250,6 @@ pub const Emitter = struct {
             std.debug.print("Jumps left to patch: {}\n", .{self.jumps_to_patch.count()});
             @panic("Error: Unpatched jumps!");
         }
-        self.emit_block_epilogue();
     }
 
     pub fn emit_byte(self: *@This(), value: u8) !void {
@@ -199,7 +267,7 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn emit_block_prologue(self: *@This()) void {
+    pub fn emit_block_prologue(self: *@This()) !void {
         // FIXME: Don't hardcode this? Please?
 
         // push rbp
@@ -210,7 +278,7 @@ pub const Emitter = struct {
         try self.emit(u8, 0xE5);
     }
 
-    pub fn emit_block_epilogue(self: *@This()) void {
+    pub fn emit_block_epilogue(self: *@This()) !void {
         // pop    rbp
         try self.emit(u8, 0x5D);
         // ret
@@ -241,7 +309,7 @@ pub const Emitter = struct {
         try self.emit(u8, @bitCast(modrm));
     }
 
-    pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
@@ -380,7 +448,7 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn movsx(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .reg => |dst_reg| {
                 switch (src) {
@@ -431,7 +499,7 @@ pub const Emitter = struct {
     }
 
     // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
-    fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
+    fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: MemOperand, comptime ImmType: type, imm: ImmType) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
@@ -464,7 +532,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: JIT.MemOperand, reg: Register) !void {
+    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: MemOperand, reg: Register) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
@@ -505,7 +573,7 @@ pub const Emitter = struct {
     }
 
     // FIXME: I don't have a better name.
-    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm__opcode: RegOpcode, dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm__opcode: RegOpcode, dst: Operand, src: Operand) !void {
         _ = rax_dst_opcode_8;
         _ = mr_opcode_8;
         _ = rm_opcode_8;
@@ -544,32 +612,32 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src);
     }
-    pub fn or_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn or_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x0C, 0x0D, 0x08, 0x09, 0x0A, 0x0B, .Or, dst, src);
     }
-    pub fn adc(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn adc(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x14, 0x15, 0x10, 0x11, 0x12, 0x13, .Adc, dst, src);
     }
-    pub fn sbb(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn sbb(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x1C, 0x1D, 0x18, 0x19, 0x1A, 0x1B, .Sbb, dst, src);
     }
-    pub fn and_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn and_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
     }
-    pub fn sub(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src);
     }
-    pub fn xor_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn xor_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
     }
-    pub fn cmp(self: *@This(), lhs: JIT.Operand, rhs: JIT.Operand) !void {
+    pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
         return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
     }
 
-    pub fn bit_test(self: *@This(), reg: Register, offset: JIT.Operand) !void {
+    pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
         // NOTE: We only support 32-bit registers here.
         switch (offset) {
             .imm8 => |imm| {

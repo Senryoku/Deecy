@@ -1,76 +1,12 @@
 const std = @import("std");
 
-pub const Register = @import("x86_64.zig").Register;
+pub const Architecture = @import("x86_64.zig");
+pub const Register = Architecture.Register;
+pub const Instruction = Architecture.Instruction;
+pub const Operand = Architecture.Operand;
+pub const Condition = Architecture.Condition;
 
-pub const Condition = enum {
-    Always,
-    Equal,
-    NotEqual,
-    Carry,
-    NotCarry,
-    Greater, // Signed Values
-    GreaterEqual,
-    Above, // Unsigned Values
-};
-
-pub const MemOperand = struct {
-    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
-    index: ?Register = null,
-    displacement: u32 = 0,
-    size: u8,
-};
-
-const OperandType = enum {
-    reg,
-    imm8,
-    imm16,
-    imm32,
-    imm,
-    mem,
-};
-
-pub const Operand = union(OperandType) {
-    reg: Register,
-    imm8: u8,
-    imm16: u16,
-    imm32: u32,
-    imm: u64,
-    mem: MemOperand,
-};
-
-pub const InstructionType = enum {
-    Nop,
-    Break, // For Debugging
-    FunctionCall,
-    Mov,
-    Movsx, // Mov with sign extension
-    Push,
-    Pop,
-    Add,
-    Sub,
-    And,
-    Or,
-    Cmp,
-    BitTest,
-    Jmp,
-};
-
-pub const Instruction = union(InstructionType) {
-    Nop, // Usefull to patch out instructions without having to rewrite the entire block.
-    Break,
-    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
-    Mov: struct { dst: Operand, src: Operand },
-    Movsx: struct { dst: Operand, src: Operand },
-    Push: Operand,
-    Pop: Operand,
-    Add: struct { dst: Operand, src: Operand },
-    Sub: struct { dst: Operand, src: Operand },
-    And: struct { dst: Operand, src: Operand },
-    Or: struct { dst: Operand, src: Operand },
-    Cmp: struct { lhs: Operand, rhs: Operand },
-    BitTest: struct { reg: Register, offset: Operand },
-    Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
-};
+const BasicBlock = @import("basic_block.zig");
 
 pub const PatchableJump = struct {
     source_index: usize,
@@ -87,9 +23,12 @@ pub const PatchableJump = struct {
 pub const JITBlock = struct {
     instructions: std.ArrayList(Instruction),
 
+    _allocator: std.mem.Allocator,
+
     pub fn init(allocator: std.mem.Allocator) JITBlock {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
+            ._allocator = allocator,
         };
     }
 
@@ -146,5 +85,17 @@ pub const JITBlock = struct {
     // NOTE: offset could also be a register
     pub fn bit_test(self: *@This(), reg: Register, offset: u8) !void {
         try self.instructions.append(.{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
+    }
+
+    pub fn emit(self: *@This(), buffer: []u8) !BasicBlock {
+        var emitter = Architecture.Emitter.init(self._allocator, buffer);
+        defer emitter.deinit();
+
+        try emitter.emit_block_prologue();
+        try emitter.emit_instructions(self.instructions.items);
+        try emitter.emit_block_epilogue();
+
+        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
+        return emitter.block;
     }
 };

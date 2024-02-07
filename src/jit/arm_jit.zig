@@ -8,12 +8,11 @@ const JIT = @import("jit_block.zig");
 const JITBlock = JIT.JITBlock;
 
 const Architecture = @import("x86_64.zig");
-const Emitter = Architecture.Emitter;
 const ReturnRegister = Architecture.ReturnRegister;
 const ArgRegisters = Architecture.ArgRegisters;
 const SavedRegisters = Architecture.SavedRegisters;
 
-const BasicBlock = @import("basic_block.zig").BasicBlock;
+const BasicBlock = @import("basic_block.zig");
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const arm_jit_log = std.log.scoped(.arm_jit);
@@ -33,7 +32,7 @@ const BlockCache = struct {
     const BlockEntryCount = 0x200000 >> 2;
 
     buffer: []align(std.mem.page_size) u8,
-    cursor: u32 = 0,
+    cursor: usize = 0,
     blocks: []?BasicBlock = undefined,
 
     min_address: u32 = std.math.maxInt(u32),
@@ -159,36 +158,34 @@ pub const ARM7JIT = struct {
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u32) !BasicBlock {
         var ctx = start_ctx;
 
-        var emitter = Emitter.init(self._allocator, self.block_cache.buffer[self.block_cache.cursor..]);
-        defer emitter.deinit();
-
-        var jb = JITBlock.init(self._allocator);
-        defer jb.deinit();
+        var b = JITBlock.init(self._allocator);
+        defer b.deinit();
 
         // We'll be using these callee saved registers, push 'em to the stack.
-        try jb.push(.{ .reg = SavedRegisters[0] });
-        try jb.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
+        try b.push(.{ .reg = SavedRegisters[0] });
+        try b.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
 
-        try jb.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the cpu struct
+        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the cpu struct
 
+        var cycles: u32 = 0;
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
             arm_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, arm7.ARM7.disassemble(instr) });
 
             // Update PC. Done before the instruction is executed, emulating fetching.
-            try jb.add(guest_register(15), .{ .imm32 = 4 }); // PC += 4
+            try b.add(guest_register(15), .{ .imm32 = 4 }); // PC += 4
 
-            var jump = try handle_condition(&jb, &ctx, instr);
+            var jump = try handle_condition(&b, &ctx, instr);
 
             const tag = arm7.ARM7.get_instr_tag(instr);
-            const branch = try InstructionHandlers[arm7.JumpTable[tag]](&jb, &ctx, instr);
+            const branch = try InstructionHandlers[arm7.JumpTable[tag]](&b, &ctx, instr);
 
             if (jump) |*j| {
                 j.patch();
             }
 
-            emitter.block.cycles += 1; // FIXME
+            cycles += 1; // FIXME
             index += 1;
             ctx.address += 4;
 
@@ -198,21 +195,20 @@ pub const ARM7JIT = struct {
 
         // Crude appromixation, better purging slightly too often than crashing.
         // Also feels better than checking the length at each insertion.
-        if (self.block_cache.cursor + 4 * 32 + 8 * 4 * emitter.block_size >= BlockBufferSize) {
+        if (self.block_cache.cursor + 4 * 32 + 8 * 4 * b.instructions.items.len >= BlockBufferSize) {
             return error.JITCacheFull;
         }
 
         // Restore callee saved registers.
-        try jb.pop(.{ .reg = SavedRegisters[1] });
-        try jb.pop(.{ .reg = SavedRegisters[0] });
+        try b.pop(.{ .reg = SavedRegisters[1] });
+        try b.pop(.{ .reg = SavedRegisters[0] });
 
-        try emitter.emit_block(&jb);
-        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
+        var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        self.block_cache.cursor += block.buffer.len;
+        block.cycles = cycles;
 
-        self.block_cache.cursor += emitter.block_size;
-
-        self.block_cache.put(start_ctx.address, ctx.address, emitter.block);
-        return self.block_cache.get(start_ctx.address).?;
+        self.block_cache.put(start_ctx.address, ctx.address, block);
+        return block;
     }
 };
 
