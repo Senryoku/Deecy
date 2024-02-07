@@ -145,14 +145,16 @@ const TextureMetadata = struct {
 
 const DrawCall = struct {
     sampler: u8,
+    user_clip: ?HollyModule.UserTileClipInfo,
     start_index: u32 = 0,
     index_count: u32 = 0,
 
     indices: std.ArrayList(u32), // Temporary storage before uploading them to the GPU.
 
-    pub fn init(allocator: std.mem.Allocator, sampler: u8) DrawCall {
+    pub fn init(allocator: std.mem.Allocator, sampler: u8, user_clip: ?HollyModule.UserTileClipInfo) DrawCall {
         return .{
             .sampler = sampler,
+            .user_clip = user_clip,
             .indices = std.ArrayList(u32).init(allocator),
         };
     }
@@ -212,12 +214,17 @@ const PipelineKey = struct {
     depth_write_enabled: bool,
 };
 
+const DrawCallKey = struct {
+    sampler: u8,
+    user_clip: ?HollyModule.UserTileClipInfo,
+};
+
 const PipelineMetadata = struct {
-    draw_calls: std.AutoArrayHashMap(u32, DrawCall),
+    draw_calls: std.AutoArrayHashMap(DrawCallKey, DrawCall),
 
     pub fn init(allocator: std.mem.Allocator) PipelineMetadata {
         return .{
-            .draw_calls = std.AutoArrayHashMap(u32, DrawCall).init(allocator),
+            .draw_calls = std.AutoArrayHashMap(DrawCallKey, DrawCall).init(allocator),
         };
     }
 
@@ -1797,12 +1804,16 @@ pub const Renderer = struct {
                         break :put self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key).?;
                     };
 
-                    const draw_call_index = sampler;
+                    const draw_call_key = .{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
 
-                    var draw_call = pipeline.draw_calls.getPtr(draw_call_index);
+                    var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                     if (draw_call == null) {
-                        try pipeline.draw_calls.put(draw_call_index, DrawCall.init(self._allocator, sampler));
-                        draw_call = pipeline.draw_calls.getPtr(draw_call_index);
+                        try pipeline.draw_calls.put(draw_call_key, DrawCall.init(
+                            self._allocator,
+                            sampler,
+                            display_list.vertex_strips.items[idx].user_clip,
+                        ));
+                        draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                     }
 
                     for (start..self.vertices.items.len) |i| {
@@ -1832,6 +1843,18 @@ pub const Renderer = struct {
                 }
             }
         }
+    }
+
+    fn set_clipping(self: *Renderer, pass: wgpu.RenderPassEncoder, user_clip: ?HollyModule.UserTileClipInfo) void {
+        if (user_clip) |uc| {
+            // FIXME: Handle other usages.
+            //        Use Stencil for OutsideEnabled
+            if (uc.usage == .InsideEnabled) {
+                // FIXME: Correctly handle scale factor!
+                const factor = @divTrunc(self._gctx.swapchain_descriptor.width, 640);
+                pass.setScissorRect(factor * uc.x, factor * uc.y, factor * uc.width, factor * uc.height);
+            }
+        } else pass.setScissorRect(0, 0, self._gctx.swapchain_descriptor.width, self._gctx.swapchain_descriptor.height);
     }
 
     pub fn render(self: *Renderer) !void {
@@ -1946,6 +1969,8 @@ pub const Renderer = struct {
 
                             for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
                                 if (draw_call.index_count > 0) {
+                                    self.set_clipping(pass, draw_call.user_clip);
+
                                     pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
                                     pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                                 }
@@ -2002,6 +2027,8 @@ pub const Renderer = struct {
                     if (entry.value_ptr.*.draw_calls.count() > 0) {
                         for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
                             if (draw_call.index_count > 0) {
+                                self.set_clipping(pass, draw_call.user_clip);
+
                                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
                                 pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                             }

@@ -322,10 +322,10 @@ pub const ListType = enum(u3) {
 };
 
 const UserClipUsage = enum(u2) {
-    Disable,
-    Reserved,
-    InsideEnabled,
-    OutsideEnabled,
+    Disable = 0,
+    Reserved = 1,
+    InsideEnabled = 2,
+    OutsideEnabled = 3,
 };
 
 pub const GroupControl = packed struct(u8) {
@@ -1017,8 +1017,17 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParamet
     }
 }
 
+pub const UserTileClipInfo = struct {
+    usage: UserClipUsage,
+    x: u32, // In pixels
+    y: u32,
+    width: u32,
+    height: u32,
+};
+
 const VertexStrip = struct {
     polygon: Polygon,
+    user_clip: ?UserTileClipInfo,
     verter_parameter_index: usize = 0,
     verter_parameter_count: usize = 0,
 };
@@ -1065,7 +1074,7 @@ pub const Holly = struct {
     _ta_list_type: ?ListType = null,
 
     _ta_current_polygon: ?Polygon = null,
-    _ta_user_clip_usage: UserClipUsage = .Disable,
+    _ta_user_tile_clip: ?UserTileClipInfo = null,
 
     ta_display_lists: [5]DisplayList = undefined,
 
@@ -1257,6 +1266,7 @@ pub const Holly = struct {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
+                    self._ta_user_tile_clip = null;
                 }
             },
             HollyRegister.TA_LIST_CONT => {
@@ -1336,7 +1346,14 @@ pub const Holly = struct {
                 self._ta_current_polygon = null;
             },
             .UserTileClip => {
-                holly_log.debug(termcolor.red("  Unimplemented UserTileClip"), .{});
+                const user_tile_clip = @as(*const UserTileClip, @ptrCast(&self._ta_command_buffer)).*;
+                self._ta_user_tile_clip = .{
+                    .usage = .Disable,
+                    .x = 32 * user_tile_clip.user_clip_x_min,
+                    .y = 32 * user_tile_clip.user_clip_y_min,
+                    .width = 32 * (1 + user_tile_clip.user_clip_x_max - user_tile_clip.user_clip_x_min),
+                    .height = 32 * (1 + user_tile_clip.user_clip_y_max - user_tile_clip.user_clip_y_min),
+                };
             },
             .ObjectListSet => {
                 self.handle_object_list_set();
@@ -1354,7 +1371,9 @@ pub const Holly = struct {
                 // }
 
                 if (parameter_control_word.group_control.en == 1) {
-                    self._ta_user_clip_usage = parameter_control_word.group_control.user_clip;
+                    if (self._ta_user_tile_clip) |*uc| {
+                        uc.usage = parameter_control_word.group_control.user_clip;
+                    }
                 }
 
                 if (self._ta_list_type.? == .OpaqueModifierVolume) {
@@ -1387,6 +1406,13 @@ pub const Holly = struct {
                     self._ta_list_type = parameter_control_word.list_type;
                     self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
                 }
+
+                if (parameter_control_word.group_control.en == 1) {
+                    if (self._ta_user_tile_clip) |*uc| {
+                        uc.usage = parameter_control_word.group_control.user_clip;
+                    }
+                }
+
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
             },
             // VertexParameter - Yes it's a category of its own.
@@ -1448,6 +1474,7 @@ pub const Holly = struct {
                     if (parameter_control_word.end_of_strip == 1) {
                         display_list.vertex_strips.append(.{
                             .polygon = self._ta_current_polygon.?,
+                            .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
                             .verter_parameter_index = display_list.next_first_vertex_parameters_index,
                             .verter_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
                         }) catch unreachable;
