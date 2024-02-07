@@ -779,7 +779,7 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
     // Set it to a scratch register
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-    // Load the pointed value
+    // Load the pointed value and sign extend it to 32-bits.
     try block.movsx(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .size = 16 } });
     // Store it into Rn
     try store_register(block, ctx, instr.nd8.n, .{ .reg = ReturnRegister });
@@ -795,10 +795,8 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
     // Set it to a scratch register
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-    // Load the pointed value
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
-    // Store it into Rn
-    try store_register(block, ctx, instr.nd8.n, .{ .reg = ReturnRegister });
+    // Load the pointed value and store it into Rn
+    try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
     return false;
 }
 
