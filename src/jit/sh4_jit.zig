@@ -383,7 +383,7 @@ pub const SH4JIT = struct {
 
 inline fn call_interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !void {
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm = @as(u16, @bitCast(instr)) });
+    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
     try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
 }
 
@@ -499,7 +499,7 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
     try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm = ram_addr });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
     try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .size = size } });
     var to_end = try block.jmp(.Always);
 
@@ -539,7 +539,7 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
     try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm = ram_addr });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
     try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .size = size } }, .{ .reg = ArgRegisters[2] });
     var to_end = try block.jmp(.Always);
 
@@ -778,7 +778,7 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const addr = ctx.address + 4 + d;
     const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
     // Set it to a scratch register
-    try block.mov(.{ .reg = ReturnRegister }, .{ .imm = abs_addr });
+    try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
     // Load the pointed value
     try block.movsx(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .size = 16 } });
     // Store it into Rn
@@ -794,7 +794,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
     const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
     // Set it to a scratch register
-    try block.mov(.{ .reg = ReturnRegister }, .{ .imm = abs_addr });
+    try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
     // Load the pointed value
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
     // Store it into Rn

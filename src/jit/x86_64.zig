@@ -9,41 +9,41 @@ const JITBlock = @import("jit_block.zig").JITBlock;
 
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
-pub const ReturnRegister = Register.RAX;
+pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .R10, .R11 };
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
 pub const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
-    .RCX,
-    .RDX,
-    .R8,
-    .R9,
+    .rcx,
+    .rdx,
+    .r8,
+    .r9,
 } else if (builtin.os.tag == .linux) [_]Register{
-    .RDI,
-    .RSI,
-    .RDX,
-    .RCX,
-    .R8,
-    .R9,
+    .rdi,
+    .rsi,
+    .rdx,
+    .rcx,
+    .r8,
+    .r9,
 } else @compileError("Unsupported ABI");
 pub const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
-    .R12,
-    .R13,
-    .R14,
-    .R15,
-    .RBX,
-    .RSI,
-    .RDI,
+    .r12,
+    .r13,
+    .r14,
+    .r15,
+    .rbx,
+    .rsi,
+    .rdi,
     // NOTE: Both are saved registers, but I don't think I should expose them.
-    // .RBP,
-    // .RSP,
+    // .rbp,
+    // .rsp,
 } else if (builtin.os.tag == .linux) [_]Register{
-    .R12,
-    .R13,
-    .R14,
-    .R15,
-    .RBX,
-    // .RBP,
-    // .RSP,
+    .r12,
+    .r13,
+    .r14,
+    .r15,
+    .rbx,
+    // .rbp,
+    // .rsp,
 } else @compileError("Unsupported ABI");
 
 const PatchableJump = struct {
@@ -63,13 +63,38 @@ pub const Condition = enum {
     Greater, // Signed Values
     GreaterEqual,
     Above, // Unsigned Values
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return writer.print("{s}", .{@tagName(value)});
+    }
 };
+
+pub const OperandSize = enum { _8, _16, _32, _64 };
 
 pub const MemOperand = struct {
     base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
     index: ?Register = null,
     displacement: u32 = 0,
     size: u8,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        if (value.index) |index| {
+            return writer.print("[{any}+1*{any}+0x{X}]", .{
+                value.base,
+                index,
+                value.displacement,
+            });
+        } else {
+            return writer.print("[{any}+0x{X}]", .{
+                value.base,
+                value.displacement,
+            });
+        }
+    }
 };
 
 const OperandType = enum {
@@ -77,7 +102,7 @@ const OperandType = enum {
     imm8,
     imm16,
     imm32,
-    imm,
+    imm64,
     mem,
 };
 
@@ -86,8 +111,21 @@ pub const Operand = union(OperandType) {
     imm8: u8,
     imm16: u16,
     imm32: u32,
-    imm: u64,
+    imm64: u64,
     mem: MemOperand,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return switch (value) {
+            .reg => |reg| writer.print("{any}", .{reg}),
+            .imm8 => |imm| writer.print("0x{X:0>2}", .{imm}),
+            .imm16 => |imm| writer.print("0x{X:0>4}", .{imm}),
+            .imm32 => |imm| writer.print("0x{X:0>8}", .{imm}),
+            .imm64 => |imm| writer.print("0x{X:0>16}", .{imm}),
+            .mem => |mem| writer.print("{any}", .{mem}),
+        };
+    }
 };
 
 pub const InstructionType = enum {
@@ -122,25 +160,52 @@ pub const Instruction = union(InstructionType) {
     Cmp: struct { lhs: Operand, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return switch (value) {
+            .Nop => writer.print("nop", .{}),
+            .Break => writer.print("break", .{}),
+            .FunctionCall => |function| writer.print("call {any}", .{function}),
+            .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
+            .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
+            .Push => |push| writer.print("push {any}", .{push}),
+            .Pop => |pop| writer.print("pop {any}", .{pop}),
+            .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
+            .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
+            .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
+            .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
+            .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
+            .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
+            .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+        };
+    }
 };
 
 pub const Register = enum(u4) {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-    RSP = 4,
-    RBP = 5,
-    RSI = 6,
-    RDI = 7,
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
+    rax = 0,
+    rcx = 1,
+    rdx = 2,
+    rbx = 3,
+    rsp = 4,
+    rbp = 5,
+    rsi = 6,
+    rdi = 7,
+    r8 = 8,
+    r9 = 9,
+    r10 = 10,
+    r11 = 11,
+    r12 = 12,
+    r13 = 13,
+    r14 = 14,
+    r15 = 15,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return writer.print("{s}", .{@tagName(value)});
+    }
 };
 
 const REX = packed struct(u8) {
@@ -382,7 +447,7 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.mov_reg_reg(dst_reg, src_reg);
                     },
-                    .imm => |imm| {
+                    .imm64 => |imm| {
                         // movabs <reg>,<imm64>
                         try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
                         try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
@@ -588,7 +653,7 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
-                        if (dst_reg == .RAX and imm32 >= 0x80) {
+                        if (dst_reg == .rax and imm32 >= 0x80) {
                             // OP EAX, imm32
                             try self.emit(u8, rax_dst_opcode);
                             try self.emit(u32, imm32);
