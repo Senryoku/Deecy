@@ -203,6 +203,9 @@ pub const ARM7JIT = struct {
         try b.pop(.{ .reg = SavedRegisters[1] });
         try b.pop(.{ .reg = SavedRegisters[0] });
 
+        for (b.instructions.items, 0..) |instr, idx|
+            arm_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
+
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         self.block_cache.cursor += block.buffer.len;
         block.cycles = cycles;
@@ -583,11 +586,12 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                     try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
-            //.EOR => {
-            //    try load_register(b, ReturnRegister, inst.rn);
-            //    try b.append(.{ .Xor = .{ .lhs = ReturnRegister, .rhs = ArgRegisters[0] } });
-            //    try store_register(b, inst.rd, ReturnRegister);
-            //},
+            .EOR => {
+                // cpu.r(inst.rd).* = op1 ^ op2;
+                try load_register(b, ReturnRegister, inst.rn);
+                try b.append(.{ .Xor = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = ReturnRegister });
+            },
             .SUB => {
                 // cpu.r(inst.rd).* = op1 -% op2;
                 try load_register(b, ReturnRegister, inst.rn);
@@ -610,11 +614,11 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                     try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
-            //.ORR => {
-            //    try load_register(b, ReturnRegister, inst.rn);
-            //    try b.append(.{ .Or = .{ .lhs = ReturnRegister, .rhs = ArgRegisters[0] } });
-            //    try store_register(b, inst.rd, ReturnRegister);
-            //},
+            .ORR => {
+                try load_register(b, ReturnRegister, inst.rn);
+                try b.append(.{ .Or = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = ReturnRegister });
+            },
             .MOV => {
                 try store_register(b, inst.rd, op2);
             },

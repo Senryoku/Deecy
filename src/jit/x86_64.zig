@@ -145,6 +145,7 @@ pub const InstructionType = enum {
     Sub,
     And,
     Or,
+    Xor,
     Cmp,
     BitTest,
     Rol,
@@ -170,6 +171,7 @@ pub const Instruction = union(InstructionType) {
     Sub: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
+    Xor: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Operand, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Rol: struct { dst: Operand, amount: Operand },
@@ -197,6 +199,7 @@ pub const Instruction = union(InstructionType) {
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
+            .Xor => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
@@ -294,8 +297,6 @@ pub const Emitter = struct {
                 _ = self.jumps_to_patch.remove(@intCast(idx));
             }
 
-            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ idx, instr });
-
             switch (instr) {
                 .Nop => {},
                 .Break => {
@@ -328,6 +329,7 @@ pub const Emitter = struct {
                 .Sub => |a| try self.sub(a.dst, a.src),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
+                .Xor => |a| try self.xor_(a.dst, a.src),
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .Jmp => |j| {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
