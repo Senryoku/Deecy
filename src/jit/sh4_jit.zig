@@ -483,20 +483,6 @@ fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.
     try block.mov(.{ .reg = ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
 }
 
-// TODO: Add a cache for FPU registers too!
-// FIXME: Right now this will always return ReturnRegister, be careful!
-fn load_fp_reg(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
-    _ = ctx;
-    block.mov(.{ .reg = ReturnRegister }, get_fp_reg_mem(guest_reg)) catch unreachable;
-    return ReturnRegister;
-}
-// NOTE: Handles banked register (XDn) access automatically.
-fn load_dfp_reg(block: *JITBlock, ctx: *JITContext, guest_reg: u4) JIT.Register {
-    _ = ctx;
-    block.mov(.{ .reg = ReturnRegister }, get_dfp_reg_mem(guest_reg)) catch unreachable;
-    return ReturnRegister;
-}
-
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, comptime size: u32) !void {
     const src_guest_reg_location = load_register(block, ctx, guest_reg);
@@ -771,12 +757,12 @@ pub fn fmovs_FRm_at_R0_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     switch (ctx.fpscr_sz) {
         .Zero => {
             // [Rn+R0] = FRm
-            const frm = load_fp_reg(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, frm, 32);
+            try block.mov(.{ .reg = ReturnRegister }, get_fp_reg_mem(instr.nmd.m));
+            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, ReturnRegister, 32);
         },
         .One => {
-            const frm = load_dfp_reg(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, frm, 64);
+            try block.mov(.{ .reg = ReturnRegister }, get_dfp_reg_mem(instr.nmd.m));
+            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, ReturnRegister, 64);
         },
         .Unknown => {
             _ = try interpreter_fallback_cached(block, ctx, instr);
