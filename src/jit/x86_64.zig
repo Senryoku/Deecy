@@ -34,10 +34,17 @@ const REX = packed struct(u8) {
     _: u4 = 0b0100,
 };
 
+const Mod = enum(u2) {
+    indirect = 0b00, // Register indirect, or SIB without displacement (r/m = 0b100), or Displacement only (r/m = 0b101)
+    disp8 = 0b01, // 8-bit displacement
+    disp32 = 0b10, // 32-bit displacement
+    reg = 0b11,
+};
+
 const MODRM = packed struct(u8) {
     r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
     reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
-    mod: u2, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
+    mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
 };
 
 const SIB = packed struct(u8) {
@@ -248,7 +255,7 @@ pub const Emitter = struct {
     pub fn mov_reg_reg(self: *@This(), dst: JIT.Register, src: JIT.Register) !void {
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
-        const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(src), .r_m = encode(dst) };
+        const modrm: MODRM = .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) };
         try self.emit(u8, @bitCast(modrm));
     }
 
@@ -269,7 +276,7 @@ pub const Emitter = struct {
                             const opcode = 0x89;
                             try self.emit(u8, opcode);
                             const modrm: MODRM = .{
-                                .mod = 0b01,
+                                .mod = .disp8,
                                 .reg_opcode = encode(src_reg),
                                 .r_m = 0b100, // FIXME: I don't know what I'm doing :D
                             };
@@ -288,7 +295,7 @@ pub const Emitter = struct {
                                 try self.emit(u8, 0x66);
                             try self.emit(u8, opcode);
                             const modrm: MODRM = .{
-                                .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
+                                .mod = if (dst_m.displacement == 0) .indirect else .disp32,
                                 .reg_opcode = encode(src_reg),
                                 .r_m = encode(dst_m.base),
                             };
@@ -305,7 +312,7 @@ pub const Emitter = struct {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
                         const modrm: MODRM = .{
-                            .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
+                            .mod = if (dst_m.displacement == 0) .indirect else .disp32,
                             .reg_opcode = 0,
                             .r_m = encode(dst_m.base),
                         };
@@ -351,7 +358,7 @@ pub const Emitter = struct {
                             const opcode = 0x8B;
                             try self.emit(u8, opcode);
                             try self.emit(MODRM, .{
-                                .mod = 0b01,
+                                .mod = .disp8,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = 0b100, // FIXME: I don't know what I'm doing :D
                             });
@@ -373,7 +380,7 @@ pub const Emitter = struct {
                                 try self.emit(u8, 0x66);
                             try self.emit(u8, opcode);
                             try self.emit(MODRM, .{
-                                .mod = if (src_m.displacement == 0) 0b00 else 0b10,
+                                .mod = if (src_m.displacement == 0) .indirect else .disp32,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = encode(src_m.base),
                             });
@@ -405,7 +412,7 @@ pub const Emitter = struct {
                             else => return error.UnsupportedMovsxSourceSize,
                         }
                         try self.emit(MODRM, .{
-                            .mod = if (src_m.displacement == 0) 0b00 else 0b10,
+                            .mod = if (src_m.displacement == 0) .indirect else .disp32,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_m.base),
                         });
@@ -429,7 +436,7 @@ pub const Emitter = struct {
                             else => return error.UnsupportedMovsxSourceSize,
                         }
                         try self.emit(MODRM, .{
-                            .mod = 0b11,
+                            .mod = .reg,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_reg),
                         });
@@ -452,7 +459,7 @@ pub const Emitter = struct {
         try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
 
         try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
+            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
             .reg_opcode = @intFromEnum(reg_opcode),
             .r_m = encode(dst_m.base),
         });
@@ -484,7 +491,7 @@ pub const Emitter = struct {
         try self.emit(u8, opcode);
 
         try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
+            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
             .reg_opcode = encode(reg),
             .r_m = encode(dst_m.base),
         });
@@ -506,11 +513,11 @@ pub const Emitter = struct {
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
         if (imm32 < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
             try self.emit(u8, 0x83); // OP r/m32, imm8
-            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
             try self.emit(u8, @truncate(imm32));
         } else {
             try self.emit(u8, 0x81); // OP r/m32, imm32
-            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
             try self.emit(u32, imm32);
         }
     }
@@ -523,7 +530,7 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, 0x01);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
                         if (get_reg(dst_reg) == .RAX and imm32 >= 0x80) {
@@ -556,7 +563,7 @@ pub const Emitter = struct {
             .reg => |src_reg| {
                 try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
                 try self.emit(u8, 0x29);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
             },
             .imm32 => |imm32| {
                 if (get_reg(dst) == .RAX and imm32 >= 0x80) {
@@ -575,7 +582,7 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, 0x21);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm| {
                         if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
@@ -605,7 +612,7 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, 0x09);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm| {
                         if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
@@ -633,7 +640,7 @@ pub const Emitter = struct {
             .reg => |rhs_reg| {
                 try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(rhs_reg), .b = need_rex(lhs) });
                 try self.emit(u8, 0x39);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
             },
             .imm32 => |imm| {
                 if (get_reg(lhs) == .RAX and imm >= 0x80) {
@@ -651,7 +658,7 @@ pub const Emitter = struct {
             .imm8 => |imm| {
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, 0xBA);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(reg) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
                 try self.emit(u8, imm);
             },
             else => return error.UnsupportedBitTestOffset,
