@@ -1,5 +1,43 @@
 const std = @import("std");
 
+pub const Register = @import("x86_64.zig").Register;
+
+pub const Condition = enum {
+    Always,
+    Equal,
+    NotEqual,
+    Carry,
+    NotCarry,
+    Greater, // Signed Values
+    GreaterEqual,
+    Above, // Unsigned Values
+};
+
+pub const MemOperand = struct {
+    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
+    index: ?Register = null,
+    displacement: u32 = 0,
+    size: u8,
+};
+
+const OperandType = enum {
+    reg,
+    imm8,
+    imm16,
+    imm32,
+    imm,
+    mem,
+};
+
+pub const Operand = union(OperandType) {
+    reg: Register,
+    imm8: u8,
+    imm16: u16,
+    imm32: u32,
+    imm: u64,
+    mem: MemOperand,
+};
+
 pub const InstructionType = enum {
     Nop,
     Break, // For Debugging
@@ -15,57 +53,6 @@ pub const InstructionType = enum {
     Cmp,
     BitTest,
     Jmp,
-};
-
-pub const Register = enum {
-    ReturnRegister,
-    ArgRegister0,
-    ArgRegister1,
-    ArgRegister2,
-    ArgRegister3,
-    SavedRegister0,
-    SavedRegister1,
-    SavedRegister2,
-    SavedRegister3,
-    SavedRegister4,
-    SavedRegister5,
-    SavedRegister6,
-};
-
-pub const Condition = enum {
-    Always,
-    Equal,
-    NotEqual,
-    Carry,
-    NotCarry,
-    Greater, // Signed Values
-    GreaterEqual,
-    Above, // Unsigned Values
-};
-
-const OperandType = enum {
-    reg,
-    imm8,
-    imm16,
-    imm32,
-    imm,
-    mem,
-};
-
-pub const MemOperand = struct {
-    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
-    index: ?Register = null,
-    displacement: u32 = 0,
-    size: u8,
-};
-
-pub const Operand = union(OperandType) {
-    reg: Register,
-    imm8: u8,
-    imm16: u16,
-    imm32: u32,
-    imm: u64,
-    mem: MemOperand,
 };
 
 pub const Instruction = union(InstructionType) {

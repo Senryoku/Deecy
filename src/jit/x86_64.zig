@@ -7,7 +7,7 @@ const BasicBlock = @import("basic_block.zig").BasicBlock;
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
 
-const Register = enum(u4) {
+pub const Register = enum(u4) {
     RAX = 0,
     RCX = 1,
     RDX = 2,
@@ -55,10 +55,10 @@ const SIB = packed struct(u8) {
 
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
-const ReturnRegister = Register.RAX;
-const ScratchRegisters = [_]Register{ .R10, .R11 };
+pub const ReturnRegister = Register.RAX;
+pub const ScratchRegisters = [_]Register{ .R10, .R11 };
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
-const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
+pub const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
     .RCX,
     .RDX,
     .R8,
@@ -71,7 +71,7 @@ const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
     .R8,
     .R9,
 } else @compileError("Unsupported ABI");
-const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
+pub const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
     .R12,
     .R13,
     .R14,
@@ -118,23 +118,6 @@ pub const Emitter = struct {
 
     pub fn deinit(self: *@This()) void {
         self.jumps_to_patch.deinit();
-    }
-
-    pub fn get_reg(reg: JIT.Register) Register {
-        return switch (reg) {
-            .ReturnRegister => ReturnRegister,
-            .ArgRegister0 => ArgRegisters[0],
-            .ArgRegister1 => ArgRegisters[1],
-            .ArgRegister2 => ArgRegisters[2],
-            .ArgRegister3 => ArgRegisters[3],
-            .SavedRegister0 => SavedRegisters[0],
-            .SavedRegister1 => SavedRegisters[1],
-            .SavedRegister2 => SavedRegisters[2],
-            .SavedRegister3 => SavedRegisters[3],
-            .SavedRegister4 => SavedRegisters[4],
-            .SavedRegister5 => SavedRegisters[5],
-            .SavedRegister6 => SavedRegisters[6],
-        };
     }
 
     pub fn emit_block(self: *@This(), jb: *const JITBlock) !void {
@@ -234,19 +217,15 @@ pub const Emitter = struct {
         try self.ret();
     }
 
-    fn encode_reg(reg: Register) u3 {
+    fn encode(reg: Register) u3 {
         return @truncate(@intFromEnum(reg));
     }
 
-    fn encode(reg: JIT.Register) u3 {
-        return encode_reg(get_reg(reg));
+    fn need_rex(reg: Register) bool {
+        return @intFromEnum(reg) >= 8;
     }
 
-    fn need_rex(reg: JIT.Register) bool {
-        return @intFromEnum(get_reg(reg)) >= 8;
-    }
-
-    fn encode_opcode(opcode: u8, reg: JIT.Register) u8 {
+    fn encode_opcode(opcode: u8, reg: Register) u8 {
         return opcode + encode(reg);
     }
 
@@ -255,7 +234,7 @@ pub const Emitter = struct {
             try self.emit(u8, @bitCast(rex));
     }
 
-    pub fn mov_reg_reg(self: *@This(), dst: JIT.Register, src: JIT.Register) !void {
+    pub fn mov_reg_reg(self: *@This(), dst: Register, src: Register) !void {
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
         const modrm: MODRM = .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) };
@@ -485,7 +464,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: JIT.MemOperand, reg: JIT.Register) !void {
+    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: JIT.MemOperand, reg: Register) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
@@ -511,7 +490,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: JIT.Register, imm32: u32) !void {
+    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: Register, imm32: u32) !void {
         // Register is always 32bits
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
         if (imm32 < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
@@ -541,7 +520,7 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
-                        if (get_reg(dst_reg) == .RAX and imm32 >= 0x80) {
+                        if (dst_reg == .RAX and imm32 >= 0x80) {
                             // OP EAX, imm32
                             try self.emit(u8, rax_dst_opcode);
                             try self.emit(u32, imm32);
@@ -590,7 +569,7 @@ pub const Emitter = struct {
         return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
     }
 
-    pub fn bit_test(self: *@This(), reg: JIT.Register, offset: JIT.Operand) !void {
+    pub fn bit_test(self: *@This(), reg: Register, offset: JIT.Operand) !void {
         // NOTE: We only support 32-bit registers here.
         switch (offset) {
             .imm8 => |imm| {

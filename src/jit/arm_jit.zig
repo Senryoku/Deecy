@@ -6,7 +6,13 @@ const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = JIT.JITBlock;
-const Emitter = @import("x86_64.zig").Emitter;
+
+const Architecture = @import("x86_64.zig");
+const Emitter = Architecture.Emitter;
+const ReturnRegister = Architecture.ReturnRegister;
+const ArgRegisters = Architecture.ArgRegisters;
+const SavedRegisters = Architecture.SavedRegisters;
+
 const BasicBlock = @import("basic_block.zig").BasicBlock;
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
@@ -160,10 +166,10 @@ pub const ARM7JIT = struct {
         defer jb.deinit();
 
         // We'll be using these callee saved registers, push 'em to the stack.
-        try jb.push(.{ .reg = .SavedRegister0 });
-        try jb.push(.{ .reg = .SavedRegister1 }); // NOTE: We need to align the stack to 16 bytes anyway.
+        try jb.push(.{ .reg = SavedRegisters[0] });
+        try jb.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
 
-        try jb.mov(.{ .reg = .SavedRegister0 }, .{ .reg = .ArgRegister0 }); // Save the pointer to the cpu struct
+        try jb.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the cpu struct
 
         var index: u32 = 0;
         while (true) {
@@ -197,8 +203,8 @@ pub const ARM7JIT = struct {
         }
 
         // Restore callee saved registers.
-        try jb.pop(.{ .reg = .SavedRegister1 });
-        try jb.pop(.{ .reg = .SavedRegister0 });
+        try jb.pop(.{ .reg = SavedRegisters[1] });
+        try jb.pop(.{ .reg = SavedRegisters[0] });
 
         try emitter.emit_block(&jb);
         emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
@@ -211,7 +217,7 @@ pub const ARM7JIT = struct {
 };
 
 fn guest_register(arm_reg: u5) JIT.Operand {
-    return .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
+    return .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
 }
 
 fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
@@ -231,13 +237,13 @@ fn cpsr_mask(comptime flags: []const []const u8) u32 {
 }
 
 fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
-    try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-    try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
+    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+    try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
 }
 
 fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
     try extract_cpsr_flags(b, flags);
-    try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
+    try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
     return b.jmp(.NotEqual);
 }
 
@@ -286,10 +292,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             // return !cpu.cpsr.c or cpu.cpsr.z
             std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
             // FIXME: This is untested.
-            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
             var do_label = try b.jmp(.NotCarry);
-            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_2 = try b.jmp(.Carry);
             const skip_label = try b.jmp(.Always);
             do_label.patch();
@@ -300,10 +306,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             // return cpu.cpsr.n == cpu.cpsr.v
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
             var do_label_1 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -317,10 +323,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             // return cpu.cpsr.n != cpu.cpsr.v
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
             var do_label_1 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -332,16 +338,16 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
         },
         .GT => {
             // return !cpu.cpsr.z and (cpu.cpsr.n == cpu.cpsr.v)
-            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.NotCarry);
 
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
             var do_label_2 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -354,16 +360,16 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
         },
         .LE => {
             // return cpu.cpsr.z or (cpu.cpsr.n != cpu.cpsr.v)
-            try b.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(.ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
+            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
+            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
             var do_label_2 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -542,52 +548,52 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 if (inst.rd == inst.rn) {
                     try b.append(.{ .And = .{ .dst = guest_register(inst.rd), .src = op2 } });
                 } else {
-                    try load_register(b, .ReturnRegister, inst.rn); // op1
-                    try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
-                    try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                    try load_register(b, ReturnRegister, inst.rn); // op1
+                    try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                    try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
             //.EOR => {
-            //    try load_register(b, .ReturnRegister, inst.rn);
-            //    try b.append(.{ .Xor = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
-            //    try store_register(b, inst.rd, .ReturnRegister);
+            //    try load_register(b, ReturnRegister, inst.rn);
+            //    try b.append(.{ .Xor = .{ .lhs = ReturnRegister, .rhs = ArgRegisters[0] } });
+            //    try store_register(b, inst.rd, ReturnRegister);
             //},
             .SUB => {
                 // cpu.r(inst.rd).* = op1 -% op2;
-                try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
-                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                try load_register(b, ReturnRegister, inst.rn);
+                try b.append(.{ .Sub = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .RSB => {
                 // cpu.r(inst.rd).* = op2 -% op1;
-                try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .{ .reg = .ArgRegister0 }, .src = op2 } });
-                try store_register(b, inst.rd, .{ .reg = .ArgRegister0 });
+                try load_register(b, ReturnRegister, inst.rn);
+                try b.append(.{ .Sub = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = op2 } });
+                try store_register(b, inst.rd, .{ .reg = ArgRegisters[0] });
             },
             .ADD => {
                 // cpu.r(inst.rd).* = op1 +% op2;
                 if (inst.rd == inst.rn) {
                     try b.append(.{ .Add = .{ .dst = guest_register(inst.rd), .src = op2 } });
                 } else {
-                    try load_register(b, .ReturnRegister, inst.rn);
-                    try b.append(.{ .Add = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
-                    try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                    try load_register(b, ReturnRegister, inst.rn);
+                    try b.append(.{ .Add = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
+                    try store_register(b, inst.rd, .{ .reg = ReturnRegister });
                 }
             },
             //.ORR => {
-            //    try load_register(b, .ReturnRegister, inst.rn);
-            //    try b.append(.{ .Or = .{ .lhs = .ReturnRegister, .rhs = .ArgRegister0 } });
-            //    try store_register(b, inst.rd, .ReturnRegister);
+            //    try load_register(b, ReturnRegister, inst.rn);
+            //    try b.append(.{ .Or = .{ .lhs = ReturnRegister, .rhs = ArgRegisters[0] } });
+            //    try store_register(b, inst.rd, ReturnRegister);
             //},
             .MOV => {
                 try store_register(b, inst.rd, op2);
             },
             .BIC => {
                 // cpu.r(inst.rd).* = op1 & ~op2;
-                try load_register(b, .ReturnRegister, inst.rn);
+                try load_register(b, ReturnRegister, inst.rn);
                 // NOTE: Be careful if we ever support non-immediate op2!
-                try b.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
-                try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
+                try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
+                try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .MVN => {
                 // cpu.r(inst.rd).* = ~op2;
@@ -612,7 +618,7 @@ fn handle_invalid(_: *JITBlock, _: *JITContext, _: u32) !bool {
 
 fn interpreter_fallback(b: *JITBlock, ctx: *JITContext, instruction: u32) !void {
     _ = ctx;
-    try b.mov(.{ .reg = .ArgRegister0 }, .{ .reg = .SavedRegister0 });
-    try b.mov(.{ .reg = .ArgRegister1 }, .{ .imm32 = instruction });
+    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
     try b.call(arm7.interpreter.InstructionHandlers[arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]]);
 }
