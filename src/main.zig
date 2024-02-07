@@ -32,6 +32,7 @@ pub const std_options = struct {
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
+        .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },

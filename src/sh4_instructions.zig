@@ -222,7 +222,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_atRn, .name = "fmov.s FRm,@Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_rn, .access = .{ .r = .{ .rn = true }, .w = .{} } },
     .{ .code = 0b1111000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_Rm_inc_FRn, .name = "fmov.s @Rm+,FRn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_at_rm_inc_frn, .access = .{ .r = .{ .rm = true }, .w = .{ .rm = true } } },
     .{ .code = 0b1111000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_dec_Rn, .name = "fmov.s FRm,@-Rn", .privileged = false, .jit_emit_fn = sh4_jit.fmovs_frm_at_dec_rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .access = .{ .r = .{ .r0 = true, .rm = true }, .w = .{} } },
+    .{ .code = 0b1111000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_at_R0_Rm_FRn, .name = "fmov.s @(R0,Rm),FRn", .privileged = false, .issue_cycles = 1, .jit_emit_fn = sh4_jit.fmovs_at_R0_Rm_FRn, .latency_cycles = 2, .access = .{ .r = .{ .r0 = true, .rm = true }, .w = .{} } },
     .{ .code = 0b1111000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_FRm_at_R0_Rn, .name = "fmov.s FRm,@(R0,Rn)", .privileged = false, .access = .{ .r = .{ .r0 = true, .rn = true }, .w = .{} } },
 
     // Handled by single precision version - Switched by SR register sz flag
