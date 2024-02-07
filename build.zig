@@ -99,7 +99,6 @@ pub fn build(b: *std.Build) void {
     jit_perf_step.dependOn(&run_jit_perf_tests.step);
 
     const perf_step = b.step("perf", "Run performance tests");
-    perf_step.dependOn(&run_perf_tests.step);
     perf_step.dependOn(&run_jit_perf_tests.step);
 
     const pref_install = b.addInstallArtifact(interpreter_perf, .{});

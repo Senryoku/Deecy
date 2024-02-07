@@ -205,7 +205,9 @@ pub const GDI = struct {
             } else {
                 const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
                 defer self._allocator.free(track_file_path);
-                const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, track_file_path);
+                var track_file_abs_path_buffer: [std.fs.MAX_PATH_BYTES + 1]u8 = .{0} ** (std.fs.MAX_PATH_BYTES + 1);
+                const track_file_abs_path = try std.fs.cwd().realpathZ(track_file_path, &track_file_abs_path_buffer);
+                const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, @as([*:0]u8, @ptrCast(track_file_abs_path.ptr)));
 
                 const file_handle = try std.os.windows.OpenFile(file_path_w.span(), .{
                     .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
