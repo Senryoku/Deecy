@@ -69,8 +69,8 @@ pub const Operand = union(OperandType) {
 };
 
 pub const Instruction = union(InstructionType) {
-    Nop: u8, // Usefull to patch out instructions without having to rewrite the entire block.
-    Break: u8, // FIXME: Could be void, but I don't know how to initialize a void value :')
+    Nop, // Usefull to patch out instructions without having to rewrite the entire block.
+    Break,
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
     Mov: struct { dst: Operand, src: Operand },
     Movsx: struct { dst: Operand, src: Operand },
@@ -116,7 +116,7 @@ pub const JITBlock = struct {
 
     // Insert a breakpoint for debugging.
     pub fn bp(self: *@This()) !void {
-        try self.instructions.append(.{ .Break = 0x01 });
+        try self.instructions.append(.Break);
     }
 
     pub fn call(self: *@This(), func: *const anyopaque) !void {

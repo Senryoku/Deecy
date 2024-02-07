@@ -354,15 +354,15 @@ pub const SH4JIT = struct {
             try jb.pop(.{ .reg = .SavedRegister5 });
             try jb.pop(.{ .reg = .SavedRegister4 });
         } else {
-            jb.instructions.items[optional_saved_register_offset + 2] = .{ .Nop = 1 };
-            jb.instructions.items[optional_saved_register_offset + 3] = .{ .Nop = 1 };
+            jb.instructions.items[optional_saved_register_offset + 2] = .Nop;
+            jb.instructions.items[optional_saved_register_offset + 3] = .Nop;
         }
         if (ctx.highest_saved_register_used >= 1) {
             try jb.pop(.{ .reg = .SavedRegister3 });
             try jb.pop(.{ .reg = .SavedRegister2 });
         } else {
-            jb.instructions.items[optional_saved_register_offset + 0] = .{ .Nop = 1 };
-            jb.instructions.items[optional_saved_register_offset + 1] = .{ .Nop = 1 };
+            jb.instructions.items[optional_saved_register_offset + 0] = .Nop;
+            jb.instructions.items[optional_saved_register_offset + 1] = .Nop;
         }
 
         try jb.pop(.{ .reg = .SavedRegister1 });
