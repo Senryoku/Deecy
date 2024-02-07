@@ -3,27 +3,209 @@ const builtin = @import("builtin");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
-const BasicBlock = @import("basic_block.zig").BasicBlock;
+const BasicBlock = @import("basic_block.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
 
-const Registers = enum(u4) {
-    RAX = 0,
-    RCX = 1,
-    RDX = 2,
-    RBX = 3,
-    RSP = 4,
-    RBP = 5,
-    RSI = 6,
-    RDI = 7,
-    R8 = 8,
-    R9 = 9,
-    R10 = 10,
-    R11 = 11,
-    R12 = 12,
-    R13 = 13,
-    R14 = 14,
-    R15 = 15,
+// Tried using builtin.abi, but it returns .gnu on Windows.
+
+pub const ReturnRegister = Register.rax;
+pub const ScratchRegisters = [_]Register{ .R10, .R11 };
+// ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
+pub const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
+    .rcx,
+    .rdx,
+    .r8,
+    .r9,
+} else if (builtin.os.tag == .linux) [_]Register{
+    .rdi,
+    .rsi,
+    .rdx,
+    .rcx,
+    .r8,
+    .r9,
+} else @compileError("Unsupported ABI");
+pub const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
+    .r12,
+    .r13,
+    .r14,
+    .r15,
+    .rbx,
+    .rsi,
+    .rdi,
+    // NOTE: Both are saved registers, but I don't think I should expose them.
+    // .rbp,
+    // .rsp,
+} else if (builtin.os.tag == .linux) [_]Register{
+    .r12,
+    .r13,
+    .r14,
+    .r15,
+    .rbx,
+    // .rbp,
+    // .rsp,
+} else @compileError("Unsupported ABI");
+
+const PatchableJump = struct {
+    source: u32,
+    address_to_patch: u32,
+};
+
+// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
+const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
+
+pub const Condition = enum {
+    Always,
+    Equal,
+    NotEqual,
+    Carry,
+    NotCarry,
+    Greater, // Signed Values
+    GreaterEqual,
+    Above, // Unsigned Values
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return writer.print("{s}", .{@tagName(value)});
+    }
+};
+
+pub const OperandSize = enum { _8, _16, _32, _64 };
+
+pub const MemOperand = struct {
+    base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
+    index: ?Register = null,
+    displacement: u32 = 0,
+    size: u8,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        if (value.index) |index| {
+            return writer.print("[{any}+1*{any}+0x{X}]", .{
+                value.base,
+                index,
+                value.displacement,
+            });
+        } else {
+            return writer.print("[{any}+0x{X}]", .{
+                value.base,
+                value.displacement,
+            });
+        }
+    }
+};
+
+const OperandType = enum {
+    reg,
+    imm8,
+    imm16,
+    imm32,
+    imm64,
+    mem,
+};
+
+pub const Operand = union(OperandType) {
+    reg: Register,
+    imm8: u8,
+    imm16: u16,
+    imm32: u32,
+    imm64: u64,
+    mem: MemOperand,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return switch (value) {
+            .reg => |reg| writer.print("{any}", .{reg}),
+            .imm8 => |imm| writer.print("0x{X:0>2}", .{imm}),
+            .imm16 => |imm| writer.print("0x{X:0>4}", .{imm}),
+            .imm32 => |imm| writer.print("0x{X:0>8}", .{imm}),
+            .imm64 => |imm| writer.print("0x{X:0>16}", .{imm}),
+            .mem => |mem| writer.print("{any}", .{mem}),
+        };
+    }
+};
+
+pub const InstructionType = enum {
+    Nop,
+    Break, // For Debugging
+    FunctionCall,
+    Mov,
+    Movsx, // Mov with sign extension
+    Push,
+    Pop,
+    Add,
+    Sub,
+    And,
+    Or,
+    Cmp,
+    BitTest,
+    Jmp,
+};
+
+pub const Instruction = union(InstructionType) {
+    Nop, // Usefull to patch out instructions without having to rewrite the entire block.
+    Break,
+    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
+    Mov: struct { dst: Operand, src: Operand },
+    Movsx: struct { dst: Operand, src: Operand },
+    Push: Operand,
+    Pop: Operand,
+    Add: struct { dst: Operand, src: Operand },
+    Sub: struct { dst: Operand, src: Operand },
+    And: struct { dst: Operand, src: Operand },
+    Or: struct { dst: Operand, src: Operand },
+    Cmp: struct { lhs: Operand, rhs: Operand },
+    BitTest: struct { reg: Register, offset: Operand },
+    Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return switch (value) {
+            .Nop => writer.print("nop", .{}),
+            .Break => writer.print("break", .{}),
+            .FunctionCall => |function| writer.print("call {any}", .{function}),
+            .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
+            .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
+            .Push => |push| writer.print("push {any}", .{push}),
+            .Pop => |pop| writer.print("pop {any}", .{pop}),
+            .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
+            .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
+            .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
+            .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
+            .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
+            .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
+            .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+        };
+    }
+};
+
+pub const Register = enum(u4) {
+    rax = 0,
+    rcx = 1,
+    rdx = 2,
+    rbx = 3,
+    rsp = 4,
+    rbp = 5,
+    rsi = 6,
+    rdi = 7,
+    r8 = 8,
+    r9 = 9,
+    r10 = 10,
+    r11 = 11,
+    r12 = 12,
+    r13 = 13,
+    r14 = 14,
+    r15 = 15,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return writer.print("{s}", .{@tagName(value)});
+    }
 };
 
 const REX = packed struct(u8) {
@@ -34,10 +216,17 @@ const REX = packed struct(u8) {
     _: u4 = 0b0100,
 };
 
+const Mod = enum(u2) {
+    indirect = 0b00, // Register indirect, or SIB without displacement (r/m = 0b100), or Displacement only (r/m = 0b101)
+    disp8 = 0b01, // 8-bit displacement
+    disp32 = 0b10, // 32-bit displacement
+    reg = 0b11,
+};
+
 const MODRM = packed struct(u8) {
     r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
     reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
-    mod: u2, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
+    mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
 };
 
 const SIB = packed struct(u8) {
@@ -45,50 +234,6 @@ const SIB = packed struct(u8) {
     index: u3,
     scale: u2,
 };
-
-// Tried using builtin.abi, but it returns .gnu on Windows.
-
-const ReturnRegister = if (builtin.os.tag == .windows) Registers.RAX else @compileError("Unsupported ABI");
-const ArgRegisters = if (builtin.os.tag == .windows) [_]Registers{
-    Registers.RCX,
-    Registers.RDX,
-    Registers.R8,
-    Registers.R9,
-} else if (builtin.os.tag == .linux) [_]Registers{
-    Registers.RDI,
-    Registers.RSI,
-    Registers.RDX,
-    Registers.RCX,
-    Registers.R8,
-    Registers.R9,
-} else @compileError("Unsupported ABI");
-const SavedRegisters = if (builtin.os.tag == .windows) [_]Registers{
-    Registers.R12,
-    Registers.R13,
-    Registers.R14,
-    Registers.R15,
-    Registers.RBX,
-    Registers.RSI,
-    Registers.RDI,
-    Registers.RBP,
-    Registers.RSP,
-} else if (builtin.os.tag == .linux) [_]Registers{
-    Registers.R12,
-    Registers.R13,
-    Registers.R14,
-    Registers.R15,
-    Registers.RBX,
-    Registers.RBP,
-    Registers.RSP,
-} else @compileError("Unsupported ABI");
-
-const PatchableJump = struct {
-    source: u32,
-    address_to_patch: u32,
-};
-
-// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
-const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
 
 pub const Emitter = struct {
     block: BasicBlock,
@@ -110,38 +255,20 @@ pub const Emitter = struct {
         self.jumps_to_patch.deinit();
     }
 
-    pub fn get_reg(reg: JIT.Register) Registers {
-        return switch (reg) {
-            .ReturnRegister => ReturnRegister,
-            .ArgRegister0 => ArgRegisters[0],
-            .ArgRegister1 => ArgRegisters[1],
-            .ArgRegister2 => ArgRegisters[2],
-            .ArgRegister3 => ArgRegisters[3],
-            .SavedRegister0 => SavedRegisters[0],
-            .SavedRegister1 => SavedRegisters[1],
-            .SavedRegister2 => SavedRegisters[2],
-            .SavedRegister3 => SavedRegisters[3],
-            .SavedRegister4 => SavedRegisters[4],
-            .SavedRegister5 => SavedRegisters[5],
-            .SavedRegister6 => SavedRegisters[6],
-        };
-    }
-
-    pub fn emit_block(self: *@This(), jb: *const JITBlock) !void {
-        self.emit_block_prologue();
-        for (0..jb.instructions.items.len) |i| {
-            if (self.jumps_to_patch.get(@intCast(i))) |jumps| {
+    pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
+        for (instructions, 0..) |instr, idx| {
+            if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
                     const rel: u32 = @intCast(self.block_size - jump.source);
                     @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
                 }
                 jumps.deinit();
-                _ = self.jumps_to_patch.remove(@intCast(i));
+                _ = self.jumps_to_patch.remove(@intCast(idx));
             }
 
-            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ i, jb.instructions.items[i] });
+            x86_64_emitter_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-            switch (jb.instructions.items[i]) {
+            switch (instr) {
                 .Nop => {},
                 .Break => {
                     if (builtin.mode == .Debug) {
@@ -176,7 +303,7 @@ pub const Emitter = struct {
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .Jmp => |j| {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
-                    try self.jmp(j.condition, @intCast(i + j.dst.rel));
+                    try self.jmp(j.condition, @intCast(idx + j.dst.rel));
                 },
                 .BitTest => |b| {
                     try self.bit_test(b.reg, b.offset);
@@ -188,7 +315,6 @@ pub const Emitter = struct {
             std.debug.print("Jumps left to patch: {}\n", .{self.jumps_to_patch.count()});
             @panic("Error: Unpatched jumps!");
         }
-        self.emit_block_epilogue();
     }
 
     pub fn emit_byte(self: *@This(), value: u8) !void {
@@ -206,7 +332,7 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn emit_block_prologue(self: *@This()) void {
+    pub fn emit_block_prologue(self: *@This()) !void {
         // FIXME: Don't hardcode this? Please?
 
         // push rbp
@@ -217,26 +343,22 @@ pub const Emitter = struct {
         try self.emit(u8, 0xE5);
     }
 
-    pub fn emit_block_epilogue(self: *@This()) void {
+    pub fn emit_block_epilogue(self: *@This()) !void {
         // pop    rbp
         try self.emit(u8, 0x5D);
         // ret
         try self.ret();
     }
 
-    fn encode_reg(reg: Registers) u3 {
+    fn encode(reg: Register) u3 {
         return @truncate(@intFromEnum(reg));
     }
 
-    fn encode(reg: JIT.Register) u3 {
-        return encode_reg(get_reg(reg));
+    fn need_rex(reg: Register) bool {
+        return @intFromEnum(reg) >= 8;
     }
 
-    fn need_rex(reg: JIT.Register) bool {
-        return @intFromEnum(get_reg(reg)) >= 8;
-    }
-
-    fn encode_opcode(opcode: u8, reg: JIT.Register) u8 {
+    fn encode_opcode(opcode: u8, reg: Register) u8 {
         return opcode + encode(reg);
     }
 
@@ -245,14 +367,14 @@ pub const Emitter = struct {
             try self.emit(u8, @bitCast(rex));
     }
 
-    pub fn mov_reg_reg(self: *@This(), dst: JIT.Register, src: JIT.Register) !void {
+    pub fn mov_reg_reg(self: *@This(), dst: Register, src: Register) !void {
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
-        const modrm: MODRM = .{ .mod = 0b11, .reg_opcode = encode(src), .r_m = encode(dst) };
+        const modrm: MODRM = .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) };
         try self.emit(u8, @bitCast(modrm));
     }
 
-    pub fn mov(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
@@ -269,7 +391,7 @@ pub const Emitter = struct {
                             const opcode = 0x89;
                             try self.emit(u8, opcode);
                             const modrm: MODRM = .{
-                                .mod = 0b01,
+                                .mod = .disp8,
                                 .reg_opcode = encode(src_reg),
                                 .r_m = 0b100, // FIXME: I don't know what I'm doing :D
                             };
@@ -288,7 +410,7 @@ pub const Emitter = struct {
                                 try self.emit(u8, 0x66);
                             try self.emit(u8, opcode);
                             const modrm: MODRM = .{
-                                .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
+                                .mod = if (dst_m.displacement == 0) .indirect else .disp32,
                                 .reg_opcode = encode(src_reg),
                                 .r_m = encode(dst_m.base),
                             };
@@ -305,7 +427,7 @@ pub const Emitter = struct {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
                         const modrm: MODRM = .{
-                            .mod = if (dst_m.displacement == 0) 0b00 else 0b10,
+                            .mod = if (dst_m.displacement == 0) .indirect else .disp32,
                             .reg_opcode = 0,
                             .r_m = encode(dst_m.base),
                         };
@@ -325,7 +447,7 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         try self.mov_reg_reg(dst_reg, src_reg);
                     },
-                    .imm => |imm| {
+                    .imm64 => |imm| {
                         // movabs <reg>,<imm64>
                         try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
                         try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
@@ -351,7 +473,7 @@ pub const Emitter = struct {
                             const opcode = 0x8B;
                             try self.emit(u8, opcode);
                             try self.emit(MODRM, .{
-                                .mod = 0b01,
+                                .mod = .disp8,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = 0b100, // FIXME: I don't know what I'm doing :D
                             });
@@ -373,7 +495,7 @@ pub const Emitter = struct {
                                 try self.emit(u8, 0x66);
                             try self.emit(u8, opcode);
                             try self.emit(MODRM, .{
-                                .mod = if (src_m.displacement == 0) 0b00 else 0b10,
+                                .mod = if (src_m.displacement == 0) .indirect else .disp32,
                                 .reg_opcode = encode(dst.reg),
                                 .r_m = encode(src_m.base),
                             });
@@ -391,7 +513,7 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn movsx(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+    pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .reg => |dst_reg| {
                 switch (src) {
@@ -405,7 +527,7 @@ pub const Emitter = struct {
                             else => return error.UnsupportedMovsxSourceSize,
                         }
                         try self.emit(MODRM, .{
-                            .mod = if (src_m.displacement == 0) 0b00 else 0b10,
+                            .mod = if (src_m.displacement == 0) .indirect else .disp32,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_m.base),
                         });
@@ -429,7 +551,7 @@ pub const Emitter = struct {
                             else => return error.UnsupportedMovsxSourceSize,
                         }
                         try self.emit(MODRM, .{
-                            .mod = 0b11,
+                            .mod = .reg,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_reg),
                         });
@@ -442,17 +564,17 @@ pub const Emitter = struct {
     }
 
     // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
-    fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: JIT.MemOperand, comptime ImmType: type, imm: ImmType) !void {
+    fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: MemOperand, comptime ImmType: type, imm: ImmType) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
 
-        // 0x83: ADD r/m32, imm8 - Sign-extended imm8 - Shorter encoding
+        // 0x83: OP r/m32, imm8 - Sign-extended imm8 - Shorter encoding
         try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
 
         try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
+            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
             .reg_opcode = @intFromEnum(reg_opcode),
             .r_m = encode(dst_m.base),
         });
@@ -475,7 +597,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: JIT.MemOperand, reg: JIT.Register) !void {
+    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: MemOperand, reg: Register) !void {
         std.debug.assert(dst_m.size == 32);
 
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
@@ -484,7 +606,7 @@ pub const Emitter = struct {
         try self.emit(u8, opcode);
 
         try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) 0b00 else (if (dst_m.displacement < 0x80) 0b01 else 0b10),
+            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
             .reg_opcode = encode(reg),
             .r_m = encode(dst_m.base),
         });
@@ -501,157 +623,92 @@ pub const Emitter = struct {
         }
     }
 
-    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: JIT.Register, imm32: u32) !void {
+    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: Register, imm32: u32) !void {
         // Register is always 32bits
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
         if (imm32 < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
             try self.emit(u8, 0x83); // OP r/m32, imm8
-            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
             try self.emit(u8, @truncate(imm32));
         } else {
             try self.emit(u8, 0x81); // OP r/m32, imm32
-            try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
             try self.emit(u32, imm32);
         }
     }
 
-    pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        // FIXME: Handle different sizes. We expect a u32 immediate.
+    // FIXME: I don't have a better name.
+    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm__opcode: RegOpcode, dst: Operand, src: Operand) !void {
+        _ = rax_dst_opcode_8;
+        _ = mr_opcode_8;
+        _ = rm_opcode_8;
+        _ = rm_opcode;
+
         switch (dst) {
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x01);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                        try self.emit(u8, mr_opcode);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
-                        if (get_reg(dst_reg) == .RAX and imm32 >= 0x80) {
-                            // ADD EAX, imm32
-                            try self.emit(u8, 0x05);
+                        if (dst_reg == .rax and imm32 >= 0x80) {
+                            // OP EAX, imm32
+                            try self.emit(u8, rax_dst_opcode);
                             try self.emit(u32, imm32);
-                        } else try reg_dest_imm_src(self, .Add, dst_reg, imm32);
+                        } else try reg_dest_imm_src(self, rm_imm__opcode, dst_reg, imm32);
                     },
-                    else => return error.InvalidAddSource,
+                    else => return error.InvalidSource,
                 }
             },
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        try mem_dest_reg_src(self, 0x01, dst_m, src_reg);
+                        try mem_dest_reg_src(self, mr_opcode, dst_m, src_reg);
                     },
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .Add, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, rm_imm__opcode, dst_m, u32, imm);
                     },
-                    else => return error.InvalidAddSource,
+                    else => return error.InvalidSource,
                 }
             },
-            else => return error.InvalidAddDestination,
+            else => return error.InvalidDestination,
         }
     }
 
-    pub fn sub(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
-        // FIXME: Handle different sizes. We expect a u32 immediate.
-        switch (src) {
-            .reg => |src_reg| {
-                try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
-                try self.emit(u8, 0x29);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
-            },
-            .imm32 => |imm32| {
-                if (get_reg(dst) == .RAX and imm32 >= 0x80) {
-                    try self.emit(u8, 0x2D);
-                    try self.emit(u32, imm32);
-                } else try reg_dest_imm_src(self, .Sub, dst, imm32);
-            },
-            else => return error.InvalidSubSource,
-        }
+    pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src);
+    }
+    pub fn or_(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x0C, 0x0D, 0x08, 0x09, 0x0A, 0x0B, .Or, dst, src);
+    }
+    pub fn adc(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x14, 0x15, 0x10, 0x11, 0x12, 0x13, .Adc, dst, src);
+    }
+    pub fn sbb(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x1C, 0x1D, 0x18, 0x19, 0x1A, 0x1B, .Sbb, dst, src);
+    }
+    pub fn and_(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
+    }
+    pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src);
+    }
+    pub fn xor_(self: *@This(), dst: Operand, src: Operand) !void {
+        return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
+    }
+    pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
+        return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
     }
 
-    pub fn and_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        switch (dst) {
-            .reg => |dst_reg| {
-                switch (src) {
-                    .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x21);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
-                    },
-                    .imm32 => |imm| {
-                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
-                            try self.emit(u8, 0x25);
-                            try self.emit(u32, imm);
-                        } else try reg_dest_imm_src(self, .And, dst_reg, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            .mem => |dst_m| {
-                switch (src) {
-                    .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .And, dst_m, u32, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            else => return error.InvalidAndDestination,
-        }
-    }
-
-    pub fn or_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        switch (dst) {
-            .reg => |dst_reg| {
-                switch (src) {
-                    .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x09);
-                        try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
-                    },
-                    .imm32 => |imm| {
-                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
-                            try self.emit(u8, 0x0D);
-                            try self.emit(u32, imm);
-                        } else try reg_dest_imm_src(self, .Or, dst_reg, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            .mem => |dst_m| {
-                switch (src) {
-                    .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .Or, dst_m, u32, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            else => return error.InvalidAndDestination,
-        }
-    }
-
-    pub fn cmp(self: *@This(), lhs: JIT.Register, rhs: JIT.Operand) !void {
-        switch (rhs) {
-            .reg => |rhs_reg| {
-                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(rhs_reg), .b = need_rex(lhs) });
-                try self.emit(u8, 0x39);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
-            },
-            .imm32 => |imm| {
-                if (get_reg(lhs) == .RAX and imm >= 0x80) {
-                    try self.emit(u8, 0x3D);
-                    try self.emit(u32, imm);
-                } else try reg_dest_imm_src(self, .Cmp, lhs, imm);
-            },
-            else => return error.UnsupportedCmpRHS,
-        }
-    }
-
-    pub fn bit_test(self: *@This(), reg: JIT.Register, offset: JIT.Operand) !void {
+    pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
         // NOTE: We only support 32-bit registers here.
         switch (offset) {
             .imm8 => |imm| {
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, 0xBA);
-                try self.emit(MODRM, .{ .mod = 0b11, .reg_opcode = 4, .r_m = encode(reg) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
                 try self.emit(u8, imm);
             },
             else => return error.UnsupportedBitTestOffset,
@@ -666,55 +723,22 @@ pub const Emitter = struct {
 
         var address = self.block_size;
 
-        switch (condition) {
-            .Always => {
-                try self.emit(u8, 0xE9);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Equal => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x84);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .NotEqual => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x85);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Carry => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x82);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .NotCarry => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x83);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Greater => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x8F);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .GreaterEqual => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x8D);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Above => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x87);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-        }
+        if (condition != .Always)
+            try self.emit(u8, 0x0F);
+
+        try self.emit(u8, switch (condition) {
+            .Always => 0xE9,
+            .Equal => 0x84,
+            .NotEqual => 0x85,
+            .Carry => 0x82,
+            .NotCarry => 0x83,
+            .Greater => 0x8F,
+            .GreaterEqual => 0x8D,
+            .Above => 0x87,
+        });
+
+        address = self.block_size;
+        try self.emit(u32, 0x00C0FFEE);
 
         const jumps = try self.jumps_to_patch.getOrPut(dst_instruction_index);
         if (!jumps.found_existing)

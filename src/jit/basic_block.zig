@@ -1,16 +1,14 @@
 const std = @import("std");
 
-pub const BasicBlock = struct {
-    buffer: []u8,
-    cycles: u32 = 0,
+buffer: []u8,
+cycles: u32 = 0,
 
-    pub fn init(buffer: []u8) @This() {
-        return .{
-            .buffer = buffer,
-        };
-    }
+pub fn init(buffer: []u8) @This() {
+    return .{
+        .buffer = buffer,
+    };
+}
 
-    pub fn execute(self: *@This(), user_data: *anyopaque) void {
-        @as(*const fn (*anyopaque) void, @ptrCast(self.buffer.ptr))(user_data);
-    }
-};
+pub fn execute(self: *@This(), user_data: *anyopaque) void {
+    @as(*const fn (*anyopaque) void, @ptrCast(self.buffer.ptr))(user_data);
+}
