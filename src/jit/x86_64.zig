@@ -611,55 +611,22 @@ pub const Emitter = struct {
 
         var address = self.block_size;
 
-        switch (condition) {
-            .Always => {
-                try self.emit(u8, 0xE9);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Equal => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x84);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .NotEqual => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x85);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Carry => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x82);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .NotCarry => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x83);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Greater => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x8F);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .GreaterEqual => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x8D);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-            .Above => {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0x87);
-                address = self.block_size;
-                try self.emit(u32, 0x00C0FFEE);
-            },
-        }
+        if (condition != .Always)
+            try self.emit(u8, 0x0F);
+
+        try self.emit(u8, switch (condition) {
+            .Always => 0xE9,
+            .Equal => 0x84,
+            .NotEqual => 0x85,
+            .Carry => 0x82,
+            .NotCarry => 0x83,
+            .Greater => 0x8F,
+            .GreaterEqual => 0x8D,
+            .Above => 0x87,
+        });
+
+        address = self.block_size;
+        try self.emit(u32, 0x00C0FFEE);
 
         const jumps = try self.jumps_to_patch.getOrPut(dst_instruction_index);
         if (!jumps.found_existing)
