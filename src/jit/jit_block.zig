@@ -77,10 +77,10 @@ pub const Instruction = union(InstructionType) {
     Push: Operand,
     Pop: Operand,
     Add: struct { dst: Operand, src: Operand },
-    Sub: struct { dst: Register, src: Operand },
+    Sub: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
-    Cmp: struct { lhs: Register, rhs: Operand },
+    Cmp: struct { lhs: Operand, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
 };
@@ -142,7 +142,7 @@ pub const JITBlock = struct {
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
     }
-    pub fn sub(self: *@This(), dst: Register, src: Operand) !void {
+    pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Sub = .{ .dst = dst, .src = src } });
     }
 

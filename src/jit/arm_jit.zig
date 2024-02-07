@@ -237,7 +237,7 @@ fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
 
 fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
     try extract_cpsr_flags(b, flags);
-    try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
+    try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
     return b.jmp(.NotEqual);
 }
 
@@ -300,10 +300,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             // return cpu.cpsr.n == cpu.cpsr.v
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
             var do_label_1 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -317,10 +317,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             // return cpu.cpsr.n != cpu.cpsr.v
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
             var do_label_1 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -338,10 +338,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
 
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
             var do_label_2 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -360,10 +360,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
 
             try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
             var do_label_2 = try b.jmp(.Equal);
 
             const skip_label = try b.jmp(.Always);
@@ -555,13 +555,13 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             .SUB => {
                 // cpu.r(inst.rd).* = op1 -% op2;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .ReturnRegister, .src = op2 } });
+                try b.append(.{ .Sub = .{ .dst = .{ .reg = .ReturnRegister }, .src = op2 } });
                 try store_register(b, inst.rd, .{ .reg = .ReturnRegister });
             },
             .RSB => {
                 // cpu.r(inst.rd).* = op2 -% op1;
                 try load_register(b, .ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .ArgRegister0, .src = op2 } });
+                try b.append(.{ .Sub = .{ .dst = .{ .reg = .ArgRegister0 }, .src = op2 } });
                 try store_register(b, inst.rd, .{ .reg = .ArgRegister0 });
             },
             .ADD => {

@@ -79,16 +79,17 @@ const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
     .RBX,
     .RSI,
     .RDI,
-    .RBP,
-    .RSP,
+    // NOTE: Both are saved registers, but I don't think I should expose them.
+    // .RBP,
+    // .RSP,
 } else if (builtin.os.tag == .linux) [_]Register{
     .R12,
     .R13,
     .R14,
     .R15,
     .RBX,
-    .RBP,
-    .RSP,
+    // .RBP,
+    // .RSP,
 } else @compileError("Unsupported ABI");
 
 const PatchableJump = struct {
@@ -457,7 +458,7 @@ pub const Emitter = struct {
         // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
 
-        // 0x83: ADD r/m32, imm8 - Sign-extended imm8 - Shorter encoding
+        // 0x83: OP r/m32, imm8 - Sign-extended imm8 - Shorter encoding
         try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
 
         try self.emit(MODRM, .{
@@ -524,134 +525,69 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        // FIXME: Handle different sizes. We expect a u32 immediate.
+    // FIXME: I don't have a better name.
+    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm__opcode: RegOpcode, dst: JIT.Operand, src: JIT.Operand) !void {
+        _ = rax_dst_opcode_8;
+        _ = mr_opcode_8;
+        _ = rm_opcode_8;
+        _ = rm_opcode;
+
         switch (dst) {
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
                         try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x01);
+                        try self.emit(u8, mr_opcode);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     .imm32 => |imm32| {
                         if (get_reg(dst_reg) == .RAX and imm32 >= 0x80) {
-                            // ADD EAX, imm32
-                            try self.emit(u8, 0x05);
+                            // OP EAX, imm32
+                            try self.emit(u8, rax_dst_opcode);
                             try self.emit(u32, imm32);
-                        } else try reg_dest_imm_src(self, .Add, dst_reg, imm32);
+                        } else try reg_dest_imm_src(self, rm_imm__opcode, dst_reg, imm32);
                     },
-                    else => return error.InvalidAddSource,
+                    else => return error.InvalidSource,
                 }
             },
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        try mem_dest_reg_src(self, 0x01, dst_m, src_reg);
+                        try mem_dest_reg_src(self, mr_opcode, dst_m, src_reg);
                     },
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .Add, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, rm_imm__opcode, dst_m, u32, imm);
                     },
-                    else => return error.InvalidAddSource,
+                    else => return error.InvalidSource,
                 }
             },
-            else => return error.InvalidAddDestination,
+            else => return error.InvalidDestination,
         }
     }
 
-    pub fn sub(self: *@This(), dst: JIT.Register, src: JIT.Operand) !void {
-        // FIXME: Handle different sizes. We expect a u32 immediate.
-        switch (src) {
-            .reg => |src_reg| {
-                try self.emit_rex_if_needed(.{ .r = need_rex(dst), .b = need_rex(src_reg) });
-                try self.emit(u8, 0x29);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst) });
-            },
-            .imm32 => |imm32| {
-                if (get_reg(dst) == .RAX and imm32 >= 0x80) {
-                    try self.emit(u8, 0x2D);
-                    try self.emit(u32, imm32);
-                } else try reg_dest_imm_src(self, .Sub, dst, imm32);
-            },
-            else => return error.InvalidSubSource,
-        }
+    pub fn add(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src);
     }
-
-    pub fn and_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        switch (dst) {
-            .reg => |dst_reg| {
-                switch (src) {
-                    .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x21);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
-                    },
-                    .imm32 => |imm| {
-                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
-                            try self.emit(u8, 0x25);
-                            try self.emit(u32, imm);
-                        } else try reg_dest_imm_src(self, .And, dst_reg, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            .mem => |dst_m| {
-                switch (src) {
-                    .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .And, dst_m, u32, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            else => return error.InvalidAndDestination,
-        }
-    }
-
     pub fn or_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
-        switch (dst) {
-            .reg => |dst_reg| {
-                switch (src) {
-                    .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x09);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
-                    },
-                    .imm32 => |imm| {
-                        if (get_reg(dst_reg) == .RAX and imm >= 0x80) {
-                            try self.emit(u8, 0x0D);
-                            try self.emit(u32, imm);
-                        } else try reg_dest_imm_src(self, .Or, dst_reg, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            .mem => |dst_m| {
-                switch (src) {
-                    .imm32 => |imm| {
-                        try mem_dest_imm_src(self, .Or, dst_m, u32, imm);
-                    },
-                    else => return error.InvalidAndSource,
-                }
-            },
-            else => return error.InvalidAndDestination,
-        }
+        return opcode_81_83(self, 0x0C, 0x0D, 0x08, 0x09, 0x0A, 0x0B, .Or, dst, src);
     }
-
-    pub fn cmp(self: *@This(), lhs: JIT.Register, rhs: JIT.Operand) !void {
-        switch (rhs) {
-            .reg => |rhs_reg| {
-                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(rhs_reg), .b = need_rex(lhs) });
-                try self.emit(u8, 0x39);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs) });
-            },
-            .imm32 => |imm| {
-                if (get_reg(lhs) == .RAX and imm >= 0x80) {
-                    try self.emit(u8, 0x3D);
-                    try self.emit(u32, imm);
-                } else try reg_dest_imm_src(self, .Cmp, lhs, imm);
-            },
-            else => return error.UnsupportedCmpRHS,
-        }
+    pub fn adc(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x14, 0x15, 0x10, 0x11, 0x12, 0x13, .Adc, dst, src);
+    }
+    pub fn sbb(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x1C, 0x1D, 0x18, 0x19, 0x1A, 0x1B, .Sbb, dst, src);
+    }
+    pub fn and_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
+    }
+    pub fn sub(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src);
+    }
+    pub fn xor_(self: *@This(), dst: JIT.Operand, src: JIT.Operand) !void {
+        return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
+    }
+    pub fn cmp(self: *@This(), lhs: JIT.Operand, rhs: JIT.Operand) !void {
+        return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
     }
 
     pub fn bit_test(self: *@This(), reg: JIT.Register, offset: JIT.Operand) !void {

@@ -490,7 +490,7 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
     try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
-    try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
@@ -530,7 +530,7 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, displacemen
     // RAM Fast path
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
     try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
-    try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0x0C000000 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = .ArgRegister1 });
@@ -607,7 +607,7 @@ pub fn movl_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
 pub fn movl_rm_at_rn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rm -= 4
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.sub(rn, .{ .imm32 = 4 });
+    try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
     // [Rn] = Rm
     const rm = load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, 0, rm, 32);
@@ -644,7 +644,7 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
-    try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .reg = rm } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .reg = rm } } });
     var set_t = try block.jmp(.Above);
     // Clear T
     // NOTE: We could use the sign extended version with an immediate of 0xFE here for a shorter encoding, but the emitter doesn't support it yet.
@@ -713,7 +713,7 @@ pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
         .Zero, .One => {
             // Dec Rn
             const rn = load_register_for_writing(block, ctx, instr.nmd.n);
-            try block.sub(rn, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try block.sub(.{ .reg = rn }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
             _ = try fmovs_frm_at_rn(block, ctx, instr);
         },
         .Unknown => {
@@ -829,13 +829,13 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // sr.t = (Rm & Rn) == 0
     if (instr.nmd.n == instr.nmd.m) {
         const rn = load_register(block, ctx, instr.nmd.n);
-        try block.append(.{ .Cmp = .{ .lhs = rn, .rhs = .{ .imm32 = 0 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
     } else {
         const rn = load_register(block, ctx, instr.nmd.n);
         const rm = load_register(block, ctx, instr.nmd.m);
         try block.mov(.{ .reg = .ReturnRegister }, .{ .reg = rn });
         try block.append(.{ .And = .{ .dst = .{ .reg = .ReturnRegister }, .src = .{ .reg = rm } } });
-        try block.append(.{ .Cmp = .{ .lhs = .ReturnRegister, .rhs = .{ .imm32 = 0 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = .ReturnRegister }, .rhs = .{ .imm32 = 0 } } });
     }
     try block.mov(.{ .reg = .ReturnRegister }, .{ .mem = .{ .base = .SavedRegister0, .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
     var set_t = try block.jmp(.Equal);
