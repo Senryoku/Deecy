@@ -7,7 +7,7 @@ const BasicBlock = @import("basic_block.zig").BasicBlock;
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
 
-const Registers = enum(u4) {
+const Register = enum(u4) {
     RAX = 0,
     RCX = 1,
     RDX = 2,
@@ -55,38 +55,40 @@ const SIB = packed struct(u8) {
 
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
-const ReturnRegister = if (builtin.os.tag == .windows) Registers.RAX else @compileError("Unsupported ABI");
-const ArgRegisters = if (builtin.os.tag == .windows) [_]Registers{
-    Registers.RCX,
-    Registers.RDX,
-    Registers.R8,
-    Registers.R9,
-} else if (builtin.os.tag == .linux) [_]Registers{
-    Registers.RDI,
-    Registers.RSI,
-    Registers.RDX,
-    Registers.RCX,
-    Registers.R8,
-    Registers.R9,
+const ReturnRegister = Register.RAX;
+const ScratchRegisters = [_]Register{ .R10, .R11 };
+// ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
+const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
+    .RCX,
+    .RDX,
+    .R8,
+    .R9,
+} else if (builtin.os.tag == .linux) [_]Register{
+    .RDI,
+    .RSI,
+    .RDX,
+    .RCX,
+    .R8,
+    .R9,
 } else @compileError("Unsupported ABI");
-const SavedRegisters = if (builtin.os.tag == .windows) [_]Registers{
-    Registers.R12,
-    Registers.R13,
-    Registers.R14,
-    Registers.R15,
-    Registers.RBX,
-    Registers.RSI,
-    Registers.RDI,
-    Registers.RBP,
-    Registers.RSP,
-} else if (builtin.os.tag == .linux) [_]Registers{
-    Registers.R12,
-    Registers.R13,
-    Registers.R14,
-    Registers.R15,
-    Registers.RBX,
-    Registers.RBP,
-    Registers.RSP,
+const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
+    .R12,
+    .R13,
+    .R14,
+    .R15,
+    .RBX,
+    .RSI,
+    .RDI,
+    .RBP,
+    .RSP,
+} else if (builtin.os.tag == .linux) [_]Register{
+    .R12,
+    .R13,
+    .R14,
+    .R15,
+    .RBX,
+    .RBP,
+    .RSP,
 } else @compileError("Unsupported ABI");
 
 const PatchableJump = struct {
@@ -117,7 +119,7 @@ pub const Emitter = struct {
         self.jumps_to_patch.deinit();
     }
 
-    pub fn get_reg(reg: JIT.Register) Registers {
+    pub fn get_reg(reg: JIT.Register) Register {
         return switch (reg) {
             .ReturnRegister => ReturnRegister,
             .ArgRegister0 => ArgRegisters[0],
@@ -231,7 +233,7 @@ pub const Emitter = struct {
         try self.ret();
     }
 
-    fn encode_reg(reg: Registers) u3 {
+    fn encode_reg(reg: Register) u3 {
         return @truncate(@intFromEnum(reg));
     }
 
