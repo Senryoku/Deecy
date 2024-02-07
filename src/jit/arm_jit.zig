@@ -521,9 +521,12 @@ fn handle_msr(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
 
+    const sro: arm7.interpreter.ScaledRegisterOffset = @bitCast(inst.operand2);
+
     // Some fast paths/static decoding.
     // FIXME: We can handle more cases, and generate better code.
-    if (inst.s == 0 and inst.i == 1 and
+    if (inst.s == 0 and
+        (inst.i == 1 or sro.register_specified == 0) and
         inst.rd != 15 and
         (inst.opcode == .AND or
         // inst.opcode == .EOR or
@@ -536,7 +539,38 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
         inst.opcode == .MVN))
     {
         // op2
-        const op2 = JIT.Operand{ .imm32 = arm7.interpreter.immediate_shifter_operand(inst.operand2) };
+        var op2: JIT.Operand = undefined;
+        if (inst.i == 1) {
+            op2 = .{ .imm32 = arm7.interpreter.immediate_shifter_operand(inst.operand2) };
+        } else {
+            const rm = ArgRegisters[0];
+            try load_register(b, rm, sro.rm);
+            if (sro.rm == 15 and sro.register_specified == 1) {
+                try b.add(.{ .reg = rm }, .{ .imm32 = 4 });
+            }
+            op2 = .{ .reg = rm };
+
+            if (sro.register_specified == 0) {
+                const shift_amount = sro.shift_amount.imm;
+                switch (sro.shift_type) {
+                    .LSL => try b.append(.{ .Shl = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .LSR => try b.append(.{ .Shr = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .ASR => try b.append(.{ .Sar = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .ROR => {
+                        if (shift_amount == 0) {
+                            // RRX
+                            return error.RRXUnimplemented;
+                        } else {
+                            try b.append(.{ .Ror = .{ .dst = .{ .reg = rm }, .amount = .{ .imm32 = shift_amount } } });
+                        }
+                    },
+                }
+            } else {
+                try load_register(b, ArgRegisters[1], sro.shift_amount.reg.rs);
+                try b.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0xFF } } });
+                return error.RegisterSpecifiedSROUimplemented;
+            }
+        }
 
         switch (inst.opcode) {
             .AND => {
@@ -587,14 +621,24 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             .BIC => {
                 // cpu.r(inst.rd).* = op1 & ~op2;
                 try load_register(b, ReturnRegister, inst.rn);
-                // NOTE: Be careful if we ever support non-immediate op2!
-                try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) } } });
+
+                if (inst.i == 1) {
+                    op2 = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) };
+                } else {
+                    try b.append(.{ .Not = .{ .dst = op2.reg } });
+                }
+
+                try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
                 try store_register(b, inst.rd, .{ .reg = ReturnRegister });
             },
             .MVN => {
                 // cpu.r(inst.rd).* = ~op2;
-                // NOTE: Be careful if we ever support non-immediate op2!
-                try store_register(b, inst.rd, .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) });
+                if (inst.i == 1) {
+                    op2 = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) };
+                } else {
+                    try b.append(.{ .Not = .{ .dst = op2.reg } });
+                }
+                try store_register(b, inst.rd, op2);
             },
             else => @panic("Not implemented"),
         }

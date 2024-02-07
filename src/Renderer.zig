@@ -1852,7 +1852,12 @@ pub const Renderer = struct {
             if (uc.usage == .InsideEnabled) {
                 // FIXME: Correctly handle scale factor!
                 const factor = @divTrunc(self._gctx.swapchain_descriptor.width, 640);
-                pass.setScissorRect(factor * uc.x, factor * uc.y, factor * uc.width, factor * uc.height);
+                pass.setScissorRect(
+                    @max(0, factor * uc.x),
+                    @max(0, factor * uc.y),
+                    @min(factor * uc.width, self._gctx.swapchain_descriptor.width),
+                    @min(factor * uc.height, self._gctx.swapchain_descriptor.height),
+                );
             }
         } else pass.setScissorRect(0, 0, self._gctx.swapchain_descriptor.width, self._gctx.swapchain_descriptor.height);
     }

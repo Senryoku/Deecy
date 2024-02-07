@@ -53,6 +53,10 @@ const PatchableJump = struct {
 
 // RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
 const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
+// I mean, I don't know what to call these... (0xF7 opcode)
+const OtherRegOpcode = enum(u3) { Test = 0, Not = 2, Neg = 3, Mul = 4, IMul = 5, Div = 6, IDiv = 7 };
+// Opcode: C1 / D3
+const ShiftRegOpcode = enum(u3) { Rol = 0, Ror = 1, Rcl = 2, Rcr = 3, Shl = 4, Shr = 5, Sar = 7 };
 
 pub const Condition = enum {
     Always,
@@ -136,12 +140,20 @@ pub const InstructionType = enum {
     Movsx, // Mov with sign extension
     Push,
     Pop,
+    Not,
     Add,
     Sub,
     And,
     Or,
     Cmp,
     BitTest,
+    Rol,
+    Ror,
+    Rcl,
+    Rcr,
+    Shl,
+    Shr,
+    Sar,
     Jmp,
 };
 
@@ -153,12 +165,20 @@ pub const Instruction = union(InstructionType) {
     Movsx: struct { dst: Operand, src: Operand },
     Push: Operand,
     Pop: Operand,
+    Not: struct { dst: Register },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Operand, rhs: Operand },
     BitTest: struct { reg: Register, offset: Operand },
+    Rol: struct { dst: Operand, amount: Operand },
+    Ror: struct { dst: Operand, amount: Operand },
+    Rcl: struct { dst: Operand, amount: Operand },
+    Rcr: struct { dst: Operand, amount: Operand },
+    Shl: struct { dst: Operand, amount: Operand },
+    Shr: struct { dst: Operand, amount: Operand },
+    Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
@@ -172,6 +192,7 @@ pub const Instruction = union(InstructionType) {
             .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
             .Push => |push| writer.print("push {any}", .{push}),
             .Pop => |pop| writer.print("pop {any}", .{pop}),
+            .Not => |not| writer.print("not {any}", .{not.dst}),
             .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
@@ -179,6 +200,13 @@ pub const Instruction = union(InstructionType) {
             .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+            .Rol => |rol| writer.print("rol {any}, {any}", .{ rol.dst, rol.amount }),
+            .Ror => |ror| writer.print("ror {any}, {any}", .{ ror.dst, ror.amount }),
+            .Rcl => |rcl| writer.print("rcl {any}, {any}", .{ rcl.dst, rcl.amount }),
+            .Rcr => |rcr| writer.print("rcr {any}, {any}", .{ rcr.dst, rcr.amount }),
+            .Shl => |shl| writer.print("shl {any}, {any}", .{ shl.dst, shl.amount }),
+            .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
+            .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
         };
     }
 };
@@ -308,7 +336,13 @@ pub const Emitter = struct {
                 .BitTest => |b| {
                     try self.bit_test(b.reg, b.offset);
                 },
-                //else => @panic("Unhandled JIT instruction"),
+                .Rol => |r| try self.rol(r.dst, r.amount),
+                .Ror => |r| try self.ror(r.dst, r.amount),
+                .Sar => |r| try self.sar(r.dst, r.amount),
+                .Shr => |r| try self.shr(r.dst, r.amount),
+                .Shl => |r| try self.shl(r.dst, r.amount),
+                .Not => |r| try self.not(r.dst),
+                else => return error.UnsupportedInstruction,
             }
         }
         if (self.jumps_to_patch.count() > 0) {
@@ -700,6 +734,51 @@ pub const Emitter = struct {
     }
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
         return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
+    }
+
+    fn shift_instruction(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Operand, amount: Operand) !void {
+        switch (dst) {
+            .reg => |dst_reg| {
+                switch (amount) {
+                    .imm8 => |imm8| {
+                        try self.emit(u8, 0xC1);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                        try self.emit(u8, imm8);
+                    },
+                    .reg => |src_reg| {
+                        if (src_reg != .rcx) {
+                            return error.InvalidShiftAmount; // Only rcx is supported as a source for the shift amount in x86!
+                        }
+                        try self.emit(u8, 0xD3);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                    },
+                    else => return error.InvalidShiftAmount,
+                }
+            },
+            .mem => return error.TODOMemShift,
+            else => return error.InvalidShiftDestination,
+        }
+    }
+
+    fn sar(self: *@This(), dst: Operand, amount: Operand) !void {
+        try self.shift_instruction(.Sar, dst, amount);
+    }
+    fn shr(self: *@This(), dst: Operand, amount: Operand) !void {
+        try self.shift_instruction(.Shr, dst, amount);
+    }
+    fn shl(self: *@This(), dst: Operand, amount: Operand) !void {
+        try self.shift_instruction(.Shl, dst, amount);
+    }
+    fn rol(self: *@This(), dst: Operand, amount: Operand) !void {
+        try self.shift_instruction(.Rol, dst, amount);
+    }
+    fn ror(self: *@This(), dst: Operand, amount: Operand) !void {
+        try self.shift_instruction(.Ror, dst, amount);
+    }
+
+    fn not(self: *@This(), dst: Register) !void {
+        try self.emit(u8, 0xF7);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Not), .r_m = encode(dst) });
     }
 
     pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
