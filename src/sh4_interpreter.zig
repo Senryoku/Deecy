@@ -1459,8 +1459,10 @@ pub fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
+            // fmov.d	@Rm,DRn
             cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
+            // fmov.d	@Rm,XDn
             cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
     }
@@ -1470,8 +1472,10 @@ pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
         cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
+            // fmov.d	DRm,@Rn
             cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
         } else {
+            // fmov.d	XDm,@Rn
             cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
         }
     }
@@ -1483,8 +1487,10 @@ pub fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.R(opcode.nmd.m).* += 4;
     } else { // Double-precision
         if (opcode.nmd.n & 0x1 == 0) {
+            // fmov.d	@Rm+,DRn
             cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
+            // fmov.d	@Rm+,XDn
             cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
         cpu.R(opcode.nmd.m).* += 8;
