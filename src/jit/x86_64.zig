@@ -749,7 +749,7 @@ pub const Emitter = struct {
                     },
                     .reg => |src_reg| {
                         if (src_reg != .rcx) {
-                            return error.InvalidShiftAmount; // Only rcx is supported as a source for the shift amount in x86!
+                            return error.InvalidShiftRegister; // Only rcx is supported as a source for the shift amount in x86!
                         }
                         try self.emit(u8, 0xD3);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });

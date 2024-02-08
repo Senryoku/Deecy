@@ -564,7 +564,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                             // RRX
                             return error.RRXUnimplemented;
                         } else {
-                            try b.append(.{ .Ror = .{ .dst = .{ .reg = rm }, .amount = .{ .imm32 = shift_amount } } });
+                            try b.append(.{ .Ror = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } });
                         }
                     },
                 }

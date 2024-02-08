@@ -17,7 +17,7 @@ const Holly = HollyModule.Holly;
 const AICAModule = @import("aica.zig");
 const AICA = AICAModule.AICA;
 const MapleHost = @import("maple.zig").MapleHost;
-const GDROM = @import("GDRom.zig").GDROM;
+const GDROM = @import("gdrom.zig").GDROM;
 
 const dc_log = std.log.scoped(.dc);
 
