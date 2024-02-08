@@ -1499,6 +1499,7 @@ pub const Renderer = struct {
                                 .a = p.face_offset_color_a,
                             };
                     },
+                    // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
                     .Sprite => |p| {
                         parameter_control_word = p.parameter_control_word;
                         isp_tsp_instruction = p.isp_tsp_instruction;
