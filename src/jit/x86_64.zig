@@ -415,13 +415,13 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        if (dst_m.index != null) {
+                        if (dst_m.index) |index| {
                             if (dst_m.displacement != 0) // TODO
                                 return error.MovIndexWithDisplacementNotSupported;
                             try self.emit_rex_if_needed(.{
                                 .w = dst_m.size == 64,
                                 .r = need_rex(src_reg),
-                                .x = need_rex(dst_m.index.?),
+                                .x = need_rex(index),
                                 .b = need_rex(dst_m.base),
                             });
                             const opcode = 0x89;
@@ -434,7 +434,7 @@ pub const Emitter = struct {
                             try self.emit(u8, @bitCast(modrm));
                             const sib: SIB = .{
                                 .scale = 0,
-                                .index = encode(dst_m.index.?),
+                                .index = encode(index),
                                 .base = encode(dst_m.base),
                             };
                             try self.emit(u8, @bitCast(sib));

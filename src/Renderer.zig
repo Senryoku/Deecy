@@ -1288,12 +1288,7 @@ pub const Renderer = struct {
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
-            const tmp_tex_idx = self.get_texture_index(texture_size_index, texture_control);
-            if (tmp_tex_idx == null) {
-                tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
-            } else {
-                tex_idx = tmp_tex_idx.?;
-            }
+            tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
             self.texture_metadata[texture_size_index][tex_idx].usage += 1;
 
             if (isp_tsp_instruction.uv_16bit == 1) {

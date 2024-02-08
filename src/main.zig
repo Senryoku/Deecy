@@ -85,28 +85,22 @@ pub fn main() !void {
     defer args.deinit();
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-b")) {
-            const v = args.next();
-            if (v == null) {
+            binary_path = args.next() orelse {
                 std.log.err(termcolor.red("Expected path to binary file after -b."), .{});
-                return;
-            }
-            binary_path = v.?;
+                return error.InvalidArguments;
+            };
         }
         if (std.mem.eql(u8, arg, "-g")) {
-            const v = args.next();
-            if (v == null) {
+            gdi_path = args.next() orelse {
                 std.log.err(termcolor.red("Expected path to GDI file after -g."), .{});
-                return;
-            }
-            gdi_path = v.?;
+                return error.InvalidArguments;
+            };
         }
         if (std.mem.eql(u8, arg, "-i")) {
-            const v = args.next();
-            if (v == null) {
+            ip_bin_path = args.next() orelse {
                 std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
-                return;
-            }
-            ip_bin_path = v.?;
+                return error.InvalidArguments;
+            };
         }
         if (std.mem.eql(u8, arg, "-d")) {
             dc.cpu.debug_trace = true;
@@ -119,26 +113,25 @@ pub fn main() !void {
         }
     }
 
-    if (gdi_path != null) {
-        dc.gdrom.disk = try GDI.init(gdi_path.?, common.GeneralAllocator);
-    }
+    if (gdi_path) |path|
+        dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
 
-    if (binary_path != null) {
+    if (binary_path) |path| {
         dc.skip_bios();
 
-        var bin_file = try std.fs.cwd().openFile(binary_path.?, .{});
+        var bin_file = try std.fs.cwd().openFile(path, .{});
         defer bin_file.close();
         _ = try bin_file.readAll(dc.ram[0x10000..]);
 
-        if (ip_bin_path != null) {
-            var ip_bin_file = try std.fs.cwd().openFile(ip_bin_path.?, .{});
+        if (ip_bin_path) |ipb_path| {
+            var ip_bin_file = try std.fs.cwd().openFile(ipb_path, .{});
             defer ip_bin_file.close();
             _ = try ip_bin_file.readAll(dc.ram[0x8000..]);
         } else {
             // Skip IP.bin
             dc.cpu.pc = 0xAC010000;
         }
-    } else if (gdi_path != null) {
+    } else if (gdi_path) |path| {
         if (skip_bios)
             dc.skip_bios();
 
@@ -153,13 +146,13 @@ pub fn main() !void {
 
         // FIXME: Hacks.
         // NOPs for DC Checker, skips serial check
-        if (std.mem.count(u8, gdi_path.?, "Loop Checker version 1.00") > 0) {
+        if (std.mem.count(u8, path, "Loop Checker version 1.00") > 0) {
             dc.cpu.write16(0x0C0196DA, 0x9);
             dc.cpu.write16(0x0C0196EC, 0x9);
         }
 
         // DC CHECKER for Repair v2.050
-        if (std.mem.count(u8, gdi_path.?, "DC CHECKER for Repair v2.050") > 0) {
+        if (std.mem.count(u8, path, "DC CHECKER for Repair v2.050") > 0) {
             dc.cpu.write16(0x0C018F54, 0x9);
             dc.cpu.write16(0x0C018F42, 0x9);
         }
@@ -590,8 +583,8 @@ pub fn main() !void {
             zgui.end();
         }
 
-        if (dc.maple.ports[0].main != null) {
-            switch (dc.maple.ports[0].main.?) {
+        if (dc.maple.ports[0].main) |*main_controller| {
+            switch (main_controller.*) {
                 .Controller => |*c| {
                     // FIXME: This shouldn't be here, and is overwritten by the gamepad right after (:
                     const keybinds: [9]struct { zglfw.Key, MapleModule.ControllerButtons } = .{

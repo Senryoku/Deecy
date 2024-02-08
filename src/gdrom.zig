@@ -653,7 +653,7 @@ pub const GDROM = struct {
         for (0..alloc_length) |_| {
             self.data_queue.writeItemAssumeCapacity(0);
         }
-        self.byte_count = self.data_queue.count;
+        self.byte_count = @intCast(self.data_queue.count);
     }
 
     fn req_secu(self: *@This()) void {

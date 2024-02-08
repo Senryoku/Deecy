@@ -6,9 +6,8 @@ const Instr = sh4.Instr;
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
 
 pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
-    if (DisassemblyCache[opcode.value] != null) {
-        return DisassemblyCache[opcode.value].?;
-    }
+    if (DisassemblyCache[opcode.value]) |r|
+        return r;
 
     const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode.value]];
 
@@ -43,10 +42,9 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
 }
 
 pub fn free_disassembly_cache(allocator: std.mem.Allocator) void {
-    for (DisassemblyCache) |d| {
-        if (d != null) {
-            allocator.free(d.?);
-        }
+    for (DisassemblyCache) |dc| {
+        if (dc) |d|
+            allocator.free(d);
     }
 }
 

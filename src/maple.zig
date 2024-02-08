@@ -480,122 +480,118 @@ const MaplePort = struct {
                 sender_address |= @as(u8, 1) << @intCast(i);
         }
 
-        if (self.main == null) {
-            dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
-        } else {
-            const target = switch (command.recipent_address & 0b11111) {
-                0 => self.main.?,
-                else => self.subperipherals[@ctz(command.recipent_address)],
-            };
-            if (target == null) {
-                dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
-            } else {
-                switch (command.command) {
-                    .DeviceInfoRequest => {
-                        const identity = switch (target.?) {
-                            .Controller => |c| c.get_identity(),
-                            .VMU => |v| v.get_identity(),
-                        };
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(identity.len) }));
-                        const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
-                        @memcpy(ptr[0..identity.len], &identity);
-                    },
-                    .GetCondition => {
-                        switch (target.?) {
-                            .Controller => |c| {
-                                std.debug.assert(command.payload_length == 1);
-                                const function = data[2];
-                                std.debug.assert(function == 0x01000000);
+        const maybe_target = switch (command.recipent_address & 0b11111) {
+            0 => self.main,
+            else => self.subperipherals[@ctz(command.recipent_address)],
+        };
+        if (maybe_target) |target| {
+            switch (command.command) {
+                .DeviceInfoRequest => {
+                    const identity = switch (target) {
+                        .Controller => |c| c.get_identity(),
+                        .VMU => |v| v.get_identity(),
+                    };
+                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(identity.len) }));
+                    const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                    @memcpy(ptr[0..identity.len], &identity);
+                },
+                .GetCondition => {
+                    switch (target) {
+                        .Controller => |c| {
+                            std.debug.assert(command.payload_length == 1);
+                            const function = data[2];
+                            std.debug.assert(function == 0x01000000);
 
-                                const condition = c.get_condition();
-                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
-                                const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
-                                @memcpy(ptr[0..condition.len], &condition);
-                            },
-                            .VMU => {
-                                maple_log.err("TODO: GetCondition for VMU", .{});
-                                @panic("TODO VMU GET CONDITION");
-                            },
-                            //else => {
-                            //    maple_log.err("Unimplemented GetCondition for target: {any}", .{target.?});
-                            //    @panic("[Maple] Unimplemented GetCondition for target");
-                            //},
-                        }
-                    },
-                    .GetMediaInformation => {
-                        std.debug.assert(command.payload_length == 2);
+                            const condition = c.get_condition();
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
+                            const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                            @memcpy(ptr[0..condition.len], &condition);
+                        },
+                        .VMU => {
+                            maple_log.err("TODO: GetCondition for VMU", .{});
+                            @panic("TODO VMU GET CONDITION");
+                        },
+                        //else => {
+                        //    maple_log.err("Unimplemented GetCondition for target: {any}", .{target});
+                        //    @panic("[Maple] Unimplemented GetCondition for target");
+                        //},
+                    }
+                },
+                .GetMediaInformation => {
+                    std.debug.assert(command.payload_length == 2);
 
-                        const function_type = data[2];
-                        const partition_number: u8 = @truncate(data[3] >> 24);
+                    const function_type = data[2];
+                    const partition_number: u8 = @truncate(data[3] >> 24);
 
-                        maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
+                    maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
 
-                        switch ((target.?)) {
-                            .VMU => |v| {
-                                const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
-                                const payload_size = v.get_media_info(dest, function_type, partition_number);
-                                if (payload_size > 0) {
-                                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
-                                    dc.cpu.write32(return_addr + 4, function_type);
-                                } else {
-                                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                                }
-                            },
-                            else => {
-                                maple_log.err("Unimplemented GetMediaInformation for target: {any}", .{target.?});
-                            },
-                        }
-                    },
-                    .BlockRead => {
-                        const function_type = data[2];
-                        std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
-                        const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
-                        const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
-                        const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
-                        maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
+                    switch (target) {
+                        .VMU => |v| {
+                            const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
+                            const payload_size = v.get_media_info(dest, function_type, partition_number);
+                            if (payload_size > 0) {
+                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                                dc.cpu.write32(return_addr + 4, function_type);
+                            } else {
+                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            }
+                        },
+                        else => {
+                            maple_log.err("Unimplemented GetMediaInformation for target: {any}", .{target});
+                        },
+                    }
+                },
+                .BlockRead => {
+                    const function_type = data[2];
+                    std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
+                    const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
+                    const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
+                    const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
+                    maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
-                        const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
-                        const payload_size = switch (target.?) {
-                            .VMU => |v| v.block_read(dest, function_type, partition, block_num, phase),
-                            else => s: {
-                                maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{target.?});
-                                break :s 0;
-                            },
-                        };
+                    const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
+                    const payload_size = switch (target) {
+                        .VMU => |v| v.block_read(dest, function_type, partition, block_num, phase),
+                        else => s: {
+                            maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{target});
+                            break :s 0;
+                        },
+                    };
 
-                        if (payload_size > 0) {
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
-                            dc.cpu.write32(return_addr + 4, function_type);
-                            dc.cpu.write32(return_addr + 8, data[3]); // Header repeating the location.
-                        } else {
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                        }
-                    },
-                    .BlockWrite => {
-                        const function_type = data[2];
-                        const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
-                        const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
-                        const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
-                        const write_data = data[4 .. 4 + command.payload_length - 2];
+                    if (payload_size > 0) {
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                        dc.cpu.write32(return_addr + 4, function_type);
+                        dc.cpu.write32(return_addr + 8, data[3]); // Header repeating the location.
+                    } else {
+                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    }
+                },
+                .BlockWrite => {
+                    const function_type = data[2];
+                    const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
+                    const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
+                    const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
+                    const write_data = data[4 .. 4 + command.payload_length - 2];
 
-                        switch (target.?) {
-                            .VMU => |v| v.block_write(function_type, partition, phase, block_num, write_data),
-                            else => {
-                                maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
-                            },
-                        }
+                    switch (target) {
+                        .VMU => |v| v.block_write(function_type, partition, phase, block_num, write_data),
+                        else => {
+                            maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
+                        },
+                    }
 
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                    },
-                    .GetLastError => {
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                    },
-                    else => {
-                        maple_log.warn(termcolor.yellow("Unimplemented command: {}"), .{command.command});
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
-                    },
-                }
+                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                },
+                .GetLastError => {
+                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                },
+                else => {
+                    maple_log.warn(termcolor.yellow("Unimplemented command: {}"), .{command.command});
+                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                },
             }
+        } else {
+            dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
         }
 
         return 2 + command.payload_length;

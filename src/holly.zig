@@ -1328,16 +1328,16 @@ pub const Holly = struct {
         switch (parameter_control_word.parameter_type) {
             // Control Parameters
             .EndOfList => {
-                if (self._ta_list_type != null) { // Apprently this happens?... Why would a game do this?
+                if (self._ta_list_type) |list| { // Apprently this happens?... Why would a game do this?
                     // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
-                    self.schedule_interrupt(800, switch (self._ta_list_type.?) {
+                    self.schedule_interrupt(800, switch (list) {
                         .Opaque => .{ .EoT_OpaqueList = 1 },
                         .OpaqueModifierVolume => .{ .EoT_OpaqueModifierVolumeList = 1 },
                         .Translucent => .{ .EoT_TranslucentList = 1 },
                         .TranslucentModifierVolume => .{ .EoT_TranslucentModifierVolumeList = 1 },
                         .PunchThrough => .{ .EoD_PunchThroughList = 1 },
                         else => {
-                            holly_log.err(termcolor.red("  Unimplemented List Type {any}"), .{self._ta_list_type});
+                            holly_log.err(termcolor.red("  Unimplemented List Type {any}"), .{list});
                             @panic("Unimplemented List Type");
                         },
                     });
