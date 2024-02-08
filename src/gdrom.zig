@@ -460,7 +460,7 @@ pub const GDROM = struct {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2"), .{});
                         },
                         .GetSCD => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetSCD"), .{});
+                            self.get_subcode();
                         },
                         .SYS_CHK_SECU => {
                             self.byte_count = 0;
@@ -666,6 +666,16 @@ pub const GDROM = struct {
         defer self._allocator.free(buffer);
         _ = self.disk.?.load_sectors(start_addr, transfer_length, buffer);
         self.data_queue.writeAssumeCapacity(buffer);
+    }
+
+    fn get_subcode(self: *@This()) void {
+        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetSCD"), .{});
+        // Absolutely no idea what this does.
+        const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
+        for (0..alloc_length) |_| {
+            self.data_queue.writeItemAssumeCapacity(0);
+        }
+        self.byte_count = alloc_length;
     }
 
     fn req_secu(self: *@This()) void {
