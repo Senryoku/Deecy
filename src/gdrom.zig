@@ -12,19 +12,28 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
 
-// HLE
-
-pub const GDROMStatus = enum(u32) {
-    Busy = 0,
+pub const GDROMStatus = enum(u4) {
+    Busy = 0, // State transition
     Paused = 1,
     Standby = 2,
-    Playing = 3,
+    Playing = 3, // CD playback
     Seeking = 4,
     Scanning = 5,
-    Open = 6,
-    Empty = 7,
+    Open = 6, // Tray is open
+    Empty = 7, // No disc
+    Retry = 8, // Read retry in progress (option)
+    Error = 9, // Reading of disc TOC failed (state does not allow access)
 };
 
+pub const DiscFormat = enum(u4) {
+    CDDA = 0,
+    CDROM = 1,
+    CDROM_XA = 2,
+    CDI = 3,
+    GDROM = 8,
+};
+
+// HLE
 pub const GDROMCommand = enum(u32) {
     PIORead = 16,
     DMARead = 17,
@@ -160,6 +169,7 @@ const SPIPacketCommandCode = enum(u8) {
 pub const GDROM = struct {
     disk: ?GDI = null,
 
+    state: GDROMStatus = GDROMStatus.Standby,
     // LLE
     status_register: StatusRegister = .{},
     control_register: ControlRegister = .{},
@@ -175,8 +185,6 @@ pub const GDROM = struct {
     scheduled_event: ?ScheduledEvent = null,
 
     // HLE
-
-    hle_status: GDROMStatus = GDROMStatus.Standby,
     hle_command: GDROMCommand = undefined,
     hle_params: [4]u32 = undefined,
     hle_result: [4]u32 = undefined,
@@ -196,7 +204,7 @@ pub const GDROM = struct {
     }
 
     pub fn reinit(self: *@This()) void {
-        self.hle_status = GDROMStatus.Standby;
+        self.state = GDROMStatus.Standby;
         self.hle_command = undefined;
         @memset(&self.hle_params, 0);
         @memset(&self.hle_result, 0);
@@ -210,17 +218,25 @@ pub const GDROM = struct {
         if (self.scheduled_event) |*event| {
             if (event.cycles < cycles) {
                 self.status_register = event.status;
+                if (self.control_register.nien == 0)
+                    dc.raise_external_interrupt(.{ .GDRom = 1 });
                 if (event.interrupt_reason) |reason| {
                     self.interrupt_reason_register = reason;
-                    if (self.control_register.nien == 0) {
-                        dc.raise_external_interrupt(.{ .GDRom = 1 });
-                    }
+                    dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 }
                 self.scheduled_event = null;
             } else {
                 event.cycles -= cycles;
             }
         }
+    }
+
+    fn schedule_event(self: *@This(), event: ScheduledEvent) void {
+        if (self.scheduled_event) |*e| {
+            gdrom_log.warn(termcolor.yellow("Scheduled event already in progress: {any}"), .{e});
+            return;
+        }
+        self.scheduled_event = event;
     }
 
     pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
@@ -232,8 +248,8 @@ pub const GDROM = struct {
                 return @intCast(@as(u8, @bitCast(self.status_register)));
             },
             .GD_Status_Command => {
-                gdrom_log.info("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
+                gdrom_log.info("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // Clear the pending interrupt signal.
                 self.status_register.drq = 0;
                 return val;
@@ -249,47 +265,46 @@ pub const GDROM = struct {
                     const high = self.data_queue.readItem().?;
                     const val: u16 = @as(u16, low) | (@as(u16, high) << 8);
                     gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
-                    // FIXME: No idea if this is right...
-                    if (self.data_queue.count == 0)
-                        self.status_register.drq = 0;
                     return val;
-                } else {
-                    std.debug.assert(false);
                 }
-                return 0;
+                @panic("8-bit read to GD_Data");
             },
             .GD_Error_Features => {
-                gdrom_log.info("  Read GD_Error_Features @{X:0>8} = 0x{X:0>8}", .{ addr, 0 });
                 // 7    6    5    4   3    2    1    0
                 //    Sense Key      MCR  ABRT EOMF ILI
-                return 0;
+                const val = @as(u8, @intFromEnum(if (self.status_register.drdy == 0) SenseKey.NotReady else SenseKey.NoSense)) << 4;
+                gdrom_log.info("  Read GD_Error_Features @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                return val;
             },
             .GD_InterruptReason_SectorCount => {
                 gdrom_log.info("  Read Interrupt Reason @{X:0>8} = {any}", .{ addr, self.interrupt_reason_register });
                 return @intCast(@as(u8, @bitCast(self.interrupt_reason_register)));
             },
             .GD_SectorNumber => {
-                gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Read to SectorNumber @{X:0>8}"), .{addr});
                 // TODO: See REQ_STAT
                 //  7  6  5  4  | 3  2  1  0
                 //  Disc Format |   Status
-                if (self.disk == null) {
-                    return 0x87;
-                } else {
-                    return 0x82;
-                }
+                const val = if (self.disk == null)
+                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(SenseKey.NotReady)
+                else
+                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(if (self.status_register.drdy == 0) SenseKey.NotReady else SenseKey.NoSense);
+                gdrom_log.warn(termcolor.yellow("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}"), .{ addr, val });
+                return val;
             },
             .GD_ByteCountLow => {
-                gdrom_log.info("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, @as(u8, @truncate(self.byte_count)) });
-                return @as(u8, @truncate(self.data_queue.count));
+                const val = @as(u8, @truncate(self.data_queue.readableLength()));
+                gdrom_log.info("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                return val;
             },
             .GD_ByteCountHigh => {
-                gdrom_log.info("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, @as(u8, @truncate(self.byte_count >> @intCast(8))) });
-                return @as(u8, @truncate(self.data_queue.count >> @intCast(8)));
+                const val = @as(u8, @truncate(self.data_queue.readableLength() >> @intCast(8)));
+                gdrom_log.info("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                return val;
             },
             .GD_DriveSelect => {
-                gdrom_log.info("  Read Drive Select @{X:0>8} = 0x{X:0>8}", .{ addr, 0b10100000 });
-                return 0b10100000;
+                const val = 0b10100000;
+                gdrom_log.info("  Read Drive Select @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                return val;
             },
             else => {
                 gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Read to @{X:0>8}"), .{addr});
@@ -306,32 +321,33 @@ pub const GDROM = struct {
                 self.error_register = .{};
                 switch (@as(Command, @enumFromInt(value))) {
                     .SoftReset => {
-                        gdrom_log.debug("  Command: SoftReset", .{});
+                        gdrom_log.info("  Command: SoftReset", .{});
+                        self.data_queue.discard(self.data_queue.count);
                     },
                     .ExecuteDeviceDiagnostic => {
-                        gdrom_log.debug("  Command: ExecuteDeviceDiagnostic", .{});
+                        gdrom_log.info("  Command: ExecuteDeviceDiagnostic", .{});
                         self.status_register.bsy = 1;
                         self.status_register.drq = 0;
                         // The device clears the BSY bit and initiates an interrup
-                        self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                        self.schedule_event(.{
+                            .cycles = 100, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 0 },
                             .interrupt_reason = null,
-                        };
+                        });
                         // Always report no errors.
                         self.error_register = .{};
                     },
                     .PacketCommand => {
-                        gdrom_log.warn(termcolor.yellow("  Command: PacketCommand - TODO! See cdif131e.pdf"), .{});
+                        gdrom_log.warn(termcolor.yellow("  Command: PacketCommand"), .{});
                         self.status_register.bsy = 1;
 
                         self.packet_command_idx = 0;
 
-                        self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                        self.schedule_event(.{
+                            .cycles = 100, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
                             .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
-                        };
+                        });
                     },
                     .IdentifyDevice => {
                         gdrom_log.warn(termcolor.yellow("  Command: IdentifyDevice - TODO!"), .{});
@@ -357,11 +373,11 @@ pub const GDROM = struct {
                         // 0x40 - 0x4F Reserved
                         self.data_queue.writeAssumeCapacity("                ");
 
-                        self.scheduled_event = .{
-                            .cycles = 200, // FIXME: Random value
+                        self.schedule_event(.{
+                            .cycles = 100, // FIXME: Random value
                             .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
                             .status = .{ .bsy = 0, .drq = 1 },
-                        };
+                        });
                     },
                     .IdentifyDevice2 => {
                         // This command is issued by KallistiOS (g1_ata_scan), apparently to "check for a slave device".
@@ -423,7 +439,7 @@ pub const GDROM = struct {
                     }
 
                     switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
-                        .TestUnit => self.byte_count = 0,
+                        .TestUnit => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit: {X:0>2}"), .{self.packet_command}),
                         .ReqStat => self.req_stat(),
                         .ReqMode => self.req_mode(),
                         .SetMode => self.set_mode(),
@@ -441,11 +457,13 @@ pub const GDROM = struct {
                         else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
                     }
 
-                    self.scheduled_event = .{
-                        .cycles = 200, // FIXME: Random value
-                        .status = .{ .bsy = 0, .drq = 1 },
-                        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-                    };
+                    // Packet handlers might have already raised it
+                    if (self.scheduled_event == null)
+                        self.schedule_event(.{
+                            .cycles = 100, // FIXME: Random value
+                            .status = .{ .bsy = 0, .drq = 1 },
+                            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+                        });
                 }
             },
             else => {
@@ -455,14 +473,19 @@ pub const GDROM = struct {
     }
 
     fn nop(self: *@This()) void {
+        gdrom_log.info("  NOP Packet command", .{});
         //   Setting "abort" in the error register
         self.error_register.abrt = 1;
         //   Setting "error" in the status register
         self.status_register.check = 1;
         //   Clearing BUSY in the status register
         self.status_register.bsy = 0;
-        // TODO:
         //   Asserting the INTRQ signal
+        self.schedule_event(.{
+            .cycles = 0,
+            .status = .{ .check = 1, .bsy = 0 },
+            .interrupt_reason = null,
+        });
     }
 
     fn req_stat(self: *@This()) void {
@@ -470,7 +493,7 @@ pub const GDROM = struct {
         const start_addr = self.packet_command[2];
         _ = start_addr;
         const alloc_length = self.packet_command[4];
-        _ = alloc_length;
+
         // 0 |  0 0 0 0 STATUS
         // 1 |  Disc Format Repeat Count
         // 2 |  Address Control
@@ -481,10 +504,15 @@ pub const GDROM = struct {
         // 7 |  FAD
         // 8 |  Max Read Error Retry Times
         // 9 |  0 0 0 0 0 0 0 0
+
+        if (alloc_length > 0) {
+            self.data_queue.writeItemAssumeCapacity(if (self.status_register.drdy == 0) @intFromEnum(GDROMStatus.Busy) else @intFromEnum(GDROMStatus.Standby));
+            self.data_queue.writeItemAssumeCapacity(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE);
+        }
     }
 
     fn req_mode(self: *@This()) void {
-        gdrom_log.debug(" GDROM PacketCommand ReqMode", .{});
+        gdrom_log.info(" GDROM PacketCommand ReqMode", .{});
         const start_addr = self.packet_command[2];
         const alloc_length = self.packet_command[4];
 
@@ -526,98 +554,108 @@ pub const GDROM = struct {
 
         gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
 
-        if (self.disk == null) {
-            self.byte_count = 0;
-            return;
-        }
-
-        if (self.data_queue.count > 0) {
-            gdrom_log.warn(termcolor.yellow("   GetToC - Data queue was not empty ({d})"), .{self.data_queue.count});
-            self.data_queue.discard(self.data_queue.count);
-        }
-
         if (alloc_length > 0) {
-            if (select == 1) {
-                if (self.disk.?.tracks.items.len >= 3) {
-                    // Copy ToC directly from the third track. No idea if this is what's expected here.
-                    self.data_queue.writeAssumeCapacity(self.disk.?.tracks.items[2].data[0x110 .. 0x110 + alloc_length]);
+            if (self.disk) |disk| {
+                if (select == 1) {
+                    if (disk.tracks.items.len >= 3) {
+                        // Copy ToC directly from the third track. No idea if this is what's expected here.
 
-                    // Debug Dump
-                    // const d = self.disk.?.tracks.items[2].data[0x110 + 4 .. 0x110 + 4 + alloc_length];
-                    // for (0..d.len / 4) |i| {
-                    //     std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
-                    // }
-                } else {
-                    for (0..alloc_length) |_| {
-                        self.data_queue.writeItemAssumeCapacity(0xFF);
+                        const leading_fad = disk.tracks.items[2].offset + 166;
+
+                        self.data_queue.writeItemAssumeCapacity(0x41); // TODO
+                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 16));
+                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 8));
+                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 0));
+                        for (1..99) |_| {
+                            self.data_queue.writeItemAssumeCapacity(0xFF);
+                            self.data_queue.writeItemAssumeCapacity(0xFF);
+                            self.data_queue.writeItemAssumeCapacity(0xFF);
+                            self.data_queue.writeItemAssumeCapacity(0xFF);
+                        }
+                        // TODO
+                        self.data_queue.writeAssumeCapacity(&[_]u8{
+                            0x41, 0x03, 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0        ]
+                            0x41, 0x03, 0x00, 0x00, // End track info:   [Control/ADR] [End Track Number  ] [0  ] [0        ]
+                            0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+                        });
+
+                        // Debug Dump
+                        const d = self.data_queue.readableSlice(0);
+                        for (0..d.len / 4) |i| {
+                            std.debug.print("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                        }
+                    } else {
+                        for (0..alloc_length) |_| {
+                            self.data_queue.writeItemAssumeCapacity(0xFF);
+                        }
                     }
-                }
-            } else {
-                // Single Density: First two tracks.
-                for (0..2) |i| {
-                    const track = self.disk.?.tracks.items[i];
-                    // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
-                    //   0h No sub Q channel mode information
-                    //   1h Sub Q channel indicates current position.
-                    //   (Example: track, index, absolute address, relative address)
-                    //   2h Sub Q channel indicates media catalog number.
-                    //   3h Sub Q channel indicates ISRC code.
-                    //   4h~Fh Reserved
-                    const adr: u4 = 0;
-                    // Control: This item indicates the type of track.
-                    //  Bit | If 0                                    | If 1
-                    //   0  | Audio data without pre-emphasis (CD-DA) | Audio data with pre-emphasis (CD-DA)
-                    //      | At-once recorded track (CD-ROM)         | Packet-recorded track (CD-ROM)
-                    //   1  | Digital copy prohibited                 | Digital copy allowed
-                    //   2  | Audio track                             | Data track
-                    //   3  | 2-channel audio                         | 4-channel audio
-                    const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
-                    self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 16));
-                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
-                    self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
-                }
-                for (2..99) |_| {
-                    self.data_queue.writeAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
-                }
-                if (self.disk.?.tracks.items.len > 0) {
-                    { // First track
-                        const track = self.disk.?.tracks.items[0];
+                } else {
+                    // Single Density: First two tracks.
+                    for (0..2) |i| {
+                        const track = disk.tracks.items[i];
+                        // ADR: This item indicates the type of information encoded in the sub Q channel of the block for which a TOC entry was detected
+                        //   0h No sub Q channel mode information
+                        //   1h Sub Q channel indicates current position.
+                        //   (Example: track, index, absolute address, relative address)
+                        //   2h Sub Q channel indicates media catalog number.
+                        //   3h Sub Q channel indicates ISRC code.
+                        //   4h~Fh Reserved
                         const adr: u4 = 0;
+                        // Control: This item indicates the type of track.
+                        //  Bit | If 0                                    | If 1
+                        //   0  | Audio data without pre-emphasis (CD-DA) | Audio data with pre-emphasis (CD-DA)
+                        //      | At-once recorded track (CD-ROM)         | Packet-recorded track (CD-ROM)
+                        //   1  | Digital copy prohibited                 | Digital copy allowed
+                        //   2  | Audio track                             | Data track
+                        //   3  | 2-channel audio                         | 4-channel audio
                         const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
                         self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                        self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
-                        self.data_queue.writeItemAssumeCapacity(0);
-                        self.data_queue.writeItemAssumeCapacity(0);
+                        self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 16));
+                        self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 8));
+                        self.data_queue.writeItemAssumeCapacity(@truncate(track.offset >> 0));
                     }
-                    { // Last Track
-                        const track = self.disk.?.tracks.items[1];
-                        const adr: u4 = 0;
-                        const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
-                        self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
-                        self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
-                        self.data_queue.writeItemAssumeCapacity(0);
-                        self.data_queue.writeItemAssumeCapacity(0);
+                    for (2..99) |_| {
+                        self.data_queue.writeAssumeCapacity(&[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
                     }
-                    // Lead Out Information
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0);
-                    self.data_queue.writeItemAssumeCapacity(0x46);
-                    self.data_queue.writeItemAssumeCapacity(0x50);
-                } else {
-                    self.data_queue.writeAssumeCapacity(&[_]u8{
-                        0, 0, 0, 0,
-                        0, 0, 0, 0,
-                        0, 0, 0, 0,
-                    });
+                    if (disk.tracks.items.len > 0) {
+                        { // First track
+                            const track = disk.tracks.items[0];
+                            const adr: u4 = 0;
+                            const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                            self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                            self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                            self.data_queue.writeItemAssumeCapacity(0);
+                            self.data_queue.writeItemAssumeCapacity(0);
+                        }
+                        { // Last Track
+                            const track = disk.tracks.items[1];
+                            const adr: u4 = 0;
+                            const control: u8 = if (track.track_type == 4) 0b0010 else 0b0000;
+                            self.data_queue.writeItemAssumeCapacity((control << 4) | adr);
+                            self.data_queue.writeItemAssumeCapacity(@truncate(track.num));
+                            self.data_queue.writeItemAssumeCapacity(0);
+                            self.data_queue.writeItemAssumeCapacity(0);
+                        }
+                        // Lead Out Information
+                        self.data_queue.writeItemAssumeCapacity(0);
+                        self.data_queue.writeItemAssumeCapacity(0);
+                        self.data_queue.writeItemAssumeCapacity(0x46);
+                        self.data_queue.writeItemAssumeCapacity(0x50);
+                    } else {
+                        self.data_queue.writeAssumeCapacity(&[_]u8{
+                            0, 0, 0, 0,
+                            0, 0, 0, 0,
+                            0, 0, 0, 0,
+                        });
+                    }
+
+                    const d = self.data_queue.readableSlice(0);
+                    for (0..d.len / 4) |i| {
+                        std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                    }
                 }
             }
         }
-
-        // FIXME: I'm not actually honoring the alloc_length parameter here
-        std.debug.assert(self.data_queue.count == alloc_length);
-
-        self.byte_count = alloc_length;
     }
 
     fn cd_read(self: *@This()) void {
@@ -630,6 +668,7 @@ pub const GDROM = struct {
         const transfer_length = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
 
         gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
+        gdrom_log.info("{X}", .{self.packet_command});
 
         // FIXME: Everything else isn't implemented
         std.debug.assert(parameter_type == 0); // start_addr is a FAD
@@ -643,7 +682,7 @@ pub const GDROM = struct {
         _ = self.disk.?.load_sectors(start_addr, transfer_length, buffer);
         self.data_queue.writeAssumeCapacity(buffer);
 
-        self.byte_count = @intCast(self.data_queue.count);
+        std.debug.print("{X}\n", .{buffer[0..0x20]});
     }
 
     fn get_subcode(self: *@This()) void {
@@ -653,7 +692,6 @@ pub const GDROM = struct {
         for (0..alloc_length) |_| {
             self.data_queue.writeItemAssumeCapacity(0);
         }
-        self.byte_count = @intCast(self.data_queue.count);
     }
 
     fn req_secu(self: *@This()) void {
@@ -661,20 +699,18 @@ pub const GDROM = struct {
         const parameter = self.packet_command[1];
         _ = parameter;
         self.data_queue.writeAssumeCapacity(&GDROMCommand71Reply);
-
-        self.byte_count = @intCast(self.data_queue.count);
     }
 
     // HLE - Used by the BIOS syscalls
 
     pub fn send_command(self: *@This(), command_code: u32, params: [4]u32) u32 {
-        if (self.hle_status != GDROMStatus.Standby) return 0;
+        if (self.state != GDROMStatus.Standby) return 0;
 
         self._current_command_id = self._next_command_id;
         self._next_command_id +%= 1;
         if (self._next_command_id == 0) self._next_command_id = 1;
 
-        self.hle_status = GDROMStatus.Busy;
+        self.state = GDROMStatus.Busy;
         self.hle_command = @enumFromInt(command_code);
         self.hle_params = params;
         @memset(&self.hle_result, 0);
@@ -683,7 +719,7 @@ pub const GDROM = struct {
     }
 
     pub fn mainloop(self: *@This(), dc: *Dreamcast) void {
-        if (self.hle_status != GDROMStatus.Busy) {
+        if (self.state != GDROMStatus.Busy) {
             gdrom_log.debug("  GDROM Mainloop - No command queued", .{});
             return;
         }
@@ -705,11 +741,11 @@ pub const GDROM = struct {
 
                 self.hle_result = .{ 0, 0, read, 0 };
 
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.Init => {
                 gdrom_log.warn("    GDROM Command Init : TODO (Reset some stuff?)", .{});
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.GetVersion => {
                 const dest = self.hle_params[0];
@@ -718,7 +754,7 @@ pub const GDROM = struct {
                     dc.cpu.write8(@intCast(dest + i), version[i]);
                 }
                 dc.cpu.write8(@intCast(dest + version.len), 0x2);
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.ReqMode => {
                 const dest = self.hle_params[0];
@@ -728,11 +764,11 @@ pub const GDROM = struct {
                 dc.cpu.write32(dest + 8, 0x19); // Read Flags
                 dc.cpu.write32(dest + 12, 0x08); // Read retry
                 self.hle_result = .{ 0, 0, 0xA, 0 };
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.SetMode => {
                 gdrom_log.warn("    GDROM SetMode: TODO", .{});
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.GetTOC2 => {
                 const area = self.hle_params[0];
@@ -747,7 +783,7 @@ pub const GDROM = struct {
                     // High Density Area, doesn't have a TOC? (What's that thing at 0x110 in track 3?)
                 } else {}
 
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             GDROMCommand.GetSCD => {
                 gdrom_log.warn(termcolor.yellow("    Unimplemented GDROM command GetSCD"), .{});
@@ -761,14 +797,14 @@ pub const GDROM = struct {
                     dc.cpu.write32(@intCast(dest + 4 * i), 0);
                 }
 
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
             else => {
                 gdrom_log.warn(termcolor.yellow("    Unhandled GDROM command {any}"), .{self.hle_command});
                 for (0..self.hle_params.len) |i| {
                     gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
                 }
-                self.hle_status = GDROMStatus.Standby;
+                self.state = GDROMStatus.Standby;
             },
         }
     }
@@ -779,7 +815,7 @@ pub const GDROM = struct {
             self.hle_result[0] = 0x5;
             return 0; // no such request active
         }
-        if (self.hle_status != GDROMStatus.Standby) return 1; // request is still being processed
+        if (self.state != GDROMStatus.Standby) return 1; // request is still being processed
 
         // request has completed
         self._current_command_id = 0;

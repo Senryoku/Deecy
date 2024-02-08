@@ -10,7 +10,8 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 const Interrupts = @import("Interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
-const SH4 = @import("sh4.zig").SH4;
+const sh4 = @import("sh4.zig");
+const SH4 = sh4.SH4;
 const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
 const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
@@ -87,8 +88,8 @@ pub const Dreamcast = struct {
         // FIXME: Hack to bypass some checks I'm failling to emulate.
         //        Pretty sure this is linked to the GD ROM, bios is waiting on something here.
         //        Insert a nop instead of the branch.
-        dc.boot[0x077B] = 0x00;
-        dc.boot[0x077A] = 0x09;
+        // dc.boot[0x077B] = 0x00;
+        // dc.boot[0x077A] = 0x09;
 
         // Load Flash
         dc.flash = try dc._allocator.alloc(u8, 0x20000);
@@ -424,10 +425,13 @@ pub const Dreamcast = struct {
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
+
+            std.debug.print("{X}\n", .{@as([*]u8, @ptrCast(self.cpu._get_memory(0x0C008300)))[0..0x20]});
+
             std.debug.assert(copied == len);
 
-            self.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
-            self.raise_external_interrupt(.{ .GDRom = 1 });
+            self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 200);
+            self.schedule_external_interrupt(.{ .GDRom = 1 }, 200);
         }
     }
 
