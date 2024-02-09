@@ -31,7 +31,7 @@ pub const std_options = struct {
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
-        .{ .scope = .arm_jit, .level = .info },
+        .{ .scope = .arm_jit, .level = .debug },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
@@ -698,6 +698,7 @@ pub fn main() !void {
             const now = std.time.microTimestamp();
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
+
             try renderer.render();
         }
         renderer.draw(); //  Blit to screen

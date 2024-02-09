@@ -106,6 +106,8 @@ const BlockCache = struct {
 
 pub const JITContext = struct {
     address: u32,
+
+    did_fallback: bool = false, // Only there for analysis.
 };
 
 pub const ARM7JIT = struct {
@@ -171,7 +173,8 @@ pub const ARM7JIT = struct {
         var index: u32 = 0;
         while (true) {
             const instr = instructions[index];
-            arm_jit_log.debug("  [{X:0>8}] {s}", .{ ctx.address, arm7.ARM7.disassemble(instr) });
+
+            ctx.did_fallback = false;
 
             // Update PC. Done before the instruction is executed, emulating fetching.
             try b.add(guest_register(15), .{ .imm32 = 4 }); // PC += 4
@@ -188,6 +191,8 @@ pub const ARM7JIT = struct {
             cycles += 1; // FIXME
             index += 1;
             ctx.address += 4;
+
+            arm_jit_log.debug("  [{X:0>8}] {s} {s}", .{ ctx.address, if (ctx.did_fallback) "!" else " ", arm7.ARM7.disassemble(instr) });
 
             if (branch)
                 break;
@@ -225,6 +230,49 @@ fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
 
 fn store_register(b: *JITBlock, arm_reg: u5, value: JIT.Operand) !void {
     try b.mov(guest_register(arm_reg), value);
+}
+
+fn read8(self: *arm7.ARM7, address: u32) u8 {
+    return self.read(u8, address);
+}
+fn read32(self: *arm7.ARM7, address: u32) u32 {
+    return self.read(u32, address);
+}
+fn write8(self: *arm7.ARM7, address: u32, value: u8) void {
+    self.write(u8, address, value);
+}
+fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
+    self.write(u32, address, value);
+}
+
+// Loads into ReturnRegister
+fn load_mem(b: *JITBlock, comptime T: type, dst: JIT.Register, addr: JIT.Register) !void {
+    // TODO: Fallback for now. Can't do everything at once.
+    if (addr != ArgRegisters[1])
+        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
+    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+    if (T == u8) {
+        try b.call(read8);
+    } else if (T == u32) {
+        try b.call(read32);
+    } else @compileError("Unsupported type: " ++ @typeName(T));
+    if (dst != ReturnRegister)
+        try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+}
+
+fn store_mem(b: *JITBlock, comptime T: type, addr: JIT.Register, value: JIT.Register) !void {
+    std.debug.assert(value != ArgRegisters[1]); // It would be overwritten.
+    // TODO: Fallback for now.
+    if (addr != ArgRegisters[1])
+        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
+    if (value != ArgRegisters[2])
+        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
+    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+    if (T == u8) {
+        try b.call(write8);
+    } else if (T == u32) {
+        try b.call(write32);
+    } else @compileError("Unsupported type: " ++ @typeName(T));
 }
 
 fn cpsr_mask(comptime flags: []const []const u8) u32 {
@@ -439,7 +487,80 @@ fn handle_undefined(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
-    try interpreter_fallback(b, ctx, instruction);
+
+    std.debug.assert(inst.rn != 15 or inst.w == 0);
+
+    if (inst.i == 0) {
+        const offset: u32 = inst.offset;
+
+        const base = ArgRegisters[1];
+        try load_register(b, base, inst.rn);
+        const offset_addr = ReturnRegister;
+
+        const addr = base;
+
+        if (inst.offset != 0) {
+            try b.mov(.{ .reg = offset_addr }, .{ .reg = base });
+
+            if (inst.u == 1) {
+                try b.add(.{ .reg = offset_addr }, .{ .imm32 = offset });
+            } else {
+                try b.sub(.{ .reg = offset_addr }, .{ .imm32 = offset });
+            }
+
+            if (inst.p == 1) try b.mov(.{ .reg = addr }, .{ .reg = offset_addr });
+
+            if (inst.w == 1 or inst.p == 0) try store_register(b, inst.rn, .{ .reg = offset_addr });
+        }
+
+        if (inst.l == 0) {
+            // Store
+            const val = ArgRegisters[2];
+            try load_register(b, val, inst.rd);
+
+            if (inst.rd == 15)
+                try b.add(.{ .reg = val }, .{ .imm32 = 4 });
+
+            if (inst.b == 1) {
+                try store_mem(b, u8, addr, val);
+            } else {
+                try b.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0xFFFFFFFC } } });
+                try store_mem(b, u32, addr, val);
+            }
+        } else {
+            // Load
+            const val = ReturnRegister;
+            if (inst.b == 1) {
+                try load_mem(b, u8, val, addr);
+                try store_register(b, inst.rd, .{ .reg = val });
+            } else {
+                // A word load (LDR) will normally use a word aligned address. However, an address
+                // offset from a word boundary will cause the data to be rotated into the register so that
+                // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
+                // 0 and 2 from the word boundary will be correctly loaded into bits 0 through 15 of the
+                // register. Two shift operations are then required to clear or to sign extend the upper 16
+                // bits.
+                try b.mov(.{ .reg = SavedRegisters[1] }, .{ .reg = addr }); // We need to hold to it and the call might invalidate it.
+                try b.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0xFFFFFFFC } } });
+                try load_mem(b, u32, val, addr);
+                // addr = (addr & 3) * 8
+                const shift_amount = JIT.Register.rcx; // Only valid register for shifts.
+                try b.mov(.{ .reg = shift_amount }, .{ .reg = SavedRegisters[1] }); // Restore addr.
+                try b.append(.{ .And = .{ .dst = .{ .reg = shift_amount }, .src = .{ .imm32 = 0x00000003 } } });
+                try b.append(.{ .Shl = .{ .dst = .{ .reg = shift_amount }, .amount = .{ .imm8 = 3 } } });
+                // val ROR addr
+                try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .reg = shift_amount } } });
+                try store_register(b, inst.rd, .{ .reg = val });
+
+                // Simulate an additional fetch
+                if (inst.rd == 15) {
+                    try b.add(guest_register(15), .{ .imm32 = 4 });
+                }
+            }
+        }
+    } else {
+        try interpreter_fallback(b, ctx, instruction);
+    }
     return inst.l == 1 and inst.rd == 15;
 }
 
@@ -661,8 +782,9 @@ fn handle_invalid(_: *JITBlock, _: *JITContext, _: u32) !bool {
 }
 
 fn interpreter_fallback(b: *JITBlock, ctx: *JITContext, instruction: u32) !void {
-    _ = ctx;
     try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
     try b.call(arm7.interpreter.InstructionHandlers[arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]]);
+
+    ctx.did_fallback = true;
 }
