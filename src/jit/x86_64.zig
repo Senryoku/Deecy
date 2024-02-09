@@ -776,9 +776,14 @@ pub const Emitter = struct {
                 switch (amount) {
                     .imm8 => |imm8| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0xC1);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
-                        try self.emit(u8, imm8);
+                        if (imm8 == 1) {
+                            try self.emit(u8, 0xD1);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                        } else {
+                            try self.emit(u8, 0xC1);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
+                            try self.emit(u8, imm8);
+                        }
                     },
                     .reg => |src_reg| {
                         if (src_reg != .rcx) {
