@@ -856,6 +856,13 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     return false;
 }
 
+pub fn sub_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = load_register(block, ctx, instr.nmd.m);
+    try block.sub(.{ .reg = rn }, .{ .reg = rm });
+    return false;
+}
+
 pub fn and_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
