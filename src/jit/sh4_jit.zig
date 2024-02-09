@@ -271,7 +271,6 @@ pub const SH4JIT = struct {
                         }, instructions);
                     } else break :retry err;
                 });
-                sh4_jit_log.debug("Compiled: {X:0>2}", .{block.?.buffer});
             }
             block.?.execute(cpu);
 
@@ -372,9 +371,14 @@ pub const SH4JIT = struct {
         try b.pop(.{ .reg = SavedRegisters[1] });
         try b.pop(.{ .reg = SavedRegisters[0] });
 
+        for (b.instructions.items, 0..) |instr, idx|
+            sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
+
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         self.block_cache.cursor += block.buffer.len;
         block.cycles = cycles;
+
+        // sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
         return block;
@@ -894,6 +898,56 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.append(.{ .Or = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 1 } } });
     end.patch();
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ReturnRegister });
+    return false;
+}
+
+pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    // TODO: Update t bit
+    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    return false;
+}
+
+pub fn shll2(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 2 } } });
+    return false;
+}
+
+pub fn shll8(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 8 } } });
+    return false;
+}
+
+pub fn shll16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 16 } } });
+    return false;
+}
+
+pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    // TODO: Update t bit
+    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    return false;
+}
+
+pub fn shlr2(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 2 } } });
+    return false;
+}
+
+pub fn shlr8(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 8 } } });
+    return false;
+}
+
+pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 16 } } });
     return false;
 }
 
