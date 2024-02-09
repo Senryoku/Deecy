@@ -96,7 +96,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0011000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.div1, .name = "div1 Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0011000000001101, .mask = 0b0000111111110000, .fn_ = interpreter.dmulsl_Rm_Rn, .name = "dmuls.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{} } },
     .{ .code = 0b0011000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.dmulul_Rm_Rn, .name = "dmulu.l Rm,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 4, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{} } },
-    .{ .code = 0b0100000000010000, .mask = 0b0000111100000000, .fn_ = interpreter.dt_Rn, .name = "dt Rn", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000000010000, .mask = 0b0000111100000000, .fn_ = interpreter.dt_Rn, .name = "dt Rn", .privileged = false, .jit_emit_fn = sh4_jit.dt_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000001110, .mask = 0b0000111111110000, .fn_ = interpreter.extsb_Rm_Rn, .name = "exts.b Rm,Rn", .privileged = false, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000001111, .mask = 0b0000111111110000, .fn_ = interpreter.extsw_Rm_Rn, .name = "exts.w Rm,Rn", .privileged = false, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.extub_Rm_Rn, .name = "extu.b Rm,Rn", .privileged = false, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
