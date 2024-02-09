@@ -754,6 +754,7 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (amount) {
                     .imm8 => |imm8| {
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
                         try self.emit(u8, 0xC1);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                         try self.emit(u8, imm8);
@@ -762,6 +763,7 @@ pub const Emitter = struct {
                         if (src_reg != .rcx) {
                             return error.InvalidShiftRegister; // Only rcx is supported as a source for the shift amount in x86!
                         }
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
                         try self.emit(u8, 0xD3);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                     },
