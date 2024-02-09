@@ -118,6 +118,17 @@ pub const Operand = union(OperandType) {
     imm64: u64,
     mem: MemOperand,
 
+    pub fn tag(self: @This()) OperandType {
+        return switch (self) {
+            .reg => .reg,
+            .imm8 => .imm8,
+            .imm16 => .imm16,
+            .imm32 => .imm32,
+            .imm64 => .imm64,
+            .mem => .mem,
+        };
+    }
+
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;

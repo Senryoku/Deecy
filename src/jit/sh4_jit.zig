@@ -838,6 +838,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
     const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
+    // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
     // Set it to a scratch register
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
     // Load the pointed value and store it into Rn

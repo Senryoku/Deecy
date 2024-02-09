@@ -106,6 +106,7 @@ const BlockCache = struct {
 
 pub const JITContext = struct {
     address: u32,
+    cpu: *arm7.ARM7,
 
     did_fallback: bool = false, // Only there for analysis.
 };
@@ -136,11 +137,11 @@ pub const ARM7JIT = struct {
             if (block == null) {
                 arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
-                block = try (self.compile(.{ .address = pc }, instructions) catch |err| retry: {
+                block = try (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         try self.block_cache.reset();
                         arm_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.compile(.{ .address = pc }, instructions);
+                        break :retry self.compile(.{ .address = pc, .cpu = cpu }, instructions);
                     } else break :retry err;
                 });
             }
@@ -245,34 +246,89 @@ fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
     self.write(u32, address, value);
 }
 
-// Loads into ReturnRegister
-fn load_mem(b: *JITBlock, comptime T: type, dst: JIT.Register, addr: JIT.Register) !void {
-    // TODO: Fallback for now. Can't do everything at once.
-    if (addr != ArgRegisters[1])
-        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    if (T == u8) {
-        try b.call(read8);
-    } else if (T == u32) {
-        try b.call(read32);
-    } else @compileError("Unsupported type: " ++ @typeName(T));
-    if (dst != ReturnRegister)
-        try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
+    // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
+    try b.mov(.{ .reg = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
+    try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = dst, .displacement = 0, .size = @sizeOf(T) } });
 }
 
-fn store_mem(b: *JITBlock, comptime T: type, addr: JIT.Register, value: JIT.Register) !void {
-    std.debug.assert(value != ArgRegisters[1]); // It would be overwritten.
-    // TODO: Fallback for now.
-    if (addr != ArgRegisters[1])
-        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    if (value != ArgRegisters[2])
-        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
-    try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    if (T == u8) {
-        try b.call(write8);
-    } else if (T == u32) {
-        try b.call(write32);
-    } else @compileError("Unsupported type: " ++ @typeName(T));
+// NOTE: Uses ReturnRegister as a temporary!
+fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
+    // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
+    try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
+    try b.mov(.{ .mem = .{ .base = ReturnRegister, .displacement = 0, .size = @sizeOf(T) } }, .{ .reg = value });
+}
+
+// Loads into ReturnRegister
+fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
+    switch (addr) {
+        .imm32 => |addr_imm32| {
+            if (addr_imm32 < ctx.cpu.external_memory_address_threshold) {
+                try load_wave_memory(b, ctx, T, dst, addr_imm32);
+            } else {
+                // TODO: External memory, fallback for now!
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
+                if (T == u8) {
+                    try b.call(read8);
+                } else if (T == u32) {
+                    try b.call(read32);
+                } else @compileError("Unsupported type: " ++ @typeName(T));
+                if (dst != ReturnRegister)
+                    try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+            }
+        },
+        .reg => |addr_reg| {
+            // TODO: Fallback for now. Can't do everything at once.
+            if (addr_reg != ArgRegisters[1])
+                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr_reg });
+            try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+            if (T == u8) {
+                try b.call(read8);
+            } else if (T == u32) {
+                try b.call(read32);
+            } else @compileError("Unsupported type: " ++ @typeName(T));
+            if (dst != ReturnRegister)
+                try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+        },
+        else => return error.UnsupportedAddrOperand,
+    }
+}
+
+fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
+    switch (addr) {
+        .imm32 => |addr_imm32| {
+            if (addr_imm32 < ctx.cpu.external_memory_address_threshold) {
+                try store_wave_memory(b, ctx, T, addr_imm32, value);
+            } else {
+                // TODO: External memory, fallback for now!
+                if (value != ArgRegisters[2])
+                    try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
+                if (T == u8) {
+                    try b.call(write8);
+                } else if (T == u32) {
+                    try b.call(write32);
+                } else @compileError("Unsupported type: " ++ @typeName(T));
+            }
+        },
+        .reg => |addr_reg| {
+            std.debug.assert(value != ArgRegisters[1]); // It would be overwritten.
+            // TODO: Fallback for now.
+            if (addr_reg != ArgRegisters[1])
+                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr_reg });
+            if (value != ArgRegisters[2])
+                try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
+            try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+            if (T == u8) {
+                try b.call(write8);
+            } else if (T == u32) {
+                try b.call(write32);
+            } else @compileError("Unsupported type: " ++ @typeName(T));
+        },
+        else => return error.UnsupportedAddrOperand,
+    }
 }
 
 fn cpsr_mask(comptime flags: []const []const u8) u32 {
@@ -491,24 +547,18 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
     if (inst.i == 0) {
         const offset: u32 = inst.offset;
 
-        const base = ArgRegisters[1];
+        var addr: JIT.Operand = .{ .reg = ArgRegisters[1] };
         const offset_addr = ReturnRegister;
-        const addr = base;
-
-        try load_register(b, base, inst.rn);
 
         // PC-relative addressing: A constant in this case.
         if (inst.rn == 15) {
             std.debug.assert(inst.w == 0);
             std.debug.assert(inst.p == 1);
-            if (inst.u == 1) {
-                try b.mov(.{ .reg = addr }, .{ .imm32 = ctx.address + 8 + offset });
-            } else {
-                try b.mov(.{ .reg = addr }, .{ .imm32 = ctx.address + 8 - offset });
-            }
+            addr = .{ .imm32 = if (inst.u == 1) ctx.address + 8 + offset else ctx.address + 8 - offset };
         } else {
+            try load_register(b, addr.reg, inst.rn);
             if (inst.offset != 0) {
-                try b.mov(.{ .reg = offset_addr }, .{ .reg = base });
+                try b.mov(.{ .reg = offset_addr }, addr);
 
                 if (inst.u == 1) {
                     try b.add(.{ .reg = offset_addr }, .{ .imm32 = offset });
@@ -516,7 +566,7 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                     try b.sub(.{ .reg = offset_addr }, .{ .imm32 = offset });
                 }
 
-                if (inst.p == 1) try b.mov(.{ .reg = addr }, .{ .reg = offset_addr });
+                if (inst.p == 1) try b.mov(addr, .{ .reg = offset_addr });
 
                 if (inst.w == 1 or inst.p == 0) try store_register(b, inst.rn, .{ .reg = offset_addr });
             }
@@ -531,35 +581,48 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                 try b.add(.{ .reg = val }, .{ .imm32 = 4 });
 
             if (inst.b == 1) {
-                try store_mem(b, u8, addr, val);
+                try store_mem(b, ctx, u8, addr, val);
             } else {
-                try b.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0xFFFFFFFC } } });
-                try store_mem(b, u32, addr, val);
+                if (addr.tag() == .imm32) {
+                    addr.imm32 &= 0xFFFFFFFC;
+                } else {
+                    try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0xFFFFFFFC } } });
+                }
+                try store_mem(b, ctx, u32, addr, val);
             }
         } else {
             // Load
             const val = ReturnRegister;
             if (inst.b == 1) {
-                try load_mem(b, u8, val, addr);
+                try load_mem(b, ctx, u8, val, addr);
                 try store_register(b, inst.rd, .{ .reg = val });
             } else {
-                // A word load (LDR) will normally use a word aligned address. However, an address
-                // offset from a word boundary will cause the data to be rotated into the register so that
-                // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
-                // 0 and 2 from the word boundary will be correctly loaded into bits 0 through 15 of the
-                // register. Two shift operations are then required to clear or to sign extend the upper 16
-                // bits.
-                try b.mov(.{ .reg = SavedRegisters[1] }, .{ .reg = addr }); // We need to hold to it and the call might invalidate it.
-                try b.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0xFFFFFFFC } } });
-                try load_mem(b, u32, val, addr);
-                // addr = (addr & 3) * 8
-                const shift_amount = JIT.Register.rcx; // Only valid register for shifts.
-                try b.mov(.{ .reg = shift_amount }, .{ .reg = SavedRegisters[1] }); // Restore addr.
-                try b.append(.{ .And = .{ .dst = .{ .reg = shift_amount }, .src = .{ .imm32 = 0x00000003 } } });
-                try b.append(.{ .Shl = .{ .dst = .{ .reg = shift_amount }, .amount = .{ .imm8 = 3 } } });
-                // val ROR addr
-                try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .reg = shift_amount } } });
-                try store_register(b, inst.rd, .{ .reg = val });
+                if (addr.tag() == .imm32) {
+                    const rotate_amount = (addr.imm32 & 3) * 8;
+                    addr.imm32 &= 0xFFFFFFFC;
+                    try load_mem(b, ctx, u32, val, addr);
+                    if (rotate_amount != 0)
+                        try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .imm32 = rotate_amount } } });
+                    try store_register(b, inst.rd, .{ .reg = val });
+                } else {
+                    // A word load (LDR) will normally use a word aligned address. However, an address
+                    // offset from a word boundary will cause the data to be rotated into the register so that
+                    // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
+                    // 0 and 2 from the word boundary will be correctly loaded into bits 0 through 15 of the
+                    // register. Two shift operations are then required to clear or to sign extend the upper 16
+                    // bits.
+                    try b.mov(.{ .reg = SavedRegisters[1] }, addr); // We need to hold to it and the call might invalidate it.
+                    try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0xFFFFFFFC } } });
+                    try load_mem(b, ctx, u32, val, addr);
+                    // addr = (addr & 3) * 8
+                    const rotate_amount = JIT.Register.rcx; // Only valid register for shifts.
+                    try b.mov(.{ .reg = rotate_amount }, .{ .reg = SavedRegisters[1] }); // Restore addr.
+                    try b.append(.{ .And = .{ .dst = .{ .reg = rotate_amount }, .src = .{ .imm32 = 0x00000003 } } });
+                    try b.append(.{ .Shl = .{ .dst = .{ .reg = rotate_amount }, .amount = .{ .imm8 = 3 } } });
+                    // val ROR addr
+                    try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .reg = rotate_amount } } });
+                    try store_register(b, inst.rd, .{ .reg = val });
+                }
 
                 // Simulate an additional fetch
                 if (inst.rd == 15) {
