@@ -1,8 +1,6 @@
 struct Uniforms {
     depth_min: f32,
     depth_max: f32, 
-    max_fragments: u32,
-    target_width: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

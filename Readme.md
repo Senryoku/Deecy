@@ -7,6 +7,8 @@
 
 ## Things I know I have to do
 
+-   Better low level emulation: Boot ROM currently hangs after the logo animation.
+
 -   AICA ARM7 state after bios (when skipping bios)
 
 -   ch0-DMA and ch1-DMA?
@@ -19,12 +21,13 @@
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
-    - Split OIT pass into multiple slices. We're limited by the max storage buffer size for the fragment linked list, and it's already limiting at 2x resolution. 
     - Modifier Volumes.
     - User Tile Clip.
     - Fog.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
     - Handle and generate Mipmaps.
+    - (Improvement?) OIT: Add an option to allocate lists per slice to allow processing them in parallel when memory is not an issue (we're currently limited by the limit on binding buffer size, not total memory).
+        No idea of the potential gain, if any.
       
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).

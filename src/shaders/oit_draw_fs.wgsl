@@ -1,5 +1,11 @@
 // https://webgpu.github.io/webgpu-samples/samples/A-buffer 
 
+struct OITUniforms {
+    max_fragments: u32,
+    target_width: u32,
+    start_y: u32,
+};
+
 struct Heads {
   fragment_count: atomic<u32>,
   data: array<atomic<u32>>
@@ -16,10 +22,10 @@ struct LinkedList {
   data: array<LinkedListElement>
 };
 
-@group(2) @binding(0) var opaque_depth_texture: texture_depth_2d;
+@group(2) @binding(0) var<uniform> oit_uniforms: OITUniforms;
 @group(2) @binding(1) var<storage, read_write> heads: Heads;
 @group(2) @binding(2) var<storage, read_write> linked_list: LinkedList;
-
+@group(2) @binding(3) var opaque_depth_texture: texture_depth_2d;
 
 @fragment
 fn main(
@@ -66,13 +72,13 @@ fn main(
 
     // The index in the heads buffer corresponding to the head data for the fragment at
     // the current location.
-    let heads_index = u32(frag_coords.y) * uniforms.target_width + u32(frag_coords.x);
+    let heads_index = (u32(frag_coords.y) - oit_uniforms.start_y) * oit_uniforms.target_width + u32(frag_coords.x);
     
     // The index in the linkedList buffer at which to store the new fragment
     let frag_index = atomicAdd(&heads.fragment_count, 1u);
 
     // If we run out of space to store the fragments, we just lose them
-    if frag_index < uniforms.max_fragments {
+    if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position.z;
         linked_list.data[frag_index].color = final_color;

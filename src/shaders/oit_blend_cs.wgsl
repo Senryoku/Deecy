@@ -1,10 +1,9 @@
 // https://webgpu.github.io/webgpu-samples/samples/A-buffer
 
-struct Uniforms {
-    depth_min: f32,
-    depth_max: f32, 
+struct OITUniforms {
     max_fragments: u32,
     target_width: u32,
+    start_y: u32,
 };
 
 struct Heads {
@@ -23,7 +22,7 @@ struct LinkedList {
   data: array<LinkedListElement>
 };
 
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(0) var<uniform> oit_uniforms: OITUniforms;
 @group(0) @binding(1) var<storage, read_write> heads: Heads;
 @group(0) @binding(2) var<storage, read_write> linked_list: LinkedList;
 @group(0) @binding(3) var opaque_texture: texture_2d<f32>; // FIXME: Should be the same as output_texture, but WGPU doesn't support reading from storage textures.
@@ -59,8 +58,9 @@ fn get_dst_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let frag_coords = vec2<i32>(global_id.xy);
-    let heads_index = u32(frag_coords.y) * uniforms.target_width + u32(frag_coords.x);
+    var frag_coords = global_id.xy;
+    frag_coords.y += oit_uniforms.start_y;
+    let heads_index = global_id.y * oit_uniforms.target_width + global_id.x;
 
     // The maximum layers we can process for any pixel
     const MaxLayers = 24u;
@@ -70,7 +70,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var layer_count = 0u;
     var element_index = heads.data[heads_index];
 
-    // copy the list elements into an array up to the maximum amount of layers
+    // Copy the list elements into an array up to the maximum amount of layers
     while element_index != 0xFFFFFFFFu && layer_count < MaxLayers {
         layers[layer_count] = linked_list.data[element_index];
         layer_count++;
@@ -81,7 +81,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         return;
     }
   
-    // sort the fragments by depth
+    // Sort the fragments by depth
     for (var i = 1u; i < layer_count; i++) {
         let to_insert = layers[i];
         var j = i;
@@ -97,7 +97,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var color = textureLoad(opaque_texture, frag_coords, 0);
     color.a = 1.0;
 
-    // blend the remaining layers
+    // Blend the remaining layers
     for (var i = 0u; i < layer_count; i++) {
         let src = layers[i].color;
         let dst = color;

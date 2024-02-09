@@ -646,7 +646,7 @@ pub const Renderer = struct {
         }
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(f32) },
+            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
             .{ .binding = 1, .texture_view_handle = texture_array_views[0] },
             .{ .binding = 2, .texture_view_handle = texture_array_views[1] },
             .{ .binding = 3, .texture_view_handle = texture_array_views[2] },
@@ -674,9 +674,10 @@ pub const Renderer = struct {
         defer translucent_fragment_shader_module.release();
 
         const translucent_bind_group_layout = gctx.createBindGroupLayout(&.{
-            zgpu.textureEntry(0, .{ .fragment = true }, .depth, .tvdim_2d, false),
+            zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
+            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
         });
         const translucent_pipeline_layout = gctx.createPipelineLayout(&.{
             bind_group_layout,
@@ -1841,21 +1842,22 @@ pub const Renderer = struct {
         }
     }
 
-    fn set_clipping(self: *Renderer, pass: wgpu.RenderPassEncoder, user_clip: ?HollyModule.UserTileClipInfo) void {
+    fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                // FIXME: Correctly handle scale factor!
                 const factor = @divTrunc(self._gctx.swapchain_descriptor.width, 640);
-                pass.setScissorRect(
-                    @max(0, factor * uc.x),
-                    @max(0, factor * uc.y),
-                    @min(factor * uc.width, self._gctx.swapchain_descriptor.width),
-                    @min(factor * uc.height, self._gctx.swapchain_descriptor.height),
-                );
+                return .{
+                    .usage = .InsideEnabled,
+                    .x = @max(0, factor * uc.x),
+                    .y = @max(0, factor * uc.y),
+                    .width = @min(factor * uc.width, self._gctx.swapchain_descriptor.width),
+                    .height = @min(factor * uc.height, self._gctx.swapchain_descriptor.height),
+                };
             }
-        } else pass.setScissorRect(0, 0, self._gctx.swapchain_descriptor.width, self._gctx.swapchain_descriptor.height);
+        }
+        return .{ .usage = .InsideEnabled, .x = 0, .y = 0, .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height };
     }
 
     pub fn render(self: *Renderer) !void {
@@ -1899,19 +1901,12 @@ pub const Renderer = struct {
                     pass.release();
                 }
             }
-            const bind_group = gctx.lookupResource(self.bind_group).?;
 
-            const uniform_mem = gctx.uniformsAllocate(struct { depth_min: f32, depth_max: f32, max_fragments: u32, target_width: u32 }, 1);
+            const uniform_mem = gctx.uniformsAllocate(struct { depth_min: f32, depth_max: f32 }, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
             uniform_mem.slice[0].depth_max = self.max_depth;
 
-            const screen_width = 640;
-            const screen_height = 480;
-            _ = screen_height;
-
-            const LinkedListNodeSize = 4 * 4 + 4 + 4 + 4;
-            uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / LinkedListNodeSize);
-            uniform_mem.slice[0].target_width = 2 * screen_width; // FIXME: target_width
+            const bind_group = gctx.lookupResource(self.bind_group).?;
 
             {
                 const depth_view = gctx.lookupResource(self.depth_texture_view).?;
@@ -1970,7 +1965,8 @@ pub const Renderer = struct {
 
                             for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
                                 if (draw_call.index_count > 0) {
-                                    self.set_clipping(pass, draw_call.user_clip);
+                                    const clip = self.convert_clipping(draw_call.user_clip);
+                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
                                     pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
                                     pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
@@ -1989,68 +1985,88 @@ pub const Renderer = struct {
             );
 
             // Generate all translucent fragments
-            {
-                const heads_info = gctx.lookupResourceInfo(self.list_heads_buffer).?;
-                const init_heads_info = gctx.lookupResourceInfo(self.init_list_heads_buffer).?;
+            const heads_info = gctx.lookupResourceInfo(self.list_heads_buffer).?;
+            const init_heads_info = gctx.lookupResourceInfo(self.init_list_heads_buffer).?;
+            const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
+            const blend_bind_group = gctx.lookupResource(self.blend_bind_group).?;
 
-                // Clear lists
-                encoder.copyBufferToBuffer(init_heads_info.gpuobj.?, 0, heads_info.gpuobj.?, 0, heads_info.size);
+            const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                .load_op = .load,
+                .store_op = .store,
+            }};
+            const oit_render_pass_info = wgpu.RenderPassDescriptor{
+                .color_attachment_count = oit_color_attachments.len,
+                .color_attachments = &oit_color_attachments,
+                .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+            };
 
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                    .load_op = .load,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = null,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
+            const horizontal_slices: u32 = 4;
+            const slice_size = self._gctx.swapchain_descriptor.height / horizontal_slices;
+            for (0..horizontal_slices) |i| {
+                const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+                const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
+                const LinkedListNodeSize = 4 * 4 + 4 + 4 + 4;
+                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / LinkedListNodeSize);
+                oit_uniform_mem.slice[0].target_width = self._gctx.swapchain_descriptor.width;
+                oit_uniform_mem.slice[0].start_y = start_y;
 
-                const translucent_pass = self.passes[@intFromEnum(HollyModule.ListType.Translucent)];
+                {
+                    // Clear lists
+                    encoder.copyBufferToBuffer(init_heads_info.gpuobj.?, 0, heads_info.gpuobj.?, 0, heads_info.size);
 
-                pass.setPipeline(gctx.lookupResource(self.translucent_pipeline).?);
+                    const pass = encoder.beginRenderPass(oit_render_pass_info);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
 
-                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                    pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                    pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                pass.setBindGroup(2, gctx.lookupResource(self.translucent_bind_group).?, &.{});
+                    const translucent_pass = self.passes[@intFromEnum(HollyModule.ListType.Translucent)];
 
-                var it = translucent_pass.pipelines.iterator();
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.*.draw_calls.count() > 0) {
-                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                            if (draw_call.index_count > 0) {
-                                self.set_clipping(pass, draw_call.user_clip);
+                    pass.setPipeline(gctx.lookupResource(self.translucent_pipeline).?);
 
-                                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                    pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                    pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
+
+                    var it = translucent_pass.pipelines.iterator();
+                    while (it.next()) |entry| {
+                        if (entry.value_ptr.*.draw_calls.count() > 0) {
+                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                if (draw_call.index_count > 0) {
+                                    var clip = self.convert_clipping(draw_call.user_clip);
+                                    const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
+                                    clip.y = @max(clip.y, start_y);
+                                    clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
+                                    if (clip.height > 0 and clip.width > 0) {
+                                        pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+
+                                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // Blend the results of the translucent pass
-            {
-                const pass = encoder.beginComputePass(null);
-                defer {
-                    pass.end();
-                    pass.release();
+                // Blend the results of the translucent pass
+                {
+                    const pass = encoder.beginComputePass(null);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
+                    const num_groups = [2]u32{ @divExact(self._gctx.swapchain_descriptor.width, 8), @divExact(self._gctx.swapchain_descriptor.height, horizontal_slices * 8) };
+                    pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
+
+                    pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
+
+                    pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                 }
-                const num_groups = [2]u32{ @divExact(self._gctx.swapchain_descriptor.width, 8), @divExact(self._gctx.swapchain_descriptor.height, 8) };
-                pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
-
-                pass.setBindGroup(0, gctx.lookupResource(self.blend_bind_group).?, &.{uniform_mem.offset});
-
-                pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
             }
 
             break :commands encoder.finish(null);
@@ -2228,15 +2244,16 @@ pub const Renderer = struct {
 
     fn create_translucent_bind_group(self: *@This()) void {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.depth_texture_view },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
+            .{ .binding = 3, .texture_view_handle = self.depth_texture_view },
         });
     }
 
     fn create_blend_bind_group(self: *@This()) void {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(u32) },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
