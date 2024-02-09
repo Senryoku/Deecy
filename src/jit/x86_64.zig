@@ -67,12 +67,33 @@ pub const Condition = enum {
     Greater, // Signed Values
     GreaterEqual,
     Above, // Unsigned Values
+    ParityEven,
+    ParityOdd,
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
         return writer.print("{s}", .{@tagName(value)});
     }
+};
+
+pub const EFLAGSCondition = enum(u4) {
+    Overflow = 0b0000,
+    NoOverflow = 0b0001,
+    Carry = 0b0010,
+    NotCarry = 0b0011,
+    Equal = 0b0100,
+    NotEqual = 0b0101,
+    BelowOrEqual = 0b0110,
+    Above = 0b0111,
+    Sign = 0b1000,
+    NotSign = 0b1001,
+    ParityEven = 0b1010,
+    ParityOdd = 0b1011,
+    Less = 0b1100,
+    GreaterOrEqual = 0b1101,
+    LessOrEqual = 0b1110,
+    Greater = 0b1111,
 };
 
 pub const OperandSize = enum { _8, _16, _32, _64 };
@@ -829,6 +850,8 @@ pub const Emitter = struct {
             .Greater => 0x8F,
             .GreaterEqual => 0x8D,
             .Above => 0x87,
+            .ParityEven => 0x8A,
+            .ParityOdd => 0x8B,
         });
 
         address = self.block_size;

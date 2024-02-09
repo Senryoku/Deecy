@@ -487,6 +487,20 @@ fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.
     try block.mov(.{ .reg = ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
 }
 
+// Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
+// TODO: We'll want to cache the T bit at some point too!
+fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
+    var set = try block.jmp(condition);
+    // Clear T
+    // NOTE: We could use the sign extended version with an immediate of 0xFE here for a shorter encoding, but the emitter doesn't support it yet.
+    try block.append(.{ .And = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
+    var end = try block.jmp(.Always);
+    // Set T
+    set.patch();
+    try block.append(.{ .Or = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "t") } } });
+    end.patch();
+}
+
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, comptime size: u32) !void {
     const src_guest_reg_location = load_register(block, ctx, guest_reg);
@@ -661,15 +675,7 @@ pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .reg = rm } } });
-    var set_t = try block.jmp(.Above);
-    // Clear T
-    // NOTE: We could use the sign extended version with an immediate of 0xFE here for a shorter encoding, but the emitter doesn't support it yet.
-    try block.append(.{ .And = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
-    var end = try block.jmp(.Always);
-    // Set T
-    set_t.patch();
-    try block.append(.{ .Or = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "t") } } });
-    end.patch();
+    try set_t(block, ctx, .Above);
     return false;
 }
 
@@ -888,22 +894,14 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = rm } } });
         try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0 } } });
     }
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
-    var set_t = try block.jmp(.Equal);
-    // Clear T
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = ~@as(u32, 1) } } });
-    var end = try block.jmp(.Always);
-    // Set T
-    set_t.patch();
-    try block.append(.{ .Or = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 1 } } });
-    end.patch();
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try set_t(block, ctx, .Equal);
     return false;
 }
 
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
-    // TODO: Update t bit
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0x80000000 } } });
+    try set_t(block, ctx, .NotCarry); // Equivalent to Above or Equal
     try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
     return false;
 }
@@ -928,8 +926,9 @@ pub fn shll16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
-    // TODO: Update t bit
     try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    // The CF flag contains the value of the last bit shifted out of the destination operand.
+    try set_t(block, ctx, .Carry);
     return false;
 }
 
