@@ -582,7 +582,7 @@ pub const GDROM = struct {
                         // Debug Dump
                         const d = self.data_queue.readableSlice(0);
                         for (0..d.len / 4) |i| {
-                            std.debug.print("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                            gdrom_log.debug("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
                         }
                     } else {
                         for (0..alloc_length) |_| {
@@ -651,7 +651,7 @@ pub const GDROM = struct {
 
                     const d = self.data_queue.readableSlice(0);
                     for (0..d.len / 4) |i| {
-                        std.debug.print("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
+                        gdrom_log.debug("{d: >3}  {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
                     }
                 }
             }

@@ -270,14 +270,6 @@ pub const Dreamcast = struct {
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
-
-        // TODO: Initialize AICA ARM7 Code correctly!
-        if (!AICAModule.DisableARMCore) {
-            dc_log.err(termcolor.red("Skipping bios with AICA ARM core enabled: This is not supported and will probably crash!"), .{});
-        }
-        // Quick guess from observing the boot rom, probably need a lot more.
-        // FIXME: Actually I don't know if this is needed now that I 'fixed' the FIQ.
-        self.aica.arm7.r[13] = 0xB000; // Fells like a pretty good guess for the stack pointer
     }
 
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
