@@ -11,22 +11,9 @@ struct VertexOut {
      @location(0) base_color: vec4<f32>,
      @location(1) offset_color: vec4<f32>,
      @location(2) uv: vec2<f32>,
-     @location(3) @interpolate(flat) tex: vec2<u32>,
+     @location(3) w: f32,
+     @location(4) @interpolate(flat) tex: vec2<u32>,
  }
-
-fn tex_size(idx: u32) -> f32 {
-    switch(idx & 7)  {
-        case 0: { return 8.0; }
-        case 1: { return 16.0; }
-        case 2: { return 32.0; }
-        case 3: { return 64.0; }
-        case 4: { return 128.0; }
-        case 5: { return 256.0; }
-        case 6: { return 512.0; }
-        case 7: { return 1024.0; }
-        default: { return 8.0; }
-    }
-}
 
 @vertex
 fn main(
@@ -51,10 +38,9 @@ fn main(
     output.base_color = base_color;
     output.offset_color = offset_color;
 
-    let u_size: f32 = tex_size((tex[1] >> 4) & 7);
-    let v_size: f32 = tex_size((tex[1] >> 7) & 7);
-
-    output.uv = vec2<f32>(1.0, v_size / u_size) * uv;
+    let w = position.z;
+    output.uv = w * uv;
+    output.w = w;
     output.tex = tex;
 
     return output;

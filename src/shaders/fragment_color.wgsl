@@ -33,13 +33,29 @@ fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
     }
 }
 
+fn tex_size(idx: u32) -> f32 {
+    switch(idx & 7)  {
+        case 0: { return 8.0; }
+        case 1: { return 16.0; }
+        case 2: { return 32.0; }
+        case 3: { return 64.0; }
+        case 4: { return 128.0; }
+        case 5: { return 256.0; }
+        case 6: { return 512.0; }
+        case 7: { return 1024.0; }
+        default: { return 8.0; }
+    }
+}
+
 fn fragment_color(
     base_color: vec4<f32>,
     offset_color: vec4<f32>,
     uv: vec2<f32>,
     tex: vec2<u32>
 ) -> vec4<f32> {
-    let tex_color = tex_sample(uv, tex[1], tex[0]);
+    let u_size: f32 = tex_size((tex[1] >> 4) & 7);
+    let v_size: f32 = tex_size((tex[1] >> 7) & 7);
+    let tex_color = tex_sample( vec2<f32>(1.0, v_size / u_size) * uv, tex[1], tex[0]);
 
     if (tex[1] & 1) == 1 {
         let shading = (tex[1] >> 1) & 0x3;
