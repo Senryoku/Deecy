@@ -179,7 +179,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000011010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_MACL, .name = "lds Rn,MACL", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .access = .{ .r = .{ .rn = true }, .w = .{} } },
     .{ .code = 0b0100000000010110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_at_Rn_inc_MACL, .name = "lds.l @Rn+,MACL", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_PR, .name = "lds Rn,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .access = .{ .r = .{ .rn = true }, .w = .{} } },
-    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000000100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_atRn_inc_PR, .name = "lds.l @Rn+,PR", .privileged = false, .jit_emit_fn = sh4_jit.ldsl_atRn_inc_PR, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0000000000111000, .mask = 0b0000000000000000, .fn_ = interpreter.ldtlb, .name = "ldtlb", .privileged = true, .access = .{ .r = .{}, .w = .{} } },
 
     .{ .code = 0b0000000011000011, .mask = 0b0000111100000000, .fn_ = interpreter.movcal_R0_atRn, .name = "movca.l R0,@Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .access = .{ .r = .{ .r0 = true, .rn = true }, .w = .{} } },

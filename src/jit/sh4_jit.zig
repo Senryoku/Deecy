@@ -1115,3 +1115,12 @@ pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     ctx.outdated_pc = false;
     return true;
 }
+
+pub fn ldsl_atRn_inc_PR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .reg = ReturnRegister });
+
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+    return false;
+}
