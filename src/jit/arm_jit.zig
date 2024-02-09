@@ -488,29 +488,38 @@ fn handle_undefined(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
 
-    std.debug.assert(inst.rn != 15 or inst.w == 0);
-
     if (inst.i == 0) {
         const offset: u32 = inst.offset;
 
         const base = ArgRegisters[1];
-        try load_register(b, base, inst.rn);
         const offset_addr = ReturnRegister;
-
         const addr = base;
 
-        if (inst.offset != 0) {
-            try b.mov(.{ .reg = offset_addr }, .{ .reg = base });
+        try load_register(b, base, inst.rn);
 
+        // PC-relative addressing: A constant in this case.
+        if (inst.rn == 15) {
+            std.debug.assert(inst.w == 0);
+            std.debug.assert(inst.p == 1);
             if (inst.u == 1) {
-                try b.add(.{ .reg = offset_addr }, .{ .imm32 = offset });
+                try b.mov(.{ .reg = addr }, .{ .imm32 = ctx.address + 8 + offset });
             } else {
-                try b.sub(.{ .reg = offset_addr }, .{ .imm32 = offset });
+                try b.mov(.{ .reg = addr }, .{ .imm32 = ctx.address + 8 - offset });
             }
+        } else {
+            if (inst.offset != 0) {
+                try b.mov(.{ .reg = offset_addr }, .{ .reg = base });
 
-            if (inst.p == 1) try b.mov(.{ .reg = addr }, .{ .reg = offset_addr });
+                if (inst.u == 1) {
+                    try b.add(.{ .reg = offset_addr }, .{ .imm32 = offset });
+                } else {
+                    try b.sub(.{ .reg = offset_addr }, .{ .imm32 = offset });
+                }
 
-            if (inst.w == 1 or inst.p == 0) try store_register(b, inst.rn, .{ .reg = offset_addr });
+                if (inst.p == 1) try b.mov(.{ .reg = addr }, .{ .reg = offset_addr });
+
+                if (inst.w == 1 or inst.p == 0) try store_register(b, inst.rn, .{ .reg = offset_addr });
+            }
         }
 
         if (inst.l == 0) {
