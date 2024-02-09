@@ -658,6 +658,18 @@ pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     return false;
 }
 
+pub fn movl_atR0Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 32);
+    try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+    return false;
+}
+
+pub fn movl_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rm = load_register(block, ctx, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, rm, 32);
+    return false;
+}
+
 pub fn add_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
