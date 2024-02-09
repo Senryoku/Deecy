@@ -677,8 +677,10 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
-        if (blit_framebuffer_from_vram)
+        if (blit_framebuffer_from_vram) {
             renderer.update_framebuffer(&dc.gpu);
+            renderer.blit_framebuffer();
+        }
 
         if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
             // FIXME: I don't how to handle this correctly, but copying the framebuffer from VRAM
@@ -696,12 +698,8 @@ pub fn main() !void {
             const now = std.time.microTimestamp();
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
+            try renderer.render();
         }
-
-        // FIXME: We don't need to render everything if the DC did not issued a render_start command, but we still need to render the
-        //        direct framebuffer writes. Reverting to rendering everything for now.
-        try renderer.render();
-
         renderer.draw(); //  Blit to screen
 
         if (draw_ui) {

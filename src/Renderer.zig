@@ -1860,21 +1860,18 @@ pub const Renderer = struct {
         return .{ .usage = .InsideEnabled, .x = 0, .y = 0, .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height };
     }
 
-    pub fn render(self: *Renderer) !void {
-        const gctx = self._gctx;
+    // Convert Framebuffer from native 640*480 to window resolution
+    pub fn blit_framebuffer(self: *Renderer) void {
+        if (self.read_framebuffer_enabled) {
+            const gctx = self._gctx;
 
-        const commands = commands: {
-            const encoder = gctx.device.createCommandEncoder(null);
-            defer encoder.release();
+            const commands = commands: {
+                const encoder = gctx.device.createCommandEncoder(null);
+                defer encoder.release();
 
-            const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-            const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
 
-            const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
-            const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
-
-            // Convert Framebuffer from native 640*480 to window resolution
-            if (self.read_framebuffer_enabled) {
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
@@ -1887,20 +1884,39 @@ pub const Renderer = struct {
                     .color_attachments = &color_attachments,
                 };
 
-                const pass = encoder.beginRenderPass(render_pass_info);
+                {
+                    const pass = encoder.beginRenderPass(render_pass_info);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
 
-                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+                    pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                    pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
-                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+                    pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
 
-                pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
-                pass.drawIndexed(4, 1, 0, 0, 0);
-                defer {
-                    pass.end();
-                    pass.release();
+                    pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                    pass.drawIndexed(4, 1, 0, 0, 0);
                 }
-            }
+
+                break :commands encoder.finish(null);
+            };
+            defer commands.release();
+
+            gctx.submit(&.{commands});
+        }
+    }
+
+    pub fn render(self: *Renderer) !void {
+        const gctx = self._gctx;
+
+        const commands = commands: {
+            const encoder = gctx.device.createCommandEncoder(null);
+            defer encoder.release();
+
+            const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
+            const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
 
             const uniform_mem = gctx.uniformsAllocate(struct { depth_min: f32, depth_max: f32 }, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
@@ -2103,6 +2119,10 @@ pub const Renderer = struct {
                 };
 
                 const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
 
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
@@ -2111,10 +2131,6 @@ pub const Renderer = struct {
 
                 pass.setBindGroup(0, blit_bind_group, &.{});
                 pass.drawIndexed(4, 1, 0, 0, 0);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
             }
 
             break :commands encoder.finish(null);
