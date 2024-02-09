@@ -82,7 +82,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0111000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.add_imm_rn, .name = "add #imm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.add_imm_rn },
     .{ .code = 0b0011000000001110, .mask = 0b0000111111110000, .fn_ = interpreter.addc_Rm_Rn, .name = "addc Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0011000000001111, .mask = 0b0000111111110000, .fn_ = interpreter.addv_Rm_Rn, .name = "addv Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b1000100000000000, .mask = 0b0000000011111111, .fn_ = interpreter.cmpeq_imm_r0, .name = "cmp/eq #imm,R0", .privileged = false, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
+    .{ .code = 0b1000100000000000, .mask = 0b0000000011111111, .fn_ = interpreter.cmpeq_imm_r0, .name = "cmp/eq #imm,R0", .privileged = false, .jit_emit_fn = sh4_jit.cmpeq_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0011000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.cmpeq_Rm_Rn, .name = "cmp/eq Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{} } },
     .{ .code = 0b0011000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.cmphs_Rm_Rn, .name = "cmp/hs Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{} } },
     .{ .code = 0b0011000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.cmpge_Rm_Rn, .name = "cmp/ge Rm,Rn", .privileged = false, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{} } },

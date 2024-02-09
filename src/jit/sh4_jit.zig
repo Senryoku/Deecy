@@ -683,6 +683,13 @@ pub fn add_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn cmpeq_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = load_register(block, ctx, 0);
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = r0 }, .rhs = .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) } } });
+    try set_t(block, ctx, .Equal);
+    return false;
+}
+
 pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
