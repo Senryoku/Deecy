@@ -44,26 +44,26 @@ fn main(
     // NOTE: Comparisons are inversed compared to Holly's 1/z depth.
     //       Also, the label denotes when the fragment is kept, not when it's discarded.
     switch(depth_compare) {
-        case 0: { discard; } // Never
-        case 1: { // Less
+        case 0u: { discard; } // Never
+        case 1u: { // Less
             if position.z <= opaque_depth { discard; }
         }
-        case 2: { // Equal
+        case 2u: { // Equal
             if position.z != opaque_depth { discard; }
         }
-        case 3: { // Less or Equal
+        case 3u: { // Less or Equal
             if position.z < opaque_depth { discard; }
         }
-        case 4: { // Greater
+        case 4u: { // Greater
             if position.z >= opaque_depth { discard; }
         }
-        case 5: { // Not Equal
+        case 5u: { // Not Equal
             if position.z == opaque_depth { discard; }
         }
-        case 6: { // Greater or Equal
+        case 6u: { // Greater or Equal
             if position.z > opaque_depth { discard; }
         }
-        case 7: {} // Always
+        case 7u: {} // Always
         default: {}
     }
 
