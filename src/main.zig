@@ -299,7 +299,7 @@ pub fn main() !void {
 
                 if (zgui.button("Step", .{ .w = 200.0 })) {
                     running = false;
-                    _ = dc.tick(1);
+                    _ = try dc.tick(1);
                 }
                 if (zgui.button("Skip", .{ .w = 200.0 })) {
                     dc.cpu.pc += 2;
@@ -654,7 +654,7 @@ pub fn main() !void {
                 if (!enable_jit) {
                     const max_instructions: u8 = if (breakpoints.items.len == 0) 16 else 1;
 
-                    _ = dc.tick(max_instructions);
+                    _ = try dc.tick(max_instructions);
 
                     // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
                     if (max_instructions == 1) {
@@ -667,7 +667,7 @@ pub fn main() !void {
                     }
                 } else {
                     for (0..32) |_| {
-                        _ = dc.tick_jit();
+                        _ = try dc.tick_jit();
                         if (dc.gpu.render_start) break;
                     }
                 }

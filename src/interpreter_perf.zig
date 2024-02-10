@@ -33,7 +33,7 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += try dc.tick(max_instructions);
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
@@ -55,7 +55,7 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += try dc.tick(max_instructions);
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;
@@ -77,7 +77,7 @@ pub fn main() !void {
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
         while (cycles < cycles_target) {
-            cycles += dc.tick(max_instructions);
+            cycles += try dc.tick(max_instructions);
         }
         const elapsed = (try std.time.Instant.now()).since(start);
         total_time += elapsed;

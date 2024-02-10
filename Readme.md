@@ -21,6 +21,7 @@
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
+    - Correct color/offset interpolation in respect to perspective. See UVs. 
     - Modifier Volumes.
     - User Tile Clip.
     - Fog.
