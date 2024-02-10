@@ -86,7 +86,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let to_insert = layers[i];
         var j = i;
 
-        while j > 0u && to_insert.depth > layers[j - 1u].depth {
+        while j > 0u && to_insert.depth >= layers[j - 1u].depth {
             layers[j] = layers[j - 1u];
             j--;
         }
@@ -97,7 +97,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var color = textureLoad(opaque_texture, frag_coords, 0);
     color.a = 1.0;
 
-    // Blend the remaining layers
+    // Blend the translucent fragments
     for (var i = 0u; i < layer_count; i++) {
         let src = layers[i].color;
         let dst = color;
