@@ -58,17 +58,37 @@ const OtherRegOpcode = enum(u3) { Test = 0, Not = 2, Neg = 3, Mul = 4, IMul = 5,
 // Opcode: C1 / D3
 const ShiftRegOpcode = enum(u3) { Rol = 0, Ror = 1, Rcl = 2, Rcr = 3, Shl = 4, Shr = 5, Sar = 7 };
 
+// Above/Below: Unsigned
+// Greater/Less: Signed
 pub const Condition = enum {
     Always,
-    Equal,
-    NotEqual,
+    Overflow,
+    NotOverflow,
     Carry,
+    Below,
     NotCarry,
-    Greater, // Signed Values
-    GreaterEqual,
-    Above, // Unsigned Values
+    AboveEqual,
+    NotBelow,
+    Equal,
+    Zero,
+    NotEqual,
+    NotZero,
+    NotAbove,
+    BelowEqual,
+    Above,
+    NotBelowEqual,
+    Sign,
+    NotSign,
     ParityEven,
     ParityOdd,
+    Less,
+    NotGreaterEqual,
+    GreaterEqual,
+    NotLess,
+    LessEqual,
+    NotGreater,
+    Greater,
+    NotLessEqual,
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -848,15 +868,22 @@ pub const Emitter = struct {
 
         try self.emit(u8, switch (condition) {
             .Always => 0xE9,
-            .Equal => 0x84,
-            .NotEqual => 0x85,
-            .Carry => 0x82,
-            .NotCarry => 0x83,
-            .Greater => 0x8F,
-            .GreaterEqual => 0x8D,
-            .Above => 0x87,
+            .Overflow => 0x80,
+            .NotOverflow => 0x81,
+            .Carry, .Below => 0x82,
+            .NotCarry, .AboveEqual, .NotBelow => 0x83,
+            .Equal, .Zero => 0x84,
+            .NotEqual, .NotZero => 0x85,
+            .NotAbove, .BelowEqual => 0x86,
+            .Above, .NotBelowEqual => 0x87,
+            .Sign => 0x88,
+            .NotSign => 0x89,
             .ParityEven => 0x8A,
             .ParityOdd => 0x8B,
+            .Less, .NotGreaterEqual => 0x8C,
+            .GreaterEqual, .NotLess => 0x8D,
+            .LessEqual, .NotGreater => 0x8E,
+            .Greater, .NotLessEqual => 0x8F,
         });
 
         address = self.block_size;

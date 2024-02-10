@@ -690,11 +690,45 @@ pub fn cmpeq_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     return false;
 }
 
-pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+fn cmp_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, condition: JIT.Condition) !bool {
     const rn = load_register(block, ctx, instr.nmd.n);
     const rm = load_register(block, ctx, instr.nmd.m);
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .reg = rm } } });
-    try set_t(block, ctx, .Above);
+    try set_t(block, ctx, condition);
+    return false;
+}
+
+pub fn cmpeq_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return cmp_Rm_Rn(block, ctx, instr, .Equal);
+}
+
+pub fn cmpge_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return cmp_Rm_Rn(block, ctx, instr, .GreaterEqual);
+}
+
+pub fn cmpgt_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return cmp_Rm_Rn(block, ctx, instr, .Greater);
+}
+
+pub fn cmphs_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return cmp_Rm_Rn(block, ctx, instr, .AboveEqual);
+}
+
+pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return cmp_Rm_Rn(block, ctx, instr, .Above);
+}
+
+pub fn cmppl_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register(block, ctx, instr.nmd.n);
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+    try set_t(block, ctx, .Greater);
+    return false;
+}
+
+pub fn cmppz_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register(block, ctx, instr.nmd.n);
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+    try set_t(block, ctx, .GreaterEqual);
     return false;
 }
 
