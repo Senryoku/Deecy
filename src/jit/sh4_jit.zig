@@ -853,16 +853,12 @@ pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // FIXME: This is buggy, and I have no clue why. It (sometimes) causes weird behavior is Soulcalibur. The interpreter fallback doesn't seem to have this issue.
-    //        Might be another cache invalidation issue...
-
-    //  try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    //  try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, 0, 32);
-    //  try block.call(sh4.SH4.set_fpscr);
-    //  const rn = load_register_for_writing(block, ctx, instr.nmd.n);
-    //  try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
-
-    _ = try interpreter_fallback_cached(block, ctx, instr);
+    // NOTE: If we ever get a cache for fp registers, invalidate it here!
+    try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, .Reg, 0, 32);
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+    try block.call(sh4.SH4.set_fpscr);
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
 
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
