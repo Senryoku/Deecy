@@ -698,6 +698,14 @@ pub fn cmphi_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn stsl_PR_atRn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
+    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, ReturnRegister, 32);
+    return false;
+}
+
 pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
         .Zero => {

@@ -214,7 +214,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000000011010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_MACL_Rn, .name = "sts MACL,Rn", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .access = .{ .r = .{}, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_MACL_at_Rn_dec, .name = "sts.l MACL,@-Rn", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0000000000101010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_PR_Rn, .name = "sts PR,Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .{}, .w = .{ .rn = true } } },
-    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_PR_atRn_dec, .name = "sts.l PR,@-Rn", .privileged = false, .jit_emit_fn = sh4_jit.stsl_PR_atRn_dec, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = interpreter.trapa_imm, .name = "trapa #imm", .privileged = false, .issue_cycles = 7, .latency_cycles = 7, .access = .{ .r = .{}, .w = .{} } },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.fmov_FRm_FRn, .name = "fmov FRm,FRn", .privileged = false, .issue_cycles = 1, .latency_cycles = 0, .access = .{ .r = .{}, .w = .{} } },
