@@ -42,7 +42,7 @@ pub const std_options = struct {
 };
 
 var running = true;
-var draw_ui = true;
+var draw_debug_ui = true;
 
 fn trapa_handler() void {
     running = false;
@@ -59,7 +59,7 @@ fn glfw_key_callback(
     _ = scancode;
     _ = mods;
     if (key == .escape and action == .press) {
-        draw_ui = !draw_ui;
+        draw_debug_ui = !draw_debug_ui;
     }
 }
 
@@ -245,23 +245,23 @@ pub fn main() !void {
     while (!window.shouldClose()) {
         zglfw.pollEvents();
 
-        if (draw_ui) {
-            zgui.backend.newFrame(
-                gctx.swapchain_descriptor.width,
-                gctx.swapchain_descriptor.height,
-            );
+        zgui.backend.newFrame(
+            gctx.swapchain_descriptor.width,
+            gctx.swapchain_descriptor.height,
+        );
 
-            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true } })) {
-                var sum: i128 = 0;
-                for (0..last_n_frametimes.count) |i| {
-                    sum += last_n_frametimes.peekItem(i);
-                }
-                const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
-                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+        zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
+        if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true } })) {
+            var sum: i128 = 0;
+            for (0..last_n_frametimes.count) |i| {
+                sum += last_n_frametimes.peekItem(i);
             }
-            zgui.end();
+            const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
+            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+        }
+        zgui.end();
 
+        if (draw_debug_ui) {
             if (zgui.begin("CPU State", .{})) {
                 _ = zgui.checkbox("JIT", .{ .v = &enable_jit });
                 zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
@@ -703,24 +703,22 @@ pub fn main() !void {
         }
         renderer.draw(); //  Blit to screen
 
-        if (draw_ui) {
-            const commands = commands: {
-                const encoder = gctx.device.createCommandEncoder(null);
-                defer encoder.release();
+        const commands = commands: {
+            const encoder = gctx.device.createCommandEncoder(null);
+            defer encoder.release();
 
-                // GUI pass
-                {
-                    const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                    defer zgpu.endReleasePass(pass);
-                    zgui.backend.draw(pass);
-                }
+            // GUI pass
+            {
+                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+                defer zgpu.endReleasePass(pass);
+                zgui.backend.draw(pass);
+            }
 
-                break :commands encoder.finish(null);
-            };
-            defer commands.release();
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
 
-            gctx.submit(&.{commands});
-        }
+        gctx.submit(&.{commands});
 
         if (gctx.present() == .swap_chain_resized) {
             renderer.on_resize();
