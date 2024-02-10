@@ -67,7 +67,7 @@ fn main(
         default: {}
     }
 
-    var final_color: vec4<f32> = fragment_color(base_color, offset_color, uv / w, tex);
+    var final_color: vec4<f32> = fragment_color(base_color / w, offset_color / w, uv / w, tex);
 
     // Add the fragment to the linked list
 

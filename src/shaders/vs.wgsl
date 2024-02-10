@@ -35,10 +35,11 @@ fn main(
     output.position_clip.z = (1.0 / position.z) / uniforms.depth_max; // Remap to the [0.0..1.0] range used by WGPU
     output.position_clip.w = 1.0;
 
-    output.base_color = base_color;
-    output.offset_color = offset_color;
-
     let w = position.z;
+    
+    output.base_color = w * base_color;
+    output.offset_color = w * offset_color;
+
     output.uv = w * uv;
     output.w = w;
     output.tex = tex;

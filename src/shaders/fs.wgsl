@@ -6,7 +6,7 @@ fn main(
     @location(3) w: f32,
     @location(4) @interpolate(flat) tex: vec2<u32>,
 ) -> @location(0) vec4<f32> {
-    var final_color: vec4<f32> = fragment_color(base_color, offset_color, uv / w, tex);
+    var final_color: vec4<f32> = fragment_color(base_color / w, offset_color / w, uv / w, tex);
 
     if final_color.a == 0.0 {
         discard;
