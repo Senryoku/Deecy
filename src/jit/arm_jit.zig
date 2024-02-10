@@ -249,14 +249,14 @@ fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
 fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
     try b.mov(.{ .reg = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
-    try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = dst, .displacement = 0, .size = @sizeOf(T) } });
+    try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = dst, .displacement = 0, .size = @bitSizeOf(T) } });
 }
 
 // NOTE: Uses ReturnRegister as a temporary!
 fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
     try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
-    try b.mov(.{ .mem = .{ .base = ReturnRegister, .displacement = 0, .size = @sizeOf(T) } }, .{ .reg = value });
+    try b.mov(.{ .mem = .{ .base = ReturnRegister, .displacement = 0, .size = @bitSizeOf(T) } }, .{ .reg = value });
 }
 
 // Loads into ReturnRegister
