@@ -216,6 +216,8 @@ pub const ARM7JIT = struct {
         self.block_cache.cursor += block.buffer.len;
         block.cycles = cycles;
 
+        arm_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
+
         self.block_cache.put(start_ctx.address, ctx.address, block);
         return block;
     }
@@ -623,11 +625,11 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                     try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .reg = rotate_amount } } });
                     try store_register(b, inst.rd, .{ .reg = val });
                 }
+            }
 
-                // Simulate an additional fetch
-                if (inst.rd == 15) {
-                    try b.add(guest_register(15), .{ .imm32 = 4 });
-                }
+            // Simulate an additional fetch
+            if (inst.rd == 15) {
+                try b.add(guest_register(15), .{ .imm32 = 4 });
             }
         }
     } else {

@@ -188,7 +188,7 @@ pub const InstructionType = enum {
     Nop,
     Break, // For Debugging
     FunctionCall,
-    Mov,
+    Mov, // Mov with zero extention (NOTE: This is NOT the same as the x86 mov instruction, which doesn't zero extend from 8 and 16-bit memory accesses)
     Movsx, // Mov with sign extension
     Push,
     Pop,
@@ -411,7 +411,7 @@ pub const Emitter = struct {
     }
 
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
-        if (T == MODRM) {
+        if (@sizeOf(T) == 1) {
             try self.emit_byte(@bitCast(value));
         } else {
             for (0..@sizeOf(T)) |i| {
@@ -456,61 +456,73 @@ pub const Emitter = struct {
     }
 
     pub fn mov_reg_reg(self: *@This(), dst: Register, src: Register) !void {
+        // Always 64bits
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
         const modrm: MODRM = .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) };
         try self.emit(u8, @bitCast(modrm));
     }
 
+    pub fn mov_mem_reg(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Register, mem: MemOperand) !void {
+        var reg_64 = mem.size == 64;
+
+        if (direction == .MemToReg and mem.size < 32)
+            reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
+
+        const opcode: []const u8 = switch (direction) {
+            .MemToReg => switch (mem.size) {
+                8 => &[_]u8{ 0x0F, 0xB6 }, // Emit a movzx (zero extend) in this case.
+                16 => &[_]u8{ 0x0F, 0xB7 }, // Emit a movzx (zero extend) in this case.
+                32, 64 => &[_]u8{0x8B},
+                else => return error.InvalidMemSize,
+            },
+            .RegToMem => switch (mem.size) {
+                8 => &[_]u8{0x88},
+                16 => &[_]u8{ 0x66, 0x88 },
+                32, 64 => &[_]u8{0x89},
+                else => return error.InvalidMemSize,
+            },
+        };
+
+        try self.emit_rex_if_needed(.{
+            .w = reg_64,
+            .r = need_rex(reg),
+            .x = if (mem.index) |i| need_rex(i) else false,
+            .b = need_rex(mem.base),
+        });
+
+        for (opcode) |o| try self.emit(u8, o);
+
+        const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
+        else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
+
+        try self.emit(MODRM, .{
+            .mod = if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32,
+            .reg_opcode = encode(reg),
+            .r_m = r_m,
+        });
+
+        if (r_m == 0b100) {
+            try self.emit(SIB, .{
+                .scale = 0,
+                // NOTE: ESP/R12-based addressing needs a SIB byte, this is the 0b100 case.
+                .index = if (mem.index) |i| encode(i) else 0b100,
+                .base = encode(mem.base),
+            });
+        }
+
+        if (mem.displacement >= 0x80) {
+            try self.emit(u32, mem.displacement);
+        } else if (mem.displacement != 0) {
+            try self.emit(u8, @truncate(mem.displacement));
+        }
+    }
+
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
-                    .reg => |src_reg| {
-                        if (dst_m.index) |index| {
-                            if (dst_m.displacement != 0) // TODO
-                                return error.MovIndexWithDisplacementNotSupported;
-                            try self.emit_rex_if_needed(.{
-                                .w = dst_m.size == 64,
-                                .r = need_rex(src_reg),
-                                .x = need_rex(index),
-                                .b = need_rex(dst_m.base),
-                            });
-                            const opcode = 0x89;
-                            try self.emit(u8, opcode);
-                            const modrm: MODRM = .{
-                                .mod = .disp8,
-                                .reg_opcode = encode(src_reg),
-                                .r_m = 0b100, // FIXME: I don't know what I'm doing :D
-                            };
-                            try self.emit(u8, @bitCast(modrm));
-                            const sib: SIB = .{
-                                .scale = 0,
-                                .index = encode(index),
-                                .base = encode(dst_m.base),
-                            };
-                            try self.emit(u8, @bitCast(sib));
-                            try self.emit(u8, 0x00); // Zero displacement
-                        } else {
-                            try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
-                            const opcode = 0x89;
-                            if (dst_m.size == 16) // Operand size prefix
-                                try self.emit(u8, 0x66);
-                            try self.emit(u8, opcode);
-                            const modrm: MODRM = .{
-                                .mod = if (dst_m.displacement == 0) .indirect else .disp32,
-                                .reg_opcode = encode(src_reg),
-                                .r_m = encode(dst_m.base),
-                            };
-                            try self.emit(u8, @bitCast(modrm));
-                            // NOTE: ESP/R12-based addressing need a SIB byte.
-                            if (encode(dst_m.base) == 0b100) {
-                                try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                            }
-                            if (dst_m.displacement != 0)
-                                try self.emit(u32, dst_m.displacement);
-                        }
-                    },
+                    .reg => |src_reg| try mov_mem_reg(self, .RegToMem, src_reg, dst_m),
                     .imm32 => |imm| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
@@ -522,7 +534,7 @@ pub const Emitter = struct {
                         try self.emit(u8, @bitCast(modrm));
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(dst_m.base) == 0b100)
-                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
                         if (dst_m.displacement != 0)
                             try self.emit(u32, dst_m.displacement);
                         try self.emit(u32, imm);
@@ -547,53 +559,7 @@ pub const Emitter = struct {
                         try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
                         try self.emit(u32, imm);
                     },
-                    .mem => |src_m| {
-                        if (src_m.index) |index| {
-                            if (src_m.displacement != 0) {
-                                return error.MovIndexWithDisplacementNotSupported;
-                            }
-                            try self.emit_rex_if_needed(.{
-                                .w = src_m.size == 64,
-                                .r = need_rex(dst_reg),
-                                .x = need_rex(index),
-                                .b = need_rex(src_m.base),
-                            });
-                            const opcode = 0x8B;
-                            try self.emit(u8, opcode);
-                            try self.emit(MODRM, .{
-                                .mod = .disp8,
-                                .reg_opcode = encode(dst.reg),
-                                .r_m = 0b100, // FIXME: I don't know what I'm doing :D
-                            });
-                            const sib: SIB = .{
-                                .scale = 0,
-                                .index = encode(index),
-                                .base = encode(src_m.base),
-                            };
-                            try self.emit(u8, @bitCast(sib));
-                            try self.emit(u8, 0x00); // Zero displacement
-                        } else {
-                            try self.emit_rex_if_needed(.{
-                                .w = src_m.size == 64,
-                                .r = need_rex(dst_reg),
-                                .b = need_rex(src_m.base),
-                            });
-                            const opcode = 0x8B;
-                            if (src_m.size == 16) // Operand size prefix
-                                try self.emit(u8, 0x66);
-                            try self.emit(u8, opcode);
-                            try self.emit(MODRM, .{
-                                .mod = if (src_m.displacement == 0) .indirect else .disp32,
-                                .reg_opcode = encode(dst.reg),
-                                .r_m = encode(src_m.base),
-                            });
-                            // NOTE: ESP/R12-based addressing need a SIB byte.
-                            if (encode(src_m.base) == 0b100)
-                                try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
-                            if (src_m.displacement != 0)
-                                try self.emit(u32, src_m.displacement);
-                        }
-                    },
+                    .mem => |src_m| try mov_mem_reg(self, .MemToReg, dst_reg, src_m),
                     else => return error.InvalidMovSource,
                 }
             },
