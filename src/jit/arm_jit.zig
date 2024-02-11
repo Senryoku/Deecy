@@ -740,11 +740,11 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
         (inst.i == 1 or sro.register_specified == 0) and
         inst.rd != 15 and
         (inst.opcode == .AND or
-        // inst.opcode == .EOR or
+        inst.opcode == .EOR or
         inst.opcode == .SUB or
         inst.opcode == .RSB or
         inst.opcode == .ADD or
-        // inst.opcode == .ORR or
+        inst.opcode == .ORR or
         inst.opcode == .MOV or
         inst.opcode == .BIC or
         inst.opcode == .MVN))
