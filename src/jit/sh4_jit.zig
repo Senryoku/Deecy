@@ -378,7 +378,7 @@ pub const SH4JIT = struct {
         self.block_cache.cursor += block.buffer.len;
         block.cycles = cycles;
 
-        // sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
+        sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
         return block;

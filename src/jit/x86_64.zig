@@ -692,7 +692,7 @@ pub const Emitter = struct {
     }
 
     // FIXME: I don't have a better name.
-    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm__opcode: RegOpcode, dst: Operand, src: Operand) !void {
+    pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm_opcode: RegOpcode, dst: Operand, src: Operand) !void {
         _ = rax_dst_opcode_8;
         _ = mr_opcode_8;
         _ = rm_opcode_8;
@@ -711,7 +711,10 @@ pub const Emitter = struct {
                             // OP EAX, imm32
                             try self.emit(u8, rax_dst_opcode);
                             try self.emit(u32, imm32);
-                        } else try reg_dest_imm_src(self, rm_imm__opcode, dst_reg, imm32);
+                        } else try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm32);
+                    },
+                    .imm8 => |imm8| {
+                        try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm8);
                     },
                     else => return error.InvalidSource,
                 }
@@ -722,7 +725,7 @@ pub const Emitter = struct {
                         try mem_dest_reg_src(self, mr_opcode, dst_m, src_reg);
                     },
                     .imm32 => |imm| {
-                        try mem_dest_imm_src(self, rm_imm__opcode, dst_m, u32, imm);
+                        try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm);
                     },
                     else => return error.InvalidSource,
                 }
@@ -870,9 +873,27 @@ pub const Emitter = struct {
         try self.emit(u8, 0x48);
         try self.emit(u8, 0xB8);
         try self.emit(u64, @intFromPtr(function));
+
+        if (builtin.os.tag == .windows) {
+            // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
+            // sub rsp, 0x20
+            try self.emit(u8, 0x48);
+            try self.emit(u8, 0x83);
+            try self.emit(u8, 0xEC);
+            try self.emit(u8, 0x20);
+        }
+
         // call rax
         try self.emit(u8, 0xFF);
         try self.emit(u8, 0xD0);
+
+        if (builtin.os.tag == .windows) {
+            // add rsp, 0x20
+            try self.emit(u8, 0x48);
+            try self.emit(u8, 0x83);
+            try self.emit(u8, 0xC4);
+            try self.emit(u8, 0x20);
+        }
     }
 
     pub fn ret(self: *@This()) !void {
