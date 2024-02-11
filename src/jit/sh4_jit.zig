@@ -516,13 +516,13 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
     try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
+    // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
-    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .size = size } });
+    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = size } });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
@@ -563,11 +563,10 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
-    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
-    try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .size = size } }, .{ .reg = ArgRegisters[2] });
+    try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = size } }, .{ .reg = ArgRegisters[2] });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
