@@ -525,8 +525,21 @@ fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) 
     return true; // FIXME: Return true only if we're writing to PC
 }
 
-fn handle_branch(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
-    try interpreter_fallback(b, ctx, instruction);
+fn handle_branch(b: *JITBlock, _: *JITContext, instruction: u32) !bool {
+    const inst: arm7.BranchInstruction = @bitCast(instruction);
+
+    const offset = arm7.sign_extend(@TypeOf(inst.offset), inst.offset) << 2;
+
+    if (inst.l == 1) {
+        try load_register(b, ReturnRegister, 15);
+        try b.sub(.{ .reg = ReturnRegister }, .{ .imm32 = 4 });
+        try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0xFFFFFFFC } } });
+        try store_register(b, 14, .{ .reg = ReturnRegister });
+    }
+
+    // +4 to simulate next prefetch
+    try b.add(guest_register(15), .{ .imm32 = offset + 4 });
+
     return true;
 }
 
