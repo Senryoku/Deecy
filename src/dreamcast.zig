@@ -31,11 +31,16 @@ const CableType = enum(u16) {
 const ScheduledInterrupt = struct {
     const InterruptType = enum { Normal, External };
 
-    cycles: u32,
+    trigger_cycle: u64,
     interrupt: union(InterruptType) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
     },
+
+    fn compare(context: void, a: ScheduledInterrupt, b: ScheduledInterrupt) std.math.Order {
+        _ = context;
+        return std.math.order(a.trigger_cycle, b.trigger_cycle);
+    }
 };
 
 pub const Dreamcast = struct {
@@ -55,7 +60,8 @@ pub const Dreamcast = struct {
     ram: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
-    scheduled_interrupts: std.ArrayList(ScheduledInterrupt),
+    scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
+    _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
 
     _allocator: std.mem.Allocator = undefined,
 
@@ -72,7 +78,7 @@ pub const Dreamcast = struct {
             .sh4_jit = try SH4JIT.init(allocator),
             .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
-            .scheduled_interrupts = std.ArrayList(ScheduledInterrupt).init(allocator),
+            .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
             ._allocator = allocator,
         };
 
@@ -304,31 +310,28 @@ pub const Dreamcast = struct {
     // TODO: Add helpers for external interrupts and errors.
 
     pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
-        self.scheduled_interrupts.append(.{ .cycles = cycles, .interrupt = .{ .Normal = int } }) catch |err| {
+        self.scheduled_interrupts.add(.{ .trigger_cycle = self._scheduled_interrupts_cycles +% cycles, .interrupt = .{ .Normal = int } }) catch |err| {
             std.debug.panic("Failed to schedule interrupt: {}", .{err});
         };
     }
 
     pub fn schedule_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT, cycles: u32) void {
-        self.scheduled_interrupts.append(.{ .cycles = cycles, .interrupt = .{ .External = int } }) catch |err| {
+        self.scheduled_interrupts.add(.{ .trigger_cycle = self._scheduled_interrupts_cycles +% cycles, .interrupt = .{ .External = int } }) catch |err| {
             std.debug.panic("Failed to schedule external interrupt: {}", .{err});
         };
     }
 
     fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
-        if (self.scheduled_interrupts.items.len > 0) {
-            var index: u32 = 0;
-            while (index < self.scheduled_interrupts.items.len) {
-                if (self.scheduled_interrupts.items[index].cycles < cycles) {
-                    switch (self.scheduled_interrupts.items[index].interrupt) {
-                        .Normal => self.raise_normal_interrupt(self.scheduled_interrupts.items[index].interrupt.Normal),
-                        .External => self.raise_external_interrupt(self.scheduled_interrupts.items[index].interrupt.External),
+        if (self.scheduled_interrupts.count() > 0) {
+            self._scheduled_interrupts_cycles += cycles;
+            while (self.scheduled_interrupts.peek()) |event| {
+                if (event.trigger_cycle <= self._scheduled_interrupts_cycles) {
+                    switch (event.interrupt) {
+                        .Normal => self.raise_normal_interrupt(event.interrupt.Normal),
+                        .External => self.raise_external_interrupt(event.interrupt.External),
                     }
-                    _ = self.scheduled_interrupts.swapRemove(index);
-                } else {
-                    self.scheduled_interrupts.items[index].cycles -= cycles;
-                    index += 1;
-                }
+                    _ = self.scheduled_interrupts.remove();
+                } else break;
             }
         }
     }
