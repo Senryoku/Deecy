@@ -9,6 +9,7 @@ const JITBlock = JIT.JITBlock;
 
 const Architecture = @import("x86_64.zig");
 const ReturnRegister = Architecture.ReturnRegister;
+const ScratchRegisters = Architecture.ScratchRegisters;
 const ArgRegisters = Architecture.ArgRegisters;
 const SavedRegisters = Architecture.SavedRegisters;
 
@@ -545,35 +546,36 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, value: JIT.Register, comptime size: u32) !void {
     const dest_guest_reg_location = load_register(block, ctx, dest_guest_reg);
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = dest_guest_reg_location });
+
+    const addr = ArgRegisters[1];
+
+    try block.mov(.{ .reg = addr }, .{ .reg = dest_guest_reg_location });
 
     if (displacement != 0)
-        try block.add(.{ .reg = ArgRegisters[1] }, .{ .imm32 = displacement });
+        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
     if (addressing == .Reg_R0) {
         const r0 = load_register(block, ctx, 0);
-        try block.add(.{ .reg = ArgRegisters[1] }, .{ .reg = r0 });
+        try block.add(.{ .reg = addr }, .{ .reg = r0 });
     }
 
-    if (value != ArgRegisters[2])
-        try block.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
-
     // RAM Fast path
-    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
+    try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
+    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[3] }, .rhs = .{ .imm32 = 0x0C000000 } } });
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
-    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
     const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
-    try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = size } }, .{ .reg = ArgRegisters[2] });
+    try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = addr, .size = size } }, .{ .reg = value });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
-    //   Value is already loaded into ArgRegisters[2]
+    if (value != ArgRegisters[2])
+        try block.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
     if (size == 32) {
         try block.call(&sh4.SH4._out_of_line_write32);
     } else if (size == 64) {

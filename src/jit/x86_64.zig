@@ -10,7 +10,7 @@ const JITBlock = @import("jit_block.zig").JITBlock;
 // Tried using builtin.abi, but it returns .gnu on Windows.
 
 pub const ReturnRegister = Register.rax;
-pub const ScratchRegisters = [_]Register{ .R10, .R11 };
+pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
 pub const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
     .rcx,
