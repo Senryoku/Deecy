@@ -299,7 +299,9 @@ pub const Dreamcast = struct {
     }
 
     pub fn tick_jit(self: *@This()) !u32 {
-        const cycles = try self.sh4_jit.execute(&self.cpu);
+        var cycles: u32 = 0;
+        while (cycles < 64)
+            cycles += try self.sh4_jit.execute(&self.cpu);
         self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
