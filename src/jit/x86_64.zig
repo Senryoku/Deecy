@@ -561,16 +561,24 @@ pub const Emitter = struct {
                         try self.mov_reg_reg(dst_reg, src_reg);
                     },
                     .imm64 => |imm| {
-                        // movabs <reg>,<imm64>
-                        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
-                        try self.emit(u64, imm);
+                        if (imm == 0) {
+                            try self.xor_(dst, dst);
+                        } else {
+                            // movabs <reg>,<imm64>
+                            try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
+                            try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
+                            try self.emit(u64, imm);
+                        }
                     },
                     .imm32 => |imm| {
-                        // mov    <reg>,<imm32>
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
-                        try self.emit(u32, imm);
+                        if (imm == 0) {
+                            try self.xor_(dst, dst);
+                        } else {
+                            // mov    <reg>,<imm32>
+                            try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
+                            try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
+                            try self.emit(u32, imm);
+                        }
                     },
                     .mem => |src_m| try mov_mem_reg(self, .MemToReg, dst_reg, src_m),
                     else => return error.InvalidMovSource,
