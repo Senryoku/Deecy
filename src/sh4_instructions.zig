@@ -14,7 +14,7 @@ const CacheAccess = struct {
     rm: bool = false,
 };
 
-const OpcodeDescription = struct {
+pub const OpcodeDescription = struct {
     code: u16,
     mask: u16,
     fn_: *const fn (*sh4.SH4, sh4.Instr) void,

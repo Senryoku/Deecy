@@ -287,6 +287,44 @@ pub const SH4JIT = struct {
         }
     }
 
+    inline fn instr_lookup(instr: u16) sh4_instructions.OpcodeDescription {
+        return sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]];
+    }
+
+    // Try to match some common division patterns and replace them with a "single" instruction.
+    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext, instructions: [*]u16) !u32 {
+        _ = self;
+        // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
+        //        Tested by looking at the timer in Soulcalibur :^)
+        if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0u) {
+            var index: u32 = 1;
+            var rotcl_Rn_div1_count: u32 = 0;
+            while (true) {
+                if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.rotcl_Rn) break;
+                index += 1;
+                if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.div1) break;
+                index += 1;
+                rotcl_Rn_div1_count += 1;
+            }
+            if (rotcl_Rn_div1_count == 32 and (index % 2) == 0) {
+                const dividend_low = (sh4.Instr{ .value = instructions[1] }).nmd.n;
+                const dividend_high = (sh4.Instr{ .value = instructions[2] }).nmd.n;
+                const divisor = (sh4.Instr{ .value = instructions[2] }).nmd.m;
+
+                const dl = load_register_for_writing(b, ctx, dividend_low);
+                const dh = load_register(b, ctx, dividend_high);
+                const div = load_register(b, ctx, divisor);
+
+                try b.append(.{ .Div64_32 = .{ .dividend_high = dh, .dividend_low = dl, .divisor = div, .result = dl } });
+                return index;
+            }
+        }
+        if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
+            // TODO: Or not. This case seems messier?
+        }
+        return 0;
+    }
+
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
         var ctx = start_ctx;
 
@@ -310,7 +348,10 @@ pub const SH4JIT = struct {
 
         var index: u32 = 0;
         while (true) {
+            index += try self.simplify_div(&b, &ctx, instructions[index..]);
+
             const instr = instructions[index];
+
             sh4_jit_log.debug(" [{X:0>8}] {s} {s}", .{
                 ctx.address,
                 if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",

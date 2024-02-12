@@ -208,6 +208,7 @@ pub const InstructionType = enum {
     Shr,
     Sar,
     Jmp,
+    Div64_32,
 };
 
 pub const Instruction = union(InstructionType) {
@@ -234,6 +235,7 @@ pub const Instruction = union(InstructionType) {
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+    Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -262,6 +264,7 @@ pub const Instruction = union(InstructionType) {
             .Shl => |shl| writer.print("shl {any}, {any}", .{ shl.dst, shl.amount }),
             .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
             .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
+            .Div64_32 => |div| writer.print("div64_32 {any},{any}:{any},{any},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
         };
     }
 };
@@ -292,10 +295,10 @@ pub const Register = enum(u4) {
 };
 
 const REX = packed struct(u8) {
-    b: bool = false,
-    x: bool = false,
-    r: bool = false,
-    w: bool = false,
+    b: bool = false, // Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
+    x: bool = false, // Extension of the SIB index field
+    r: bool = false, // Extension of the ModR/M reg field
+    w: bool = false, // 0 = Operand size determined by CS.D; 1 = 64 Bit Operand Siz
     _: u4 = 0b0100,
 };
 
@@ -396,6 +399,7 @@ pub const Emitter = struct {
                 .Shr => |r| try self.shr(r.dst, r.amount),
                 .Shl => |r| try self.shl(r.dst, r.amount),
                 .Not => |r| try self.not(r.dst),
+                .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
                 else => return error.UnsupportedInstruction,
             }
         }
@@ -809,6 +813,24 @@ pub const Emitter = struct {
     fn not(self: *@This(), dst: Register) !void {
         try self.emit(u8, 0xF7);
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Not), .r_m = encode(dst) });
+    }
+
+    fn div64_32(self: *@This(), dividend_high: Register, dividend_low: Register, divisor: Register, result: Register) !void {
+        // Some register shuffling
+        if (dividend_high == .rax) {
+            try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }); // Avoid overwriting it before copying it.
+            try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low });
+        } else {
+            if (dividend_low != .rax)
+                try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low });
+            if (dividend_high != .rdx)
+                try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high });
+        }
+        // Actual div instruction
+        try self.emit_rex_if_needed(.{ .b = need_rex(divisor) });
+        try self.emit(u8, 0xF7);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 6, .r_m = encode(divisor) });
+        try self.mov(.{ .reg = result }, .{ .reg = .rax });
     }
 
     pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
