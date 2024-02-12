@@ -415,6 +415,12 @@ pub const Emitter = struct {
     }
 
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
+        if (T == MODRM) {
+            // See Intel Manual Vol. 2A 2-11.
+            if (value.mod == .indirect and value.r_m == 0b101)
+                return error.UnhandledSpecialCase;
+        }
+
         if (@sizeOf(T) == 1) {
             try self.emit_byte(@bitCast(value));
         } else {
@@ -463,12 +469,16 @@ pub const Emitter = struct {
         // Always 64bits
         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
         try self.emit(u8, 0x89);
-        const modrm: MODRM = .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) };
-        try self.emit(u8, @bitCast(modrm));
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
     }
 
     pub fn mov_mem_reg(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Register, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
+
+        if (mem.base == .rbp and mem.displacement == 0) {
+            // See Intel Manual Vol. 2A 2-11.
+            return error.UnimplementedMandatoryExplicitDisplacement;
+        }
 
         if (direction == .MemToReg and mem.size < 32)
             reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
@@ -530,12 +540,11 @@ pub const Emitter = struct {
                     .imm32 => |imm| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
-                        const modrm: MODRM = .{
+                        try self.emit(MODRM, .{
                             .mod = if (dst_m.displacement == 0) .indirect else .disp32,
                             .reg_opcode = 0,
                             .r_m = encode(dst_m.base),
-                        };
-                        try self.emit(u8, @bitCast(modrm));
+                        });
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(dst_m.base) == 0b100)
                             try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
@@ -591,7 +600,7 @@ pub const Emitter = struct {
                         });
                         // NOTE: ESP/R12-based addressing need a SIB byte.
                         if (encode(src_m.base) == 0b100)
-                            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+                            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
                         if (src_m.displacement != 0)
                             try self.emit(u32, src_m.displacement);
                     },
@@ -638,7 +647,7 @@ pub const Emitter = struct {
         });
 
         if (encode(dst_m.base) == 0b100) // Special case for r12
-            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
 
         if (dst_m.displacement != 0) {
             if (dst_m.displacement < 0x80) {
@@ -670,7 +679,7 @@ pub const Emitter = struct {
         });
 
         if (encode(dst_m.base) == 0b100) // Special case for r12
-            try self.emit(u8, @bitCast(SIB{ .scale = 0, .index = 0b100, .base = 0b100 }));
+            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
 
         if (dst_m.displacement != 0) {
             if (dst_m.displacement < 0x80) {
