@@ -43,6 +43,24 @@ const ScheduledInterrupt = struct {
     }
 };
 
+// Area 0:
+// 0x00000000 - 0x001FFFFF Boot ROM
+// 0x00200000 - 0x0021FFFF Flash Memory
+// 0x005F6800 - 0x005F69FF System Control Reg.
+// 0x005F6C00 - 0x005F6CFF Maple Control Reg.
+// 0x005F7000 - 0x005F70FF GD-ROM
+// 0x005F7400 - 0x005F74FF G1 Control Reg.
+// 0x005F7800 - 0x005F78FF G2 Control Reg.
+// 0x005F7C00 - 0x005F7CFF PVR Control Reg.
+// 0x005F8000 - 0x005F9FFF TA/PVR Core Reg.
+// 0x00600000 - 0x006007FF MODEM
+// 0x00700000 - 0x00707FFF AICA sound Reg.
+// 0x00710000 - 0x00710007 AICA RTC Reg.
+// 0x00800000 - 0x009FFFFF AICA Memory
+// 0x01000000 - 0x01FFFFFF G2 External Device #1
+// 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
+// 0x03000000 - 0x03FFFFE0 G2 External Device #2
+
 pub const Dreamcast = struct {
     cpu: SH4,
     gpu: Holly,
@@ -188,39 +206,32 @@ pub const Dreamcast = struct {
             }
         }
 
-        // Patch some function adresses ("syscalls")
-
+        // Patch some adresses of functions provided by the boot ROM ("syscalls")
+        inline for (.{
+            .{ 0x8C0000B0, 0x8C003C00 },
+            .{ 0x8C0000B4, 0x8C003D80 },
+            .{ 0x8C0000B8, 0x8C003D00 },
+            .{ 0x8C0000BC, 0x8C001000 },
+            .{ 0x8C0000C0, 0x8C0010F0 },
+            .{ 0x8C0000E0, 0x8C000800 },
+        }) |p| {
+            self.cpu.write32(p[0], p[1]);
+        }
         const HLE_syscalls = true;
+        // Replace them by HLE counterparts (see syscall.zig) by inserting fake opcodes.
         if (HLE_syscalls) {
             // System
-            self.cpu.write32(0x8C0000B0, 0x8C001000);
-            self.cpu.write16(0x8C001000, 0b0000000000010000);
+            self.cpu.write16(0x8C003C00, 0b0000000000010000);
             // Font
-            self.cpu.write32(0x8C0000B4, 0x8C001002);
-            self.cpu.write16(0x8C001002, 0b0000000000100000);
+            self.cpu.write16(0x8C003D80, 0b0000000000100000);
             // Flashrom
-            self.cpu.write32(0x8C0000B8, 0x8C001004);
-            self.cpu.write16(0x8C001004, 0b0000000000110000);
+            self.cpu.write16(0x8C003D00, 0b0000000000110000);
             // GD
-            self.cpu.write32(0x8C0000BC, 0x8C001006);
-            self.cpu.write16(0x8C001006, 0b0000000001000000);
+            self.cpu.write16(0x8C001000, 0b0000000001000000);
             // GD2
-            self.cpu.write32(0x8C0000C0, 0x8C0010F0);
             self.cpu.write16(0x8C0010F0, 0b0000000001010000);
             // Misc
-            self.cpu.write32(0x8C0000E0, 0x8C001008);
-            self.cpu.write16(0x8C001008, 0b0000000001100000);
-        } else {
-            inline for (.{
-                .{ 0x8C0000B0, 0x8C003C00 },
-                .{ 0x8C0000B4, 0x8C003D80 },
-                .{ 0x8C0000B8, 0x8C003D00 },
-                .{ 0x8C0000BC, 0x8C001000 },
-                .{ 0x8C0000C0, 0x8C0010F0 },
-                .{ 0x8C0000E0, 0x8C000800 },
-            }) |p| {
-                self.cpu.write32(p[0], p[1]);
-            }
+            self.cpu.write16(0x8C000800, 0b0000000001100000);
         }
 
         // Other set values, IDK
@@ -367,24 +378,6 @@ pub const Dreamcast = struct {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
         }
     }
-
-    // Area 0:
-    // 0x00000000 - 0x001FFFFF Boot ROM
-    // 0x00200000 - 0x0021FFFF Flash Memory
-    // 0x005F6800 - 0x005F69FF System Control Reg.
-    // 0x005F6C00 - 0x005F6CFF Maple Control Reg.
-    // 0x005F7000 - 0x005F70FF GD-ROM
-    // 0x005F7400 - 0x005F74FF G1 Control Reg.
-    // 0x005F7800 - 0x005F78FF G2 Control Reg.
-    // 0x005F7C00 - 0x005F7CFF PVR Control Reg.
-    // 0x005F8000 - 0x005F9FFF TA/PVR Core Reg.
-    // 0x00600000 - 0x006007FF MODEM
-    // 0x00700000 - 0x00707FFF AICA sound Reg.
-    // 0x00710000 - 0x00710007 AICA RTC Reg.
-    // 0x00800000 - 0x009FFFFF AICA Memory
-    // 0x01000000 - 0x01FFFFFF G2 External Device #1
-    // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
-    // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
     pub fn start_maple_dma(self: *@This()) void {
         if (self.hw_register(u32, .SB_MDEN).* == 1) {

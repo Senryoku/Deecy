@@ -9,6 +9,47 @@ const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 // Yamaha AICA Audio Chip
+// Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes
+
+const SampleFormat = enum(u2) {
+    i16 = 0, // 16-bit signed little-endian
+    i8 = 1, // 8-bit signed
+    ADPCM = 2, // 4-bit Yamaha ADPCM
+    Invalid = 3,
+};
+
+const PlayControl = packed struct(u32) {
+    start_address: u7, // Highest bits of the address
+    sample_format: SampleFormat,
+    sample_loop: bool,
+    noise_enabled: bool,
+    _0: u3 = 0,
+    key_on_bit: bool,
+    key_on_execute: bool,
+    _1: u16 = 0,
+};
+
+// NOTE: Only the lower 16bits of each registers are actually used.
+pub const AICAChannel = packed struct(u576) {
+    play_control: PlayControl,
+    sample_address: u32,
+    loop_start: u32,
+    loop_end: u32,
+    amp_env_1: u32,
+    amp_env_2: u32,
+    sample_pitch_rate: u32,
+    lfo_control: u32,
+    dps_channel_send: u32,
+    direct_pan_vol_send: u32,
+    lpf1_volume: u32,
+    lpf2_volume: u32,
+    lpf3_volume: u32,
+    lpf4_volume: u32,
+    lpf5_volume: u32,
+    lpf6_volume: u32,
+    lpf7_volume: u32,
+    lpf8_volume: u32,
+};
 
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
 pub const AICARegister = enum(u32) {
@@ -230,24 +271,55 @@ pub const AICA = struct {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
+    pub fn get_channel(self: *const AICA, number: u8) *const AICAChannel {
+        std.debug.assert(number < 64);
+        return &@as([*]const AICAChannel, @alignCast(@ptrCast(self.regs.ptr)))[number];
+    }
+
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
         const local_addr = addr & 0x0000FFFF;
         //aica_log.debug("Read AICA register at 0x{X:0>8} / 0x{X:0>8}", .{ addr, local_addr });
         //aica_log.debug("Read AICA register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, self.regs[local_addr / 4] });
-        if (T == u8) {
-            return @as([*]const u8, @ptrCast(&self.regs[0]))[local_addr];
-        } else if (T == u32) {
-            return self.regs[local_addr / 4];
-        }
+        return switch (T) {
+            u8 => @as([*]const u8, @ptrCast(&self.regs[0]))[local_addr],
+            u32 => self.regs[local_addr / 4],
+            else => @compileError("Invalid value type"),
+        };
     }
 
     pub fn write_register(self: *AICA, comptime T: type, addr: u32, value: T) void {
         const local_addr = addr & 0x0000FFFF;
         aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
+
+        // Channel registers
+        if (local_addr < 0x2000) {
+            const channel = local_addr / 0x80;
+            _ = channel;
+            switch (local_addr & 0x7F) {
+                0x00 => { // Play control
+                    // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
+                    if (value & 0x1 == 1) {
+                        for (0..64) |i| {
+                            if (self.get_channel(@intCast(i)).play_control.key_on_bit) {
+                                // TODO!
+                            }
+                        }
+
+                        switch (T) {
+                            u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value & 0xFE,
+                            u32 => self.regs[local_addr / 4] = value & 0xFFFFFFFE,
+                            else => @compileError("Invalid value type"),
+                        }
+                        return;
+                    }
+                },
+                else => {},
+            }
+        }
+
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
             .MasterVolume => {
                 aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
-                return;
             },
             .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                 if (T == u8)
@@ -292,10 +364,11 @@ pub const AICA = struct {
             },
             else => {},
         }
-        if (T == u8)
-            @as([*]u8, @ptrCast(&self.regs[0]))[local_addr] = value;
-        if (T == u32)
-            self.regs[local_addr / 4] = value;
+        switch (T) {
+            u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
+            u32 => self.regs[local_addr / 4] = value,
+            else => @compileError("Invalid value type"),
+        }
     }
 
     pub fn read_rtc_register(self: *const AICA, addr: u32) u32 {

@@ -30,10 +30,10 @@ pub const std_options = struct {
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
-        .{ .scope = .syscall_log, .level = .info },
+        .{ .scope = .syscall_log, .level = .warn },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .info },
+        .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
     };
@@ -133,6 +133,7 @@ pub fn main() !void {
         if (skip_bios)
             dc.skip_bios();
 
+        // Load 1STREAD.BIN (Actual name might change)
         const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
         const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x60 + header_size .. 0x70 + header_size];
         const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
@@ -185,6 +186,9 @@ pub fn main() !void {
         break :scale_factor @max(scale[0], scale[1]);
     };
 
+    var renderer = try Renderer.init(common.GeneralAllocator, gctx);
+    defer renderer.deinit();
+
     zgui.init(common.GeneralAllocator);
     defer zgui.deinit();
 
@@ -207,6 +211,7 @@ pub fn main() !void {
     defer breakpoints.deinit();
     dc.cpu.on_trapa = trapa_handler;
 
+    // Debug UI State
     const vram_width = 640;
     const vram_height = 400;
     const texture = gctx.createTexture(.{
@@ -228,12 +233,12 @@ pub fn main() !void {
     const pixels = try common.GeneralAllocator.alloc(u8, (vram_width * vram_height) * 4);
     defer common.GeneralAllocator.free(pixels);
 
-    var renderer = try Renderer.init(common.GeneralAllocator, gctx);
-    defer renderer.deinit();
-
     var renderer_texture_views: [8]zgpu.TextureViewHandle = undefined;
     for (0..renderer_texture_views.len) |i|
         renderer_texture_views[i] = gctx.createTextureView(renderer.texture_arrays[i], .{ .dimension = .tvdim_2d, .base_array_layer = 0, .array_layer_count = 1 });
+
+    var show_disabled_channels = false;
+    //////////
 
     var last_frame_timestamp = std.time.microTimestamp();
     var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);
@@ -376,7 +381,7 @@ pub fn main() !void {
             }
             zgui.end();
 
-            if (zgui.begin("AICA", .{})) {
+            if (zgui.begin("AICA - ARM", .{})) {
                 _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
                 zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
                 zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
@@ -400,6 +405,37 @@ pub fn main() !void {
                     const disassembly = arm7.ARM7.disassemble(dc.aica.read_mem(u32, addr));
                     zgui.text("[{X: >6}] {s} {s}", .{ addr - 0x00800000, if (addr == pc) ">" else " ", disassembly });
                     addr += 4;
+                }
+            }
+            zgui.end();
+
+            if (zgui.begin("AICA", .{})) {
+                _ = zgui.checkbox("Show disabled channels", .{ .v = &show_disabled_channels });
+                inline for (0..64) |i| {
+                    const channel = dc.aica.get_channel(@intCast(i));
+                    if (show_disabled_channels or channel.play_control.key_on_bit) {
+                        if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
+                            zgui.text("KeyOn: {any} - Format: {s} - Loop: {any} - Start Address: {X:0>4}", .{
+                                channel.play_control.key_on_bit,
+                                @tagName(channel.play_control.sample_format),
+                                channel.play_control.sample_loop,
+                                @as(u16, channel.play_control.start_address) << 7,
+                            });
+                            // TODO: Display the samples!
+                            //if (zgui.plot.beginPlot("Line Plot", .{ .h = -1.0 })) {
+                            //    zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
+                            //    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 5 });
+                            //    zgui.plot.setupLegend(.{ .south = true, .west = true }, .{});
+                            //    zgui.plot.setupFinish();
+                            //    zgui.plot.plotLineValues("y data", i32, .{ .v = &.{ 0, 1, 0, 1, 0, 1 } });
+                            //    zgui.plot.plotLine("xy data", f32, .{
+                            //        .xv = &.{ 0.1, 0.2, 0.5, 2.5 },
+                            //        .yv = &.{ 0.1, 0.3, 0.5, 0.9 },
+                            //    });
+                            //    zgui.plot.endPlot();
+                            //}
+                        }
+                    }
                 }
             }
             zgui.end();
