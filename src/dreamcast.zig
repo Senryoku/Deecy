@@ -118,13 +118,15 @@ pub const Dreamcast = struct {
 
     pub fn deinit(self: *@This()) void {
         // Write flash to disk
-        if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
-            defer file.close();
-            _ = file.writeAll(self.flash) catch |err| {
-                dc_log.err("Failed to save user flash: {any}", .{err});
-            };
-        } else |err| {
-            dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ "./userdata/flash.bin", err });
+        if (!@import("builtin").is_test) {
+            if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
+                defer file.close();
+                _ = file.writeAll(self.flash) catch |err| {
+                    dc_log.err("Failed to save user flash: {any}", .{err});
+                };
+            } else |err| {
+                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ "./userdata/flash.bin", err });
+            }
         }
 
         self.scheduled_interrupts.deinit();

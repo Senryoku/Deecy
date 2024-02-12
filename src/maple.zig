@@ -606,6 +606,8 @@ pub const MapleHost = struct {
         .{},
     },
 
+    _allocator: std.mem.Allocator,
+
     pub fn init(allocator: std.mem.Allocator) !MapleHost {
         return .{
             .ports = .{
@@ -614,11 +616,24 @@ pub const MapleHost = struct {
                 .{},
                 .{},
             },
+            ._allocator = allocator,
         };
     }
 
     pub fn deinit(self: *MapleHost) void {
-        _ = self;
+        for (&self.ports) |*port| {
+            // Can't have a VMU as the main peripheral.
+            for (&port.subperipherals) |*maybe_peripheral| {
+                if (maybe_peripheral.*) |*peripheral| {
+                    switch (peripheral.*) {
+                        .VMU => |*vmu| {
+                            vmu.deinit(self._allocator);
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
     }
 
     pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {

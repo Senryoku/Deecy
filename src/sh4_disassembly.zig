@@ -42,9 +42,10 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
 }
 
 pub fn free_disassembly_cache(allocator: std.mem.Allocator) void {
-    for (DisassemblyCache) |dc| {
-        if (dc) |d|
+    for (&DisassemblyCache) |*dc| {
+        if (dc.*) |d|
             allocator.free(d);
+        dc.* = null;
     }
 }
 

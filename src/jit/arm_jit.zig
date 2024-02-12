@@ -53,7 +53,7 @@ const BlockCache = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        std.os.munmap(self.buffer);
+        self._allocator.free(self.buffer);
         std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
     }
 

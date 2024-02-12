@@ -292,18 +292,21 @@ pub const SH4JIT = struct {
     }
 
     // Try to match some common division patterns and replace them with a "single" instruction.
-    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext, instructions: [*]u16) !u32 {
+    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext, instructions: [*]u16) !?struct { instructions: u32 = 0, cycles: u32 = 0 } {
         _ = self;
         // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
         //        Tested by looking at the timer in Soulcalibur :^)
         if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0u) {
             var index: u32 = 1;
+            var cycles: u32 = instr_lookup(instructions[0]).issue_cycles;
             var rotcl_Rn_div1_count: u32 = 0;
             while (true) {
                 if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.rotcl_Rn) break;
                 index += 1;
+                cycles += instr_lookup(instructions[index]).issue_cycles;
                 if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.div1) break;
                 index += 1;
+                cycles += instr_lookup(instructions[index]).issue_cycles;
                 rotcl_Rn_div1_count += 1;
             }
             if (rotcl_Rn_div1_count == 32 and (index % 2) == 0) {
@@ -316,13 +319,13 @@ pub const SH4JIT = struct {
                 const div = load_register(b, ctx, divisor);
 
                 try b.append(.{ .Div64_32 = .{ .dividend_high = dh, .dividend_low = dl, .divisor = div, .result = dl } });
-                return index;
+                return .{ .instructions = index, .cycles = cycles };
             }
         }
         if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
             // TODO: Or not. This case seems messier?
         }
-        return 0;
+        return null;
     }
 
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
@@ -348,17 +351,20 @@ pub const SH4JIT = struct {
 
         var index: u32 = 0;
         while (true) {
-            index += try self.simplify_div(&b, &ctx, instructions[index..]);
+            if (try self.simplify_div(&b, &ctx, instructions[index..])) |s| {
+                index += s.instructions;
+                cycles += s.cycles;
+            }
 
             const instr = instructions[index];
 
             sh4_jit_log.debug(" [{X:0>8}] {s} {s}", .{
                 ctx.address,
-                if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+                if (instr_lookup(instr).jit_emit_fn == interpreter_fallback or instr_lookup(instr).jit_emit_fn == interpreter_fallback_branch or instr_lookup(instr).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
-            const branch = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].jit_emit_fn(&b, &ctx, @bitCast(instr));
-            cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]].issue_cycles;
+            const branch = try instr_lookup(instr).jit_emit_fn(&b, &ctx, @bitCast(instr));
+            cycles += instr_lookup(instr).issue_cycles;
             index += 1;
             ctx.address += 2;
 
@@ -367,11 +373,11 @@ pub const SH4JIT = struct {
                     const delay_slot = instructions[index];
                     sh4_jit_log.debug(" [{X:0>8}] {s}  {s}", .{
                         ctx.address,
-                        if (sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_branch or sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+                        if (instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_branch or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                         try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
                     });
-                    const branch_delay_slot = try sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
-                    cycles += sh4_instructions.Opcodes[sh4_instructions.JumpTable[delay_slot]].issue_cycles;
+                    const branch_delay_slot = try instr_lookup(delay_slot).jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
+                    cycles += instr_lookup(delay_slot).issue_cycles;
                     std.debug.assert(!branch_delay_slot);
                 }
                 break;

@@ -122,7 +122,7 @@ const Track = struct {
             allocator.free(self.data);
         } else {
             // TODO:
-            UnmapViewOfFile(std.data.ptr);
+            _ = UnmapViewOfFile(self.data.ptr);
             std.os.windows.CloseHandle(self._mapping_handle.?);
             std.os.windows.CloseHandle(self._file_handle.?);
         }
@@ -310,7 +310,7 @@ pub const GDI = struct {
 };
 
 test "gdi" {
-    var gdi = try GDI.init("./bin/[GDI] Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", std.testing.allocator);
+    var gdi = try GDI.init("./bin/Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", std.testing.allocator);
     defer gdi.deinit();
     try std.testing.expect(gdi.tracks.items.len == 3);
 

@@ -191,6 +191,7 @@ pub const AICA = struct {
     }
 
     pub fn deinit(self: *AICA) void {
+        self.arm_jit.deinit();
         self._allocator.free(self.regs);
         self._allocator.free(self.wave_memory);
         self.events.deinit();
