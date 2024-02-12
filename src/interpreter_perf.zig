@@ -50,7 +50,7 @@ pub fn main() !void {
 
         dc.gdrom.disk = try GDI.init("./bin/Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
         _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
+        _ = try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
@@ -72,7 +72,7 @@ pub fn main() !void {
         dc.skip_bios();
         dc.gdrom.disk = try GDI.init("./bin/Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi", common.GeneralAllocator);
         _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]) + 2047) / 2048;
+        _ = try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;

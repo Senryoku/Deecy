@@ -810,8 +810,8 @@ pub const GDROM = struct {
     }
 
     pub fn check_command(self: *@This(), cmd_id: u32) u32 {
+        @memset(&self.hle_result, 0);
         if (cmd_id != self._current_command_id) {
-            @memset(&self.hle_result, 0);
             self.hle_result[0] = 0x5;
             return 0; // no such request active
         }

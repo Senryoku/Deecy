@@ -22,9 +22,6 @@ const Renderer = RendererModule.Renderer;
 
 const assets_dir = "assets/";
 
-// FIXME
-const syscall = @import("syscall.zig");
-
 pub const std_options = struct {
     pub const log_level = .info;
 
@@ -33,6 +30,7 @@ pub const std_options = struct {
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
+        .{ .scope = .syscall_log, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
@@ -142,7 +140,7 @@ pub fn main() !void {
         defer common.GeneralAllocator.free(first_read);
         @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
         @memcpy(first_read[name_end .. name_end + 2], ";1");
-        syscall.FirstReadBINSectorSize = (try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]) + 2047) / 2048;
+        _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
 
         // FIXME: Hacks.
         // NOPs for DC Checker, skips serial check

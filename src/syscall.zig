@@ -6,9 +6,9 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
-// HLE Re-Implementations of syscalls normally provided by the Boot ROM
+const syscall_log = std.log.scoped(.syscall_log);
 
-pub var FirstReadBINSectorSize: u32 = 0; // FIXME
+// HLE Re-Implementations of syscalls normally provided by the Boot ROM
 
 inline fn return_from_syscall(dc: *Dreamcast) void {
     // Syscall are called using JSR, simulate a RTS/N (return from subroutine, without delay slot)
@@ -16,9 +16,9 @@ inline fn return_from_syscall(dc: *Dreamcast) void {
 }
 
 pub fn syscall(dc: *Dreamcast) void {
-    std.log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ dc.cpu.pc, dc.cpu.read16(dc.cpu.pc) });
+    syscall_log.err("Unimplemented SYSCALL: 0x{X:0>8} = 0b{b:0>16}", .{ dc.cpu.pc, dc.cpu.read16(dc.cpu.pc) });
     for (0..15) |i| {
-        std.log.err("  R{d}: {x}", .{ i, dc.cpu.R(@intCast(i)).* });
+        syscall_log.err("  R{d}: {x}", .{ i, dc.cpu.R(@intCast(i)).* });
     }
     @panic("Unimplemented SYSCALL");
 }
@@ -40,7 +40,7 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
             dc.cpu.R(0).* = 0x8c000068;
         },
         else => {
-            std.log.err("  syscall_sysinfo with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
+            syscall_log.err("  syscall_sysinfo with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
             @panic("syscall_sysinfo with unhandled R7");
         },
     }
@@ -62,7 +62,7 @@ pub fn syscall_romfont(dc: *Dreamcast) void {
             // ROMFONT_UNLOCK - Nothing to do, I guess?
         },
         else => {
-            std.log.err("  syscall_romfont with unhandled R1: R1={d}", .{dc.cpu.R(1).*});
+            syscall_log.err("  syscall_romfont with unhandled R1: R1={d}", .{dc.cpu.R(1).*});
             @panic("syscall_romfont with unhandled R1");
         },
     }
@@ -137,11 +137,11 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             //     r4 = offset of the start of the partition you want to delete, in bytes from the start of the flashrom
             // Returns: zero if successful, -1 if delete failed
             const start = dc.cpu.R(4).*;
-            std.log.warn("  Unimplemented FLASHROM_DELETE (R4={X:0>8})", .{start});
+            syscall_log.warn("  Unimplemented FLASHROM_DELETE (R4={X:0>8})", .{start});
             dc.cpu.R(0).* = 0xFFFFFFFF;
         },
         else => {
-            std.log.err("  syscall_flashrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
+            syscall_log.err("  syscall_flashrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
             @panic("syscall_flashrom with unhandled R7");
         },
     }
@@ -156,7 +156,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Args: r4 = command code
             //       r5 = pointer to parameter block for the command, can be NULL if the command does not take parameters
             // Returns: a request id (>=0) if successful, negative error code if failed
-            std.log.debug("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
+            syscall_log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
 
             var params: [4]u32 = .{0} ** 4;
             const params_addr = dc.cpu.R(5).*;
@@ -182,7 +182,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             for (0..4) |i| {
                 dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.hle_result[i]);
             }
-            std.log.debug("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
+            syscall_log.info("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
                 dc.cpu.R(4).*,
                 dc.cpu.R(5).*,
                 dc.cpu.R(0).*,
@@ -202,7 +202,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
         },
         3 => {
             // GDROM_INIT
-            std.log.debug("  GDROM_INIT", .{});
+            syscall_log.debug("  GDROM_INIT", .{});
             dc.gdrom.reinit();
         },
         4 => {
@@ -213,24 +213,34 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
 
             // TODO: We always return success (i.e. ready) for now.
             //       Get actual GDROM state and disk type.
-            std.log.debug("  GDROM_CHECK_DRIVE", .{});
+            syscall_log.debug("  GDROM_CHECK_DRIVE", .{});
             dc.cpu.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.state)); // GDROM status. 0x2 => Standby.
             dc.cpu.write32(dc.cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
             dc.cpu.R(0).* = 0;
         },
         5 => {
             // DMA END?
-            std.log.debug("  GDROM_DMA_END (R7={d})", .{dc.cpu.R(7).*});
+            // According to the disassembly, maybe?:
+            //   R4: Callback
+            //   R5: Callback parameter
+            syscall_log.info("  GDROM_DMA_END (R7={d}) R4={X:0>8} R5={X:0>8}", .{
+                dc.cpu.R(7).*,
+                dc.cpu.R(4).*,
+                dc.cpu.R(5).*,
+            });
             dc.cpu.write32(@intFromEnum(HardwareRegister.SB_ISTNRM), @bitCast(HardwareRegisters.SB_ISTNRM{ .EoD_GDROM = 1 })); // Clear interrupt
-            dc.cpu.R(0).* = 0;
+            if (dc.cpu.R(4).* != 0) {
+                syscall_log.warn(termcolor.yellow(" GDROM_DMA_END: R4={X:0>8}, is it a callback?"), .{dc.cpu.R(4).*});
+            }
+            // No return value, I think.
         },
         9 => {
             // GDROM_RESET
-            std.log.warn(termcolor.yellow("  GDROM_RESET (R7={d}) : Not implemented!"), .{dc.cpu.R(7).*});
+            syscall_log.warn(termcolor.yellow("  GDROM_RESET (R7={d}) : Not implemented!"), .{dc.cpu.R(7).*});
         },
         10 => {
             // GDROM_SECTOR_MODE
-            std.log.warn(termcolor.yellow("  GDROM_SECTOR_MODE  (R7={d}) : Not implemented!"), .{dc.cpu.R(7).*});
+            syscall_log.warn(termcolor.yellow("  GDROM_SECTOR_MODE  (R7={d}) : Not implemented!"), .{dc.cpu.R(7).*});
             if (dc.cpu.read32(dc.cpu.R(4).*) == 0) { // Get/Set, if 0 the mode will be set, if 1 it will be queried.
                 const mode = dc.cpu.read32(dc.cpu.R(4).* + 8) == 0;
                 const sector_size_in_bytes = dc.cpu.read32(dc.cpu.R(4).* + 12) == 0;
@@ -244,7 +254,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = 0;
         },
         else => {
-            std.log.err("  syscall_gdrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
+            syscall_log.err("  syscall_gdrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
             @panic("syscall_gdrom with unhandled R7");
         },
     }
@@ -252,25 +262,23 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
 }
 
 pub fn syscall_misc(dc: *Dreamcast) void {
-    // This comes pretty much directly from flycast, I don't think there's any official
-    // documentation on these syscalls, https://mc.pp.se/dc/syscalls.html doesn't have enough info.
-    std.log.debug("syscall_misc: R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).*, dc.cpu.R(7).* });
+    syscall_log.debug("syscall_misc: R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).*, dc.cpu.R(7).* });
     switch (dc.cpu.R(4).*) {
         0 => {
             // Normal Init
-            dc.cpu.write32(@intFromEnum(HardwareRegister.SB_GDSTARD), 0x0C010000 + 2048 * FirstReadBINSectorSize);
+            // Looking at the disassembly, it does a bunch of stuff related to the GDROM, security checks and status check, but we probably don't care about it.
+            dc.cpu.sr.imask = 0;
             dc.cpu.write32(@intFromEnum(HardwareRegister.SB_IML2NRM), 0);
-            dc.cpu.R(0).* = 0x00C0BEBC;
-            dc.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC;
+            dc.gpu._get_register(u32, .VO_BORDER_COL).* = 0x00C0BEBC; // Set border color to light grey
         },
         1 => {
             // Return to BIOS?
-            std.log.err("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).*, dc.cpu.R(7).* });
-            std.log.err("                              PC={X:0>8} PR={X:0>8} ", .{ dc.cpu.pc, dc.cpu.pr });
+            syscall_log.err("syscall_misc: Return to BIOS? R4={d} R5={X:0>8} R6={X:0>8} R7={X:0>8} ", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).*, dc.cpu.R(7).* });
+            syscall_log.err("                              PC={X:0>8} PR={X:0>8} ", .{ dc.cpu.pc, dc.cpu.pr });
             @panic("Return to BIOS?");
         },
         else => {
-            std.log.err("  syscall_misc with unhandled R4: R4={d}", .{dc.cpu.R(4).*});
+            syscall_log.err("  syscall_misc with unhandled R4: R4={d}", .{dc.cpu.R(4).*});
             @panic("syscall_misc with unhandled R4");
         },
     }
