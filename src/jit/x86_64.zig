@@ -11,40 +11,74 @@ const JITBlock = @import("jit_block.zig").JITBlock;
 
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
+
+pub const ABI = enum {
+    SystemV,
+    Win64,
+};
+
+pub const JITABI = switch (builtin.os.tag) {
+    .windows => .Win64,
+    .linux => .SystemV,
+    else => @compileError("Unsupported OS"),
+};
+
 // ArgRegisters are also used as scratch registers, but have a special meaning for function calls.
-pub const ArgRegisters = if (builtin.os.tag == .windows) [_]Register{
-    .rcx,
-    .rdx,
-    .r8,
-    .r9,
-} else if (builtin.os.tag == .linux) [_]Register{
-    .rdi,
-    .rsi,
-    .rdx,
-    .rcx,
-    .r8,
-    .r9,
-} else @compileError("Unsupported ABI");
-pub const SavedRegisters = if (builtin.os.tag == .windows) [_]Register{
-    .r12,
-    .r13,
-    .r14,
-    .r15,
-    .rbx,
-    .rsi,
-    .rdi,
-    // NOTE: Both are saved registers, but I don't think I should expose them.
-    // .rbp,
-    // .rsp,
-} else if (builtin.os.tag == .linux) [_]Register{
-    .r12,
-    .r13,
-    .r14,
-    .r15,
-    .rbx,
-    // .rbp,
-    // .rsp,
-} else @compileError("Unsupported ABI");
+pub const ArgRegisters = switch (JITABI) {
+    .Win64 => [_]Register{ .rcx, .rdx, .r8, .r9 },
+    .SystemV => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
+    else => @compileError("Unsupported ABI"),
+};
+pub const SavedRegisters = switch (JITABI) {
+    .Win64 => [_]Register{
+        .rbx,
+        .rsi,
+        .r12,
+        .r13,
+        .r14,
+        .r15,
+        .rdi,
+        // NOTE: Both are saved registers, but I don't think I should expose them.
+        // .rbp,
+        // .rsp,
+    },
+    .SystemV => [_]Register{
+        .rbx,
+        .r12,
+        .r13,
+        .r14,
+        .r15,
+        // .rbp,
+        // .rsp,
+    },
+    else => @compileError("Unsupported ABI"),
+};
+
+pub const FPArgRegisters = [_]FPRegister{
+    .xmm0,
+    .xmm1,
+    .xmm2,
+    .xmm3,
+};
+
+pub const FPScratchRegisters = [_]FPRegister{
+    .xmm4,
+    .xmm5,
+};
+
+// This is only true for Win64
+pub const FPSavedRegisters = [_]FPRegister{
+    .xmm6,
+    .xmm7,
+    .xmm8,
+    .xmm9,
+    .xmm10,
+    .xmm11,
+    .xmm12,
+    .xmm13,
+    .xmm14,
+    .xmm15,
+};
 
 const PatchableJump = struct {
     source: u32,
@@ -116,7 +150,7 @@ pub const EFLAGSCondition = enum(u4) {
     Greater = 0b1111,
 };
 
-pub const OperandSize = enum { _8, _16, _32, _64 };
+pub const OperandSize = enum(u8) { _8 = 8, _16 = 16, _32 = 32, _64 = 64 };
 
 pub const MemOperand = struct {
     base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
@@ -144,6 +178,9 @@ pub const MemOperand = struct {
 
 const OperandType = enum {
     reg,
+    freg32,
+    freg64,
+    freg128,
     imm8,
     imm16,
     imm32,
@@ -153,6 +190,9 @@ const OperandType = enum {
 
 pub const Operand = union(OperandType) {
     reg: Register,
+    freg32: FPRegister,
+    freg64: FPRegister,
+    freg128: FPRegister,
     imm8: u8,
     imm16: u16,
     imm32: u32,
@@ -162,6 +202,9 @@ pub const Operand = union(OperandType) {
     pub fn tag(self: @This()) OperandType {
         return switch (self) {
             .reg => .reg,
+            .freg32 => .freg32,
+            .freg64 => .freg64,
+            .freg128 => .freg128,
             .imm8 => .imm8,
             .imm16 => .imm16,
             .imm32 => .imm32,
@@ -175,6 +218,9 @@ pub const Operand = union(OperandType) {
         _ = options;
         return switch (value) {
             .reg => |reg| writer.print("{any}", .{reg}),
+            .freg32 => |reg| writer.print("{any}<32>", .{reg}),
+            .freg64 => |reg| writer.print("{any}<64>", .{reg}),
+            .freg128 => |reg| writer.print("{any}<128>", .{reg}),
             .imm8 => |imm| writer.print("0x{X:0>2}", .{imm}),
             .imm16 => |imm| writer.print("0x{X:0>4}", .{imm}),
             .imm32 => |imm| writer.print("0x{X:0>8}", .{imm}),
@@ -195,6 +241,8 @@ pub const InstructionType = enum {
     Not,
     Add,
     Sub,
+    Mul,
+    Div,
     And,
     Or,
     Xor,
@@ -208,7 +256,10 @@ pub const InstructionType = enum {
     Shr,
     Sar,
     Jmp,
-    Div64_32,
+    Div64_32, // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
+
+    SaveFPRegisters,
+    RestoreFPRegisters,
 };
 
 pub const Instruction = union(InstructionType) {
@@ -222,6 +273,8 @@ pub const Instruction = union(InstructionType) {
     Not: struct { dst: Register },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
+    Mul: struct { dst: Operand, src: Operand },
+    Div: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
@@ -237,6 +290,9 @@ pub const Instruction = union(InstructionType) {
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
 
+    SaveFPRegisters: struct { count: u8 },
+    RestoreFPRegisters: struct { count: u8 },
+
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
@@ -251,6 +307,8 @@ pub const Instruction = union(InstructionType) {
             .Not => |not| writer.print("not {any}", .{not.dst}),
             .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
+            .Mul => |sub| writer.print("mul {any}, {any}", .{ sub.dst, sub.src }),
+            .Div => |sub| writer.print("div {any}, {any}", .{ sub.dst, sub.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
@@ -265,6 +323,8 @@ pub const Instruction = union(InstructionType) {
             .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
             .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
             .Div64_32 => |div| writer.print("div64_32 {any},{any}:{any},{any},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
+            .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {any}", .{instr.count}),
+            .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {any}", .{instr.count}),
         };
     }
 };
@@ -286,6 +346,31 @@ pub const Register = enum(u4) {
     r13 = 13,
     r14 = 14,
     r15 = 15,
+
+    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        return writer.print("{s}", .{@tagName(value)});
+    }
+};
+
+pub const FPRegister = enum(u4) {
+    xmm0 = 0,
+    xmm1 = 1,
+    xmm2 = 2,
+    xmm3 = 3,
+    xmm4 = 4,
+    xmm5 = 5,
+    xmm6 = 6,
+    xmm7 = 7,
+    xmm8 = 8,
+    xmm9 = 9,
+    xmm10 = 10,
+    xmm11 = 11,
+    xmm12 = 12,
+    xmm13 = 13,
+    xmm14 = 14,
+    xmm15 = 15,
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -319,6 +404,20 @@ const SIB = packed struct(u8) {
     base: u3,
     index: u3,
     scale: u2,
+};
+
+const ScalarFPOpcodes = enum(u8) {
+    Mov = 0x10,
+    Rsqrt = 0x52, // Reciprocal of Square Root
+    Rcp = 0x53, // Reciprocal
+    Add = 0x58,
+    Mul = 0x59,
+    Convert_SS_SD = 0x5A,
+    Convert_PS_DQ = 0x5B,
+    Sub = 0x5C,
+    Min = 0x5D,
+    Div = 0x5E,
+    Max = 0x5F,
 };
 
 pub const Emitter = struct {
@@ -382,6 +481,8 @@ pub const Emitter = struct {
                 },
                 .Add => |a| try self.add(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
+                .Mul => |a| try self.mul(a.dst, a.src),
+                .Div => |a| try self.div(a.dst, a.src),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
@@ -400,6 +501,9 @@ pub const Emitter = struct {
                 .Shl => |r| try self.shl(r.dst, r.amount),
                 .Not => |r| try self.not(r.dst),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
+
+                .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
+                .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
                 else => return error.UnsupportedInstruction,
             }
         }
@@ -414,6 +518,11 @@ pub const Emitter = struct {
         self.block_size += 1;
     }
 
+    pub fn emit_slice(self: *@This(), comptime T: type, value: []const T) !void {
+        for (value) |v|
+            try self.emit(T, v);
+    }
+
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
         if (T == MODRM) {
             // See Intel Manual Vol. 2A 2-11.
@@ -422,7 +531,11 @@ pub const Emitter = struct {
         }
 
         if (@sizeOf(T) == 1) {
-            try self.emit_byte(@bitCast(value));
+            if (@typeInfo(T) == .Enum) {
+                try self.emit_byte(@intFromEnum(value));
+            } else {
+                try self.emit_byte(@bitCast(value));
+            }
         } else {
             for (0..@sizeOf(T)) |i| {
                 try self.emit_byte(@truncate((value >> @intCast(8 * i)) & 0xFF));
@@ -448,15 +561,35 @@ pub const Emitter = struct {
         try self.ret();
     }
 
-    fn encode(reg: Register) u3 {
-        return @truncate(@intFromEnum(reg));
+    fn encode(reg: anytype) u3 {
+        return switch (@TypeOf(reg)) {
+            Register => @truncate(@intFromEnum(reg)),
+            FPRegister => @truncate(@intFromEnum(reg)),
+            Operand => switch (reg) {
+                .reg => |r| @truncate(@intFromEnum(r)),
+                .freg32 => |r| @truncate(@intFromEnum(r)),
+                .freg64 => |r| @truncate(@intFromEnum(r)),
+                else => @panic("Operand must be a register"),
+            },
+            else => @compileError("Unsupported register type"),
+        };
     }
 
-    fn need_rex(reg: Register) bool {
-        return @intFromEnum(reg) >= 8;
+    fn need_rex(reg: anytype) bool {
+        return switch (comptime @TypeOf(reg)) {
+            Register => @intFromEnum(reg) >= 8,
+            FPRegister => @intFromEnum(reg) >= 8,
+            Operand => switch (reg) {
+                .reg => |r| @intFromEnum(r) >= 8,
+                .freg32 => |r| @intFromEnum(r) >= 8,
+                .freg64 => |r| @intFromEnum(r) >= 8,
+                else => @panic("Operand must be a register"),
+            },
+            else => @compileError("Unsupported register type"),
+        };
     }
 
-    fn encode_opcode(opcode: u8, reg: Register) u8 {
+    fn encode_opcode(opcode: u8, reg: anytype) u8 {
         return opcode + encode(reg);
     }
 
@@ -472,7 +605,50 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
     }
 
-    pub fn mov_mem_reg(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Register, mem: MemOperand) !void {
+    // movd xmm, r/m32 / movq xmm, r/m64
+    pub fn mov_freg_reg(self: *@This(), comptime size: OperandSize, dst: FPRegister, src: Register) !void {
+        try self.emit(u8, 0x66);
+        try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(dst), .b = need_rex(src) });
+        try self.emit(u8, 0x0F);
+        try self.emit(u8, 0x6E);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+    }
+
+    // movd r/m32, xmm / movq r/m64, xmm
+    pub fn mov_reg_freg(self: *@This(), comptime size: OperandSize, dst: Register, src: FPRegister) !void {
+        try self.emit(u8, 0x66);
+        try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(src), .b = need_rex(dst) });
+        try self.emit(u8, 0x0F);
+        try self.emit(u8, 0x7E);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
+    }
+
+    // <op>ss xmm1, xmm2/m32 (mem operand not yet supported here)
+    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst: FPRegister, src: FPRegister) !void {
+        try self.emit(u8, switch (size) {
+            ._32 => 0xF3,
+            ._64 => 0xF2,
+            else => @compileError("Unsupported operand size"),
+        });
+        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src) });
+        try self.emit(u8, 0x0F);
+        try self.emit(ScalarFPOpcodes, opcode);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+    }
+
+    pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, lhs: FPRegister, rhs: FPRegister) !void {
+        switch (size) {
+            ._32 => {},
+            ._64 => try self.emit(u8, 0x66),
+            else => @compileError("Unsupported operand size"),
+        }
+        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(lhs), .b = need_rex(rhs) });
+        try self.emit(u8, 0x0F);
+        try self.emit(u8, 0x2F);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(lhs), .r_m = encode(rhs) });
+    }
+
+    pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
 
         if (mem.base == .rbp and mem.displacement == 0) {
@@ -484,19 +660,30 @@ pub const Emitter = struct {
             reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
 
         const opcode: []const u8 = switch (direction) {
-            .MemToReg => switch (mem.size) {
-                8 => &[_]u8{ 0x0F, 0xB6 }, // Emit a movzx (zero extend) in this case.
-                16 => &[_]u8{ 0x0F, 0xB7 }, // Emit a movzx (zero extend) in this case.
-                32, 64 => &[_]u8{0x8B},
-                else => return error.InvalidMemSize,
+            .MemToReg => switch (reg) {
+                .reg => switch (mem.size) {
+                    8 => &[_]u8{ 0x0F, 0xB6 }, // Emit a movzx (zero extend) in this case.
+                    16 => &[_]u8{ 0x0F, 0xB7 }, // Emit a movzx (zero extend) in this case.
+                    32, 64 => &[_]u8{0x8B},
+                    else => return error.InvalidMemSize,
+                },
+                .freg32, .freg64 => &[_]u8{ 0x0F, 0x6E }, // movd/movq
+                else => return error.InvalidRegisterType,
             },
-            .RegToMem => switch (mem.size) {
-                8 => &[_]u8{0x88},
-                16 => &[_]u8{ 0x66, 0x88 },
-                32, 64 => &[_]u8{0x89},
-                else => return error.InvalidMemSize,
+            .RegToMem => switch (reg) {
+                .reg => switch (mem.size) {
+                    8 => &[_]u8{0x88},
+                    16 => &[_]u8{ 0x66, 0x88 },
+                    32, 64 => &[_]u8{0x89},
+                    else => return error.InvalidMemSize,
+                },
+                .freg32, .freg64 => &[_]u8{ 0x0F, 0x7E }, // movd/movq
+                else => return error.InvalidRegisterType,
             },
         };
+
+        if (reg.tag() == .freg32 or reg.tag() == .freg64)
+            try self.emit(u8, 0x66);
 
         try self.emit_rex_if_needed(.{
             .w = reg_64,
@@ -536,7 +723,7 @@ pub const Emitter = struct {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
-                    .reg => |src_reg| try mov_mem_reg(self, .RegToMem, src_reg, dst_m),
+                    .reg => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .imm32 => |imm| {
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
@@ -552,14 +739,14 @@ pub const Emitter = struct {
                             try self.emit(u32, dst_m.displacement);
                         try self.emit(u32, imm);
                     },
+                    .freg32 => try mov_reg_mem(self, .RegToMem, src, dst_m),
+                    .freg64 => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     else => return error.InvalidMovSource,
                 }
             },
             .reg => |dst_reg| {
                 switch (src) {
-                    .reg => |src_reg| {
-                        try self.mov_reg_reg(dst_reg, src_reg);
-                    },
+                    .reg => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
                         if (imm == 0) {
                             try self.xor_(dst, dst);
@@ -580,7 +767,28 @@ pub const Emitter = struct {
                             try self.emit(u32, imm);
                         }
                     },
-                    .mem => |src_m| try mov_mem_reg(self, .MemToReg, dst_reg, src_m),
+                    .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
+                    .freg32 => |src_reg| try mov_reg_freg(self, ._32, dst_reg, src_reg),
+                    .freg64 => |src_reg| try mov_reg_freg(self, ._64, dst_reg, src_reg),
+                    else => return error.InvalidMovSource,
+                }
+            },
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| try mov_freg_reg(self, ._32, dst_reg, src_reg),
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mov, dst_reg, src_reg),
+                    .mem => |src_mem| try mov_reg_mem(self, .MemToReg, dst, src_mem),
+                    else => return error.InvalidMovSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| try mov_freg_reg(self, ._64, dst_reg, src_reg),
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mov, dst_reg, src_reg),
+                    .mem => |src_mem| {
+                        if (src_mem.size != 64) return error.InvalidMemSize;
+                        try mov_reg_mem(self, .MemToReg, dst, src_mem);
+                    },
                     else => return error.InvalidMovSource,
                 }
             },
@@ -756,7 +964,21 @@ pub const Emitter = struct {
     }
 
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src);
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Add, dst_reg, src_reg),
+                    else => return error.InvalidAddSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Add, dst_reg, src_reg),
+                    else => return error.InvalidAddSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src),
+        }
     }
     pub fn or_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x0C, 0x0D, 0x08, 0x09, 0x0A, 0x0B, .Or, dst, src);
@@ -771,13 +993,77 @@ pub const Emitter = struct {
         return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
     }
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src);
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Sub, dst_reg, src_reg),
+                    else => return error.InvalidSubSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Sub, dst_reg, src_reg),
+                    else => return error.InvalidSubSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src),
+        }
     }
     pub fn xor_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
     }
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
-        return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
+        switch (lhs) {
+            .freg32 => |lhs_reg| {
+                switch (rhs) {
+                    .freg32 => |rhs_reg| try cmp_scalar_fp(self, ._32, lhs_reg, rhs_reg),
+                    else => return error.InvalidCmpSource,
+                }
+            },
+            .freg64 => |lhs_reg| {
+                switch (rhs) {
+                    .freg64 => |rhs_reg| try cmp_scalar_fp(self, ._64, lhs_reg, rhs_reg),
+                    else => return error.InvalidCmpSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs),
+        }
+    }
+
+    pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mul, dst_reg, src_reg),
+                    else => return error.InvalidMulSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mul, dst_reg, src_reg),
+                    else => return error.InvalidMulSource,
+                }
+            },
+            else => return error.InvalidMulDestination,
+        }
+    }
+
+    pub fn div(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Div, dst_reg, src_reg),
+                    else => return error.InvalidDivSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Div, dst_reg, src_reg),
+                    else => return error.InvalidDivSource,
+                }
+            },
+            else => return error.InvalidDivDestination,
+        }
     }
 
     fn shift_instruction(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Operand, amount: Operand) !void {
@@ -937,5 +1223,80 @@ pub const Emitter = struct {
 
     pub fn ret(self: *@This()) !void {
         try self.emit(u8, 0xC3);
+    }
+
+    pub fn save_fp_registers(self: *@This(), count: u8) !void {
+        if (count > 0) {
+            // sub rsp, count * 16
+            const byte_count: u32 = count * 16;
+            if (byte_count < 0x80) {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x83);
+                try self.emit(u8, 0xEC);
+                try self.emit(u8, @truncate(byte_count));
+            } else {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x81);
+                try self.emit(u8, 0xEC);
+                try self.emit(u32, byte_count);
+            }
+
+            // movdqa XMMWORD PTR [rsp],xmm6      16bytes aligned version of movd, basically.
+            // movdqa XMMWORD PTR [rsp+8],xmm7
+            // ...
+            // Yes, I know. I'm too lazy to provide actual codegen for movsqa
+            const instrs = [_][]const u8{
+                &[_]u8{ 0x66, 0x0f, 0x7f, 0x34, 0x24 },
+                &[_]u8{ 0x66, 0x0f, 0x7f, 0x7c, 0x24, 0x10 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x44, 0x24, 0x20 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x4c, 0x24, 0x30 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x54, 0x24, 0x40 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x5c, 0x24, 0x50 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x64, 0x24, 0x60 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x6c, 0x24, 0x70 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0xb4, 0x24, 0x80, 0x00, 0x00, 0x00 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0xbc, 0x24, 0x90, 0x00, 0x00, 0x00 },
+            };
+            for (0..count) |i| {
+                try self.emit_slice(u8, instrs[i]);
+            }
+        }
+    }
+
+    pub fn restore_fp_registers(self: *@This(), count: u8) !void {
+        if (count > 0) {
+            // movdqa xmm6,XMMWORD PTR [rsp]
+            // movdqa xmm7,XMMWORD PTR [rsp+0x10]
+            // ...
+            const instrs = [_][]const u8{
+                &[_]u8{ 0x66, 0x0f, 0x6f, 0x34, 0x24 },
+                &[_]u8{ 0x66, 0x0f, 0x6f, 0x7c, 0x24, 0x10 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x44, 0x24, 0x20 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x4c, 0x24, 0x30 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x54, 0x24, 0x40 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x5c, 0x24, 0x50 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x64, 0x24, 0x60 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x6c, 0x24, 0x70 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0xb4, 0x24, 0x80, 0x00, 0x00, 0x00 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0xbc, 0x24, 0x90, 0x00, 0x00, 0x00 },
+            };
+            for (0..count) |i| {
+                try self.emit_slice(u8, instrs[i]);
+            }
+
+            // add rsp, count * 16
+            const byte_count: u32 = count * 16;
+            if (byte_count < 0x80) {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x83);
+                try self.emit(u8, 0xC4);
+                try self.emit(u8, @truncate(byte_count));
+            } else {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x81);
+                try self.emit(u8, 0xC4);
+                try self.emit(u32, byte_count);
+            }
+        }
     }
 };
