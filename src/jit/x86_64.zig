@@ -238,6 +238,8 @@ pub const InstructionType = enum {
     Not,
     Add,
     Sub,
+    Mul,
+    Div,
     And,
     Or,
     Xor,
@@ -251,7 +253,7 @@ pub const InstructionType = enum {
     Shr,
     Sar,
     Jmp,
-    Div64_32,
+    Div64_32, // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
 };
 
 pub const Instruction = union(InstructionType) {
@@ -265,6 +267,8 @@ pub const Instruction = union(InstructionType) {
     Not: struct { dst: Register },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
+    Mul: struct { dst: Operand, src: Operand },
+    Div: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
@@ -294,6 +298,8 @@ pub const Instruction = union(InstructionType) {
             .Not => |not| writer.print("not {any}", .{not.dst}),
             .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
+            .Mul => |sub| writer.print("mul {any}, {any}", .{ sub.dst, sub.src }),
+            .Div => |sub| writer.print("div {any}, {any}", .{ sub.dst, sub.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
@@ -389,6 +395,20 @@ const SIB = packed struct(u8) {
     scale: u2,
 };
 
+const ScalarFPOpcodes = enum(u8) {
+    Mov = 0x10,
+    Rsqrt = 0x52, // Reciprocal of Square Root
+    Rcp = 0x53, // Reciprocal
+    Add = 0x58,
+    Mul = 0x59,
+    Convert_SS_SD = 0x5A,
+    Convert_PS_DQ = 0x5B,
+    Sub = 0x5C,
+    Min = 0x5D,
+    Div = 0x5E,
+    Max = 0x5F,
+};
+
 pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
@@ -450,6 +470,8 @@ pub const Emitter = struct {
                 },
                 .Add => |a| try self.add(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
+                .Mul => |a| try self.mul(a.dst, a.src),
+                .Div => |a| try self.div(a.dst, a.src),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
@@ -490,7 +512,11 @@ pub const Emitter = struct {
         }
 
         if (@sizeOf(T) == 1) {
-            try self.emit_byte(@bitCast(value));
+            if (@typeInfo(T) == .Enum) {
+                try self.emit_byte(@intFromEnum(value));
+            } else {
+                try self.emit_byte(@bitCast(value));
+            }
         } else {
             for (0..@sizeOf(T)) |i| {
                 try self.emit_byte(@truncate((value >> @intCast(8 * i)) & 0xFF));
@@ -578,25 +604,17 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
     }
 
-    // movss xmm1, xmm2 - SSE2
-    pub fn mov_freg_freg(self: *@This(), comptime size: OperandSize, dst: FPRegister, src: FPRegister) !void {
-        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src), .b = need_rex(dst) });
+    // <op>ss xmm1, xmm2/m32 (mem operand not yet supported here)
+    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst: FPRegister, src: FPRegister) !void {
         try self.emit(u8, switch (size) {
             ._32 => 0xF3,
             ._64 => 0xF2,
             else => @compileError("Unsupported operand size"),
         });
+        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src) });
         try self.emit(u8, 0x0F);
-        try self.emit(u8, 0x10);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
-    }
-
-    pub fn mov_freg64_freg64(self: *@This(), dst: FPRegister, src: FPRegister) !void {
-        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(src), .b = need_rex(dst) });
-        try self.emit(u8, 0xF2);
-        try self.emit(u8, 0x0F);
-        try self.emit(u8, 0x10);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
+        try self.emit(ScalarFPOpcodes, opcode);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
     }
 
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
@@ -727,7 +745,7 @@ pub const Emitter = struct {
             .freg32 => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| try mov_freg_reg(self, ._32, dst_reg, src_reg),
-                    .freg32 => |src_reg| try mov_freg_freg(self, ._32, dst_reg, src_reg),
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mov, dst_reg, src_reg),
                     .mem => |src_mem| try mov_reg_mem(self, .MemToReg, dst, src_mem),
                     else => return error.InvalidMovSource,
                 }
@@ -735,7 +753,7 @@ pub const Emitter = struct {
             .freg64 => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| try mov_freg_reg(self, ._64, dst_reg, src_reg),
-                    .freg64 => |src_reg| try mov_freg_freg(self, ._64, dst_reg, src_reg),
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mov, dst_reg, src_reg),
                     .mem => |src_mem| {
                         if (src_mem.size != 64) return error.InvalidMemSize;
                         try mov_reg_mem(self, .MemToReg, dst, src_mem);
@@ -915,7 +933,21 @@ pub const Emitter = struct {
     }
 
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src);
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Add, dst_reg, src_reg),
+                    else => return error.InvalidAddSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Add, dst_reg, src_reg),
+                    else => return error.InvalidAddSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src),
+        }
     }
     pub fn or_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x0C, 0x0D, 0x08, 0x09, 0x0A, 0x0B, .Or, dst, src);
@@ -930,13 +962,63 @@ pub const Emitter = struct {
         return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
     }
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src);
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Sub, dst_reg, src_reg),
+                    else => return error.InvalidSubSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Sub, dst_reg, src_reg),
+                    else => return error.InvalidSubSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src),
+        }
     }
     pub fn xor_(self: *@This(), dst: Operand, src: Operand) !void {
         return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
     }
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
         return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
+    }
+
+    pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mul, dst_reg, src_reg),
+                    else => return error.InvalidMulSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mul, dst_reg, src_reg),
+                    else => return error.InvalidMulSource,
+                }
+            },
+            else => return error.InvalidMulDestination,
+        }
+    }
+
+    pub fn div(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Div, dst_reg, src_reg),
+                    else => return error.InvalidDivSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Div, dst_reg, src_reg),
+                    else => return error.InvalidDivSource,
+                }
+            },
+            else => return error.InvalidDivDestination,
+        }
     }
 
     fn shift_instruction(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Operand, amount: Operand) !void {

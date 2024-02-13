@@ -992,6 +992,25 @@ pub fn fmovs_FRm_at_R0_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     return false;
 }
 
+pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Zero => {
+            const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+            const frm = try load_fp_register(block, ctx, instr.nmd.m);
+            try block.add(.{ .freg32 = frn }, .{ .freg32 = frm });
+        },
+        .One => {
+            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
+            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
+            try block.add(.{ .freg64 = frn }, .{ .freg64 = frm });
+        },
+        .Unknown => {
+            _ = try interpreter_fallback_cached(block, ctx, instr);
+        },
+    }
+    return false;
+}
+
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
