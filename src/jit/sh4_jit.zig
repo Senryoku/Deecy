@@ -390,7 +390,7 @@ pub const SH4JIT = struct {
         return null;
     }
 
-    pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
+    pub noinline fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
         var ctx = start_ctx;
 
         var b = JITBlock.init(self._allocator);

@@ -712,7 +712,7 @@ pub const SH4 = struct {
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
-    fn panic_debug(self: @This(), comptime fmt: []const u8, args: anytype) noreturn {
+    fn panic_debug(self: *const @This(), comptime fmt: []const u8, args: anytype) noreturn {
         std.debug.print("panic_debug: PC: {X:0>8}\n", .{self.pc});
         std.debug.print(fmt ++ "\n", args);
         @panic(fmt);
@@ -855,14 +855,14 @@ pub const SH4 = struct {
         }
     }
 
-    pub inline fn read8(self: @This(), virtual_addr: addr_t) u8 {
+    pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
                 else => {
                     sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
+                        @constCast(self)._get_memory(addr),
                     ))).* });
                 },
             }
@@ -879,15 +879,15 @@ pub const SH4 = struct {
         }
 
         return @as(*const u8, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(addr),
+            @constCast(self)._get_memory(addr),
         ))).*;
     }
 
-    pub noinline fn _out_of_line_read16(self: @This(), virtual_addr: addr_t) u16 {
+    pub noinline fn _out_of_line_read16(self: *const @This(), virtual_addr: addr_t) u16 {
         return read16(self, virtual_addr);
     }
 
-    pub inline fn read16(self: @This(), virtual_addr: addr_t) u16 {
+    pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         // SH4 Hardware registers
@@ -938,7 +938,7 @@ pub const SH4 = struct {
                 },
                 else => {
                     sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(&self)._get_memory(addr),
+                        @constCast(self)._get_memory(addr),
                     ))).* });
                 },
             }
@@ -958,21 +958,21 @@ pub const SH4 = struct {
         }
 
         return @as(*const u16, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(addr),
+            @constCast(self)._get_memory(addr),
         ))).*;
     }
 
-    pub noinline fn _out_of_line_read32(self: @This(), virtual_addr: addr_t) u32 {
+    pub noinline fn _out_of_line_read32(self: *const @This(), virtual_addr: addr_t) u32 {
         return read32(self, virtual_addr);
     }
 
-    pub inline fn read32(self: @This(), virtual_addr: addr_t) u32 {
+    pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         switch (virtual_addr) {
             0xFF000000...0xFFFFFFFF => {
                 sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                    @constCast(&self)._get_memory(addr),
+                    @constCast(self)._get_memory(addr),
                 ))).* });
             },
             0x7C000000...0x7FFFFFFF => {
@@ -993,14 +993,14 @@ pub const SH4 = struct {
                         //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
                         //      1: DMA transfer has ended, or is stopped due to a suspen
                         sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                            @constCast(&self)._get_memory(addr),
+                            @constCast(self)._get_memory(addr),
                         ))).* });
                         return 0x30;
                     },
                     else => {
                         if (addr != 0x005F6900) // SB_ISTNRM is way too spammy
                             sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                                @constCast(&self)._get_memory(addr),
+                                @constCast(self)._get_memory(addr),
                             ))).* });
                     },
                 }
@@ -1028,19 +1028,19 @@ pub const SH4 = struct {
         }
 
         return @as(*const u32, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(addr),
+            @constCast(self)._get_memory(addr),
         ))).*;
     }
 
-    pub noinline fn _out_of_line_read64(self: @This(), virtual_addr: addr_t) u64 {
+    pub noinline fn _out_of_line_read64(self: *const @This(), virtual_addr: addr_t) u64 {
         return read64(self, virtual_addr);
     }
 
-    pub inline fn read64(self: @This(), virtual_addr: addr_t) u64 {
+    pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         const r = @as(*const u64, @alignCast(@ptrCast(
-            @constCast(&self)._get_memory(addr),
+            @constCast(self)._get_memory(addr),
         ))).*;
 
         // Small sanity check.
@@ -1322,7 +1322,7 @@ pub const SH4 = struct {
     // MMU Stub functions
     // NOTE: This is dead code, the MMU is not emulated and utlb_entries are not in this struct anymore (reducing the size of the struct helps a lot with performance).
 
-    pub fn mmu_utlb_match(self: @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
+    pub fn mmu_utlb_match(self: *const @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
         const asid = self.dc.read_p4_register(mmu.PTEH, HardwareRegister.PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
@@ -1342,7 +1342,7 @@ pub const SH4 = struct {
         return found.?;
     }
 
-    pub fn mmu_translate_utbl(self: @This(), virtual_addr: addr_t) !addr_t {
+    pub fn mmu_translate_utbl(self: *const @This(), virtual_addr: addr_t) !addr_t {
         std.debug.assert(virtual_addr & 0xE0000000 == 0 or virtual_addr & 0xE0000000 == 0x60000000);
         if (self.dc.read_p4_register(mmu.MMUCR, HardwareRegister.MMUCR).at == 0) return virtual_addr;
 
@@ -1367,13 +1367,13 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn mmu_translate_itbl(self: @This(), virtual_addr: addr_t) !u32 {
+    pub fn mmu_translate_itbl(self: *const @This(), virtual_addr: addr_t) !u32 {
         _ = virtual_addr;
         _ = self;
         unreachable;
     }
 
-    pub fn check_memory_protection(self: @This(), entry: mmu.UTLBEntry, write: bool) !void {
+    pub fn check_memory_protection(self: *const @This(), entry: mmu.UTLBEntry, write: bool) !void {
         if (self.sr.md == 0) {
             switch (entry.pr) {
                 0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
