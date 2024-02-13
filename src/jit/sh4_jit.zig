@@ -189,6 +189,8 @@ pub const JITContext = struct {
     delay_slot: ?u32 = null,
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
+    // Unconditional forward jump
+    skip_instructions: u32 = 0,
 
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
@@ -434,19 +436,27 @@ pub const SH4JIT = struct {
             index += 1;
             ctx.address += 2;
 
-            if (branch) {
-                if (ctx.delay_slot != null) {
-                    const delay_slot = instructions[index];
-                    sh4_jit_log.debug(" [{X:0>8}] {s}  {s}", .{
-                        ctx.address,
-                        if (instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_branch or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
-                        try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
-                    });
-                    const branch_delay_slot = try instr_lookup(delay_slot).jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
-                    cycles += instr_lookup(delay_slot).issue_cycles;
-                    std.debug.assert(!branch_delay_slot);
-                }
+            if (ctx.delay_slot != null) {
+                const delay_slot = instructions[index];
+                sh4_jit_log.debug(" [{X:0>8}] {s}  {s}", .{
+                    ctx.address,
+                    if (instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_branch or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+                    try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
+                });
+                const branch_delay_slot = try instr_lookup(delay_slot).jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
+                cycles += instr_lookup(delay_slot).issue_cycles;
+                std.debug.assert(!branch_delay_slot);
+
+                ctx.delay_slot = null;
+            }
+
+            if (branch)
                 break;
+
+            if (ctx.skip_instructions > 0) {
+                index += ctx.skip_instructions;
+                ctx.address += 2 * ctx.skip_instructions;
+                ctx.skip_instructions = 0;
             }
         }
 
@@ -1306,10 +1316,17 @@ pub fn bts_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-    ctx.delay_slot = ctx.address + 2;
-    ctx.outdated_pc = false;
-    return true;
+    // Unconditional branch, and fixed destination, don't treat it like a branch.
+    if (dest > ctx.address) {
+        ctx.delay_slot = ctx.address + 2;
+        ctx.skip_instructions = (dest - ctx.address) / 2 - 1;
+        return false;
+    } else {
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+        ctx.delay_slot = ctx.address + 2;
+        ctx.outdated_pc = false;
+        return true;
+    }
 }
 
 pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
