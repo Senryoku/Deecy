@@ -27,7 +27,7 @@ pub const std_options = struct {
 
     pub const log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
-        .{ .scope = .sh4_jit, .level = .info },
+        .{ .scope = .sh4_jit, .level = .debug },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall_log, .level = .warn },

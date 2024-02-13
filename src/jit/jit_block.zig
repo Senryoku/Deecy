@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const Architecture = @import("x86_64.zig");
 pub const Register = Architecture.Register;
+pub const FPRegister = Architecture.FPRegister;
 pub const Instruction = Architecture.Instruction;
 pub const Operand = Architecture.Operand;
 pub const Condition = Architecture.Condition;
