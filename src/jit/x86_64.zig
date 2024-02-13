@@ -617,6 +617,18 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
     }
 
+    pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, dst: FPRegister, src: FPRegister) !void {
+        switch (size) {
+            ._32 => {},
+            ._64 => try self.emit(u8, 0x66),
+            else => @compileError("Unsupported operand size"),
+        }
+        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src) });
+        try self.emit(u8, 0x0F);
+        try self.emit(u8, 0x2F);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+    }
+
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
 
@@ -982,7 +994,21 @@ pub const Emitter = struct {
         return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
     }
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
-        return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs);
+        switch (lhs) {
+            .freg32 => |lhs_reg| {
+                switch (rhs) {
+                    .freg32 => |rhs_reg| try cmp_scalar_fp(self, ._32, lhs_reg, rhs_reg),
+                    else => return error.InvalidCmpSource,
+                }
+            },
+            .freg64 => |lhs_reg| {
+                switch (rhs) {
+                    .freg64 => |rhs_reg| try cmp_scalar_fp(self, ._64, lhs_reg, rhs_reg),
+                    else => return error.InvalidCmpSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x3C, 0x3D, 0x38, 0x39, 0x3A, 0x3B, .Cmp, lhs, rhs),
+        }
     }
 
     pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
