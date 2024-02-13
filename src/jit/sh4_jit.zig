@@ -89,9 +89,9 @@ const BlockCache = struct {
     }
 };
 
-const JITBitState = enum(u2) {
-    Zero = 0,
-    One = 1,
+const FPPrecision = enum(u2) {
+    Single = 0,
+    Double = 1,
     Unknown,
 };
 
@@ -190,8 +190,8 @@ pub const JITContext = struct {
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
 
-    fpscr_sz: JITBitState,
-    fpscr_pr: JITBitState,
+    fpscr_sz: FPPrecision,
+    fpscr_pr: FPPrecision,
 
     gpr_cache: RegisterCache(JIT.Register, 5) = .{
         .highest_saved_register_used = 0,
@@ -318,8 +318,8 @@ pub const SH4JIT = struct {
                 block = try (self.compile(.{
                     .address = pc,
                     .dc = cpu._dc.?,
-                    .fpscr_sz = if (cpu.fpscr.sz == 1) .One else .Zero,
-                    .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
+                    .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
+                    .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
                 }, instructions) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         try self.block_cache.reset();
@@ -327,8 +327,8 @@ pub const SH4JIT = struct {
                         break :retry self.compile(.{
                             .address = pc,
                             .dc = cpu._dc.?,
-                            .fpscr_sz = if (cpu.fpscr.sz == 1) .One else .Zero,
-                            .fpscr_pr = if (cpu.fpscr.pr == 1) .One else .Zero,
+                            .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
+                            .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
                         }, instructions);
                     } else break :retry err;
                 });
@@ -618,17 +618,17 @@ fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.
     try block.mov(.{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
 }
 
-fn load_fp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.FPRegister {
-    return try ctx.guest_freg_cache(block, 32, guest_reg, true, false);
+fn load_fp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
+    return .{ .freg32 = try ctx.guest_freg_cache(block, 32, guest_reg, true, false) };
 }
-fn load_dfp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.FPRegister {
-    return try ctx.guest_freg_cache(block, 64, guest_reg, true, false);
+fn load_dfp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
+    return .{ .freg64 = try ctx.guest_freg_cache(block, 64, guest_reg, true, false) };
 }
-fn load_fp_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.FPRegister {
-    return try ctx.guest_freg_cache(block, 32, guest_reg, true, true);
+fn load_fp_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
+    return .{ .freg32 = try ctx.guest_freg_cache(block, 32, guest_reg, true, true) };
 }
-fn load_dfp_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.FPRegister {
-    return try ctx.guest_freg_cache(block, 64, guest_reg, true, true);
+fn load_dfp_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
+    return .{ .freg64 = try ctx.guest_freg_cache(block, 64, guest_reg, true, true) };
 }
 fn store_fp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.Operand) !void {
     try block.mov(.{ .freg32 = try ctx.guest_freg_cache(block, 32, guest_reg, false, true) }, value);
@@ -892,178 +892,152 @@ pub fn stsl_PR_atRn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
 
 pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
+        .Single => {
             // FRn = [Rm]
             try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
-        .One => {
+        .Double => {
             try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmovs_frm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
+        .Single => {
             // [Rn] = FRm
             const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .freg32 = frm }, 32);
+            try store_mem(block, ctx, instr.nmd.n, .Reg, 0, frm, 32);
         },
-        .One => {
+        .Double => {
             const drm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .freg64 = drm }, 64);
+            try store_mem(block, ctx, instr.nmd.n, .Reg, 0, drm, 64);
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero, .One => {
+        .Single, .Double => {
             _ = try fmovs_at_rm_frn(block, ctx, instr);
             // Inc Rm
             const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
-            try block.add(.{ .reg = rm }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
+            try block.add(.{ .reg = rm }, .{ .imm32 = if (ctx.fpscr_sz == .Double) 8 else 4 });
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero, .One => {
+        .Single, .Double => {
             // Dec Rn
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-            try block.sub(.{ .reg = rn }, .{ .imm32 = if (ctx.fpscr_sz == .One) 8 else 4 });
-            _ = try fmovs_frm_at_rn(block, ctx, instr);
+            try block.sub(.{ .reg = rn }, .{ .imm32 = if (ctx.fpscr_sz == .Double) 8 else 4 });
+            return fmovs_frm_at_rn(block, ctx, instr);
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmovs_at_R0_Rm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
+        .Single => {
             // FRn = [Rm+R0]
             try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
-        .One => {
+        .Double => {
             try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmovs_FRm_at_R0_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
+        .Single => {
             // [Rn+R0] = FRm
             const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .freg32 = frm }, 32);
+            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, frm, 32);
         },
-        .One => {
+        .Double => {
             const drm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .freg64 = drm }, 64);
+            try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, drm, 64);
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
+        .Single => {
             const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
             const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try block.add(.{ .freg32 = frn }, .{ .freg32 = frm });
+            try block.add(frn, frm);
         },
-        .One => {
+        .Double => {
             const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
             const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try block.add(.{ .freg64 = frn }, .{ .freg64 = frm });
+            try block.add(frn, frm);
         },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fsub_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
-            const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try block.sub(.{ .freg32 = frn }, .{ .freg32 = frm });
-        },
-        .One => {
-            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try block.sub(.{ .freg64 = frn }, .{ .freg64 = frm });
-        },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Single => try block.sub(
+            try load_fp_register_for_writing(block, ctx, instr.nmd.n),
+            try load_fp_register(block, ctx, instr.nmd.m),
+        ),
+        .Double => try block.sub(
+            try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+            try load_dfp_register(block, ctx, instr.nmd.m),
+        ),
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fmul_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
-            const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try block.append(.{ .Mul = .{ .dst = .{ .freg32 = frn }, .src = .{ .freg32 = frm } } });
-        },
-        .One => {
-            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try block.append(.{ .Mul = .{ .dst = .{ .freg64 = frn }, .src = .{ .freg64 = frm } } });
-        },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Single => try block.append(.{ .Mul = .{
+            .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
+            .src = try load_fp_register(block, ctx, instr.nmd.m),
+        } }),
+        .Double => try block.append(.{ .Mul = .{
+            .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+            .src = try load_dfp_register(block, ctx, instr.nmd.m),
+        } }),
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
 
 pub fn fdiv_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Zero => {
-            const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            try block.append(.{ .Div = .{ .dst = .{ .freg32 = frn }, .src = .{ .freg32 = frm } } });
-        },
-        .One => {
-            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try block.append(.{ .Div = .{ .dst = .{ .freg64 = frn }, .src = .{ .freg64 = frm } } });
-        },
-        .Unknown => {
-            _ = try interpreter_fallback_cached(block, ctx, instr);
-        },
+        .Single => try block.append(.{ .Div = .{
+            .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
+            .src = try load_fp_register(block, ctx, instr.nmd.m),
+        } }),
+        .Double => try block.append(.{ .Div = .{
+            .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+            .src = try load_dfp_register(block, ctx, instr.nmd.m),
+        } }),
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
 }
@@ -1098,8 +1072,8 @@ pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
 pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback_cached(block, ctx, instr);
     switch (ctx.fpscr_sz) {
-        .Zero => ctx.fpscr_sz = .One,
-        .One => ctx.fpscr_sz = .Zero,
+        .Single => ctx.fpscr_sz = .Double,
+        .Double => ctx.fpscr_sz = .Single,
         else => {},
     }
     return false;
