@@ -617,16 +617,16 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
     }
 
-    pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, dst: FPRegister, src: FPRegister) !void {
+    pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, lhs: FPRegister, rhs: FPRegister) !void {
         switch (size) {
             ._32 => {},
             ._64 => try self.emit(u8, 0x66),
             else => @compileError("Unsupported operand size"),
         }
-        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src) });
+        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(lhs), .b = need_rex(rhs) });
         try self.emit(u8, 0x0F);
         try self.emit(u8, 0x2F);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(lhs), .r_m = encode(rhs) });
     }
 
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
