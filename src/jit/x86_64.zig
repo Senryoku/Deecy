@@ -54,19 +54,22 @@ pub const SavedRegisters = switch (JITABI) {
     else => @compileError("Unsupported ABI"),
 };
 
-pub const FPScratchRegisters = [_]FPRegister{
+pub const FPArgRegisters = [_]FPRegister{
     .xmm0,
     .xmm1,
     .xmm2,
     .xmm3,
+};
+
+pub const FPScratchRegisters = [_]FPRegister{
     .xmm4,
     .xmm5,
-    .xmm6,
-    .xmm7,
 };
 
 // This is only true for Win64
 pub const FPSavedRegisters = [_]FPRegister{
+    .xmm6,
+    .xmm7,
     .xmm8,
     .xmm9,
     .xmm10,
@@ -254,6 +257,9 @@ pub const InstructionType = enum {
     Sar,
     Jmp,
     Div64_32, // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
+
+    SaveFPRegisters,
+    RestoreFPRegisters,
 };
 
 pub const Instruction = union(InstructionType) {
@@ -283,6 +289,9 @@ pub const Instruction = union(InstructionType) {
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
+
+    SaveFPRegisters: struct { count: u8 },
+    RestoreFPRegisters: struct { count: u8 },
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
@@ -314,6 +323,8 @@ pub const Instruction = union(InstructionType) {
             .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
             .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
             .Div64_32 => |div| writer.print("div64_32 {any},{any}:{any},{any},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
+            .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {any}", .{instr.count}),
+            .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {any}", .{instr.count}),
         };
     }
 };
@@ -490,6 +501,9 @@ pub const Emitter = struct {
                 .Shl => |r| try self.shl(r.dst, r.amount),
                 .Not => |r| try self.not(r.dst),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
+
+                .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
+                .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
                 else => return error.UnsupportedInstruction,
             }
         }
@@ -502,6 +516,11 @@ pub const Emitter = struct {
     pub fn emit_byte(self: *@This(), value: u8) !void {
         self.block.buffer[self.block_size] = value;
         self.block_size += 1;
+    }
+
+    pub fn emit_slice(self: *@This(), comptime T: type, value: []const T) !void {
+        for (value) |v|
+            try self.emit(T, v);
     }
 
     pub fn emit(self: *@This(), comptime T: type, value: T) !void {
@@ -1204,5 +1223,80 @@ pub const Emitter = struct {
 
     pub fn ret(self: *@This()) !void {
         try self.emit(u8, 0xC3);
+    }
+
+    pub fn save_fp_registers(self: *@This(), count: u8) !void {
+        if (count > 0) {
+            // sub rsp, count * 16
+            const byte_count: u32 = count * 16;
+            if (byte_count < 0x80) {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x83);
+                try self.emit(u8, 0xEC);
+                try self.emit(u8, @truncate(byte_count));
+            } else {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x81);
+                try self.emit(u8, 0xEC);
+                try self.emit(u32, byte_count);
+            }
+
+            // movdqa XMMWORD PTR [rsp],xmm6      16bytes aligned version of movd, basically.
+            // movdqa XMMWORD PTR [rsp+8],xmm7
+            // ...
+            // Yes, I know. I'm too lazy to provide actual codegen for movsqa
+            const instrs = [_][]const u8{
+                &[_]u8{ 0x66, 0x0f, 0x7f, 0x34, 0x24 },
+                &[_]u8{ 0x66, 0x0f, 0x7f, 0x7c, 0x24, 0x10 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x44, 0x24, 0x20 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x4c, 0x24, 0x30 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x54, 0x24, 0x40 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x5c, 0x24, 0x50 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x64, 0x24, 0x60 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0x6c, 0x24, 0x70 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0xb4, 0x24, 0x80, 0x00, 0x00, 0x00 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x7f, 0xbc, 0x24, 0x90, 0x00, 0x00, 0x00 },
+            };
+            for (0..count) |i| {
+                try self.emit_slice(u8, instrs[i]);
+            }
+        }
+    }
+
+    pub fn restore_fp_registers(self: *@This(), count: u8) !void {
+        if (count > 0) {
+            // movdqa xmm6,XMMWORD PTR [rsp]
+            // movdqa xmm7,XMMWORD PTR [rsp+0x10]
+            // ...
+            const instrs = [_][]const u8{
+                &[_]u8{ 0x66, 0x0f, 0x6f, 0x34, 0x24 },
+                &[_]u8{ 0x66, 0x0f, 0x6f, 0x7c, 0x24, 0x10 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x44, 0x24, 0x20 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x4c, 0x24, 0x30 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x54, 0x24, 0x40 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x5c, 0x24, 0x50 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x64, 0x24, 0x60 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0x6c, 0x24, 0x70 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0xb4, 0x24, 0x80, 0x00, 0x00, 0x00 },
+                &[_]u8{ 0x66, 0x44, 0x0f, 0x6f, 0xbc, 0x24, 0x90, 0x00, 0x00, 0x00 },
+            };
+            for (0..count) |i| {
+                try self.emit_slice(u8, instrs[i]);
+            }
+
+            // add rsp, count * 16
+            const byte_count: u32 = count * 16;
+            if (byte_count < 0x80) {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x83);
+                try self.emit(u8, 0xC4);
+                try self.emit(u8, @truncate(byte_count));
+            } else {
+                try self.emit(u8, 0x48);
+                try self.emit(u8, 0x81);
+                try self.emit(u8, 0xC4);
+                try self.emit(u32, byte_count);
+            }
+        }
     }
 };

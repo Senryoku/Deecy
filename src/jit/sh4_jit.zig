@@ -97,7 +97,7 @@ const FPPrecision = enum(u2) {
 
 fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
     return struct {
-        highest_saved_register_used: u32,
+        highest_saved_register_used: ?u32 = null,
         entries: [entries]struct {
             host: reg_type,
             size: u8 = 32,
@@ -207,7 +207,7 @@ pub const JITContext = struct {
     },
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
-        .highest_saved_register_used = 0,
+        .highest_saved_register_used = null,
         .entries = .{
             .{ .host = FPSavedRegisters[0], .last_access = 0, .modified = false, .guest = null },
             .{ .host = FPSavedRegisters[1], .last_access = 0, .modified = false, .guest = null },
@@ -259,7 +259,7 @@ pub const JITContext = struct {
             // Do we have a free slot?
             for (&cache.entries, 0..) |*hreg, idx| {
                 if (hreg.guest == null) {
-                    cache.highest_saved_register_used = @max(cache.highest_saved_register_used, @as(u8, @intCast(idx)));
+                    cache.highest_saved_register_used = @max(cache.highest_saved_register_used orelse 0, @as(u8, @intCast(idx)));
                     break :s hreg;
                 }
                 if (hreg.last_access > lru.last_access) {
@@ -408,10 +408,8 @@ pub const SH4JIT = struct {
         try b.push(.{ .reg = SavedRegisters[5] });
 
         // Save some space for potential callee-saved FP registers
-        //const optional_saved_fp_register_offset = b.instructions.items.len;
-        //for (0..ctx.fpr_cache.entries.len + 1) |_| {
-        //    try b.append(.Nop);
-        //}
+        const optional_saved_fp_register_offset = b.instructions.items.len;
+        try b.append(.Nop);
 
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
@@ -477,38 +475,26 @@ pub const SH4JIT = struct {
         try ctx.gpr_cache.commit_and_invalidate_all(&b);
         try ctx.fpr_cache.commit_and_invalidate_all(&b);
 
-        // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about allignment).
-        //if (ctx.fpr_cache.highest_saved_register_used > 0) {
-        //    b.instructions.items[optional_saved_fp_register_offset] = .{ .Sub = .{
-        //        .dst = .{ .reg = .rsp },
-        //        .src = .{ .imm64 = 4 * ctx.fpr_cache.highest_saved_register_used },
-        //    } }; // FIXME: we need to emit a 64bit add here...
-        //    for (0..ctx.fpr_cache.highest_saved_register_used) |i| {
-        //        b.instructions.items[optional_saved_fp_register_offset + i + 1] = .{ .Mov = .{
-        //            .dst = .{ .mem = .{ .base = .rsp, .displacement = @intCast(4 * i), .size = 128 } },
-        //            .src = .{ .fp128 = .SavedFPRegisters[i] },
-        //        } };
-        //
-        //        b.mov(
-        //            .{ .fp128 = .SavedFPRegisters[i] },
-        //            .{ .mem = .{ .base = .rsp, .displacement = @intCast(4 * (ctx.fpr_cache.highest_saved_register_used - i)), .size = 128 } },
-        //        );
-        //    }
-        //    b.add(
-        //        .{ .reg = .rsp },
-        //        .{ .imm64 = 4 * ctx.fpr_cache.highest_saved_register_used },
-        //    );
-        //}
+        // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
+        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            b.instructions.items[optional_saved_fp_register_offset] = .{ .SaveFPRegisters = .{
+                .count = @intCast(highest_saved_register_used + 1),
+            } };
+            try b.append(.{ .RestoreFPRegisters = .{
+                .count = @intCast(highest_saved_register_used + 1),
+            } });
+        }
 
         // Restore callee saved registers.
-        if (ctx.gpr_cache.highest_saved_register_used >= 3) {
+        const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
+        if (highest_saved_gpr_used >= 3) {
             try b.pop(.{ .reg = SavedRegisters[5] });
             try b.pop(.{ .reg = SavedRegisters[4] });
         } else {
             b.instructions.items[optional_saved_register_offset + 2] = .Nop;
             b.instructions.items[optional_saved_register_offset + 3] = .Nop;
         }
-        if (ctx.gpr_cache.highest_saved_register_used >= 1) {
+        if (highest_saved_gpr_used >= 1) {
             try b.pop(.{ .reg = SavedRegisters[3] });
             try b.pop(.{ .reg = SavedRegisters[2] });
         } else {
