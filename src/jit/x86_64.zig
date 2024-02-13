@@ -31,12 +31,12 @@ pub const ArgRegisters = switch (JITABI) {
 };
 pub const SavedRegisters = switch (JITABI) {
     .Win64 => [_]Register{
+        .rbx,
+        .rsi,
         .r12,
         .r13,
         .r14,
         .r15,
-        .rbx,
-        .rsi,
         .rdi,
         // NOTE: Both are saved registers, but I don't think I should expose them.
         // .rbp,

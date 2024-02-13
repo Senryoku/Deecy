@@ -890,6 +890,15 @@ pub fn stsl_PR_atRn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     return false;
 }
 
+pub fn fmov_frm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_sz) {
+        .Single => try store_fp_register(block, ctx, instr.nmd.n, try load_fp_register(block, ctx, instr.nmd.m)),
+        .Double => try store_dfp_register(block, ctx, instr.nmd.n, try load_dfp_register(block, ctx, instr.nmd.m)),
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn fmovs_at_rm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
         .Single => {
@@ -981,7 +990,7 @@ pub fn fmovs_FRm_at_R0_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 }
 
 pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    switch (ctx.fpscr_sz) {
+    switch (ctx.fpscr_pr) {
         .Single => {
             const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
             const frm = try load_fp_register(block, ctx, instr.nmd.m);
@@ -998,7 +1007,7 @@ pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn fsub_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    switch (ctx.fpscr_sz) {
+    switch (ctx.fpscr_pr) {
         .Single => try block.sub(
             try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             try load_fp_register(block, ctx, instr.nmd.m),
@@ -1013,7 +1022,7 @@ pub fn fsub_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn fmul_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    switch (ctx.fpscr_sz) {
+    switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Mul = .{
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             .src = try load_fp_register(block, ctx, instr.nmd.m),
@@ -1028,7 +1037,7 @@ pub fn fmul_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn fdiv_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    switch (ctx.fpscr_sz) {
+    switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Div = .{
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             .src = try load_fp_register(block, ctx, instr.nmd.m),
