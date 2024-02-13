@@ -207,14 +207,14 @@ pub const JITContext = struct {
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = 0,
         .entries = .{
-            .{ .host = FPScratchRegisters[0], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[1], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[2], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[3], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[4], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[5], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[6], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPScratchRegisters[7], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[0], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[1], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[2], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[3], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[4], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[5], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[6], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[7], .last_access = 0, .modified = false, .guest = null },
         },
     },
 

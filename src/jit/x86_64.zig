@@ -563,10 +563,10 @@ pub const Emitter = struct {
     // movd xmm, r/m32 / movq xmm, r/m64
     pub fn mov_freg_reg(self: *@This(), comptime size: OperandSize, dst: FPRegister, src: Register) !void {
         try self.emit(u8, 0x66);
-        try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(src), .b = need_rex(dst) });
+        try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(dst), .b = need_rex(src) });
         try self.emit(u8, 0x0F);
         try self.emit(u8, 0x6E);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
     }
 
     // movd r/m32, xmm / movq r/m64, xmm
