@@ -906,6 +906,18 @@ pub fn movl_atR0Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
     return false;
 }
 
+pub fn movb_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .reg8 = rm }, 8);
+    return false;
+}
+
+pub fn movw_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .reg16 = rm }, 16);
+    return false;
+}
+
 pub fn movl_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .reg = rm }, 32);
