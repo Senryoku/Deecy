@@ -620,7 +620,7 @@ fn get_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !
     return .{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) };
 }
 fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.Operand) !void {
-    try block.mov(.{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
+    try block.mov(try get_register_for_writing(block, ctx, guest_reg), value);
 }
 
 fn load_fp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
@@ -844,6 +844,13 @@ pub fn movl_rm_at_rn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
     return movl_rm_at_rn(block, ctx, instr);
+}
+
+pub fn movw_at_disp_rm_r0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const d = bit_manip.zero_extend(instr.nmd.d) << 1;
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, d, 16);
+    try block.movsx(try get_register_for_writing(block, ctx, 0), .{ .reg16 = ReturnRegister });
+    return false;
 }
 
 pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
