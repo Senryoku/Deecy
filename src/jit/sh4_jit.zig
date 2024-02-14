@@ -763,7 +763,7 @@ pub fn movw_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     // Load [Rm] into temporary
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
     // Sign extend
-    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg = ReturnRegister });
+    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg16 = ReturnRegister });
     return false;
 }
 

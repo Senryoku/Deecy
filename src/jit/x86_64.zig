@@ -178,6 +178,7 @@ pub const MemOperand = struct {
 
 const OperandType = enum {
     reg8,
+    reg16,
     reg,
     freg32,
     freg64,
@@ -191,7 +192,8 @@ const OperandType = enum {
 
 pub const Operand = union(OperandType) {
     reg8: Register,
-    reg: Register,
+    reg16: Register,
+    reg: Register, // FIXME: This will sometimes be treated as a 32-bit register, and sometimes as a 64-bit register, depending on the instruction, or the size of the other operand. Make it explicit.
     freg32: FPRegister,
     freg64: FPRegister,
     freg128: FPRegister,
@@ -204,6 +206,7 @@ pub const Operand = union(OperandType) {
     pub fn tag(self: @This()) OperandType {
         return switch (self) {
             .reg8 => .reg8,
+            .reg16 => .reg16,
             .reg => .reg,
             .freg32 => .freg32,
             .freg64 => .freg64,
@@ -221,6 +224,7 @@ pub const Operand = union(OperandType) {
         _ = options;
         return switch (value) {
             .reg8 => |reg| writer.print("{any}<8>", .{reg}),
+            .reg16 => |reg| writer.print("{any}<16>", .{reg}),
             .reg => |reg| writer.print("{any}", .{reg}),
             .freg32 => |reg| writer.print("{any}<32>", .{reg}),
             .freg64 => |reg| writer.print("{any}<64>", .{reg}),
@@ -570,6 +574,8 @@ pub const Emitter = struct {
             Register => @truncate(@intFromEnum(reg)),
             FPRegister => @truncate(@intFromEnum(reg)),
             Operand => switch (reg) {
+                .reg8 => |r| @truncate(@intFromEnum(r)),
+                .reg16 => |r| @truncate(@intFromEnum(r)),
                 .reg => |r| @truncate(@intFromEnum(r)),
                 .freg32 => |r| @truncate(@intFromEnum(r)),
                 .freg64 => |r| @truncate(@intFromEnum(r)),
@@ -584,6 +590,8 @@ pub const Emitter = struct {
             Register => @intFromEnum(reg) >= 8,
             FPRegister => @intFromEnum(reg) >= 8,
             Operand => switch (reg) {
+                .reg8 => |r| @truncate(@intFromEnum(r)),
+                .reg16 => |r| @truncate(@intFromEnum(r)),
                 .reg => |r| @intFromEnum(r) >= 8,
                 .freg32 => |r| @intFromEnum(r) >= 8,
                 .freg64 => |r| @intFromEnum(r) >= 8,
@@ -652,6 +660,36 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(lhs), .r_m = encode(rhs) });
     }
 
+    // Emits ModRM, SIB and displacement bytes, as needed.
+    fn emit_mem_addressing(self: *@This(), reg_opcode: u3, mem: MemOperand) !void {
+        const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
+        else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
+
+        const mod: Mod = if (mem.base == .rbp and mem.displacement == 0) .disp8 // Special case: If the base is rbp, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
+        else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
+
+        try self.emit(MODRM, .{
+            .mod = mod,
+            .reg_opcode = reg_opcode,
+            .r_m = r_m,
+        });
+
+        if (r_m == 0b100) {
+            try self.emit(SIB, .{
+                .scale = 0,
+                // NOTE: ESP/R12-based addressing needs a SIB byte, this is the 0b100 case.
+                .index = if (mem.index) |i| encode(i) else 0b100,
+                .base = encode(mem.base),
+            });
+        }
+
+        switch (mod) {
+            .disp8 => try self.emit(u8, @truncate(mem.displacement)),
+            .disp32 => try self.emit(u32, mem.displacement),
+            else => {},
+        }
+    }
+
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
 
@@ -693,32 +731,7 @@ pub const Emitter = struct {
 
         try self.emit_slice(u8, opcode);
 
-        const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
-        else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
-
-        const mod: Mod = if (mem.base == .rbp and mem.displacement == 0) .disp8 // Special case: If the base is rbp, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
-        else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
-
-        try self.emit(MODRM, .{
-            .mod = mod,
-            .reg_opcode = encode(reg),
-            .r_m = r_m,
-        });
-
-        if (r_m == 0b100) {
-            try self.emit(SIB, .{
-                .scale = 0,
-                // NOTE: ESP/R12-based addressing needs a SIB byte, this is the 0b100 case.
-                .index = if (mem.index) |i| encode(i) else 0b100,
-                .base = encode(mem.base),
-            });
-        }
-
-        switch (mod) {
-            .disp8 => try self.emit(u8, @truncate(mem.displacement)),
-            .disp32 => try self.emit(u32, mem.displacement),
-            else => {},
-        }
+        try self.emit_mem_addressing(encode(reg), mem);
     }
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
@@ -727,18 +740,10 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .imm32 => |imm| {
+                        if (dst.mem.size != 32) return error.OperandSizeMismatch;
                         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
                         try self.emit(u8, 0xC7);
-                        try self.emit(MODRM, .{
-                            .mod = if (dst_m.displacement == 0) .indirect else .disp32,
-                            .reg_opcode = 0,
-                            .r_m = encode(dst_m.base),
-                        });
-                        // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(dst_m.base) == 0b100)
-                            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
-                        if (dst_m.displacement != 0)
-                            try self.emit(u32, dst_m.displacement);
+                        try self.emit_mem_addressing(0, dst_m);
                         try self.emit(u32, imm);
                     },
                     .freg32 => try mov_reg_mem(self, .RegToMem, src, dst_m),
@@ -800,10 +805,10 @@ pub const Emitter = struct {
 
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
+            // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
             .reg => |dst_reg| {
                 switch (src) {
                     .mem => |src_m| {
-                        // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
                         try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
                         try self.emit(u8, 0x0F);
                         switch (src_m.size) {
@@ -811,40 +816,22 @@ pub const Emitter = struct {
                             16 => try self.emit(u8, 0xBF),
                             else => return error.UnsupportedMovsxSourceSize,
                         }
-                        try self.emit(MODRM, .{
-                            .mod = if (src_m.displacement == 0) .indirect else .disp32,
-                            .reg_opcode = encode(dst.reg),
-                            .r_m = encode(src_m.base),
-                        });
-                        // NOTE: ESP/R12-based addressing need a SIB byte.
-                        if (encode(src_m.base) == 0b100)
-                            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
-                        if (src_m.displacement != 0)
-                            try self.emit(u32, src_m.displacement);
+                        try self.emit_mem_addressing(encode(dst_reg), src_m);
                     },
-                    .reg => |src_reg| {
-
-                        // FIXME: We only support sign extending from 16-bits to 32-bits right now.
-                        //        Registers don't currently have a size and we can't express other instructions!
-                        const src_size = 16;
-
+                    .reg8 => |src_reg| {
                         try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         try self.emit(u8, 0x0F);
-                        switch (src_size) {
-                            8 => try self.emit(u8, 0xBE),
-                            16 => try self.emit(u8, 0xBF),
-                            else => return error.UnsupportedMovsxSourceSize,
-                        }
+                        try self.emit(u8, 0xBE);
                         try self.emit(MODRM, .{
                             .mod = .reg,
                             .reg_opcode = encode(dst.reg),
                             .r_m = encode(src_reg),
                         });
                     },
-                    .reg8 => |src_reg| {
+                    .reg16 => |src_reg| {
                         try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0xBE);
+                        try self.emit(u8, 0xBF);
                         try self.emit(MODRM, .{
                             .mod = .reg,
                             .reg_opcode = encode(dst.reg),
@@ -861,60 +848,17 @@ pub const Emitter = struct {
     // Helper for 0x81 / 0x83 opcodes (Add, And, Sub...)
     fn mem_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_m: MemOperand, comptime ImmType: type, imm: ImmType) !void {
         std.debug.assert(dst_m.size == 32);
-
-        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
         try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
 
         // 0x83: OP r/m32, imm8 - Sign-extended imm8 - Shorter encoding
         try self.emit(u8, if (imm < 0x80) 0x83 else 0x81);
 
-        try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
-            .reg_opcode = @intFromEnum(reg_opcode),
-            .r_m = encode(dst_m.base),
-        });
-
-        if (encode(dst_m.base) == 0b100) // Special case for r12
-            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
-
-        if (dst_m.displacement != 0) {
-            if (dst_m.displacement < 0x80) {
-                try self.emit(u8, @truncate(dst_m.displacement));
-            } else {
-                try self.emit(u32, dst_m.displacement);
-            }
-        }
+        try self.emit_mem_addressing(@intFromEnum(reg_opcode), dst_m);
 
         if (imm < 0x80) {
             try self.emit(u8, @truncate(imm));
         } else {
             try self.emit(ImmType, imm);
-        }
-    }
-
-    fn mem_dest_reg_src(self: *@This(), opcode: u8, dst_m: MemOperand, reg: Register) !void {
-        std.debug.assert(dst_m.size == 32);
-
-        // NOTE: I'm not entirely sure how emitting a 32-bit displacement works here.
-        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
-
-        try self.emit(u8, opcode);
-
-        try self.emit(MODRM, .{
-            .mod = if (dst_m.displacement == 0) .indirect else (if (dst_m.displacement < 0x80) .disp8 else .disp32),
-            .reg_opcode = encode(reg),
-            .r_m = encode(dst_m.base),
-        });
-
-        if (encode(dst_m.base) == 0b100) // Special case for r12
-            try self.emit(SIB, .{ .scale = 0, .index = 0b100, .base = 0b100 });
-
-        if (dst_m.displacement != 0) {
-            if (dst_m.displacement < 0x80) {
-                try self.emit(u8, @truncate(dst_m.displacement));
-            } else {
-                try self.emit(u32, dst_m.displacement);
-            }
         }
     }
 
@@ -963,7 +907,11 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        try mem_dest_reg_src(self, mr_opcode, dst_m, src_reg);
+                        if (dst_m.size != 32) return error.OperandSizeMismatch;
+
+                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                        try self.emit(u8, mr_opcode);
+                        try self.emit_mem_addressing(encode(src_reg), dst_m);
                     },
                     .imm32 => |imm| {
                         try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm);
