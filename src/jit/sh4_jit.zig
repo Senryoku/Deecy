@@ -1129,13 +1129,15 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
     const addr = ctx.address + 4 + d;
-    const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
-    // Set it to a scratch register
-    try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-    // Load the pointed value and sign extend it to 32-bits.
-    try block.movsx(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .size = 16 } });
-    // Store it into Rn
-    try store_register(block, ctx, instr.nd8.n, .{ .reg = ReturnRegister });
+    if (addr < 0x00200000) {
+        const abs_addr = @intFromPtr(&ctx.dc.boot[addr]);
+        // Set it to a scratch register
+        try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
+        // Load the pointed value and sign extend it to 32-bits.
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = ReturnRegister, .size = 16 } });
+    } else {
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 16 } });
+    }
     return false;
 }
 
@@ -1145,12 +1147,15 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
-    const abs_addr = @intFromPtr(if (ctx.address < 0x00200000) &ctx.dc.boot[addr] else &ctx.dc.ram[addr & 0x00FFFFFF]);
-    // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
-    // Set it to a scratch register
-    try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-    // Load the pointed value and store it into Rn
-    try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
+    if (addr < 0x00200000) {
+        const abs_addr = @intFromPtr(&ctx.dc.boot[addr]);
+        // Set it to a scratch register
+        try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
+        // Load the pointed value and store it into Rn
+        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
+    } else {
+        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 32 } });
+    }
     return false;
 }
 
@@ -1213,7 +1218,7 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0x80000000 } } });
-    try set_t(block, ctx, .NotCarry); // Equivalent to Above or Equal
+    try set_t(block, ctx, .AboveEqual);
     try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
     return false;
 }
