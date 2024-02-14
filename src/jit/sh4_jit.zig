@@ -795,6 +795,16 @@ pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn movb_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    _ = try movb_at_rm_rn(block, ctx, instr);
+    // if(n != m) Rm += 1
+    if (instr.nmd.n != instr.nmd.m) {
+        const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
+        try block.add(.{ .reg = rm }, .{ .imm32 = 1 });
+    }
+    return false;
+}
+
 pub fn movw_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try movw_at_rm_rn(block, ctx, instr);
     // if(n != m) Rm += 2
