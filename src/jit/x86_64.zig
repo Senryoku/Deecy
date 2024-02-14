@@ -177,6 +177,7 @@ pub const MemOperand = struct {
 };
 
 const OperandType = enum {
+    reg8,
     reg,
     freg32,
     freg64,
@@ -189,6 +190,7 @@ const OperandType = enum {
 };
 
 pub const Operand = union(OperandType) {
+    reg8: Register,
     reg: Register,
     freg32: FPRegister,
     freg64: FPRegister,
@@ -201,6 +203,7 @@ pub const Operand = union(OperandType) {
 
     pub fn tag(self: @This()) OperandType {
         return switch (self) {
+            .reg8 => .reg8,
             .reg => .reg,
             .freg32 => .freg32,
             .freg64 => .freg64,
@@ -217,6 +220,7 @@ pub const Operand = union(OperandType) {
         _ = fmt;
         _ = options;
         return switch (value) {
+            .reg8 => |reg| writer.print("{any}<8>", .{reg}),
             .reg => |reg| writer.print("{any}", .{reg}),
             .freg32 => |reg| writer.print("{any}<32>", .{reg}),
             .freg64 => |reg| writer.print("{any}<64>", .{reg}),
@@ -831,6 +835,16 @@ pub const Emitter = struct {
                             16 => try self.emit(u8, 0xBF),
                             else => return error.UnsupportedMovsxSourceSize,
                         }
+                        try self.emit(MODRM, .{
+                            .mod = .reg,
+                            .reg_opcode = encode(dst.reg),
+                            .r_m = encode(src_reg),
+                        });
+                    },
+                    .reg8 => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0xBE);
                         try self.emit(MODRM, .{
                             .mod = .reg,
                             .reg_opcode = encode(dst.reg),

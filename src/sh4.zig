@@ -855,6 +855,10 @@ pub const SH4 = struct {
         }
     }
 
+    pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
+        return read8(self, virtual_addr);
+    }
+
     pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
@@ -1054,6 +1058,10 @@ pub const SH4 = struct {
         return r;
     }
 
+    pub noinline fn _out_of_line_write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        write8(self, virtual_addr, value);
+    }
+
     pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
         if (virtual_addr >= 0xFF000000) {
             switch (virtual_addr) {
@@ -1101,6 +1109,10 @@ pub const SH4 = struct {
         @as(*u8, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
+    }
+
+    pub noinline fn _out_of_line_write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        write16(self, virtual_addr, value);
     }
 
     pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {

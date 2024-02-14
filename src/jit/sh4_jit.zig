@@ -682,7 +682,9 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
-    if (size == 16) {
+    if (size == 8) {
+        try block.call(&sh4.SH4._out_of_line_read8);
+    } else if (size == 16) {
         try block.call(&sh4.SH4._out_of_line_read16);
     } else if (size == 32) {
         try block.call(&sh4.SH4._out_of_line_read32);
@@ -744,6 +746,15 @@ pub fn mov_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn mov_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // FIXME: Should keep the "signess" in the type system?  ---v
     try store_register(block, ctx, instr.nmd.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
+    return false;
+}
+
+pub fn movb_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // Rn = [Rm]
+    // Load [Rm] into temporary
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 8);
+    // Sign extend
+    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg8 = ReturnRegister });
     return false;
 }
 
