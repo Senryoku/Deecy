@@ -724,12 +724,24 @@ pub const Emitter = struct {
         if (mem.size == 16 or reg.tag() == .freg32 or reg.tag() == .freg64)
             try self.emit(u8, 0x66);
 
-        try self.emit_rex_if_needed(.{
-            .w = reg_64,
-            .r = need_rex(reg),
-            .x = if (mem.index) |i| need_rex(i) else false,
-            .b = need_rex(mem.base),
-        });
+        if (reg.tag() == .reg8 and (reg.reg8 == .rsp or reg.reg8 == .rbp or reg.reg8 == .rsi or reg.reg8 == .rdi)) {
+            // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
+            // emit it unconditionally.
+            // FIXME: This should probably be done elsewhere too...
+            try self.emit(REX, .{
+                .w = reg_64,
+                .r = need_rex(reg),
+                .x = if (mem.index) |i| need_rex(i) else false,
+                .b = need_rex(mem.base),
+            });
+        } else {
+            try self.emit_rex_if_needed(.{
+                .w = reg_64,
+                .r = need_rex(reg),
+                .x = if (mem.index) |i| need_rex(i) else false,
+                .b = need_rex(mem.base),
+            });
+        }
 
         try self.emit_slice(u8, opcode);
 
@@ -763,8 +775,21 @@ pub const Emitter = struct {
             },
             .reg => |dst_reg| {
                 switch (src) {
-                    .reg8 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
-                    .reg16 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
+                    // NOTE: Both reg8 to reg and reg16 to reg zero extend the source to 64-bits.
+                    .reg8 => |src_reg| {
+                        // NOTE: If for some reason this is changed so that .w is not necessarily set,
+                        //       remember to always emit a REX prefix in the rsp/rbp/rsi/rdi case.
+                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0xB6);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    .reg16 => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0xB7);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
                     .reg => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
                         if (imm == 0) {
@@ -831,7 +856,13 @@ pub const Emitter = struct {
                         try self.emit_mem_addressing(encode(dst_reg), src_m);
                     },
                     .reg8 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        if (src_reg == .rsp or src_reg == .rbp or src_reg == .rsi or src_reg == .rdi) {
+                            // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
+                            // emit it unconditionally.
+                            try self.emit(REX, .{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        } else {
+                            try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        }
                         try self.emit(u8, 0x0F);
                         try self.emit(u8, 0xBE);
                         try self.emit(MODRM, .{

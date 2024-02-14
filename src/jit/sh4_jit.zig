@@ -777,6 +777,12 @@ pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn movb_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg8 = rm }, 8);
+    return false;
+}
+
 pub fn movw_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg16 = rm }, 16);
