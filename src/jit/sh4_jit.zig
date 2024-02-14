@@ -867,9 +867,16 @@ pub fn movl_at_disp_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     return false;
 }
 
+pub fn movw_r0_at_disp_rm(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const d = bit_manip.zero_extend(instr.nmd.d) << 1;
+    const r0 = try load_register(block, ctx, 0);
+    try store_mem(block, ctx, instr.nmd.m, .Reg, d, .{ .reg = r0 }, 16);
+    return false;
+}
+
 pub fn movl_rm_at_disp_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
+    const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, .Reg, d, .{ .reg = rm }, 32);
     return false;
 }
