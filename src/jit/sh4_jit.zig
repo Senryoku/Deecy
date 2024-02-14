@@ -614,6 +614,11 @@ fn load_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Registe
 fn load_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Register {
     return try ctx.guest_reg_cache(block, guest_reg, true, true);
 }
+// Return a host register representing the requested guest register, but don't load it's actual value.
+// Use this as a destination to another instruction that doesn't need the previous value of the destination.
+fn get_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
+    return .{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) };
+}
 fn store_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: JIT.Operand) !void {
     try block.mov(.{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) }, value);
 }
@@ -742,6 +747,15 @@ pub fn mov_imm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn movw_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // Rn = [Rm]
+    // Load [Rm] into temporary
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
+    // Sign extend
+    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg = ReturnRegister });
+    return false;
+}
+
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
@@ -755,11 +769,7 @@ pub fn movl_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 }
 
 pub fn movw_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rn = [Rm]
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
-    // Sign extend
-    try block.movsx(.{ .reg = ReturnRegister }, .{ .reg = ReturnRegister });
-    try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+    _ = try movw_at_rm_rn(block, ctx, instr);
     // if(n != m) Rm += 2
     if (instr.nmd.n != instr.nmd.m) {
         const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
@@ -769,9 +779,7 @@ pub fn movw_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
 }
 
 pub fn movl_at_rm_inc_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rn = [Rm]
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
-    try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+    _ = try movl_at_rm_rn(block, ctx, instr);
     // if(n != m) Rm += 4
     if (instr.nmd.n != instr.nmd.m) {
         const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
