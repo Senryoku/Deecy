@@ -485,18 +485,18 @@ pub fn main() !void {
                 zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
                 zgui.text("ISP_BACKGND_T: {X:0>8}", .{ISP_BACKGND_T});
 
-                const FB_C_SOF: u32 = dc.gpu._get_register(u32, .FB_C_SOF).*;
-                const FB_W_CTRL: u32 = dc.gpu._get_register(u32, .FB_W_CTRL).*;
-                const FB_W_SOF1: u32 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
-                const FB_W_SOF2: u32 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
-                const FB_R_CTRL: u32 = dc.gpu._get_register(u32, .FB_R_CTRL).*;
-                const FB_R_SOF1: u32 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
-                const FB_R_SOF2: u32 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
+                const FB_C_SOF = dc.gpu._get_register(u32, .FB_C_SOF).*;
+                const FB_W_CTRL = dc.gpu._get_register(Holly.FB_W_CTRL, .FB_W_CTRL).*;
+                const FB_W_SOF1 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
+                const FB_W_SOF2 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
+                const FB_R_CTRL = dc.gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
+                const FB_R_SOF1 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
+                const FB_R_SOF2 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
                 zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
-                zgui.text("FB_W_CTRL: 0x{X:0>8}", .{FB_W_CTRL});
+                zgui.text("FB_W_CTRL: {any}", .{FB_W_CTRL});
                 zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
                 zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
-                zgui.text("FB_R_CTRL: 0x{X:0>8}", .{FB_R_CTRL});
+                zgui.text("FB_R_CTRL: {any}", .{FB_R_CTRL});
                 zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
                 zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
 

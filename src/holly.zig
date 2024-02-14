@@ -242,6 +242,15 @@ pub const ISP_BACKGND_T = packed struct(u32) {
     _: u3,
 };
 
+pub const FB_W_CTRL = packed struct(u32) {
+    fb_packmode: u3,
+    fb_dither: u1,
+    _0: u4,
+    fb_kval: u8,
+    fb_alpha_threshold: u8,
+    _1: u8,
+};
+
 pub const FB_R_CTRL = packed struct(u32) {
     enable: bool,
     line_double: bool,
