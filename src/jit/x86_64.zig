@@ -590,8 +590,8 @@ pub const Emitter = struct {
             Register => @intFromEnum(reg) >= 8,
             FPRegister => @intFromEnum(reg) >= 8,
             Operand => switch (reg) {
-                .reg8 => |r| @truncate(@intFromEnum(r)),
-                .reg16 => |r| @truncate(@intFromEnum(r)),
+                .reg8 => |r| @intFromEnum(r) >= 8,
+                .reg16 => |r| @intFromEnum(r) >= 8,
                 .reg => |r| @intFromEnum(r) >= 8,
                 .freg32 => |r| @intFromEnum(r) >= 8,
                 .freg64 => |r| @intFromEnum(r) >= 8,
@@ -708,9 +708,11 @@ pub const Emitter = struct {
                 else => return error.InvalidRegisterType,
             },
             .RegToMem => switch (reg) {
+                .reg8 => &[_]u8{0x88},
+                .reg16 => &[_]u8{0x89}, // With 0x66 prefix
                 .reg => switch (mem.size) {
                     8 => &[_]u8{0x88},
-                    16 => &[_]u8{ 0x66, 0x88 },
+                    16 => &[_]u8{0x89}, // With 0x66 prefix
                     32, 64 => &[_]u8{0x89},
                     else => return error.InvalidMemSize,
                 },
@@ -719,7 +721,7 @@ pub const Emitter = struct {
             },
         };
 
-        if (reg.tag() == .freg32 or reg.tag() == .freg64)
+        if (mem.size == 16 or reg.tag() == .freg32 or reg.tag() == .freg64)
             try self.emit(u8, 0x66);
 
         try self.emit_rex_if_needed(.{
@@ -738,6 +740,14 @@ pub const Emitter = struct {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
+                    .reg8 => {
+                        if (dst.mem.size != 8) return error.OperandSizeMismatch;
+                        try mov_reg_mem(self, .RegToMem, src, dst_m);
+                    },
+                    .reg16 => {
+                        if (dst.mem.size != 16) return error.OperandSizeMismatch;
+                        try mov_reg_mem(self, .RegToMem, src, dst_m);
+                    },
                     .reg => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .imm32 => |imm| {
                         if (dst.mem.size != 32) return error.OperandSizeMismatch;
@@ -753,6 +763,8 @@ pub const Emitter = struct {
             },
             .reg => |dst_reg| {
                 switch (src) {
+                    .reg8 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
+                    .reg16 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .reg => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
                         if (imm == 0) {

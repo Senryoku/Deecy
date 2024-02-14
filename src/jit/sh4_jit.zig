@@ -728,7 +728,11 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     // Address is already loaded into ArgRegisters[1]
     if (value.tag() != .reg or value.reg != ArgRegisters[2])
         try block.mov(.{ .reg = ArgRegisters[2] }, value);
-    if (size == 32) {
+    if (size == 8) {
+        try block.call(&sh4.SH4._out_of_line_write8);
+    } else if (size == 16) {
+        try block.call(&sh4.SH4._out_of_line_write16);
+    } else if (size == 32) {
         try block.call(&sh4.SH4._out_of_line_write32);
     } else if (size == 64) {
         try block.call(&sh4.SH4._out_of_line_write64);
@@ -770,6 +774,12 @@ pub fn movw_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 pub fn movl_at_rm_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+    return false;
+}
+
+pub fn movw_rm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg16 = rm }, 16);
     return false;
 }
 
