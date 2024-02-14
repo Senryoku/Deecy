@@ -651,11 +651,6 @@ pub const Emitter = struct {
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
 
-        if (mem.base == .rbp and mem.displacement == 0) {
-            // See Intel Manual Vol. 2A 2-11.
-            return error.UnimplementedMandatoryExplicitDisplacement;
-        }
-
         if (direction == .MemToReg and mem.size < 32)
             reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
 
@@ -692,13 +687,16 @@ pub const Emitter = struct {
             .b = need_rex(mem.base),
         });
 
-        for (opcode) |o| try self.emit(u8, o);
+        try self.emit_slice(u8, opcode);
 
         const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
         else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
 
+        const mod: Mod = if (mem.base == .rbp and mem.displacement == 0) .disp8 // Special case: If the base is rbp, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
+        else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
+
         try self.emit(MODRM, .{
-            .mod = if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32,
+            .mod = mod,
             .reg_opcode = encode(reg),
             .r_m = r_m,
         });
@@ -712,10 +710,10 @@ pub const Emitter = struct {
             });
         }
 
-        if (mem.displacement >= 0x80) {
-            try self.emit(u32, mem.displacement);
-        } else if (mem.displacement != 0) {
-            try self.emit(u8, @truncate(mem.displacement));
+        switch (mod) {
+            .disp8 => try self.emit(u8, @truncate(mem.displacement)),
+            .disp32 => try self.emit(u32, mem.displacement),
+            else => {},
         }
     }
 

@@ -411,6 +411,10 @@ pub const SH4JIT = struct {
         const optional_saved_fp_register_offset = b.instructions.items.len;
         try b.append(.Nop);
 
+        const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
+
+        try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr });
+
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
         var cycles: u32 = 0;
@@ -666,9 +670,7 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
-    const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = ArgRegisters[0], .index = ArgRegisters[1], .size = size } });
+    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[1], .size = size } });
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
@@ -710,9 +712,7 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     var not_branch = try block.jmp(.NotEqual);
     // We're in RAM!
     try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
-    const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = ram_addr });
-    try block.mov(.{ .mem = .{ .base = ArgRegisters[0], .index = addr, .size = size } }, value);
+    try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
     var to_end = try block.jmp(.Always);
 
     not_branch.patch();
