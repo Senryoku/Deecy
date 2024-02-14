@@ -29,8 +29,10 @@ pub const OpcodeDescription = struct {
 };
 
 pub const Opcodes: [217]OpcodeDescription = .{
-    .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = interpreter.nop, .name = "NOP", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.nop },
-    .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = interpreter.unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
+    // NOTE: According to MetalliC, not all technically invalid instructions causes a exception, some are treated as NOP. This includes the SH2 DSP opcodes for examples.
+    //       One case where it matters is WinCE games, which might include 0 opcodes in their delay slots (maybe due to a compiler bug), hence the following special case.
+    .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = interpreter.nop, .name = "nop", .privileged = false, .issue_cycles = 1, .latency_cycles = 1, .jit_emit_fn = sh4_jit.nop },
+    .{ .code = 0b0000000000000000, .mask = 0b0000000000000000, .fn_ = interpreter.unknown, .name = "Unknown opcode", .privileged = false, .issue_cycles = 1, .latency_cycles = 1 },
     // Fake opcodes to catch emulated syscalls
     .{ .code = 0b0000000000010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_sysinfo, .name = "Syscall Sysinfo", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000000100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_romfont, .name = "Syscall ROMFont", .privileged = false, .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
