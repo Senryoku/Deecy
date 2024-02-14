@@ -1312,22 +1312,21 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register(block, ctx, instr.nmd.n);
         try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+        try set_t(block, ctx, .Equal);
     } else {
         const rn = try load_register(block, ctx, instr.nmd.n);
         const rm = try load_register(block, ctx, instr.nmd.m);
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn });
-        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = rm } } });
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0 } } });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = rm } } }); // TODO: Use an actual TEST instruction instead?
+        try set_t(block, ctx, .Zero);
     }
-    try set_t(block, ctx, .Equal);
     return false;
 }
 
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0x80000000 } } });
-    try set_t(block, ctx, .AboveEqual);
     try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    try set_t(block, ctx, .Carry);
     return false;
 }
 
