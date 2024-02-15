@@ -62,7 +62,7 @@ fn glfw_key_callback(
 }
 
 pub fn main() !void {
-    std.log.info("\r  == Katana ==                             ", .{});
+    std.log.info("\r  == Deecy ==                             ", .{});
 
     var dc = try Dreamcast.create(common.GeneralAllocator);
     defer {
@@ -167,7 +167,7 @@ pub fn main() !void {
     try zglfw.init();
     defer zglfw.terminate();
 
-    const window = zglfw.Window.create(640 * 2, 480 * 2, "Katana", null) catch {
+    const window = zglfw.Window.create(640 * 2, 480 * 2, "Deecy", null) catch {
         std.log.err("Failed to create window.", .{});
         return;
     };
@@ -493,10 +493,10 @@ pub fn main() !void {
                 const FB_R_SOF1 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
                 const FB_R_SOF2 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
                 zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
-                zgui.text("FB_W_CTRL: {any}", .{FB_W_CTRL});
+                zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
                 zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
                 zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
-                zgui.text("FB_R_CTRL: {any}", .{FB_R_CTRL});
+                zgui.text("FB_R_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_CTRL)), FB_R_CTRL });
                 zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
                 zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
 
