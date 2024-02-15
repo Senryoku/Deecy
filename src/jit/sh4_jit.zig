@@ -101,16 +101,20 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
         entries: [entries]struct {
             host: reg_type,
             size: u8 = 32,
-            last_access: u32,
-            modified: bool,
-            guest: ?u4,
+            last_access: u32 = 0,
+            modified: bool = false,
+            guest: ?u4 = null,
 
             pub fn load(self: *@This(), block: *JITBlock) !void {
                 if (self.guest) |guest_reg| {
                     try block.mov(
                         switch (reg_type) {
                             JIT.Register => .{ .reg = self.host },
-                            JIT.FPRegister => .{ .freg32 = self.host },
+                            JIT.FPRegister => switch (self.size) {
+                                32 => .{ .freg32 = self.host },
+                                64 => .{ .freg64 = self.host },
+                                else => @panic("Invalid floating point register size."),
+                            },
                             else => @compileError("Invalid register type."),
                         },
                         JITContext.guest_reg_memory(reg_type, self.size, guest_reg),
@@ -119,19 +123,28 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
 
             pub fn commit(self: *@This(), block: *JITBlock) !void {
-                if (self.modified) {
-                    if (self.guest) |guest_reg| {
+                if (self.guest) |guest_reg| {
+                    if (self.modified) {
                         try block.mov(
                             JITContext.guest_reg_memory(reg_type, self.size, guest_reg),
                             switch (reg_type) {
                                 JIT.Register => .{ .reg = self.host },
-                                JIT.FPRegister => .{ .freg32 = self.host },
+                                JIT.FPRegister => switch (self.size) {
+                                    32 => .{ .freg32 = self.host },
+                                    64 => .{ .freg64 = self.host },
+                                    else => @panic("Invalid floating point register size."),
+                                },
                                 else => @compileError("Invalid register type."),
                             },
                         );
                         self.modified = false;
                     }
                 }
+            }
+
+            pub fn commit_and_invalidate(self: *@This(), block: *JITBlock) !void {
+                try self.commit(block);
+                self.guest = null;
             }
         },
 
@@ -173,10 +186,8 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
         }
         pub fn commit_and_invalidate(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
-            if (self.get_cached_register(32, guest_reg)) |reg| {
-                try reg.commit(block);
-                reg.guest = null;
-            }
+            if (self.get_cached_register(32, guest_reg)) |reg|
+                try reg.commit_and_invalidate(block);
         }
     };
 }
@@ -198,25 +209,25 @@ pub const JITContext = struct {
     gpr_cache: RegisterCache(JIT.Register, 5) = .{
         .highest_saved_register_used = 0,
         .entries = .{
-            .{ .host = SavedRegisters[1], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = SavedRegisters[2], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = SavedRegisters[3], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = SavedRegisters[4], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = SavedRegisters[5], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = SavedRegisters[1] },
+            .{ .host = SavedRegisters[2] },
+            .{ .host = SavedRegisters[3] },
+            .{ .host = SavedRegisters[4] },
+            .{ .host = SavedRegisters[5] },
         },
     },
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
         .entries = .{
-            .{ .host = FPSavedRegisters[0], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[1], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[2], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[3], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[4], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[5], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[6], .last_access = 0, .modified = false, .guest = null },
-            .{ .host = FPSavedRegisters[7], .last_access = 0, .modified = false, .guest = null },
+            .{ .host = FPSavedRegisters[0] },
+            .{ .host = FPSavedRegisters[1] },
+            .{ .host = FPSavedRegisters[2] },
+            .{ .host = FPSavedRegisters[3] },
+            .{ .host = FPSavedRegisters[4] },
+            .{ .host = FPSavedRegisters[5] },
+            .{ .host = FPSavedRegisters[6] },
+            .{ .host = FPSavedRegisters[7] },
         },
     },
 
@@ -252,6 +263,29 @@ pub const JITContext = struct {
             hreg.last_access = 0;
             if (modified) hreg.modified = true;
             return hreg.host;
+        }
+
+        // FP registers aliasing check! FIXME: This can probably be improved a lot.
+        // If we're asking a register while we already have part of it cached in a different size, invalidate it.
+        if (reg_type == JIT.FPRegister) {
+            if (size == 64) {
+                for (&cache.entries) |*reg| {
+                    if (reg.guest) |r| {
+                        // Search of both halves.
+                        if (r == (guest_reg & 0xE) or (r == (guest_reg | 1)) and reg.size == 32) {
+                            try reg.commit_and_invalidate(block);
+                        }
+                    }
+                }
+            } else {
+                for (&cache.entries) |*reg| {
+                    if (reg.guest) |r| {
+                        if ((r == (guest_reg & 0xE)) and reg.size == 64) {
+                            try reg.commit_and_invalidate(block);
+                        }
+                    }
+                }
+            }
         }
 
         var slot = s: {
@@ -1037,11 +1071,11 @@ pub fn fmovs_frm_at_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 
 pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Single, .Double => {
+        .Single, .Double => |size| {
             _ = try fmovs_at_rm_frn(block, ctx, instr);
             // Inc Rm
             const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
-            try block.add(.{ .reg = rm }, .{ .imm32 = if (ctx.fpscr_sz == .Double) 8 else 4 });
+            try block.add(.{ .reg = rm }, .{ .imm32 = if (size == .Double) 8 else 4 });
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
@@ -1050,10 +1084,10 @@ pub fn fmovs_at_rm_inc_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr)
 
 pub fn fmovs_frm_at_dec_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
-        .Single, .Double => {
+        .Single, .Double => |size| {
             // Dec Rn
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-            try block.sub(.{ .reg = rn }, .{ .imm32 = if (ctx.fpscr_sz == .Double) 8 else 4 });
+            try block.sub(.{ .reg = rn }, .{ .imm32 = if (size == .Double) 8 else 4 });
             return fmovs_frm_at_rn(block, ctx, instr);
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
@@ -1194,18 +1228,20 @@ pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rn });
     try block.call(sh4.SH4.set_fpscr);
+
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
+
     return false;
 }
 
 pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
-    // NOTE: If we ever get a cache for fp registers, invalidate it here!
     try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, .Reg, 0, 32);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.call(sh4.SH4.set_fpscr);
+
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
 
