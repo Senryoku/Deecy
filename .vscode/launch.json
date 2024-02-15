@@ -5,7 +5,7 @@
 			"name": "Debug (LLDB)",
 			"type": "lldb",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [],
 			"cwd": "${workspaceFolder}",
 			"preLaunchTask": "build"
@@ -14,10 +14,10 @@
 			"name": "Debug",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"H:/Source/Katana/bin/Soul Calibur (US)[4S T-1401N]/Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
+				"./bin/Soul Calibur (US)[4S T-1401N]/Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
 				"--skip-bios"
 			],
 			"cwd": "${workspaceFolder}",
@@ -28,10 +28,10 @@
 			"name": "Debug (Release)",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"bin/[GDI] Crazy Taxi (US)[10S 51035]/Crazy Taxi v1.004 (1999)(Sega)(NTSC)(US)[!][10S 51035].gdi",
+				"./bin/[GDI] Crazy Taxi (US)[10S 51035]/Crazy Taxi v1.004 (1999)(Sega)(NTSC)(US)[!][10S 51035].gdi",
 				"--skip-bios"
 			],
 			"cwd": "${workspaceFolder}",
@@ -42,10 +42,10 @@
 			"name": "Debug (Release Safe)",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Katana.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"H:\\Source\\Katana\\bin\\Soul_Calibur_(US)[4S_T-1401N]\\Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
+				"./bin/Soul Calibur (US)[4S T-1401N]/Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
 				"--skip-bios"
 			],
 			"cwd": "${workspaceFolder}",

@@ -1,4 +1,4 @@
-// https://webgpu.github.io/webgpu-samples/samples/A-buffer
+// Modified from https://webgpu.github.io/webgpu-samples/samples/A-buffer - BSD-3-Clause license 
 
 struct OITUniforms {
     max_fragments: u32,

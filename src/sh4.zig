@@ -10,7 +10,7 @@ pub const sh4_log = std.log.scoped(.sh4);
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
-const mmu = @import("./mmu.zig");
+pub const mmu = @import("./mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
 const Interrupts = @import("Interrupts.zig");

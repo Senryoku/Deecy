@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) void {
     // FIXME: This should be exported by the arm7 build script, probably.
     const arm7_module = b.createModule(.{ .root_source_file = .{ .path = "libs/arm7/src/arm7.zig" } });
 
+    const dc_module = b.createModule(.{ .root_source_file = .{ .path = "src/dreamcast.zig" } });
+    dc_module.addImport("arm7", arm7_module);
+
     const exe = b.addExecutable(.{
         .name = "Deecy",
         // In this case the main source file is merely a path, however, in more
@@ -74,26 +77,22 @@ pub fn build(b: *std.Build) void {
 
     const interpreter_perf = b.addExecutable(.{
         .name = "InterpreterPerf",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/interpreter_perf.zig" },
+        .root_source_file = .{ .path = "test/interpreter_perf.zig" },
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
-    interpreter_perf.root_module.addImport("arm7", arm7_module);
+    interpreter_perf.root_module.addImport("dreamcast", dc_module);
     const run_perf_tests = b.addRunArtifact(interpreter_perf);
     const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
     interpreter_perf_step.dependOn(&run_perf_tests.step);
 
     const jit_perf = b.addExecutable(.{
         .name = "JITPerf",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/jit_perf.zig" },
+        .root_source_file = .{ .path = "test/jit_perf.zig" },
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
-    jit_perf.root_module.addImport("arm7", arm7_module);
+    jit_perf.root_module.addImport("dreamcast", dc_module);
     const run_jit_perf_tests = b.addRunArtifact(jit_perf);
     const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
     jit_perf_step.dependOn(&run_jit_perf_tests.step);

@@ -11,9 +11,6 @@ const Instr = sh4.Instr;
 const sh4_log = sh4.sh4_log;
 
 const sh4_instructions = @import("sh4_instructions.zig");
-const Opcodes = sh4_instructions.Opcodes;
-
-const mmu = @import("mmu.zig");
 
 const syscall = @import("syscall.zig");
 
@@ -33,7 +30,7 @@ pub fn unknown(cpu: *SH4, opcode: Instr) void {
 pub fn nop(_: *SH4, _: Instr) void {}
 
 pub fn unimplemented(_: *SH4, opcode: Instr) void {
-    std.debug.print("Unimplemented opcode: {s}\n", .{Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(opcode))]].name});
+    std.debug.print("Unimplemented opcode: {s}\n", .{sh4_instructions.Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(opcode))]].name});
     @panic("Unimplemented");
 }
 
@@ -1283,7 +1280,7 @@ pub fn ocbwb_atRn(_: *SH4, _: Instr) void {
 pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     if (addr & 0xEC000000 == 0xE0000000) {
-        if (cpu.read_p4_register(mmu.MMUCR, .MMUCR).at == 1) {
+        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at == 1) {
             sh4_log.err(termcolor.yellow("  MMU ON: Not implemented"), .{});
             @panic("pref @Rn with MMU ON: Not implemented");
         } else {

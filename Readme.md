@@ -1,18 +1,13 @@
-#
+# Deecy
 
-## Notes
-
--   Some games (e.g. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
-
+Deecy is a very experimental Dreamcast emulator written in Zig.
 
 ## Things I know I have to do
 
 -   Better low level emulation: Boot ROM currently hangs after the logo animation.
 
--   AICA ARM7 state after bios (when skipping bios)
-
 -   ch0-DMA and ch1-DMA?
--   Sort-DMA? (And the corresponding end interrupt)
+-   Sort-DMA (And the corresponding end interrupt)
 
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
@@ -21,7 +16,6 @@
 -   The whole AICA Chip. Please have mercy.
 
 -   Renderer:
-    - Correct color/offset interpolation in respect to perspective. See UVs. 
     - Modifier Volumes.
     - User Tile Clip.
     - Fog.
@@ -33,6 +27,7 @@
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
     The fact that the issue arise before issuing a pref instruction with the MMU on lead me to think there's more to it.
+- Some games (e.g. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
 
 
 ## Things I don't know I have to do
@@ -42,17 +37,21 @@
 ## Some sources
 
 -   http://www.shared-ptr.com/sh_insns.html
--   https://www.renesas.com/us/en/document/mas/sh-4-software-manual / h14th002d2.pdf
--   DreamcastDevBoxSystemArchitecture.pdf
+-   SH4 Hardware Manual / Programming Manual
+-   https://segaretro.org/Dreamcast_official_documentation
 -   Dreamcast Programming by Marcus Comstedt : https://mc.pp.se/dc/
 -   Boot ROM disassembly by Lars Olsson (https://lars-olsson.sizious.com/, originally https://www.ludd.ltu.se/~jlo/dc/)
 -   AICA ARM7 Core tester by snickerbockers: https://github.com/snickerbockers/dc-arm7wrestler/
 -   Reicast https://github.com/skmp/reicast-emulator
 
+
 ## Dependencies
 
 -   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/
 
+## Thanks
+
+-   Huge thanks to drk||Raziel and MetalliC for their respective contributions to the scene, and for answering my questions!
 
 ## Licence
 

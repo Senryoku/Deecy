@@ -1,11 +1,8 @@
 const std = @import("std");
 
-const common = @import("common.zig");
-const GDI = @import("gdi.zig").GDI;
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
-
-// FIXME
-const syscall = @import("syscall.zig");
+const common = @import("../src/common.zig");
+const GDI = @import("../src/gdi.zig").GDI;
+const Dreamcast = @import("dreamcast").Dreamcast;
 
 // Very quick and dirty perf test to avoid doing random optimisation completely blindly.
 
