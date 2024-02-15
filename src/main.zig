@@ -30,10 +30,10 @@ pub const std_options = struct {
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
-        .{ .scope = .syscall_log, .level = .warn },
+        .{ .scope = .syscall_log, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .warn },
+        .{ .scope = .gdrom, .level = .info },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
     };
@@ -613,6 +613,65 @@ pub fn main() !void {
                     const fb_tex_id = gctx.lookupResource(renderer.resized_framebuffer_texture_view).?;
                     zgui.image(fb_tex_id, .{ .w = @floatFromInt(gctx.swapchain_descriptor.width), .h = @floatFromInt(gctx.swapchain_descriptor.height) });
                 }
+            }
+            zgui.end();
+
+            if (zgui.begin("Debug", .{})) {
+                if (zgui.button("Trigger RenderDoneVideo Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .RenderDoneVideo = 1 });
+                if (zgui.button("Trigger RenderDoneISP Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .RenderDoneISP = 1 });
+                if (zgui.button("Trigger RenderDoneTSP Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .RenderDoneTSP = 1 });
+                if (zgui.button("Trigger VBlankIn Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
+                if (zgui.button("Trigger VBlankOut Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
+                if (zgui.button("Trigger HBlankIn Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
+                if (zgui.button("Trigger EoT_YUV Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoT_YUV = 1 });
+                if (zgui.button("Trigger EoT_OpaqueList Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoT_OpaqueList = 1 });
+                if (zgui.button("Trigger EoT_OpaqueModifierVolumeList Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoT_OpaqueModifierVolumeList = 1 });
+                if (zgui.button("Trigger EoT_TranslucentList Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoT_TranslucentList = 1 });
+                if (zgui.button("Trigger EoT_TranslucentModifierVolumeList Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoT_TranslucentModifierVolumeList = 1 });
+                if (zgui.button("Trigger EoD_PVR Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_PVR = 1 });
+                if (zgui.button("Trigger EoD_Maple Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_Maple = 1 });
+                if (zgui.button("Trigger MapleVBlankOver Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .MapleVBlankOver = 1 });
+                if (zgui.button("Trigger EoD_GDROM Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+                if (zgui.button("Trigger EoD_AICA Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
+                if (zgui.button("Trigger EoD_EXT1 Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_EXT1 = 1 });
+                if (zgui.button("Trigger EoD_EXT2 Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_EXT2 = 1 });
+                if (zgui.button("Trigger EoD_DEV Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_DEV = 1 });
+                if (zgui.button("Trigger EoD_CH2 Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_CH2 = 1 });
+                if (zgui.button("Trigger EoD_PVRSort Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_PVRSort = 1 });
+                if (zgui.button("Trigger EoD_PunchThroughList Interrupt", .{}))
+                    dc.raise_normal_interrupt(.{ .EoD_PunchThroughList = 1 });
+
+                zgui.separator();
+
+                if (zgui.button("Trigger GDRom Interrupt", .{}))
+                    dc.raise_external_interrupt(.{ .GDRom = 1 });
+                if (zgui.button("Trigger AICA Interrupt", .{}))
+                    dc.raise_external_interrupt(.{ .AICA = 1 });
+                if (zgui.button("Trigger Modem Interrupt", .{}))
+                    dc.raise_external_interrupt(.{ .Modem = 1 });
+                if (zgui.button("Trigger ExternalDevice Interrupt", .{}))
+                    dc.raise_external_interrupt(.{ .ExternalDevice = 1 });
             }
             zgui.end();
         }

@@ -273,7 +273,7 @@ pub const AICA = struct {
 
     pub fn get_channel(self: *const AICA, number: u8) *const AICAChannel {
         std.debug.assert(number < 64);
-        return &@as([*]const AICAChannel, @alignCast(@ptrCast(self.regs.ptr)))[number];
+        return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
@@ -485,7 +485,7 @@ pub const AICA = struct {
             var timer = self.get_reg(TimerControl, timer_registers[i]);
             self._timer_counters[i] += 1; // FIXME: This should be counting samples, not whatever this is!
             // FIXME: Remove this random 1024 factor which is only there to slow down the interrupts.
-            const scaled = 1024 * @as(u32, 1) << timer.prescale;
+            const scaled = @as(u32, 1) << timer.prescale;
             if (self._timer_counters[i] >= scaled) {
                 self._timer_counters[i] -= scaled;
                 if (timer.value == 0xFF) {

@@ -545,6 +545,38 @@ pub const GDROM = struct {
         self.req_mode();
     }
 
+    fn write_toc(self: *@This(), dest: []u8) u32 {
+        if (self.disk) |disk| {
+            if (disk.tracks.items.len >= 3) {
+                //@memcpy(dest, disk.tracks.items[2].data[0x114 .. 0x114 + 408]);
+
+                const leading_fad = disk.tracks.items[2].offset + 150;
+
+                var idx: u32 = 0;
+
+                dest[idx + 0] = 0x41; // TODO
+                dest[idx + 1] = (@truncate(leading_fad >> 16));
+                dest[idx + 2] = (@truncate(leading_fad >> 8));
+                dest[idx + 3] = (@truncate(leading_fad >> 0));
+
+                idx += 4;
+                for (1..99) |_| {
+                    @memcpy(dest[idx .. idx + 4], &[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
+                    idx += 4;
+                }
+                // TODO
+                @memcpy(dest[idx .. idx + 3 * 4], &[_]u8{
+                    0x41, 0x03, 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0        ]
+                    0x41, 0x03, 0x00, 0x00, // End track info:   [Control/ADR] [End Track Number  ] [0  ] [0        ]
+                    0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+                });
+
+                return 408;
+            }
+        }
+        return 0;
+    }
+
     fn get_toc(self: *@This()) void {
         // Selects the type of volume.
         //   0: Get TOC information from single-density area.
@@ -558,26 +590,8 @@ pub const GDROM = struct {
             if (self.disk) |disk| {
                 if (select == 1) {
                     if (disk.tracks.items.len >= 3) {
-                        // Copy ToC directly from the third track. No idea if this is what's expected here.
-
-                        const leading_fad = disk.tracks.items[2].offset + 166;
-
-                        self.data_queue.writeItemAssumeCapacity(0x41); // TODO
-                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 16));
-                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 8));
-                        self.data_queue.writeItemAssumeCapacity(@truncate(leading_fad >> 0));
-                        for (1..99) |_| {
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                        }
-                        // TODO
-                        self.data_queue.writeAssumeCapacity(&[_]u8{
-                            0x41, 0x03, 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0        ]
-                            0x41, 0x03, 0x00, 0x00, // End track info:   [Control/ADR] [End Track Number  ] [0  ] [0        ]
-                            0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-                        });
+                        const bytes_written = self.write_toc(self.data_queue.writableWithSize(408) catch unreachable);
+                        self.data_queue.update(bytes_written);
 
                         // Debug Dump
                         const d = self.data_queue.readableSlice(0);
@@ -774,14 +788,19 @@ pub const GDROM = struct {
                 const area = self.hle_params[0];
                 const dest = self.hle_params[1];
 
-                gdrom_log.warn(termcolor.yellow("    GDROM GetTOC2: area={d} dest=0x{X:0>8}, TODO!"), .{ area, dest });
+                gdrom_log.info("    GDROM GetTOC2: area={d} dest=0x{X:0>8}", .{ area, dest });
                 for (0..self.hle_params.len) |i| {
                     gdrom_log.debug("      {d}  {X:0>8}", .{ i, self.hle_params[i] });
                 }
 
                 if (area == 1) {
-                    // High Density Area, doesn't have a TOC? (What's that thing at 0x110 in track 3?)
-                } else {}
+                    const dest_slice = @as([*]u8, @ptrCast(dc.*.cpu._get_memory(dest & 0x1FFFFFFF)))[0..408];
+                    const bytes_written = self.write_toc(dest_slice);
+                    self.hle_result = .{ 0, 0, bytes_written, 0 };
+                } else {
+                    // TODO
+                    gdrom_log.warn(termcolor.yellow("    GDROM GetTOC2: area={d} dest=0x{X:0>8}, TODO!"), .{ area, dest });
+                }
 
                 self.state = GDROMStatus.Standby;
             },
@@ -810,8 +829,8 @@ pub const GDROM = struct {
     }
 
     pub fn check_command(self: *@This(), cmd_id: u32) u32 {
-        @memset(&self.hle_result, 0);
         if (cmd_id != self._current_command_id) {
+            @memset(&self.hle_result, 0);
             self.hle_result[0] = 0x5;
             return 0; // no such request active
         }

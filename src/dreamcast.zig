@@ -285,6 +285,7 @@ pub const Dreamcast = struct {
         self.cpu.write16(0x8C000092, @bitCast(@as(i16, -128)));
 
         self.hw_register(u32, .SB_MDST).* = 0;
+        self.hw_register(u32, .SB_DDST).* = 0;
 
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
@@ -368,13 +369,13 @@ pub const Dreamcast = struct {
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
-        if (istnrm & self.read_hw_register(u32, .SB_IML6NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML6EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML6ERR) != 0) {
+        if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL9);
         }
-        if (istnrm & self.read_hw_register(u32, .SB_IML4NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML4EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML4ERR) != 0) {
+        if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL11);
         }
-        if (istnrm & self.read_hw_register(u32, .SB_IML2NRM) != 0 or istext & self.read_hw_register(u32, .SB_IML2EXT) != 0 or isterr & self.read_hw_register(u32, .SB_IML2ERR) != 0) {
+        if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
         }
     }

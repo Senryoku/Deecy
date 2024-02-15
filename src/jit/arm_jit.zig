@@ -486,7 +486,11 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             return skip_label;
         },
         .AL => return null,
-        .Invalid => unreachable,
+        .Invalid => {
+            arm_jit_log.err(termcolor.red("Invalid condition, instruction: 0x{x}"), .{instruction});
+            const skip_label = try b.jmp(.Always);
+            return skip_label;
+        },
     }
 }
 
