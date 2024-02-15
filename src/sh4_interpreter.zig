@@ -1684,7 +1684,6 @@ pub fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     }
 }
 pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
-    // FIXME: We're skipping a lot of error checking here.
     // NOTE: Experimentation shows the FPUL is treated as signed, at least here. I don't know if this is ALWAYS the case, or not.
     if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = @floatFromInt(as_i32(cpu.fpul));
@@ -1695,9 +1694,11 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
-    // FIXME: We're skipping a lot of error checking here.
     // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
     //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
+
+    // NOTE/FIXME: The overflow behavior is different between SH4 and x86. Might want to look into that. Thanks Raziel!
+
     if (cpu.fpscr.pr == 0) {
         cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));
     } else {
@@ -1818,6 +1819,7 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     const fraction = cpu.fpul & 0x0000_FFFF;
     const angle = 2 * std.math.pi * @as(f32, @floatFromInt(fraction)) / 0x10000;
 
+    // TODO: Use the fsca-table graciously shared by Raziel!
     cpu.FR(opcode.nmd.n).* = @sin(angle);
     cpu.FR(opcode.nmd.n + 1).* = @cos(angle);
 }

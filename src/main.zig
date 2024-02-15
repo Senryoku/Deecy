@@ -770,15 +770,18 @@ pub fn main() !void {
         const swapchain_texv = gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
 
+        // FIXME: I don't how to handle this correctly, copying the framebuffer from VRAM
+        // is very expensive and generally useless outside of splash screen/homebrews.
+        // However it is actually sometimes used in games, like Namco Museum.
+        // TODO: I could start by only updating in on vblank.
         if (blit_framebuffer_from_vram) {
             renderer.update_framebuffer(&dc.gpu);
             renderer.blit_framebuffer();
         }
 
-        if (dc.gpu.render_start) { // FIXME: Find a better way to start a render.
-            // FIXME: I don't how to handle this correctly, but copying the framebuffer from VRAM
-            // is very expensive and useless outside of splash screen/homebrews.
-            // I'm disabling it as soon as we start rendering normally.
+        // FIXME: Find a better way to start a render.
+        if (dc.gpu.render_start) {
+            // FIXME: Remove
             blit_framebuffer_from_vram = false;
             renderer.read_framebuffer_enabled = false;
 
