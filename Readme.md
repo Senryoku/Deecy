@@ -2,6 +2,8 @@
 
 Deecy is a very experimental Dreamcast emulator written in Zig.
 
+![image](https://github.com/Senryoku/Deecy/assets/1338143/5818d263-8f62-4f33-a799-5682f1fa94aa)
+
 ## Things I know I have to do
 
 -   Better low level emulation: Boot ROM currently hangs after the logo animation.
