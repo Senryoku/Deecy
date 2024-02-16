@@ -109,18 +109,19 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     } else if (gdi_path) |path| {
-        if (skip_bios)
+        if (skip_bios) {
             dc.skip_bios();
 
-        // Load 1STREAD.BIN (Actual name might change)
-        const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
-        const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x60 + header_size .. 0x70 + header_size];
-        const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
-        var first_read: []u8 = try common.GeneralAllocator.alloc(u8, name_end + 2);
-        defer common.GeneralAllocator.free(first_read);
-        @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
-        @memcpy(first_read[name_end .. name_end + 2], ";1");
-        _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
+            // Load 1STREAD.BIN (Actual name might change)
+            const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
+            const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x60 + header_size .. 0x70 + header_size];
+            const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
+            var first_read: []u8 = try common.GeneralAllocator.alloc(u8, name_end + 2);
+            defer common.GeneralAllocator.free(first_read);
+            @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
+            @memcpy(first_read[name_end .. name_end + 2], ";1");
+            _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
+        }
 
         // FIXME: Hacks.
         // NOPs for DC Checker, skips serial check
