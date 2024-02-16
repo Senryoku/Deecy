@@ -1140,6 +1140,18 @@ pub fn fldi0_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn fldi1_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_pr) {
+        .Single => {
+            try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
+            try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+        },
+        .Double => return error.IllegalInstruction,
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => {
