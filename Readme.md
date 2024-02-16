@@ -7,22 +7,18 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 ## Things I know I have to do
 
 -   Better low level emulation: Boot ROM currently hangs after the logo animation.
-
 -   ch0-DMA and ch1-DMA?
--   Sort-DMA (And the corresponding end interrupt)
-
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
 -   VMU/Storage
-
 -   The whole AICA Chip. Please have mercy.
-
 -   Renderer:
     - Modifier Volumes.
-    - User Tile Clip.
     - Fog.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
     - Handle and generate Mipmaps.
+    - Sort-DMA?
+    - User Tile Clip, only the simplest version is supported.
     - (Improvement?) OIT: Add an option to allocate lists per slice to allow processing them in parallel when memory is not an issue (we're currently limited by the limit on binding buffer size, not total memory).
         No idea of the potential gain, if any.
       
