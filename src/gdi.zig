@@ -1,32 +1,7 @@
 const std = @import("std");
 const common = @import("common.zig");
 
-pub extern "kernel32" fn OpenFileMappingA(
-    dwDesiredAccess: std.os.windows.DWORD,
-    bInheritHandle: bool,
-    lpName: std.os.windows.LPCSTR,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
-
-pub extern "kernel32" fn CreateFileMappingA(
-    hFile: std.os.windows.HANDLE,
-    lpFileMappingAttributes: ?*std.os.windows.SECURITY_ATTRIBUTES,
-    flProtect: std.os.windows.DWORD,
-    dwMaximumSizeHigh: std.os.windows.DWORD,
-    dwMaximumSizeLow: std.os.windows.DWORD,
-    lpName: ?std.os.windows.LPCSTR,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
-
-pub extern "kernel32" fn MapViewOfFile(
-    hFileMappingObject: std.os.windows.HANDLE,
-    dwDesiredAccess: std.os.windows.DWORD,
-    dwFileOffsetHigh: std.os.windows.DWORD,
-    dwFileOffsetLow: std.os.windows.DWORD,
-    dwNumberOfBytesToMap: std.os.windows.SIZE_T,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.LPVOID;
-
-pub extern "kernel32" fn UnmapViewOfFile(
-    lpBaseAddress: std.os.windows.LPCVOID,
-) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+const windows = @import("windows.zig");
 
 const DirectoryRecord = extern struct {
     length: u8 align(1),
@@ -122,7 +97,7 @@ const Track = struct {
             allocator.free(self.data);
         } else {
             // TODO:
-            _ = UnmapViewOfFile(self.data.ptr);
+            _ = windows.UnmapViewOfFile(self.data.ptr);
             std.os.windows.CloseHandle(self._mapping_handle.?);
             std.os.windows.CloseHandle(self._file_handle.?);
         }
@@ -214,8 +189,8 @@ pub const GDI = struct {
                     .creation = std.os.windows.FILE_OPEN,
                     .io_mode = .blocking,
                 });
-                const mapping_handle = CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
-                const ptr = MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
+                const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
+                const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
                 var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                 _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
 
