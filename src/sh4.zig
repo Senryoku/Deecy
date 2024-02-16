@@ -831,14 +831,9 @@ pub const SH4 = struct {
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
             },
-            0x14000000...0x17FFFFFF => { // Area 5 - Expansion (modem) port
-                const static = struct {
-                    var once = false;
-                };
-                if (!static.once) {
-                    static.once = true;
-                    sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (MODEM): {X:0>8} (This will only be reported once)"), .{addr});
-                }
+            0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
+                sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
+                self._dc.?._dummy = .{ 0, 0, 0, 0 };
                 return @ptrCast(&self._dc.?._dummy);
             },
             0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
