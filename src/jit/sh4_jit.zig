@@ -1127,6 +1127,19 @@ pub fn fmovs_FRm_at_R0_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
     return false;
 }
 
+pub fn fldi0_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_pr) {
+        .Single => {
+            // Might be a xor, but we don't care about the previous value here.
+            const frn: JIT.Operand = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) };
+            try block.append(.{ .Xor = .{ .dst = frn, .src = frn } });
+        },
+        .Double => return error.IllegalInstruction,
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => {

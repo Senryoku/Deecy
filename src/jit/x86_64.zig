@@ -1013,7 +1013,32 @@ pub const Emitter = struct {
         }
     }
     pub fn xor_(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src);
+        switch (dst) {
+            // Yes, it's the same thing for both sizes, we're operating on the full size of the xmm registers here.
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| {
+                        try self.emit(u8, 0x66);
+                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0xEF });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    else => return error.InvalidSubSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| {
+                        try self.emit(u8, 0x66);
+                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0xEF });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    else => return error.InvalidSubSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src),
+        }
     }
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
         switch (lhs) {
