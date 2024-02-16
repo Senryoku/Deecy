@@ -18,8 +18,8 @@ const Interrupt = Interrupts.Interrupt;
 
 const addr_t = common.addr_t;
 
-const sh4_instructions = @import("sh4_instructions.zig");
-const sh4_disassembly = @import("sh4_disassembly.zig");
+pub const sh4_instructions = @import("sh4_instructions.zig");
+pub const sh4_disassembly = @import("sh4_disassembly.zig");
 
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
@@ -744,7 +744,7 @@ pub const SH4 = struct {
 
         // NOTE: These cases are out of order as an optimization.
         //       Empirically tested on interpreter_perf (i.e. 200_000_000 first 'ticks' of Sonic Adventure and the Boot ROM).
-        //       The compile seems to really having equal length ranges (and also easily maskable, I guess)!
+        //       The compiler seems to like really having equal length ranges (and also easily maskable, I guess)!
         switch (addr) {
             0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
                 return &self._dc.?.ram[addr & 0x00FFFFFF];
