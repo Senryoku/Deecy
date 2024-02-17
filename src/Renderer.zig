@@ -88,7 +88,8 @@ const ShadingInstructions = packed struct(u32) {
     dst_blend_factor: HollyModule.AlphaInstruction = .Zero,
     depth_compare: HollyModule.DepthCompareMode,
     fog_control: HollyModule.FogControl,
-    _: u11 = 0,
+    offset_bit: u1,
+    _: u10 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1342,6 +1343,7 @@ pub const Renderer = struct {
                 .tex_v_size = tsp_instruction.texture_v_size,
                 .depth_compare = isp_tsp_instruction.depth_compare_mode,
                 .fog_control = tsp_instruction.fog_control,
+                .offset_bit = isp_tsp_instruction.offset,
             },
         };
 
@@ -1592,6 +1594,7 @@ pub const Renderer = struct {
                         .dst_blend_factor = tsp_instruction.dst_alpha_instr,
                         .depth_compare = isp_tsp_instruction.depth_compare_mode,
                         .fog_control = tsp_instruction.fog_control,
+                        .offset_bit = isp_tsp_instruction.offset,
                     },
                 };
 
@@ -1670,7 +1673,7 @@ pub const Renderer = struct {
                                     .r = @as(f32, @floatFromInt(v.offset_color.r)) / 255.0,
                                     .g = @as(f32, @floatFromInt(v.offset_color.g)) / 255.0,
                                     .b = @as(f32, @floatFromInt(v.offset_color.b)) / 255.0,
-                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.offset_color.a)) / 255.0 else 1.0,
+                                    .a = @as(f32, @floatFromInt(v.offset_color.a)) / 255.0,
                                 } else .{},
                                 .u = v.u,
                                 .v = v.v,
@@ -1693,7 +1696,7 @@ pub const Renderer = struct {
                                     .r = @as(f32, @floatFromInt(v.offset_color.r)) / 255.0,
                                     .g = @as(f32, @floatFromInt(v.offset_color.g)) / 255.0,
                                     .b = @as(f32, @floatFromInt(v.offset_color.b)) / 255.0,
-                                    .a = if (use_alpha) @as(f32, @floatFromInt(v.offset_color.a)) / 255.0 else 1.0,
+                                    .a = @as(f32, @floatFromInt(v.offset_color.a)) / 255.0,
                                 } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
@@ -1716,7 +1719,7 @@ pub const Renderer = struct {
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
-                                    .a = if (use_alpha) v.offset_a else 1.0,
+                                    .a = v.offset_a,
                                 } else .{},
                                 .u = v.u,
                                 .v = v.v,
@@ -1739,7 +1742,7 @@ pub const Renderer = struct {
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
-                                    .a = if (use_alpha) v.offset_a else 1.0,
+                                    .a = v.offset_a,
                                 } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
@@ -1764,7 +1767,7 @@ pub const Renderer = struct {
                                     .r = v.offset_intensity * face_offset_color.r,
                                     .g = v.offset_intensity * face_offset_color.g,
                                     .b = v.offset_intensity * face_offset_color.b,
-                                    .a = if (use_alpha) face_offset_color.a else 1.0,
+                                    .a = face_offset_color.a,
                                 } else .{},
                                 .u = v.u,
                                 .v = v.v,
@@ -1789,7 +1792,7 @@ pub const Renderer = struct {
                                     .r = v.offset_intensity * face_offset_color.r,
                                     .g = v.offset_intensity * face_offset_color.g,
                                     .b = v.offset_intensity * face_offset_color.b,
-                                    .a = if (use_alpha) face_offset_color.a else 1.0,
+                                    .a = face_offset_color.a,
                                 } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
@@ -1809,7 +1812,7 @@ pub const Renderer = struct {
                                 //        .r = @as(f32, @floatFromInt(sprite_offset_color.r)) / 255.0,
                                 //        .g = @as(f32, @floatFromInt(sprite_offset_color.g)) / 255.0,
                                 //        .b = @as(f32, @floatFromInt(sprite_offset_color.b)) / 255.0,
-                                //        .a = if (use_alpha) @as(f32, @floatFromInt(sprite_offset_color.a)) / 255.0 else 1.0,
+                                //        .a = @as(f32, @floatFromInt(sprite_offset_color.a)) / 255.0,
                                 //    };
                                 v.tex = tex;
                                 self.min_depth = @min(self.min_depth, 1.0 / v.z);

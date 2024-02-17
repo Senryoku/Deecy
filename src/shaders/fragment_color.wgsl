@@ -63,7 +63,12 @@ fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alp
         }
         case 0x1u: {
             // Per vertex mode
-            return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);;
+            if(((shading_instructions >> 21) & 1) == 1) { // Using Offset color?
+                return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);
+            } else {
+                // If the polygon is not set up to use an Offset Color, Fog processing is not performed.
+                return color;
+            }
         }
         case 0x2u: {
             // No Fog
