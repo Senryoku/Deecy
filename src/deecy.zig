@@ -97,14 +97,18 @@ pub const Deecy = struct {
             @intFromEnum(zgpu.wgpu.TextureFormat.undef),
         );
 
+        zgui.plot.init();
+
         self.debug_ui = try DebugUI.init(self);
     }
 
     fn ui_deinit(self: *Deecy) void {
         self.debug_ui.deinit();
 
-        defer zgui.deinit();
-        defer zgui.backend.deinit();
+        zgui.plot.deinit();
+
+        zgui.backend.deinit();
+        zgui.deinit();
     }
 
     pub fn destroy(self: *Deecy) void {

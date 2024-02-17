@@ -228,25 +228,23 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 const channel = dc.aica.get_channel(@intCast(i));
                 if (self.show_disabled_channels or channel.play_control.key_on_bit) {
                     if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
+                        const start_addr = (@as(u16, channel.play_control.start_address) << 7) + channel.sample_address;
                         zgui.text("KeyOn: {any} - Format: {s} - Loop: {any} - Start Address: {X:0>4}", .{
                             channel.play_control.key_on_bit,
                             @tagName(channel.play_control.sample_format),
                             channel.play_control.sample_loop,
-                            @as(u16, channel.play_control.start_address) << 7,
+                            start_addr,
                         });
-                        // TODO: Display the samples!
-                        //if (zgui.plot.beginPlot("Line Plot", .{ .h = -1.0 })) {
-                        //    zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
-                        //    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 5 });
-                        //    zgui.plot.setupLegend(.{ .south = true, .west = true }, .{});
-                        //    zgui.plot.setupFinish();
-                        //    zgui.plot.plotLineValues("y data", i32, .{ .v = &.{ 0, 1, 0, 1, 0, 1 } });
-                        //    zgui.plot.plotLine("xy data", f32, .{
-                        //        .xv = &.{ 0.1, 0.2, 0.5, 2.5 },
-                        //        .yv = &.{ 0.1, 0.3, 0.5, 0.9 },
-                        //    });
-                        //    zgui.plot.endPlot();
-                        //}
+                        if (channel.play_control.sample_format == .i16) {
+                            if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                                // zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
+                                zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
+                                // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
+                                // zgui.plot.setupFinish();
+                                zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..44100] });
+                                zgui.plot.endPlot();
+                            }
+                        }
                     }
                 }
             }
@@ -390,6 +388,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.begin("Renderer", .{})) {
             zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
             zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
+            if (zgui.collapsingHeader("Fog", .{})) {
+                zgui.text("Fog Density: {d: >4.2}", .{d.renderer.fog_density});
+                _ = zgui.colorEdit4("Fog Pal", .{ .col = @as([*]f32, @ptrCast(&d.renderer.fog_col_pal))[0..4] });
+                _ = zgui.colorEdit4("Fog Vert", .{ .col = @as([*]f32, @ptrCast(&d.renderer.fog_col_vert))[0..4] });
+                for (0..128) |i| {
+                    zgui.text("Fog {d: >3}: {X:0>4}", .{ i, d.renderer.fog_lut[i] });
+                }
+            }
             if (zgui.collapsingHeader("Textures", .{})) {
                 const static = struct {
                     var index: i32 = 0;
@@ -430,6 +436,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("Debug", .{})) {
+            if (zgui.button("Clear SH4 JIT Cache", .{}))
+                try dc.sh4_jit.block_cache.reset();
+
+            zgui.separator();
+
             if (zgui.button("Trigger RenderDoneVideo Interrupt", .{}))
                 dc.raise_normal_interrupt(.{ .RenderDoneVideo = 1 });
             if (zgui.button("Trigger RenderDoneISP Interrupt", .{}))

@@ -62,11 +62,20 @@ fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u32 {
     return r;
 }
 
-const fRGBA = struct {
-    r: f32,
-    g: f32,
-    b: f32,
-    a: f32,
+const fRGBA = packed struct {
+    r: f32 = 0,
+    g: f32 = 0,
+    b: f32 = 0,
+    a: f32 = 0,
+
+    pub fn fromPacked(color: HollyModule.PackedColor) fRGBA {
+        return .{
+            .r = @as(f32, @floatFromInt(color.r)) / 255.0,
+            .g = @as(f32, @floatFromInt(color.g)) / 255.0,
+            .b = @as(f32, @floatFromInt(color.b)) / 255.0,
+            .a = @as(f32, @floatFromInt(color.a)) / 255.0,
+        };
+    }
 };
 
 const ShadingInstructions = packed struct(u32) {
@@ -78,7 +87,8 @@ const ShadingInstructions = packed struct(u32) {
     src_blend_factor: HollyModule.AlphaInstruction = .One,
     dst_blend_factor: HollyModule.AlphaInstruction = .Zero,
     depth_compare: HollyModule.DepthCompareMode,
-    _: u13 = 0,
+    fog_control: HollyModule.FogControl,
+    _: u11 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -96,6 +106,20 @@ const VertexTextureInfo = packed struct {
     index: TextureIndex,
     shading: ShadingInstructions,
 };
+
+const Uniforms = extern struct {
+    depth_min: f32,
+    depth_max: f32,
+    _padding: f32 = 0,
+    fog_density: f32, // Should be a f16?
+    fog_col_pal: fRGBA align(16),
+    fog_col_vert: fRGBA align(16),
+    fog_lut: [0x80]u32 align(16), // actually 2 * 8bits per entry.
+};
+
+comptime {
+    std.debug.assert(@sizeOf(Uniforms) == 560);
+}
 
 const Vertex = packed struct {
     x: f32,
@@ -118,9 +142,9 @@ const Vertex = packed struct {
     tex: VertexTextureInfo,
 };
 
-const wgsl_vs = @embedFile("./shaders/vs.wgsl");
-const wgsl_fs = @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
-const wgsl_translucent_fs = @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
+const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/vs.wgsl");
+const wgsl_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
+const wgsl_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
 const wgsl_blend_cs = @embedFile("./shaders/oit_blend_cs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
 const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
@@ -416,6 +440,10 @@ pub const Renderer = struct {
     read_framebuffer_enabled: bool = false,
     min_depth: f32 = std.math.floatMax(f32),
     max_depth: f32 = 0.0,
+    fog_col_pal: fRGBA = .{},
+    fog_col_vert: fRGBA = .{},
+    fog_density: f32 = 0,
+    fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
 
     vertices: std.ArrayList(Vertex) = undefined,
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
@@ -646,7 +674,7 @@ pub const Renderer = struct {
         }
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
+            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
             .{ .binding = 1, .texture_view_handle = texture_array_views[0] },
             .{ .binding = 2, .texture_view_handle = texture_array_views[1] },
             .{ .binding = 3, .texture_view_handle = texture_array_views[2] },
@@ -1313,6 +1341,7 @@ pub const Renderer = struct {
                 .tex_u_size = texture_size_index,
                 .tex_v_size = tsp_instruction.texture_v_size,
                 .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                .fog_control = tsp_instruction.fog_control,
             },
         };
 
@@ -1418,6 +1447,19 @@ pub const Renderer = struct {
 
         self.min_depth = std.math.floatMax(f32);
         self.max_depth = 0.0;
+
+        const col_pal = gpu._get_register(HollyModule.PackedColor, .FOG_COL_RAM).*;
+        const col_vert = gpu._get_register(HollyModule.PackedColor, .FOG_COL_VERT).*;
+
+        self.fog_col_pal = fRGBA.fromPacked(col_pal);
+        self.fog_col_vert = fRGBA.fromPacked(col_vert);
+        const fog_density = gpu._get_register(u16, .FOG_DENSITY).*;
+        const fog_density_mantissa = (fog_density >> 8) & 0xFF;
+        const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
+        self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
+        for (0..0x80) |i| {
+            self.fog_lut[i] = @as([*]u32, @ptrCast(gpu._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
+        }
 
         self.update_background(gpu);
 
@@ -1549,6 +1591,7 @@ pub const Renderer = struct {
                         .src_blend_factor = tsp_instruction.src_alpha_instr,
                         .dst_blend_factor = tsp_instruction.dst_alpha_instr,
                         .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                        .fog_control = tsp_instruction.fog_control,
                     },
                 };
 
@@ -1918,9 +1961,13 @@ pub const Renderer = struct {
             const vb_info = gctx.lookupResourceInfo(self.vertex_buffer).?;
             const ib_info = gctx.lookupResourceInfo(self.index_buffer).?;
 
-            const uniform_mem = gctx.uniformsAllocate(struct { depth_min: f32, depth_max: f32 }, 1);
+            const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
             uniform_mem.slice[0].depth_max = self.max_depth;
+            uniform_mem.slice[0].fog_col_pal = self.fog_col_pal;
+            uniform_mem.slice[0].fog_col_vert = self.fog_col_vert;
+            uniform_mem.slice[0].fog_density = self.fog_density;
+            uniform_mem.slice[0].fog_lut = self.fog_lut;
 
             const bind_group = gctx.lookupResource(self.bind_group).?;
 

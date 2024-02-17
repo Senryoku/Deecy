@@ -45,7 +45,7 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 
 ## Dependencies
 
--   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/
+-   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/ as a submodule.
 
 ## Thanks
 

@@ -278,8 +278,14 @@ pub const AICA = struct {
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
         const local_addr = addr & 0x0000FFFF;
-        //aica_log.debug("Read AICA register at 0x{X:0>8} / 0x{X:0>8}", .{ addr, local_addr });
-        //aica_log.debug("Read AICA register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, self.regs[local_addr / 4] });
+
+        //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
+
+        switch (@as(AICARegister, @enumFromInt(local_addr))) {
+            .MasterVolume => return 0x10,
+            else => {},
+        }
+
         return switch (T) {
             u8 => @as([*]const u8, @ptrCast(&self.regs[0]))[local_addr],
             u32 => self.regs[local_addr / 4],
@@ -485,7 +491,7 @@ pub const AICA = struct {
             var timer = self.get_reg(TimerControl, timer_registers[i]);
             self._timer_counters[i] += 1; // FIXME: This should be counting samples, not whatever this is!
             // FIXME: Remove this random 1024 factor which is only there to slow down the interrupts.
-            const scaled = @as(u32, 1) << timer.prescale;
+            const scaled = 1024 * @as(u32, 1) << timer.prescale;
             if (self._timer_counters[i] >= scaled) {
                 self._timer_counters[i] -= scaled;
                 if (timer.value == 0xFF) {

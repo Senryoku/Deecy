@@ -1,9 +1,3 @@
-
-struct Uniforms {
-    depth_min: f32,
-    depth_max: f32, 
-};
-
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
  
 struct VertexOut {
@@ -11,7 +5,7 @@ struct VertexOut {
      @location(0) base_color: vec4<f32>,
      @location(1) offset_color: vec4<f32>,
      @location(2) uv: vec2<f32>,
-     @location(3) w: f32,
+     @location(3) inv_w: f32,
      @location(4) @interpolate(flat) tex: vec2<u32>,
  }
 
@@ -35,13 +29,13 @@ fn main(
     output.position_clip.z = (1.0 / position.z) / uniforms.depth_max; // Remap to the [0.0..1.0] range used by WGPU
     output.position_clip.w = 1.0;
 
-    let w = position.z;
+    let inv_w = position.z;
     
-    output.base_color = w * base_color;
-    output.offset_color = w * offset_color;
+    output.base_color = inv_w * base_color;
+    output.offset_color = inv_w * offset_color;
 
-    output.uv = w * uv;
-    output.w = w;
+    output.uv = inv_w * uv;
+    output.inv_w = inv_w;
     output.tex = tex;
 
     return output;

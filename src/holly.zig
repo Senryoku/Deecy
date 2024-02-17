@@ -440,6 +440,13 @@ pub const AlphaInstruction = enum(u3) {
     InverseDestAlpha = 7,
 };
 
+pub const FogControl = enum(u2) {
+    LookUpTable = 0,
+    Vertex = 1,
+    None = 2,
+    LookUpTableMode2 = 3,
+};
+
 pub const TSPInstructionWord = packed struct(u32) {
     texture_v_size: u3,
     texture_u_size: u3,
@@ -452,7 +459,7 @@ pub const TSPInstructionWord = packed struct(u32) {
     ignore_texture_alpha: u1,
     use_alpha: u1,
     color_clamp: u1,
-    fog_control: u2,
+    fog_control: FogControl,
     dst_select: u1,
     src_select: u1,
     dst_alpha_instr: AlphaInstruction,

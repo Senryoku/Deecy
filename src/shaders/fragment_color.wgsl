@@ -1,8 +1,3 @@
-struct Uniforms {
-    depth_min: f32,
-    depth_max: f32, 
-};
-
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var texture_array_8x8: texture_2d_array<f32>;
 @group(0) @binding(2) var texture_array_16x16: texture_2d_array<f32>;
@@ -47,15 +42,56 @@ fn tex_size(idx: u32) -> f32 {
     }
 }
 
+fn fog_alpha_lut(inv_w: f32) -> f32 {
+    let val: f32 = clamp(inv_w * uniforms.fog_density, 1.0, 256.0);
+    let uval = bitcast<u32>(val);
+    // Bit 6-4: Lower 3 bits for the 1/W index
+    // Bit 3-0: Upper 4 bits for the 1/W mantissa
+    let index =  ((((uval >> 23) + 1) & 0x7) << 4) | ((uval >> 19) & 0xF);
+    let low = f32((uniforms.fog_lut[index / 4][index % 4] >> 8) & 0xFF) / 255.0;           
+    let high = f32((uniforms.fog_lut[index / 4][index % 4]) & 0xFF) / 255.0;
+    return mix(low, high, f32((uval >> 11) & 0xFF) / 255.0); // Residual fractional part
+}
+
+fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
+    // TODO: Color Clamping
+    switch((shading_instructions >> 19) & 0x3) {
+        case 0x0u: {
+            // Lookup table mode
+            let fog_alpha = fog_alpha_lut(inv_w);
+            return vec4<f32>(mix(color.rgb, uniforms.fog_col_pal.rgb, fog_alpha), color.a);
+        }
+        case 0x1u: {
+            // Per vertex mode
+            return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);;
+        }
+        case 0x2u: {
+            // No Fog
+            return color;
+        }
+        case 0x3u: {
+            // Look up table Mode 2
+            // Substitutes the polygon color for the Fog Color, and the polygon α value for the Fog α value.
+            let fog_alpha = fog_alpha_lut(inv_w);
+            return vec4<f32>(1.0, 0.0, 0.0, 1.0); // FIXME: This is untested, output a solid red to identify some places where it's used.
+            //return vec4<f32>(uniforms.fog_col_pal.rgb, fog_alpha);
+        }
+        default: { return color; }
+    }
+}
+
 fn fragment_color(
     base_color: vec4<f32>,
     offset_color: vec4<f32>,
     uv: vec2<f32>,
-    tex: vec2<u32>
+    tex: vec2<u32>,
+    inv_w: f32,
 ) -> vec4<f32> {
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);
     let tex_color = tex_sample( vec2<f32>(1.0, v_size / u_size) * uv, tex[1], tex[0]);
+
+    var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
 
     if (tex[1] & 1) == 1 {
         let shading = (tex[1] >> 1) & 0x3;
@@ -66,30 +102,30 @@ fn fragment_color(
             case 0u: {
                 let rgb = tex_color.rgb + offset_color.rgb;
                 let a = tex_a;
-                return vec4<f32>(rgb, a);
+                final_color = vec4<f32>(rgb, a);
             }
             // Modulate
             case 1u: {
                 let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
                 let a = tex_a;
-                return vec4<f32>(rgb, a);
+                final_color = vec4<f32>(rgb, a);
             }
             // Decal Alpha
             case 2u: {
                 let rgb = tex_a * tex_color.rgb + (1.0 - tex_a) * base_color.rgb + offset_color.rgb;
                 let a = base_color.a;
-                return vec4<f32>(rgb, a);
+                final_color = vec4<f32>(rgb, a);
             }
             // Modulate Alpha
             case 3u: {
                 let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
                 let a = base_color.a * tex_a;
-                return vec4<f32>(rgb, a);
+                final_color = vec4<f32>(rgb, a);
             }
-            default: { return base_color + offset_color; }
+            default: { final_color = base_color + vec4<f32>(offset_color.rgb, 0.0); }
         }
-    } else {
-        return base_color + offset_color;
-    }
+    } 
+    
+    return apply_fog(tex[1], inv_w, final_color, offset_color.a);
 }
 
