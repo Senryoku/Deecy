@@ -89,7 +89,7 @@ pub const Dreamcast = struct {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try SH4.init(allocator, dc),
-            .gpu = try Holly.init(allocator),
+            .gpu = try Holly.init(allocator, dc),
             .aica = try AICA.init(allocator),
             .maple = try MapleHost.init(allocator),
             .gdrom = GDROM.init(allocator),
@@ -444,7 +444,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DLEN).* = 0;
         self.hw_register(u32, .SB_C2DST).* = 0;
 
-        self.raise_normal_interrupt(.{ .EoD_CH2 = 1 });
+        self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200);
     }
 
     pub fn end_ch2_dma(self: *@This()) void {

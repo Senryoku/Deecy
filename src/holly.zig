@@ -1084,6 +1084,7 @@ pub const Holly = struct {
     render_start: bool = false, // Signals to start rendering. TODO: Find a better way to start rendering (and run the CPU on another thread I guess).
 
     _allocator: std.mem.Allocator = undefined,
+    _dc: *Dreamcast = undefined,
 
     _ta_command_buffer: [16]u32 align(8) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
@@ -1094,16 +1095,15 @@ pub const Holly = struct {
 
     ta_display_lists: [5]DisplayList = undefined,
 
-    _scheduled_interrupts: std.ArrayList(ScheduledInterrupt) = undefined, // NOTE: Remove in favor of DC scheduled interrupts?
-    _tmp_cycles: u32 = 0,
     _pixel: u32 = 0,
+    _tmp_cycles: u32 = 0,
 
-    pub fn init(allocator: std.mem.Allocator) !Holly {
+    pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         var holly = @This(){
             ._allocator = allocator,
+            ._dc = dc,
             .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
             .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
-            ._scheduled_interrupts = try std.ArrayList(ScheduledInterrupt).initCapacity(allocator, 32),
         };
         for (0..holly.ta_display_lists.len) |i| {
             holly.ta_display_lists[i] = DisplayList.init(allocator);
@@ -1113,8 +1113,6 @@ pub const Holly = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self._scheduled_interrupts.deinit();
-
         for (&self.ta_display_lists) |*display_list| {
             display_list.deinit();
         }
@@ -1151,18 +1149,6 @@ pub const Holly = struct {
     // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         self._tmp_cycles += cycles;
-
-        // Update scheduled interrupts
-        var idx: u32 = 0;
-        while (idx < self._scheduled_interrupts.items.len) {
-            if (self._scheduled_interrupts.items[idx].cycles < cycles) {
-                dc.raise_normal_interrupt(self._scheduled_interrupts.items[idx].int);
-                _ = self._scheduled_interrupts.swapRemove(idx);
-            } else {
-                self._scheduled_interrupts.items[idx].cycles -= cycles;
-                idx += 1;
-            }
-        }
 
         // FIXME: Move all of this to its own SPG Module ?
         const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
@@ -1240,10 +1226,6 @@ pub const Holly = struct {
         }
     }
 
-    pub fn schedule_interrupt(self: *@This(), cycles: u32, int: HardwareRegisters.SB_ISTNRM) void {
-        self._scheduled_interrupts.appendAssumeCapacity(.{ .cycles = cycles, .int = int });
-    }
-
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (@as(HollyRegister, @enumFromInt(addr))) {
             HollyRegister.SOFTRESET => {
@@ -1268,9 +1250,9 @@ pub const Holly = struct {
 
                 self.render_start = true;
 
-                self.schedule_interrupt(200, .{ .RenderDoneTSP = 1 });
-                self.schedule_interrupt(400, .{ .RenderDoneISP = 1 });
-                self.schedule_interrupt(600, .{ .RenderDoneVideo = 1 });
+                self._dc.schedule_interrupt(.{ .RenderDoneTSP = 1 }, 200);
+                self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 400);
+                self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 600);
             },
             HollyRegister.TA_LIST_INIT => {
                 if (v == 0x80000000) {
@@ -1346,7 +1328,7 @@ pub const Holly = struct {
             .EndOfList => {
                 if (self._ta_list_type) |list| { // Apprently this happens?... Why would a game do this?
                     // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
-                    self.schedule_interrupt(800, switch (list) {
+                    self._dc.schedule_interrupt(switch (list) {
                         .Opaque => .{ .EoT_OpaqueList = 1 },
                         .OpaqueModifierVolume => .{ .EoT_OpaqueModifierVolumeList = 1 },
                         .Translucent => .{ .EoT_TranslucentList = 1 },
@@ -1356,7 +1338,7 @@ pub const Holly = struct {
                             holly_log.err(termcolor.red("  Unimplemented List Type {any}"), .{list});
                             @panic("Unimplemented List Type");
                         },
-                    });
+                    }, 800);
                 }
                 self._ta_list_type = null;
                 self._ta_current_polygon = null;
@@ -1599,7 +1581,7 @@ pub const Holly = struct {
                     }
                 }
                 // FIXME: Delay is arbitrary.
-                self.schedule_interrupt(200, .{ .EoT_YUV = 1 });
+                self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, 200);
             } else {
                 @panic("ta_fifo_yuv_converter_path: Unimplemented tex=1");
             }

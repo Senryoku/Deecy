@@ -625,7 +625,7 @@ pub const AICA = struct {
         // Set "DMA Suspend or DMA Stop" bit in SB_ADSUSP
         dc.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
 
-        dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
-        dc.raise_external_interrupt(.{ .AICA = 1 });
+        dc.schedule_interrupt(.{ .EoD_AICA = 1 }, 200);
+        dc.schedule_external_interrupt(.{ .AICA = 1 }, 200);
     }
 };
