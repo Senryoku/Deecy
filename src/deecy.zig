@@ -65,7 +65,7 @@ pub const Deecy = struct {
 
         self.gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, self.window, .{
             .present_mode = .mailbox,
-            .required_features = &[_]zgpu.wgpu.FeatureName{.bgra8_unorm_storage},
+            .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
         });
 
         self.scale_factor = scale_factor: {

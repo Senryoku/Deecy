@@ -668,9 +668,22 @@ fn polygon_format_size(polygon_format: PolygonType) u32 {
     };
 }
 
-const ModifierVolume = packed struct(u256) {
+const VolumeInstruction = enum(u3) {
+    Normal = 0,
+    InsideLastPolygon = 1,
+    OutsideLastPolygon = 2,
+    _,
+};
+
+const ModifierVolumeInstruction = packed struct(u32) {
+    _: u27,
+    culling_mode: u2,
+    volume_instruction: VolumeInstruction,
+};
+
+const ModifierVolumeGlobalParameter = packed struct(u256) {
     parameter_control_word: ParameterControlWord,
-    isp_tsp_instruction: ISPTSPInstructionWord,
+    instructions: ModifierVolumeInstruction,
     _ignored: u192,
 };
 
@@ -686,6 +699,13 @@ const ModifierVolumeParameter = packed struct(u512) {
     cy: f32,
     cz: f32,
     _ignored: u192,
+};
+
+const ModifierVolume = struct {
+    parameter_control_word: ParameterControlWord,
+    instructions: ModifierVolumeInstruction,
+    first_triangle_index: u32,
+    triangle_count: u32 = 0,
 };
 
 pub const PackedColor = packed struct(u32) {
@@ -1092,6 +1112,10 @@ pub const Holly = struct {
 
     _ta_current_polygon: ?Polygon = null,
     _ta_user_tile_clip: ?UserTileClipInfo = null,
+    _ta_current_volume: ?ModifierVolume = null,
+    _ta_opaque_modifier_volumes: std.ArrayList(ModifierVolume),
+    _ta_translucent_modifier_volumes: std.ArrayList(ModifierVolume),
+    _ta_volume_triangles: std.ArrayList(ModifierVolumeParameter),
 
     ta_display_lists: [5]DisplayList = undefined,
 
@@ -1104,6 +1128,9 @@ pub const Holly = struct {
             ._dc = dc,
             .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
             .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
+            ._ta_opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
+            ._ta_translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
+            ._ta_volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
         };
         for (0..holly.ta_display_lists.len) |i| {
             holly.ta_display_lists[i] = DisplayList.init(allocator);
@@ -1117,6 +1144,9 @@ pub const Holly = struct {
             display_list.deinit();
         }
 
+        self._ta_opaque_modifier_volumes.deinit();
+        self._ta_translucent_modifier_volumes.deinit();
+        self._ta_volume_triangles.deinit();
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }
@@ -1265,6 +1295,10 @@ pub const Holly = struct {
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
                     self._ta_user_tile_clip = null;
+
+                    self._ta_opaque_modifier_volumes.clearRetainingCapacity();
+                    self._ta_translucent_modifier_volumes.clearRetainingCapacity();
+                    self._ta_volume_triangles.clearRetainingCapacity();
                 }
             },
             HollyRegister.TA_LIST_CONT => {
@@ -1374,10 +1408,15 @@ pub const Holly = struct {
                     }
                 }
 
-                if (self._ta_list_type.? == .OpaqueModifierVolume) {
-                    // TODO: Do something with that modifier volume.
-                } else if (self._ta_list_type.? == .TranslucentModifierVolume) {
-                    // TODO
+                if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
+                    if (self._ta_current_volume != null) // Might be unnecessary
+                        self.end_of_modifier_volume();
+                    const modifier_volume = @as(*ModifierVolumeGlobalParameter, @ptrCast(&self._ta_command_buffer));
+                    self._ta_current_volume = .{
+                        .parameter_control_word = modifier_volume.*.parameter_control_word,
+                        .instructions = modifier_volume.*.instructions,
+                        .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
+                    };
                 } else {
                     // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
                     const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
@@ -1417,12 +1456,11 @@ pub const Holly = struct {
             .VertexParameter => {
                 var display_list = &self.ta_display_lists[@intFromEnum(self._ta_list_type.?)];
 
-                if (self._ta_list_type.? == .OpaqueModifierVolume) {
-                    // TODO: Do something with that modifier volume parameter.
+                if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
                     if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                } else if (self._ta_list_type.? == .TranslucentModifierVolume) {
-                    // TODO
-                    if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
+                    self._ta_volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
+                    if (parameter_control_word.obj_control.volume == 1)
+                        self.end_of_modifier_volume();
                 } else {
                     if (self._ta_current_polygon == null) {
                         holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
@@ -1488,6 +1526,18 @@ pub const Holly = struct {
         }
         // Command has been handled, reset buffer.
         self._ta_command_buffer_index = 0;
+    }
+
+    fn end_of_modifier_volume(self: *@This()) void {
+        if (self._ta_current_volume) |*volume| {
+            volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
+            if (self._ta_list_type.? == .OpaqueModifierVolume) {
+                self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
+            } else {
+                self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+            }
+            self._ta_current_volume = null;
+        }
     }
 
     fn handle_object_list_set(self: *@This()) void {

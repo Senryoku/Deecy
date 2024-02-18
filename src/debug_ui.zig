@@ -196,7 +196,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         if (zgui.begin("AICA - ARM", .{})) {
             _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
-            zgui.text("State: {s}", .{@tagName(dc.aica.arm7.cpsr.m)});
+            zgui.text("State: {s} - Run.: {any}", .{ @tagName(dc.aica.arm7.cpsr.m), dc.aica.arm7.running });
             zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
             zgui.beginGroup();
             for (0..8) |i| {
@@ -212,7 +212,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
             const range = 32; // In bytes.
             const pc = 0x00800000 + dc.aica.arm7.pc() - 4;
-            var addr = std.math.clamp(pc, 0x00800000 + range / 2, 0x00A00000 - range);
+            var addr = std.math.clamp(pc - range / 2, 0x00800000, 0x00A00000 - range);
             const end_addr = addr + range;
             while (addr < end_addr) {
                 const disassembly = arm7.ARM7.disassemble(dc.aica.read_mem(u32, addr));
@@ -223,6 +223,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("AICA", .{})) {
+            zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel(@intCast(i));
