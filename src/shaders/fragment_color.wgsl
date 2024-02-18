@@ -43,7 +43,7 @@ fn tex_size(idx: u32) -> f32 {
 }
 
 fn fog_alpha_lut(inv_w: f32) -> f32 {
-    let val: f32 = clamp(inv_w * uniforms.fog_density, 1.0, 256.0);
+    let val: f32 = clamp(inv_w * uniforms.fog_density, 1.0, 255.9999);
     let uval = bitcast<u32>(val);
     // Bit 6-4: Lower 3 bits for the 1/W index
     // Bit 3-0: Upper 4 bits for the 1/W mantissa
