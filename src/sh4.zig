@@ -371,7 +371,7 @@ pub const SH4 = struct {
                 std.debug.assert(self.read_p4_register(P4.CCR, .CCR).oix == 0 or (virtual_addr >= 0x7DFFF000 and virtual_addr <= 0x7E000FFF));
             }
 
-            return @alignCast(@ptrCast(&self._operand_cache[virtual_addr & 0x3FFF]));
+            return @alignCast(@ptrCast(&self._operand_cache[virtual_addr & 0x1FFF]));
         } else {
             // Correct addressing, in case we end up needing it.
             if (self.read_p4_register(P4.CCR, .CCR).oix == 0) {
@@ -387,7 +387,7 @@ pub const SH4 = struct {
             } else {
                 // RAM Area 1 Mirroring from 0x7C00_0000 to 0x7DFF_FFFF
                 // RAM Area 2 Mirroring from 0x7E00_0000 to 0x7FFF_FFFF
-                const index = ((virtual_addr & 0x03000000) >> 16) | (virtual_addr & 0x3FFF);
+                const index = ((virtual_addr & 0x02000000) >> 13) | (virtual_addr & 0x0FFF);
                 return @alignCast(@ptrCast(&self._operand_cache[index]));
             }
         }
