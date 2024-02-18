@@ -159,17 +159,7 @@ const AICAMemoryRegister = enum(u32) {
 // 00703000 - 00707FFF  00803000 - 00807FFF  DSP_DATA
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
-const EventType = enum {
-    EndOfDMA,
-    ExternalInterrupt,
-};
-
-const ScheduledEvents = struct {
-    event_type: EventType,
-    cycles: u32,
-};
-
-pub const DisableARMCore: bool = false; // FIXME: Temp debug.
+pub const DisableARMCore: bool = true; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
@@ -183,8 +173,6 @@ pub const AICA = struct {
 
     rtc_write_enabled: bool = false,
 
-    events: std.ArrayList(ScheduledEvents) = undefined,
-
     _arm_cycles_counter: i32 = 0,
     _timer_counters: [3]u32 = .{0} ** 3,
 
@@ -195,7 +183,6 @@ pub const AICA = struct {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = try allocator.alloc(u8, 0x200000),
-            .events = std.ArrayList(ScheduledEvents).init(allocator),
             ._allocator = allocator,
         };
         @memset(r.regs, 0);
@@ -235,7 +222,6 @@ pub const AICA = struct {
         self.arm_jit.deinit();
         self._allocator.free(self.regs);
         self._allocator.free(self.wave_memory);
-        self.events.deinit();
     }
 
     pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
@@ -350,10 +336,10 @@ pub const AICA = struct {
             },
             .MCIPD => {
                 if (T == u32) {
-                    aica_log.info("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
+                    aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
                     if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).*.SCPU == 1) {
-                        aica_log.info(termcolor.green("SCPU interrupt"), .{});
-                        self.events.append(.{ .event_type = .ExternalInterrupt, .cycles = 0 }) catch unreachable;
+                        aica_log.warn(termcolor.green("SCPU interrupt"), .{});
+                        // TODO!
                     }
                 } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
             },
@@ -465,27 +451,7 @@ pub const AICA = struct {
         self.write_register(u32, addr, value);
     }
 
-    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) !void {
-        if (self.events.items.len > 0) {
-            var index: u32 = 0;
-            while (index < self.events.items.len) {
-                if (self.events.items[index].cycles < cycles) {
-                    switch (self.events.items[index].event_type) {
-                        .EndOfDMA => {
-                            self.end_dma(dc);
-                        },
-                        .ExternalInterrupt => {
-                            dc.raise_external_interrupt(.{ .AICA = 1 }); // FIXME: I'm not sure this is actually what we're meant to do here.
-                        },
-                    }
-                    _ = self.events.swapRemove(index);
-                } else {
-                    self.events.items[index].cycles -= cycles;
-                    index += 1;
-                }
-            }
-        }
-
+    pub fn update(self: *AICA, _: *Dreamcast, cycles: u32) !void {
         const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
         for (0..3) |i| {
             var timer = self.get_reg(TimerControl, timer_registers[i]);
@@ -599,7 +565,7 @@ pub const AICA = struct {
         dc.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
 
         // Schedule the end of the transfer interrupt
-        self.events.append(.{ .event_type = .EndOfDMA, .cycles = 10 * len_in_bytes }) catch unreachable; // FIXME: Compute the actual cycle count.
+        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 10 * len_in_bytes); // FIXME: Compute the actual cycle count.
     }
 
     fn end_dma(_: *AICA, dc: *Dreamcast) void {
@@ -625,7 +591,7 @@ pub const AICA = struct {
         // Set "DMA Suspend or DMA Stop" bit in SB_ADSUSP
         dc.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
 
-        dc.schedule_interrupt(.{ .EoD_AICA = 1 }, 200);
-        dc.schedule_external_interrupt(.{ .AICA = 1 }, 200);
+        dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
+        dc.raise_external_interrupt(.{ .AICA = 1 });
     }
 };

@@ -28,14 +28,20 @@ const CableType = enum(u16) {
     Composite = 3,
 };
 
+const Callback = struct {
+    function: *const fn (*anyopaque, *Dreamcast) void,
+    context: *anyopaque,
+};
+
 const ScheduledInterrupt = struct {
     const InterruptType = enum { Normal, External };
 
     trigger_cycle: u64,
-    interrupt: union(InterruptType) {
+    interrupt: ?union(InterruptType) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
     },
+    callback: ?Callback,
 
     fn compare(context: void, a: ScheduledInterrupt, b: ScheduledInterrupt) std.math.Order {
         _ = context;
@@ -325,14 +331,32 @@ pub const Dreamcast = struct {
 
     // TODO: Add helpers for external interrupts and errors.
 
+    pub fn schedule_event(self: *@This(), callback: Callback, cycles: u32) void {
+        self.scheduled_interrupts.add(.{
+            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+            .callback = callback,
+            .interrupt = null,
+        }) catch |err| {
+            std.debug.panic("Failed to schedule event: {}", .{err});
+        };
+    }
+
     pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
-        self.scheduled_interrupts.add(.{ .trigger_cycle = self._scheduled_interrupts_cycles +% cycles, .interrupt = .{ .Normal = int } }) catch |err| {
+        self.scheduled_interrupts.add(.{
+            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+            .interrupt = .{ .Normal = int },
+            .callback = null,
+        }) catch |err| {
             std.debug.panic("Failed to schedule interrupt: {}", .{err});
         };
     }
 
     pub fn schedule_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT, cycles: u32) void {
-        self.scheduled_interrupts.add(.{ .trigger_cycle = self._scheduled_interrupts_cycles +% cycles, .interrupt = .{ .External = int } }) catch |err| {
+        self.scheduled_interrupts.add(.{
+            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+            .interrupt = .{ .External = int },
+            .callback = null,
+        }) catch |err| {
             std.debug.panic("Failed to schedule external interrupt: {}", .{err});
         };
     }
@@ -342,9 +366,14 @@ pub const Dreamcast = struct {
             self._scheduled_interrupts_cycles += cycles;
             while (self.scheduled_interrupts.peek()) |event| {
                 if (event.trigger_cycle <= self._scheduled_interrupts_cycles) {
-                    switch (event.interrupt) {
-                        .Normal => self.raise_normal_interrupt(event.interrupt.Normal),
-                        .External => self.raise_external_interrupt(event.interrupt.External),
+                    if (event.interrupt) |int| {
+                        switch (int) {
+                            .Normal => self.raise_normal_interrupt(int.Normal),
+                            .External => self.raise_external_interrupt(int.External),
+                        }
+                    }
+                    if (event.callback) |callback| {
+                        callback.function(callback.context, self);
                     }
                     _ = self.scheduled_interrupts.remove();
                 } else break;
