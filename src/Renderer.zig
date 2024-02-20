@@ -378,6 +378,15 @@ const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
     .attributes = &vertex_attributes,
 }};
 
+const modifier_volume_vertex_attributes = [_]wgpu.VertexAttribute{
+    .{ .format = .float32x4, .offset = 0, .shader_location = 0 },
+};
+const modifier_volume_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+    .array_stride = 4 * @sizeOf(f32),
+    .attribute_count = modifier_volume_vertex_attributes.len,
+    .attributes = &modifier_volume_vertex_attributes,
+}};
+
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
@@ -777,6 +786,8 @@ pub const Renderer = struct {
         const blend_pipeline = gctx.createComputePipeline(blend_pipeline_layout, blend_pipeline_descriptor);
 
         // Modifier Volumes
+        // Implemented using a stencil buffer and the shadow volume algorithm.
+        // This first pipeline takes the previous depth buffer and the modifier volume to generate the stencil buffer.
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "vs");
         defer modifier_volume_vertex_shader_module.release();
@@ -791,12 +802,12 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = vertex_buffers.len,
-                .buffers = &vertex_buffers,
+                .buffer_count = modifier_volume_vertex_buffers.len,
+                .buffers = &modifier_volume_vertex_buffers,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
-                .cull_mode = .none, // Can we do it in a single pass using stencil_front/stencil_back?
+                .cull_mode = .none,
                 .topology = .triangle_list,
             },
             .depth_stencil = &wgpu.DepthStencilState{
@@ -805,13 +816,13 @@ pub const Renderer = struct {
                 .depth_compare = .less,
                 .stencil_front = .{
                     .compare = .always,
-                    .fail_op = .keep,
-                    .pass_op = .increment_wrap,
-                    .depth_fail_op = .keep,
+                    .fail_op = .increment_wrap, // Stencil test failed (we don't care about the stencil test here)
+                    .pass_op = .increment_wrap, // Stencil test passed
+                    .depth_fail_op = .keep, // Stencil test passed, but depth test failed (this is what we care about, with the front face/back face distinction)
                 },
                 .stencil_back = .{
                     .compare = .always,
-                    .fail_op = .keep,
+                    .fail_op = .decrement_wrap,
                     .pass_op = .decrement_wrap,
                     .depth_fail_op = .keep,
                 },
@@ -826,7 +837,7 @@ pub const Renderer = struct {
         const modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, modifier_volume_first_pass_pipeline_descriptor);
 
         const modifier_volume_bind_group = gctx.createBindGroup(modifier_volume_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
+            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
         });
 
         // Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
@@ -1570,7 +1581,7 @@ pub const Renderer = struct {
         self.max_depth = 0.0;
 
         const fpu_shad_scale = gpu._get_register(u32, .FPU_SHAD_SCALE).*;
-        self.fpu_shad_scale = if ((fpu_shad_scale & 0x10) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
+        self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
 
         const col_pal = gpu._get_register(HollyModule.PackedColor, .FOG_COL_RAM).*;
         const col_vert = gpu._get_register(HollyModule.PackedColor, .FOG_COL_VERT).*;
@@ -2207,7 +2218,7 @@ pub const Renderer = struct {
                         .depth_store_op = .store,
                         .depth_clear_value = 1.0,
                         .depth_read_only = false,
-                        .stencil_load_op = .load,
+                        .stencil_load_op = .clear,
                         .stencil_store_op = .store,
                         .stencil_clear_value = 0,
                         .stencil_read_only = false,
@@ -2233,8 +2244,10 @@ pub const Renderer = struct {
                         pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                     }
                 }
+                //  Samples from resized_framebuffer_copy_texture_view and writes to resized_framebuffer_texture_view.
+                //  There's probably a better way to handle that...
                 //  - Apply shadow modifier
-                //  - TODO: Draw 'Two Volumes' polygons where stencil == 0
+                //  - TODO: Apply 'Two Volumes' shading for corresponding polygons.
                 {
                     const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                     const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
@@ -2282,7 +2295,7 @@ pub const Renderer = struct {
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
-                // FIXME: Yeah, I know. 1sec.
+                // Copy the result to resized_framebuffer_copy_texture_view too.
                 encoder.copyTextureToTexture(
                     .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
                     .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
