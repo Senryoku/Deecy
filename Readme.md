@@ -14,10 +14,11 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 -   The whole AICA Chip. Please have mercy.
 -   Renderer:
     - Modifier Volumes.
-        - Implemented: Shadow bit over opaque geometry.
-        - Handle polygons with 'Two Volumes' (another way to use the modifier volumes).
-        - TODO: Both steps, but for the translucent pass.
-    - Fog.
+        - Implemented: Inclusion volumes and shadow bit over opaque geometry.
+        - TODO: Exclusion volumes.
+        - TODO: Handle polygons with 'Two Volumes' (another way to use the modifier volumes).
+        - TODO: Same, but for the translucent pass.
+    - Fog LUT Mode 2.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
     - Handle and generate Mipmaps.
     - Sort-DMA?

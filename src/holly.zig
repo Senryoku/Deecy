@@ -1413,7 +1413,6 @@ pub const Holly = struct {
                 if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
                     const modifier_volume = @as(*ModifierVolumeGlobalParameter, @ptrCast(&self._ta_command_buffer));
                     // New modifier volume starts
-                    std.debug.print("  modifier_volume: {d} {any}\n", .{ modifier_volume.*.parameter_control_word.obj_control.volume, modifier_volume.*.instructions });
                     self.check_end_of_modifier_volume();
                     if (self._ta_current_volume == null) {
                         self._ta_current_volume = .{
@@ -1539,11 +1538,6 @@ pub const Holly = struct {
             if (self._ta_current_volume) |*volume| {
                 // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volume can also be clipped.
 
-                if (self._ta_volume_triangles.items.len < volume.first_triangle_index) {
-                    std.debug.print("  self._ta_volume_triangles.items.len < volume.first_triangle_index?\n", .{});
-                    @panic("WTF is going on here?");
-                }
-
                 volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
                 if (volume.triangle_count > 0) {
                     if (self._ta_list_type.? == .OpaqueModifierVolume) {
@@ -1551,8 +1545,7 @@ pub const Holly = struct {
                     } else {
                         self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
                     }
-                    std.debug.print(" ====> Modifier volume: {any}\n", .{volume.triangle_count});
-                } else std.debug.print("  Modifier volume without any triangle?\n", .{});
+                }
                 self._ta_current_volume = null;
             }
         }

@@ -2167,12 +2167,7 @@ pub const Renderer = struct {
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
-                // Draw the passes in order.
-                //   Opaque
-                //   Punch Through (Same as opaque, but discarding pixels with alpha = 0.0)
-                //   Opaque (and Punch Through) Modifier Volume
-                //   Translucent
-                //   Translucent Modifier Volume:
+                // Opaque and PunchThrough geometry
                 inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough }) |list_type| {
                     var it = self.passes[@intFromEnum(list_type)].pipelines.iterator();
                     while (it.next()) |entry| {
@@ -2388,6 +2383,8 @@ pub const Renderer = struct {
                     pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                 }
             }
+
+            // TODO: Translucent Modifier Volume
 
             break :commands encoder.finish(null);
         };

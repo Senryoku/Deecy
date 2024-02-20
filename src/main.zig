@@ -294,24 +294,22 @@ pub fn main() !void {
         try d.renderer.render(); // FIXME: Render every frame to capture
         d.renderer.draw(); //  Blit to screen
 
-        if (false) {
-            const commands = commands: {
-                const encoder = d.gctx.device.createCommandEncoder(null);
-                defer encoder.release();
+        const commands = commands: {
+            const encoder = d.gctx.device.createCommandEncoder(null);
+            defer encoder.release();
 
-                // GUI pass
-                {
-                    const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                    defer zgpu.endReleasePass(pass);
-                    zgui.backend.draw(pass);
-                }
+            // GUI pass
+            {
+                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+                defer zgpu.endReleasePass(pass);
+                zgui.backend.draw(pass);
+            }
 
-                break :commands encoder.finish(null);
-            };
-            defer commands.release();
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
 
-            d.gctx.submit(&.{commands});
-        }
+        d.gctx.submit(&.{commands});
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.renderer.on_resize();
