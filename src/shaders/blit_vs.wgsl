@@ -1,8 +1,9 @@
 struct VertexOut {
      @builtin(position) position_clip: vec4<f32>,
      @location(0) uv: vec2<f32>,
- }
- @vertex
+}
+
+@vertex
 fn main(
     @location(0) position: vec2<f32>,
     @location(1) uv: vec2<f32>,

@@ -389,6 +389,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.begin("Renderer", .{})) {
             zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
             zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
+            zgui.text("FPU_SHAD_SCALE: {d: >4.2}", .{d.renderer.fpu_shad_scale});
             if (zgui.collapsingHeader("Fog", .{})) {
                 zgui.text("Fog Density: {d: >4.2}", .{d.renderer.fog_density});
                 _ = zgui.colorEdit4("Fog Pal", .{ .col = @as([*]f32, @ptrCast(&d.renderer.fog_col_pal))[0..4] });

@@ -701,7 +701,7 @@ const ModifierVolumeParameter = packed struct(u512) {
     _ignored: u192,
 };
 
-const ModifierVolume = struct {
+pub const ModifierVolume = struct {
     parameter_control_word: ParameterControlWord,
     instructions: ModifierVolumeInstruction,
     first_triangle_index: u32,
@@ -1294,6 +1294,7 @@ pub const Holly = struct {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
+                    self._ta_current_volume = null;
                     self._ta_user_tile_clip = null;
 
                     self._ta_opaque_modifier_volumes.clearRetainingCapacity();
@@ -1360,6 +1361,7 @@ pub const Holly = struct {
         switch (parameter_control_word.parameter_type) {
             // Control Parameters
             .EndOfList => {
+                self.check_end_of_modifier_volume();
                 if (self._ta_list_type) |list| { // Apprently this happens?... Why would a game do this?
                     // Fire corresponding interrupt. FIXME: Delay is completely arbitrary, I just need to delay them for testing, for now.
                     self._dc.schedule_interrupt(switch (list) {
@@ -1374,8 +1376,8 @@ pub const Holly = struct {
                         },
                     }, 800);
                 }
-                self._ta_list_type = null;
                 self._ta_current_polygon = null;
+                self._ta_list_type = null;
             },
             .UserTileClip => {
                 const user_tile_clip = @as(*const UserTileClip, @ptrCast(&self._ta_command_buffer)).*;
@@ -1409,14 +1411,17 @@ pub const Holly = struct {
                 }
 
                 if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
-                    if (self._ta_current_volume != null) // Might be unnecessary
-                        self.end_of_modifier_volume();
                     const modifier_volume = @as(*ModifierVolumeGlobalParameter, @ptrCast(&self._ta_command_buffer));
-                    self._ta_current_volume = .{
-                        .parameter_control_word = modifier_volume.*.parameter_control_word,
-                        .instructions = modifier_volume.*.instructions,
-                        .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
-                    };
+                    // New modifier volume starts
+                    std.debug.print("  modifier_volume: {d} {any}\n", .{ modifier_volume.*.parameter_control_word.obj_control.volume, modifier_volume.*.instructions });
+                    self.check_end_of_modifier_volume();
+                    if (self._ta_current_volume == null) {
+                        self._ta_current_volume = .{
+                            .parameter_control_word = modifier_volume.*.parameter_control_word,
+                            .instructions = modifier_volume.*.instructions,
+                            .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
+                        };
+                    }
                 } else {
                     // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."
                     const global_parameter = @as(*GenericGlobalParameter, @ptrCast(&self._ta_command_buffer));
@@ -1459,8 +1464,9 @@ pub const Holly = struct {
                 if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
                     if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
                     self._ta_volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
-                    if (parameter_control_word.obj_control.volume == 1)
-                        self.end_of_modifier_volume();
+                    // NOTE: I feel like the documentation contradicts itself here, volume == 1 is said to indicate the last triangle of a modifier volume,
+                    //       but the example use an extra global parameter to end the modifier volume. The later seem correct in practice.
+                    //           if (parameter_control_word.obj_control.volume == 1) end_volume()?
                 } else {
                     if (self._ta_current_polygon == null) {
                         holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
@@ -1528,15 +1534,27 @@ pub const Holly = struct {
         self._ta_command_buffer_index = 0;
     }
 
-    fn end_of_modifier_volume(self: *@This()) void {
-        if (self._ta_current_volume) |*volume| {
-            volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
-            if (self._ta_list_type.? == .OpaqueModifierVolume) {
-                self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
-            } else {
-                self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+    fn check_end_of_modifier_volume(self: *@This()) void {
+        if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
+            if (self._ta_current_volume) |*volume| {
+                // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volume can also be clipped.
+
+                if (self._ta_volume_triangles.items.len < volume.first_triangle_index) {
+                    std.debug.print("  self._ta_volume_triangles.items.len < volume.first_triangle_index?\n", .{});
+                    @panic("WTF is going on here?");
+                }
+
+                volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
+                if (volume.triangle_count > 0) {
+                    if (self._ta_list_type.? == .OpaqueModifierVolume) {
+                        self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
+                    } else {
+                        self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+                    }
+                    std.debug.print(" ====> Modifier volume: {any}\n", .{volume.triangle_count});
+                } else std.debug.print("  Modifier volume without any triangle?\n", .{});
+                self._ta_current_volume = null;
             }
-            self._ta_current_volume = null;
         }
     }
 
