@@ -1420,6 +1420,9 @@ pub const Holly = struct {
                             .instructions = modifier_volume.*.instructions,
                             .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
                         };
+                        if (modifier_volume.*.instructions.volume_instruction == .OutsideLastPolygon) {
+                            holly_log.warn("Unsupported Exclusion Modifier Volume.", .{});
+                        }
                     }
                 } else {
                     // NOTE: "Four bits in the ISP/TSP Instruction Word are overwritten with the corresponding bit values from the Parameter Control Word."

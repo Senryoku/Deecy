@@ -89,7 +89,8 @@ const ShadingInstructions = packed struct(u32) {
     depth_compare: HollyModule.DepthCompareMode,
     fog_control: HollyModule.FogControl,
     offset_bit: u1,
-    _: u10 = 0,
+    shadow_bit: u1,
+    _: u9 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -111,7 +112,7 @@ const VertexTextureInfo = packed struct {
 const Uniforms = extern struct {
     depth_min: f32,
     depth_max: f32,
-    _padding: f32 = 0,
+    fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16?
     fog_col_pal: fRGBA align(16),
     fog_col_vert: fRGBA align(16),
@@ -442,6 +443,8 @@ pub const Renderer = struct {
     // Framebuffer at window resolution to draw on
     resized_framebuffer_texture: zgpu.TextureHandle = undefined,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle = undefined,
+    resized_framebuffer_area1_texture: zgpu.TextureHandle = undefined,
+    resized_framebuffer_area1_texture_view: zgpu.TextureViewHandle = undefined,
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
     resized_framebuffer_copy_texture: zgpu.TextureHandle = undefined,
@@ -486,13 +489,22 @@ pub const Renderer = struct {
 
         renderer_log.info("Creating Pipeline: {any}", .{key});
 
-        const color_targets = [_]wgpu.ColorTargetState{.{
-            .format = zgpu.GraphicsContext.swapchain_format,
-            .blend = &wgpu.BlendState{
-                .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
-                .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero }, // FIXME: Not sure about this.
+        const color_targets = [_]wgpu.ColorTargetState{
+            .{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero }, // FIXME: Not sure about this.
+                },
             },
-        }};
+            .{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
+                },
+            },
+        };
 
         const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
@@ -846,8 +858,7 @@ pub const Renderer = struct {
             defer mv_apply_fragment_shader_module.release();
 
             const mv_apply_bind_group_layout = gctx.createBindGroupLayout(&.{
-                zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
-                zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d, false),
+                zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
             });
             const mv_apply_pipeline_layout = gctx.createPipelineLayout(&.{
                 mv_apply_bind_group_layout,
@@ -1474,6 +1485,7 @@ pub const Renderer = struct {
                 .depth_compare = isp_tsp_instruction.depth_compare_mode,
                 .fog_control = tsp_instruction.fog_control,
                 .offset_bit = isp_tsp_instruction.offset,
+                .shadow_bit = 0,
             },
         };
 
@@ -1541,7 +1553,7 @@ pub const Renderer = struct {
         // NOTE: MetalliC's comment about background rendering:
         //       "it's a bit brainfuck, and I don't think it was documented anywhere how exactly PVR2 background rendered...
         //        in short - it takes 3 vertices and calculate interpolation, UV, shading etc coefficients as for triangle rendering. but iterate these coefficients to fill the whole screen"
-        //  Example of an effect that my current "solution" will fail to render correctly (Noami example, but there might be some in the DC library too): https://youtu.be/gtIwGUG9iZk?t=127
+        //  Example of an effect that my current "solution" will fail to render correctly (Naomi example, but there might be some in the DC library too): https://youtu.be/gtIwGUG9iZk?t=127
         const screen_width: f32 = 640.0; // FIXME: Hack within a hack, hardcording the screen size too.
         const screen_height: f32 = 480.0;
         vertices[0].x = 0.0;
@@ -1727,6 +1739,7 @@ pub const Renderer = struct {
                         .depth_compare = isp_tsp_instruction.depth_compare_mode,
                         .fog_control = tsp_instruction.fog_control,
                         .offset_bit = isp_tsp_instruction.offset,
+                        .shadow_bit = parameter_control_word.obj_control.shadow,
                     },
                 };
 
@@ -2115,6 +2128,7 @@ pub const Renderer = struct {
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
             uniform_mem.slice[0].depth_max = self.max_depth;
+            uniform_mem.slice[0].fpu_shad_scale = self.fpu_shad_scale;
             uniform_mem.slice[0].fog_col_pal = self.fog_col_pal;
             uniform_mem.slice[0].fog_col_vert = self.fog_col_vert;
             uniform_mem.slice[0].fog_density = self.fog_density;
@@ -2123,12 +2137,18 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth_texture_view).?;
 
+            // TODO: Modify the passes to have two ouputs: one for area 0 and one for area 1 (pixels without shadow bit and 'two volumes' will simply output the same color twice)
+            //       Then the 'apply' pass of the modifier volume will simply select between the two outputs, rather than doing any computation.
             {
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{ .{
                     .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
                     .load_op = if (self.read_framebuffer_enabled) .load else .clear,
                     .store_op = .store,
-                }};
+                }, .{
+                    .view = gctx.lookupResource(self.resized_framebuffer_area1_texture_view).?,
+                    .load_op = .clear,
+                    .store_op = .store,
+                } };
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
                     .depth_load_op = .clear,
@@ -2239,18 +2259,12 @@ pub const Renderer = struct {
                         pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                     }
                 }
-                //  Samples from resized_framebuffer_copy_texture_view and writes to resized_framebuffer_texture_view.
-                //  There's probably a better way to handle that...
-                //  - Apply shadow modifier
-                //  - TODO: Apply 'Two Volumes' shading for corresponding polygons.
+                // Copy 'area 1' colors where the stencil buffer is non-zero.
                 {
                     const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                     const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                     const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
                     const dest_view = gctx.lookupResource(self.resized_framebuffer_texture_view).?;
-
-                    const mva_uniform_mem = gctx.uniformsAllocate(struct { fpu_shad_scale: f32 }, 1);
-                    mva_uniform_mem.slice[0].fpu_shad_scale = self.fpu_shad_scale;
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
@@ -2285,7 +2299,7 @@ pub const Renderer = struct {
                     pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
                     pass.setPipeline(gctx.lookupResource(self.modifier_volume_apply_pipeline).?);
-                    pass.setBindGroup(0, mva_bind_group, &.{mva_uniform_mem.offset});
+                    pass.setBindGroup(0, mva_bind_group, &.{});
 
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
@@ -2474,11 +2488,15 @@ pub const Renderer = struct {
         self.depth_only_texture_view = depth.depth_only_view;
 
         // Same thing for our screen size framebuffer.
-        const resized_framebuffer = create_resized_framebuffer_texture(self._gctx, true);
+        const resized_framebuffer = create_resized_framebuffer_texture(self._gctx, true, false);
         self.resized_framebuffer_texture = resized_framebuffer.texture;
         self.resized_framebuffer_texture_view = resized_framebuffer.view;
 
-        const resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, false);
+        const resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, false, false);
+        self.resized_framebuffer_area1_texture = resized_framebuffer_area1.texture;
+        self.resized_framebuffer_area1_texture_view = resized_framebuffer_area1.view;
+
+        const resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, false, true);
         self.resized_framebuffer_copy_texture = resized_framebuffer_copy.texture;
         self.resized_framebuffer_copy_texture_view = resized_framebuffer_copy.view;
 
@@ -2491,14 +2509,12 @@ pub const Renderer = struct {
         });
 
         const mv_apply_bind_group_layout = self._gctx.createBindGroupLayout(&.{
-            zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
-            zgpu.textureEntry(1, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
         });
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(f32) },
-            .{ .binding = 1, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1_texture_view },
         });
 
         self.create_oit_buffers();
@@ -2531,7 +2547,7 @@ pub const Renderer = struct {
         return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
     }
 
-    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, copy_src: bool) struct {
+    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, copy_src: bool, copy_dst: bool) struct {
         texture: zgpu.TextureHandle,
         view: zgpu.TextureViewHandle,
     } {
@@ -2541,7 +2557,7 @@ pub const Renderer = struct {
                 .texture_binding = true,
                 .storage_binding = true,
                 .copy_src = copy_src, // FIXME: This should not be needed (wgpu doesn't support reading from storage textures...)
-                .copy_dst = !copy_src,
+                .copy_dst = copy_dst,
             },
             .size = .{
                 .width = gctx.swapchain_descriptor.width,

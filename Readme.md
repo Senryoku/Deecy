@@ -15,6 +15,7 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 -   Renderer:
     - Modifier Volumes.
         - Implemented: Inclusion volumes and shadow bit over opaque geometry.
+        - FIXME: Actually honor the shadow bit, this currently assumes it's always on. 
         - TODO: Exclusion volumes.
         - TODO: Handle polygons with 'Two Volumes' (another way to use the modifier volumes).
         - TODO: Same, but for the translucent pass.

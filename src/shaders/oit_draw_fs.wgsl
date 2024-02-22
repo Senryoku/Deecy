@@ -67,12 +67,11 @@ fn main(
         default: {}
     }
 
-    var final_color: vec4<f32> = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w);
+    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w);
 
     // Add the fragment to the linked list
 
-    // The index in the heads buffer corresponding to the head data for the fragment at
-    // the current location.
+    // The index in the heads buffer corresponding to the head data for the fragment at the current location.
     let heads_index = (u32(frag_coords.y) - oit_uniforms.start_y) * oit_uniforms.target_width + u32(frag_coords.x);
     
     // The index in the linkedList buffer at which to store the new fragment
@@ -82,7 +81,7 @@ fn main(
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position.z;
-        linked_list.data[frag_index].color = final_color;
+        linked_list.data[frag_index].color = final_color.area0; // TODO: Handle Modifier volumes/Area 1
         linked_list.data[frag_index].blend_mode = (tex[1] >> 10) & 0x3F;
         linked_list.data[frag_index].next = last_head;
     }
