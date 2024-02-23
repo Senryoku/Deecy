@@ -1,7 +1,7 @@
 struct Uniforms {
     depth_min: f32,
     depth_max: f32,
-	fpu_shad_scale: f32,
+    fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16? 
     fog_col_pal: vec4<f32>,
     fog_col_vert: vec4<f32>,

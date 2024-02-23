@@ -291,7 +291,9 @@ pub fn main() !void {
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
         }
-        try d.renderer.render(); // FIXME: Render every frame to capture
+        // FIXME: Complete render every frame to help capture debugging, this could be called only on render_start.
+        try d.renderer.render();
+
         d.renderer.draw(); //  Blit to screen
 
         const commands = commands: {
