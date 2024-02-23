@@ -17,7 +17,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"./bin/Soul Calibur (US)[4S T-1401N]/Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
+				"./bin/Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi",
 				"--skip-bios"
 			],
 			"cwd": "${workspaceFolder}",

@@ -3,4 +3,4 @@
 	url = https://github.com/Senryoku/arm7.git
 [submodule "libs/zig-gamedev"]
 	path = libs/zig-gamedev
-	url = https://github.com/Senryoku/zig-gamedev.git
+	url = https://github.com/zig-gamedev/zig-gamedev.git

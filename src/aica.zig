@@ -29,6 +29,27 @@ const PlayControl = packed struct(u32) {
     _1: u16 = 0,
 };
 
+const ChannelInfoReq = packed struct(u32) {
+    MIDIOutputBuffer: u8,
+    MonitorSelect: u6,
+    AmplitudeOrFilterSelect: u1,
+    _: u17 = 0,
+};
+
+const EnvelopeState = enum(u2) {
+    Attack = 0,
+    Decay = 1,
+    Sustain = 2,
+    Release = 3,
+};
+
+const PlayStatus = packed struct(u32) {
+    EnvelopeLevel: u13,
+    EnvelopeState: EnvelopeState,
+    LoopEndFlag: u1,
+    _: u16 = 0,
+};
+
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
     play_control: PlayControl,
@@ -54,11 +75,11 @@ pub const AICAChannel = packed struct(u576) {
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
 pub const AICARegister = enum(u32) {
     MasterVolume = 0x00002800,
-    TESTB0 = 0x00002804,
-    _00702808 = 0x00002808,
-    AFSET = 0x0000280C,
-    _00702810 = 0x00002810,
-    CA = 0x00002814,
+    RingBufferAddress = 0x00002804,
+    MIDIInput = 0x00002808,
+    ChannelInfoReq = 0x0000280C,
+    PlayStatus = 0x00002810,
+    PlayPosition = 0x00002814,
 
     IC_TEST = 0x00002880,
     DMEA = 0x00002884,
@@ -159,10 +180,11 @@ const AICAMemoryRegister = enum(u32) {
 // 00703000 - 00707FFF  00803000 - 00807FFF  DSP_DATA
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
-pub const DisableARMCore: bool = true; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
+pub const DisableARMCore: bool = false; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
+    const SH4CyclesPerSample = 4535; // FIXME
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = true,
@@ -174,6 +196,7 @@ pub const AICA = struct {
     rtc_write_enabled: bool = false,
 
     _arm_cycles_counter: i32 = 0,
+    _timer_cycles_counter: u32 = 0,
     _timer_counters: [3]u32 = .{0} ** 3,
 
     _allocator: std.mem.Allocator = undefined,
@@ -253,13 +276,17 @@ pub const AICA = struct {
         @as(*T, @alignCast(@ptrCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).* = value;
     }
 
+    pub fn get_channel(self: *const AICA, number: u8) *const AICAChannel {
+        std.debug.assert(number < 64);
+        return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
+    }
+
     fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
-    pub fn get_channel(self: *const AICA, number: u8) *const AICAChannel {
-        std.debug.assert(number < 64);
-        return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
+    pub fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
+        return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4]))).*;
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
@@ -269,6 +296,24 @@ pub const AICA = struct {
 
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
             .MasterVolume => return 0x10,
+            .PlayStatus => {
+                // TODO:
+                const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
+                const channel = self.get_channel(req.MonitorSelect);
+                _ = channel;
+                const status = PlayStatus{
+                    .EnvelopeLevel = 0x1FFF,
+                    .EnvelopeState = .Release,
+                    .LoopEndFlag = 1, // Should be cleared on read, I'm just testing stuff.
+                };
+                return @truncate(@as(u32, @bitCast(status)));
+            },
+            .PlayPosition => {
+                const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
+                _ = req;
+                // TODO: Current sample position from the requested channel
+                return 0x0;
+            },
             else => {},
         }
 
@@ -342,6 +387,9 @@ pub const AICA = struct {
                         // TODO!
                     }
                 } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
+            },
+            .MCIRE => { // Clear interrupt(s)
+                self.get_reg(u32, .MCIPD).* &= ~value;
             },
             .ARMRST => {
                 aica_log.info("ARM reset : {d}", .{value & 1});
@@ -452,38 +500,39 @@ pub const AICA = struct {
     }
 
     pub fn update(self: *AICA, _: *Dreamcast, cycles: u32) !void {
-        const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
-        for (0..3) |i| {
-            var timer = self.get_reg(TimerControl, timer_registers[i]);
-            self._timer_counters[i] += 1; // FIXME: This should be counting samples, not whatever this is!
-            // FIXME: Remove this random 1024 factor which is only there to slow down the interrupts.
-            const scaled = 1024 * @as(u32, 1) << timer.prescale;
-            if (self._timer_counters[i] >= scaled) {
-                self._timer_counters[i] -= scaled;
-                if (timer.value == 0xFF) {
-                    self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
-                    if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
-                        aica_log.debug("Timer {d} interrupt.", .{i});
-                        if (i == 0) {
-                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 2) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0);
-                        } else {
-                            // Timer B and C share the same INTReq number.
-                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 2) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0);
-                        }
-                        self.arm7.fast_interrupt_request();
-                    }
-                    timer.value = 0;
-                } else timer.value += 1;
-            }
-        }
-
         if (self.arm7.running and !DisableARMCore) {
-            self._arm_cycles_counter += @intCast(cycles);
+            self._timer_cycles_counter += @intCast(cycles);
+            const timer_advance = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+            self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+            const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+            for (0..3) |i| {
+                var timer = self.get_reg(TimerControl, timer_registers[i]);
+                self._timer_counters[i] += timer_advance;
+                const scaled = @as(u32, 1) << timer.prescale;
+                if (self._timer_counters[i] >= scaled) {
+                    self._timer_counters[i] -= scaled;
+                    if (timer.value == 0xFF) {
+                        self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
+                        if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
+                            aica_log.debug("Timer {d} interrupt.", .{i});
+                            if (i == 0) {
+                                self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 2) |
+                                    (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
+                                    (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0);
+                            } else {
+                                // Timer B and C share the same INTReq number.
+                                self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 2) |
+                                    (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
+                                    (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0);
+                            }
+                            self.arm7.fast_interrupt_request();
+                        }
+                        timer.value = 0;
+                    } else timer.value += 1;
+                }
+            }
 
+            self._arm_cycles_counter += @intCast(cycles);
             if (self.enable_arm_jit) {
                 if (self._arm_cycles_counter >= ARM7CycleRatio)
                     self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
