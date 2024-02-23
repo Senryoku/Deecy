@@ -400,11 +400,9 @@ pub const Dreamcast = struct {
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
         if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL9);
-        }
-        if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
+        } else if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL11);
-        }
-        if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
+        } else if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
             self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
         }
     }

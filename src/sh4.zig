@@ -481,7 +481,7 @@ pub const SH4 = struct {
                 // TODO: Search the highest priority interrupt.
                 const first_set = @ctz(self.interrupt_requests);
                 // Check it against the cpu interrupt mask
-                if (Interrupts.InterruptLevel[first_set] >= self.sr.imask) {
+                if (Interrupts.InterruptLevel[first_set] > self.sr.imask) {
                     self.interrupt_requests &= ~(@as(u64, 1) << @truncate(first_set)); // Clear the request
                     self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
                     self.jump_to_interrupt();
