@@ -2297,10 +2297,10 @@ pub const Renderer = struct {
 
                     pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                     pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-
                     pass.setPipeline(gctx.lookupResource(self.modifier_volume_apply_pipeline).?);
                     pass.setBindGroup(0, mva_bind_group, &.{});
 
+                    pass.setStencilReference(0);
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
