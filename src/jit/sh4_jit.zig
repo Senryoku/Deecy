@@ -1335,6 +1335,30 @@ pub fn dt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn extsb_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.movsx(.{ .reg = rn }, .{ .reg8 = rn });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.movsx(rn, .{ .reg8 = rm });
+    }
+    return false;
+}
+
+pub fn extsw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.movsx(.{ .reg = rn }, .{ .reg16 = rn });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.movsx(rn, .{ .reg16 = rm });
+    }
+    return false;
+}
+
 pub fn extub_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
