@@ -1187,7 +1187,7 @@ pub const Holly = struct {
         const cycles_per_pixel = 7; // FIXME: Approximation. ~200/27.
 
         if (self._tmp_cycles >= cycles_per_pixel) {
-            const start_pixel = self._tmp_cycles;
+            const start_pixel = self._pixel;
             self._pixel += self._tmp_cycles / cycles_per_pixel;
             self._tmp_cycles %= cycles_per_pixel;
 

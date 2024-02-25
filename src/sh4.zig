@@ -1278,7 +1278,7 @@ pub const SH4 = struct {
                         return;
                     },
                     else => {
-                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, P4.getP4RegisterName(addr), value });
+                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
                     },
                 }
             },
