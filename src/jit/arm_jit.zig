@@ -532,7 +532,7 @@ fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) 
 fn handle_branch(b: *JITBlock, _: *JITContext, instruction: u32) !bool {
     const inst: arm7.BranchInstruction = @bitCast(instruction);
 
-    const offset = arm7.sign_extend(@TypeOf(inst.offset), inst.offset) << 2;
+    const offset: u32 = arm7.sign_extend(@TypeOf(inst.offset), inst.offset) << 2;
 
     if (inst.l == 1) {
         try load_register(b, ReturnRegister, 15);
@@ -542,7 +542,7 @@ fn handle_branch(b: *JITBlock, _: *JITContext, instruction: u32) !bool {
     }
 
     // +4 to simulate next prefetch
-    try b.add(guest_register(15), .{ .imm32 = offset + 4 });
+    try b.add(guest_register(15), .{ .imm32 = offset +% 4 });
 
     return true;
 }
@@ -769,8 +769,29 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 const shift_amount = sro.shift_amount.imm;
                 switch (sro.shift_type) {
                     .LSL => try b.append(.{ .Shl = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
-                    .LSR => try b.append(.{ .Shr = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
-                    .ASR => try b.append(.{ .Sar = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .LSR => {
+                        if (shift_amount == 0) {
+                            // The form of the shift field which might be expected to correspond to LSR #0 is used to
+                            // encode LSR #32, which has a zero result with bit 31 of Rm as the carry output. Logical
+                            // shift right zero is redundant as it is the same as logical shift left zero, so the assembler
+                            // will convert LSR #0 (and ASR #0 and ROR #0) into LSL #0, and allow LSR #32 to be
+                            // specified.
+                            try b.mov(op2, .{ .imm32 = 0 });
+                        } else {
+                            try b.append(.{ .Shr = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } });
+                        }
+                    },
+                    .ASR => {
+                        if (shift_amount == 0) {
+                            // The form of the shift field which might be expected to give ASR #0 is used to encode
+                            // ASR #32. Bit 31 of Rm is again used as the carry output, and each bit of operand 2 is
+                            // also equal to bit 31 of Rm. The result is therefore all ones or all zeros, according to the
+                            // value of bit 31 of Rm.
+                            return error.ZeroASRUnimplemented;
+                        } else {
+                            try b.append(.{ .Sar = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } });
+                        }
+                    },
                     .ROR => {
                         if (shift_amount == 0) {
                             // RRX
@@ -783,7 +804,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             } else {
                 try load_register(b, ArgRegisters[1], sro.shift_amount.reg.rs);
                 try b.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0xFF } } });
-                return error.RegisterSpecifiedSROUimplemented;
+                return error.RegisterSpecifiedSROUnimplemented;
             }
         }
 

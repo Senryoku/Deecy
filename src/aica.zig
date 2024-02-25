@@ -44,10 +44,26 @@ const EnvelopeState = enum(u2) {
 };
 
 const PlayStatus = packed struct(u32) {
-    EnvelopeLevel: u13,
-    EnvelopeState: EnvelopeState,
-    LoopEndFlag: u1,
+    EnvelopeLevel: u13 = 0,
+    EnvelopeState: EnvelopeState = .Attack,
+    LoopEndFlag: u1 = 0,
     _: u16 = 0,
+};
+
+pub const AmpEnv1 = packed struct(u32) {
+    attack_rate: u5,
+    _: u1 = 0,
+    decay_rate: u5,
+    sustain_rate: u5,
+    _0: u16,
+};
+
+pub const AmpEnv2 = packed struct(u32) {
+    release_rate: u5,
+    decay_level: u5,
+    key_rate_scaling: u4,
+    link: u1,
+    _: u17 = 0,
 };
 
 // NOTE: Only the lower 16bits of each registers are actually used.
@@ -56,8 +72,8 @@ pub const AICAChannel = packed struct(u576) {
     sample_address: u32,
     loop_start: u32,
     loop_end: u32,
-    amp_env_1: u32,
-    amp_env_2: u32,
+    amp_env_1: AmpEnv1,
+    amp_env_2: AmpEnv2,
     sample_pitch_rate: u32,
     lfo_control: u32,
     dps_channel_send: u32,
@@ -172,6 +188,42 @@ const AICAMemoryRegister = enum(u32) {
     REG_ARM_FIQ_ACK = 0x00802d04,
 };
 
+pub const AICAChannelState = struct {
+    playing: bool = false,
+    status: PlayStatus = .{},
+    play_position: u32 = 0,
+
+    pub fn update(self: *@This(), samples: u32) void {
+        if (!self.playing) return;
+
+        self.play_position +%= samples;
+
+        // FIXME: Obviously wrong, just trying to vary it
+        self.status.EnvelopeState = switch (self.play_position) {
+            0x0000...0x4000 => .Attack,
+            0x4001...0x8000 => .Decay,
+            0x8001...0xC000 => .Sustain,
+            else => .Release,
+        };
+
+        if (self.status.EnvelopeState == .Attack) {
+            self.status.EnvelopeLevel -%= 1;
+        } else if (self.status.EnvelopeState == .Decay) {
+            self.status.EnvelopeLevel +%= 1;
+        }
+
+        if (self.status.EnvelopeLevel > 0x03BF) {
+            self.status.EnvelopeLevel = 0x1FFF;
+        }
+
+        if (self.status.EnvelopeState == .Release) {
+            self.playing = false;
+            self.status.EnvelopeLevel = 0x1FFF;
+            self.status.LoopEndFlag = 1;
+        }
+    }
+};
+
 // Memory Map
 // SH4 Side             Internal
 // 00800000 - 00FFFFFF  00000000 - 007FFFFF  DRAM_AREA*
@@ -192,6 +244,8 @@ pub const AICA = struct {
 
     regs: []u32 = undefined, // All registers are 32-bit afaik
     wave_memory: []u8 align(4) = undefined,
+
+    channel_states: [64]AICAChannelState = .{.{}} ** 64,
 
     rtc_write_enabled: bool = false,
 
@@ -289,7 +343,7 @@ pub const AICA = struct {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4]))).*;
     }
 
-    pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
+    pub fn read_register(self: *AICA, comptime T: type, addr: u32) T {
         const local_addr = addr & 0x0000FFFF;
 
         //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
@@ -301,18 +355,13 @@ pub const AICA = struct {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 const channel = self.get_channel(req.MonitorSelect);
                 _ = channel;
-                const status = PlayStatus{
-                    .EnvelopeLevel = 0x1FFF,
-                    .EnvelopeState = .Release,
-                    .LoopEndFlag = 1, // Should be cleared on read, I'm just testing stuff.
-                };
+                const status = self.channel_states[req.MonitorSelect].status;
+                self.channel_states[req.MonitorSelect].status.LoopEndFlag = 0;
                 return @truncate(@as(u32, @bitCast(status)));
             },
             .PlayPosition => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                _ = req;
-                // TODO: Current sample position from the requested channel
-                return 0x0;
+                return @truncate(self.channel_states[req.MonitorSelect].play_position);
             },
             else => {},
         }
@@ -338,7 +387,11 @@ pub const AICA = struct {
                     if (value & 0x1 == 1) {
                         for (0..64) |i| {
                             if (self.get_channel(@intCast(i)).play_control.key_on_bit) {
-                                // TODO!
+                                self.channel_states[i].playing = true;
+                                self.channel_states[i].play_position = 0;
+                                self.channel_states[i].status.EnvelopeLevel = 0x280;
+                                self.channel_states[i].status.EnvelopeState = .Attack;
+                                self.channel_states[i].status.LoopEndFlag = 0;
                             }
                         }
 
@@ -464,7 +517,7 @@ pub const AICA = struct {
         std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 0, s.arm7.read(u32, s.arm7.pc() - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 0)) });
     }
 
-    pub fn read8_from_arm(self: *const AICA, addr: u32) u8 {
+    pub fn read8_from_arm(self: *AICA, addr: u32) u8 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
@@ -473,7 +526,7 @@ pub const AICA = struct {
         return self.read_register(u8, addr);
     }
 
-    pub fn read32_from_arm(self: *const AICA, addr: u32) u32 {
+    pub fn read32_from_arm(self: *AICA, addr: u32) u32 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
@@ -502,12 +555,17 @@ pub const AICA = struct {
     pub fn update(self: *AICA, _: *Dreamcast, cycles: u32) !void {
         if (self.arm7.running and !DisableARMCore) {
             self._timer_cycles_counter += @intCast(cycles);
-            const timer_advance = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+            const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+
+            for (0..64) |i| {
+                self.channel_states[i].update(sample_count);
+            }
+
             self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
             const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
             for (0..3) |i| {
                 var timer = self.get_reg(TimerControl, timer_registers[i]);
-                self._timer_counters[i] += timer_advance;
+                self._timer_counters[i] += sample_count;
                 const scaled = @as(u32, 1) << timer.prescale;
                 if (self._timer_counters[i] >= scaled) {
                     self._timer_counters[i] -= scaled;
