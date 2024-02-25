@@ -1275,6 +1275,12 @@ pub fn ldsl_at_rn_inc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     return false;
 }
 
+pub fn lds_Rn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register(block, ctx, instr.nmd.n);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, .{ .reg = rn });
+    return false;
+}
+
 pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback_cached(block, ctx, instr);
     switch (ctx.fpscr_sz) {
