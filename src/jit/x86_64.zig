@@ -284,6 +284,7 @@ pub const InstructionType = enum {
     Shr,
     Sar,
     Jmp,
+    Convert,
     Div64_32, // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
 
     SaveFPRegisters,
@@ -316,6 +317,7 @@ pub const Instruction = union(InstructionType) {
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+    Convert: struct { dst: Operand, src: Operand },
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
 
     SaveFPRegisters: struct { count: u8 },
@@ -350,6 +352,7 @@ pub const Instruction = union(InstructionType) {
             .Shl => |shl| writer.print("shl {any}, {any}", .{ shl.dst, shl.amount }),
             .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
             .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
+            .Convert => |cvt| writer.print("convert {any}, {any}", .{ cvt.dst, cvt.src }),
             .Div64_32 => |div| writer.print("div64_32 {any},{any}:{any},{any},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {any}", .{instr.count}),
             .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {any}", .{instr.count}),
@@ -519,15 +522,14 @@ pub const Emitter = struct {
                     std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
                     try self.jmp(j.condition, @intCast(idx + j.dst.rel));
                 },
-                .BitTest => |b| {
-                    try self.bit_test(b.reg, b.offset);
-                },
+                .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Rol => |r| try self.rol(r.dst, r.amount),
                 .Ror => |r| try self.ror(r.dst, r.amount),
                 .Sar => |r| try self.sar(r.dst, r.amount),
                 .Shr => |r| try self.shr(r.dst, r.amount),
                 .Shl => |r| try self.shl(r.dst, r.amount),
                 .Not => |r| try self.not(r.dst),
+                .Convert => |r| try self.convert(r.dst, r.src),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
@@ -1164,6 +1166,50 @@ pub const Emitter = struct {
     fn not(self: *@This(), dst: Register) !void {
         try self.emit(u8, 0xF7);
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Not), .r_m = encode(dst) });
+    }
+
+    fn convert(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .mem => |src_mem| {
+                        std.debug.assert(src_mem.size == 32);
+                        // CVTSI2SS
+                        try self.emit_byte(0xF3);
+                        try self.emit_rex_if_needed(.{
+                            .w = false,
+                            .r = need_rex(dst_reg),
+                            .x = if (src_mem.index) |i| need_rex(i) else false,
+                            .b = need_rex(src_mem.base),
+                        });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0x2A);
+                        try self.emit_mem_addressing(encode(dst_reg), src_mem);
+                    },
+                    else => return error.InvalidConvertSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .mem => |src_mem| {
+                        std.debug.assert(src_mem.size == 32);
+                        // CVTSI2SD
+                        try self.emit_byte(0xF2);
+                        try self.emit_rex_if_needed(.{
+                            .w = false,
+                            .r = need_rex(dst_reg),
+                            .x = if (src_mem.index) |i| need_rex(i) else false,
+                            .b = need_rex(src_mem.base),
+                        });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0x2A);
+                        try self.emit_mem_addressing(encode(dst_reg), src_mem);
+                    },
+                    else => return error.InvalidConvertSource,
+                }
+            },
+            else => return error.InvalidConvertDestination,
+        }
     }
 
     fn div64_32(self: *@This(), dividend_high: Register, dividend_low: Register, divisor: Register, result: Register) !void {
