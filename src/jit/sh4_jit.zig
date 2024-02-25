@@ -1335,6 +1335,30 @@ pub fn dt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn extub_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .imm32 = 0x000000FF } } });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.mov(rn, .{ .reg8 = rm });
+    }
+    return false;
+}
+
+pub fn extuw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.append(.{ .And = .{ .dst = .{ .reg = rn }, .src = .{ .imm32 = 0x0000FFFF } } });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.mov(rn, .{ .reg16 = rm });
+    }
+    return false;
+}
+
 pub fn sub_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
