@@ -174,6 +174,10 @@ pub const MemOperand = struct {
             });
         }
     }
+
+    pub fn equal(a: @This(), b: @This()) bool {
+        return a.base == b.base and a.index == b.index and a.displacement == b.displacement and a.size == b.size;
+    }
 };
 
 const OperandType = enum {
@@ -234,6 +238,22 @@ pub const Operand = union(OperandType) {
             .imm32 => |imm| writer.print("0x{X:0>8}", .{imm}),
             .imm64 => |imm| writer.print("0x{X:0>16}", .{imm}),
             .mem => |mem| writer.print("{any}", .{mem}),
+        };
+    }
+
+    pub fn equal(a: @This(), b: @This()) bool {
+        return switch (a) {
+            .reg8 => |a_reg| b == .reg8 and a_reg == b.reg8,
+            .reg16 => |a_reg| b == .reg16 and a_reg == b.reg16,
+            .reg => |a_reg| b == .reg and a_reg == b.reg,
+            .freg32 => |a_reg| b == .freg32 and a_reg == b.freg32,
+            .freg64 => |a_reg| b == .freg64 and a_reg == b.freg64,
+            .freg128 => |a_reg| b == .freg128 and a_reg == b.freg128,
+            .imm8 => |a_imm| b == .imm8 and a_imm == b.imm8,
+            .imm16 => |a_imm| b == .imm16 and a_imm == b.imm16,
+            .imm32 => |a_imm| b == .imm32 and a_imm == b.imm32,
+            .imm64 => |a_imm| b == .imm64 and a_imm == b.imm64,
+            .mem => |a_mem| b == .mem and a_mem.equal(b.mem),
         };
     }
 };

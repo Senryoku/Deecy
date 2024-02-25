@@ -1386,32 +1386,32 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    try block.shl(.{ .reg = rn }, .{ .imm8 = 1 });
     try set_t(block, ctx, .Carry);
     return false;
 }
 
 pub fn shll2(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 2 } } });
+    try block.shl(.{ .reg = rn }, .{ .imm8 = 2 });
     return false;
 }
 
 pub fn shll8(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 8 } } });
+    try block.shl(.{ .reg = rn }, .{ .imm8 = 8 });
     return false;
 }
 
 pub fn shll16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 16 } } });
+    try block.shl(.{ .reg = rn }, .{ .imm8 = 16 });
     return false;
 }
 
 pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    try block.shr(.{ .reg = rn }, .{ .imm8 = 1 });
     // The CF flag contains the value of the last bit shifted out of the destination operand.
     try set_t(block, ctx, .Carry);
     return false;
@@ -1419,19 +1419,19 @@ pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn shlr2(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 2 } } });
+    try block.shr(.{ .reg = rn }, .{ .imm8 = 2 });
     return false;
 }
 
 pub fn shlr8(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 8 } } });
+    try block.shr(.{ .reg = rn }, .{ .imm8 = 8 });
     return false;
 }
 
 pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.append(.{ .Shr = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 16 } } });
+    try block.shr(.{ .reg = rn }, .{ .imm8 = 16 });
     return false;
 }
 

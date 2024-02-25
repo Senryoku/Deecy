@@ -637,7 +637,7 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                     const rotate_amount = JIT.Register.rcx; // Only valid register for shifts.
                     try b.mov(.{ .reg = rotate_amount }, .{ .reg = SavedRegisters[1] }); // Restore addr.
                     try b.append(.{ .And = .{ .dst = .{ .reg = rotate_amount }, .src = .{ .imm32 = 0x00000003 } } });
-                    try b.append(.{ .Shl = .{ .dst = .{ .reg = rotate_amount }, .amount = .{ .imm8 = 3 } } });
+                    try b.shl(.{ .reg = rotate_amount }, .{ .imm8 = 3 });
                     // val ROR addr
                     try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .reg = rotate_amount } } });
                     try store_register(b, inst.rd, .{ .reg = val });

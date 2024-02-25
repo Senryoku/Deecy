@@ -69,8 +69,33 @@ pub const JITBlock = struct {
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
     }
+
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Sub = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn shl(self: *@This(), dst: Operand, amount: Operand) !void {
+        // Combine shift instructions if possible
+        if (self.instructions.items.len > 0 and amount == .imm8) {
+            const prev = &self.instructions.items[self.instructions.items.len - 1];
+            if (prev.* == .Shl and prev.Shl.dst.equal(dst) and prev.Shl.amount == .imm8) {
+                prev.Shl.amount.imm8 += amount.imm8;
+                return;
+            }
+        }
+        try self.instructions.append(.{ .Shl = .{ .dst = dst, .amount = amount } });
+    }
+
+    pub fn shr(self: *@This(), dst: Operand, amount: Operand) !void {
+        // Combine shift instructions if possible
+        if (self.instructions.items.len > 0 and amount == .imm8) {
+            const prev = &self.instructions.items[self.instructions.items.len - 1];
+            if (prev.* == .Shr and prev.Shr.dst.equal(dst) and prev.Shr.amount == .imm8) {
+                prev.Shr.amount.imm8 += amount.imm8;
+                return;
+            }
+        }
+        try self.instructions.append(.{ .Shr = .{ .dst = dst, .amount = amount } });
     }
 
     // Forward Jump
