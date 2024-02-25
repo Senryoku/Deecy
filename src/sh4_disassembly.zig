@@ -2,6 +2,7 @@ const std = @import("std");
 const sh4 = @import("sh4.zig");
 const sh4_instructions = @import("sh4_instructions.zig");
 const Instr = sh4.Instr;
+const bit_manip = @import("bit_manip.zig");
 
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
 
@@ -17,12 +18,16 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     const d8 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
     const d12 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i12, @bitCast(opcode.d12.d))});
     const imm = try std.fmt.allocPrint(allocator, "#{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
+    const label8 = try std.fmt.allocPrint(allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u8(opcode.nd8.d)});
+    const label12 = try std.fmt.allocPrint(allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u12(opcode.d12.d)});
     defer allocator.free(Rn);
     defer allocator.free(Rm);
     defer allocator.free(disp);
     defer allocator.free(d8);
     defer allocator.free(d12);
     defer allocator.free(imm);
+    defer allocator.free(label8);
+    defer allocator.free(label12);
 
     const n0 = try std.mem.replaceOwned(u8, allocator, desc.name, "Rn", Rn);
     defer allocator.free(n0);
@@ -34,7 +39,11 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     defer allocator.free(n3);
     const n4 = try std.mem.replaceOwned(u8, allocator, n3, "d:12", d12);
     defer allocator.free(n4);
-    const final_buff = try std.mem.replaceOwned(u8, allocator, n4, "#imm", imm);
+    const n5 = try std.mem.replaceOwned(u8, allocator, n4, "label:8", label8);
+    defer allocator.free(n5);
+    const n6 = try std.mem.replaceOwned(u8, allocator, n5, "label:12", label12);
+    defer allocator.free(n6);
+    const final_buff = try std.mem.replaceOwned(u8, allocator, n6, "#imm", imm);
 
     DisassemblyCache[opcode.value] = final_buff;
 
