@@ -184,6 +184,8 @@ pub const Dreamcast = struct {
     pub fn skip_bios(self: *@This()) void {
         self.cpu.state_after_boot_rom();
 
+        @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
+
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
 
         // Copy subroutine to RAM. Some of it will be overwritten, I'm trying to work out what's important and what's not.
@@ -437,12 +439,21 @@ pub const Dreamcast = struct {
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
-            std.debug.print("{X}\n", .{@as([*]u8, @ptrCast(self.cpu._get_memory(0x0C008300)))[0..0x20]});
+            dc_log.info("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
 
             std.debug.assert(copied == len);
 
-            self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 200);
-            self.schedule_external_interrupt(.{ .GDRom = 1 }, 200);
+            self.hw_register(u32, .SB_GDST).* = 0;
+            self.hw_register(u32, .SB_GDLEND).* += len;
+            self.hw_register(u32, .SB_GDSTARD).* += len;
+
+            self.gdrom.status_register.drq = 0;
+            self.gdrom.status_register.bsy = 0;
+            self.gdrom.interrupt_reason_register.cod = .Command;
+            self.gdrom.interrupt_reason_register.io = .DeviceToHost;
+
+            self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 20000);
+            // self.schedule_external_interrupt(.{ .GDRom = 1 }, 20000);
         }
     }
 

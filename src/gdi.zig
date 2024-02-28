@@ -110,6 +110,12 @@ const Track = struct {
     pub fn header_size(self: *const @This()) u32 {
         return if (self.format == 2352) 0x10 else 0;
     }
+
+    pub fn adr_ctrl_byte(self: *const @This()) u8 {
+        const adr: u4 = 0;
+        const control: u8 = if (self.track_type == 4) 0b0100 else 0b0000;
+        return (control << 4) | adr;
+    }
 };
 
 pub const SectorHeader = extern struct {
@@ -118,7 +124,7 @@ pub const SectorHeader = extern struct {
     mode: u8,
 };
 
-const GDI_SECTOR_OFFSET = 150; // Pause between tracks? I'm not sure how this works. Cues here: https://github.com/SONIC3D/gdi-utils/blob/master/README.md
+const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
 
 pub const GDI = struct {
     tracks: std.ArrayList(Track) = undefined,
@@ -151,7 +157,7 @@ pub const GDI = struct {
             var vals = std.mem.split(u8, lines.next().?, " ");
 
             const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-            const offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+            const offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10) + GDI_SECTOR_OFFSET;
             const track_type = try std.fmt.parseUnsigned(u8, vals.next().?, 10);
             const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
             const filename = vals.next().?;
@@ -225,14 +231,14 @@ pub const GDI = struct {
     pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {
         std.debug.assert(self.tracks.items.len > 0);
         var idx: u32 = 0;
-        while (idx < self.tracks.items.len and self.tracks.items[idx].offset < lda) : (idx += 1) {}
-        return &self.tracks.items[@max(0, idx - 1)];
+        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].offset <= lda) : (idx += 1) {}
+        return &self.tracks.items[@max(0, idx)];
     }
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
         const root_directory_entry = self.get_primary_volume_descriptor().*.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
-        const root_directory_lba = root_directory_entry.location;
+        const root_directory_lba = root_directory_entry.location + GDI_SECTOR_OFFSET;
         const root_track = try self.get_corresponding_track(root_directory_lba);
         const sector_start = (root_directory_lba - root_track.offset) * root_track.format;
 
@@ -250,7 +256,7 @@ pub const GDI = struct {
 
     pub fn load_sectors(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
-        const sector_start = (lba - GDI_SECTOR_OFFSET - track.offset) * track.format;
+        const sector_start = (lba - track.offset) * track.format;
         if (track.format == 2048) {
             var offset = sector_start;
             var copied: u32 = 0;
