@@ -112,7 +112,7 @@ const Track = struct {
     }
 
     pub fn adr_ctrl_byte(self: *const @This()) u8 {
-        const adr: u4 = 0;
+        const adr: u4 = 1;
         const control: u8 = if (self.track_type == 4) 0b0100 else 0b0000;
         return (control << 4) | adr;
     }
@@ -162,6 +162,8 @@ pub const GDI = struct {
             const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
             const filename = vals.next().?;
             const pregap = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+
+            std.debug.assert(pregap == 0); // FIXME: Not handled.
 
             // NOTE: Use MMAP on non-windows platforms?
             if (@import("builtin").os.tag != .windows) {

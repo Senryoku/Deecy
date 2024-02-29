@@ -266,7 +266,7 @@ pub const GDROM = struct {
                     const low = self.data_queue.readItem().?;
                     const high = self.data_queue.readItem().?;
                     const val: u16 = @as(u16, low) | (@as(u16, high) << 8);
-                    gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
+                    // gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
                     return val;
                 }
                 @panic("8-bit read to GD_Data");
@@ -377,7 +377,7 @@ pub const GDROM = struct {
                         self.data_queue.writeAssumeCapacity("                ");
 
                         self.schedule_event(.{
-                            .cycles = 100, // FIXME: Random value
+                            .cycles = 0, // FIXME: Random value
                             .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
                             .status = .{ .bsy = 0, .drq = 1 },
                         });
@@ -389,7 +389,15 @@ pub const GDROM = struct {
                         self.nop();
                     },
                     .SetFeatures => {
-                        gdrom_log.warn(termcolor.yellow("  Command: SetFeatures - TODO!"), .{});
+                        gdrom_log.warn(termcolor.yellow("  Command: SetFeatures"), .{});
+
+                        self.error_register = .{};
+
+                        self.schedule_event(.{
+                            .cycles = 0, // FIXME: Random value
+                            .status = .{ .check = 0, .df = 0, .dsc = 0, .bsy = 0, .drq = 0, .drdy = 1 },
+                            .interrupt_reason = null,
+                        });
                     },
                     .NOP => {
                         self.nop();
@@ -522,8 +530,8 @@ pub const GDROM = struct {
 
             self.schedule_event(.{
                 .cycles = 0,
-                .status = .{ .drq = 1, .bsy = 0 },
-                .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
+                .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
+                .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
             });
         }
     }
@@ -564,6 +572,8 @@ pub const GDROM = struct {
 
     fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
         if (self.disk) |disk| {
+            std.debug.assert(disk.tracks.items.len >= 3);
+
             const start_track: usize = if (area == .DoubleDensity) 2 else 0;
             const end_track: usize = if (area == .DoubleDensity) disk.tracks.items.len - 1 else 1;
             var idx: u32 = 0;
@@ -591,7 +601,7 @@ pub const GDROM = struct {
 
             if (area == .DoubleDensity) {
                 @memcpy(dest[idx .. idx + 4], &[_]u8{
-                    0x00, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+                    0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
                 });
             } else {
                 @memcpy(dest[idx .. idx + 4], &[_]u8{
@@ -614,38 +624,13 @@ pub const GDROM = struct {
         gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
 
         if (alloc_length > 0) {
-            if (self.disk) |disk| {
-                if (select == 1) {
-                    if (disk.tracks.items.len >= 3) {
-                        const bytes_written = self.write_toc(self.data_queue.writableWithSize(408) catch unreachable, .DoubleDensity);
-                        self.data_queue.update(bytes_written);
+            const bytes_written = self.write_toc(self.data_queue.writableWithSize(408) catch unreachable, if (select == 1) .DoubleDensity else .SingleDensity);
+            self.data_queue.update(@min(bytes_written, alloc_length));
 
-                        // Debug Dump
-                        const d = self.data_queue.readableSlice(0);
-                        for (0..d.len / 4) |i| {
-                            gdrom_log.debug("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
-                        }
-                    } else {
-                        for (0..alloc_length) |_| {
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                        }
-                    }
-                } else {
-                    if (disk.tracks.items.len >= 2) {
-                        const bytes_written = self.write_toc(self.data_queue.writableWithSize(408) catch unreachable, .SingleDensity);
-                        self.data_queue.update(bytes_written);
-
-                        // Debug Dump
-                        const d = self.data_queue.readableSlice(0);
-                        for (0..d.len / 4) |i| {
-                            gdrom_log.debug("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
-                        }
-                    } else {
-                        for (0..alloc_length) |_| {
-                            self.data_queue.writeItemAssumeCapacity(0xFF);
-                        }
-                    }
-                }
+            // Debug Dump
+            const d = self.data_queue.readableSlice(0);
+            for (0..d.len / 4) |i| {
+                gdrom_log.debug("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
             }
 
             self.schedule_event(.{
@@ -670,8 +655,41 @@ pub const GDROM = struct {
 
         // FIXME: Everything else isn't implemented
         std.debug.assert(parameter_type == 0); // start_addr is a FAD
-        std.debug.assert(expected_data_type == 0b00 or expected_data_type == 0b010); // Unspecified or Mode 1
         std.debug.assert(data_select == 0b0010); // Data (no header or subheader)
+
+        switch (expected_data_type) {
+            0b000 => {
+                // No check for sector type.
+                // However, if reading of mode 2 track or Form 1/Form 2 is
+                // attempted in the case of a disc which is not a CD-ROM XA,
+                // the Mode 2 disc reading will fail.
+            },
+            0b001 => {
+                // CD-DA
+                // Error if sector other than CD-DA is read.
+            },
+            0b010 => {
+                // Mode 1
+                // Error if sector other than 2048 byte (Yellow Book) is read
+            },
+            0b011 => {
+                // Mode 2, Form 1 or Mode 2, Form 1
+                // Error if sector other than 2352 byte (Yellow Book) is read
+            },
+            0b100 => {
+                // Mode 2, Form 1.
+                // Error if sector other than 2048 byte (Green Book) is read
+            },
+            0b101 => {
+                // Mode 2, Form 2
+                // Error if sector other than 2324 byte (Green Book) is read
+            },
+            0b110 => {
+                // Mode 2 of non-CD-ROM XA disc
+                // 2336 bytes are read. No sector type check is performed
+            },
+            else => unreachable,
+        }
 
         if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still donhave to figure out correctly... The offset is only applied on track 3? 3+?
 
@@ -679,6 +697,12 @@ pub const GDROM = struct {
         self.data_queue.update(bytes_written);
 
         gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
+        });
     }
 
     fn get_subcode(self: *@This()) void {
@@ -688,6 +712,11 @@ pub const GDROM = struct {
         for (0..alloc_length) |_| {
             self.data_queue.writeItemAssumeCapacity(0);
         }
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
+        });
     }
 
     fn req_secu(self: *@This()) void {
