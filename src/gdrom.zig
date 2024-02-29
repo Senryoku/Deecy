@@ -576,35 +576,30 @@ pub const GDROM = struct {
 
             const start_track: usize = if (area == .DoubleDensity) 2 else 0;
             const end_track: usize = if (area == .DoubleDensity) disk.tracks.items.len - 1 else 1;
-            var idx: u32 = 0;
+
+            @memset(dest[0..396], 0xFF);
 
             for (start_track..end_track + 1) |i| {
-                const leading_fad = disk.tracks.items[i].offset;
+                const track = disk.tracks.items[i];
+                const leading_fad = track.offset;
 
-                dest[idx + 0] = disk.tracks.items[i].adr_ctrl_byte();
-                dest[idx + 1] = (@truncate(leading_fad >> 16));
-                dest[idx + 2] = (@truncate(leading_fad >> 8));
-                dest[idx + 3] = (@truncate(leading_fad >> 0));
-                idx += 4;
+                dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
+                dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
+                dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
+                dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
             }
 
-            for (end_track + 1 - start_track..99) |_| {
-                @memcpy(dest[idx .. idx + 4], &[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF });
-                idx += 4;
-            }
-
-            @memcpy(dest[idx .. idx + 2 * 4], &[_]u8{
+            @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
                 disk.tracks.items[start_track].adr_ctrl_byte(), @intCast(disk.tracks.items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
                 disk.tracks.items[end_track].adr_ctrl_byte(), @intCast(disk.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
             });
-            idx += 2 * 4;
 
             if (area == .DoubleDensity) {
-                @memcpy(dest[idx .. idx + 4], &[_]u8{
+                @memcpy(dest[404..408], &[_]u8{
                     0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
                 });
             } else {
-                @memcpy(dest[idx .. idx + 4], &[_]u8{
+                @memcpy(dest[404..408], &[_]u8{
                     0x00, 0x00, 0x33, 0x1D, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
                 });
             }
