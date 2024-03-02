@@ -688,7 +688,7 @@ pub const GDROM = struct {
 
         if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still donhave to figure out correctly... The offset is only applied on track 3? 3+?
 
-        const bytes_written = self.disk.?.load_sectors(start_addr, 2048 * transfer_length, self.data_queue.writableWithSize(2048 * transfer_length) catch unreachable);
+        const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, self.data_queue.writableWithSize(2352 * transfer_length) catch unreachable);
         self.data_queue.update(bytes_written);
 
         gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
@@ -753,8 +753,7 @@ pub const GDROM = struct {
                 const dest = self.hle_params[2] & 0x1FFFFFFF;
 
                 gdrom_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.hle_command), lba, size, dest });
-                const byte_size = 2048 * size;
-                const read = self.disk.?.load_sectors(lba, byte_size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0..byte_size]);
+                const read = self.disk.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0 .. 2352 * size]);
 
                 dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 100_000 * size);
                 dc.schedule_external_interrupt(.{ .GDRom = 1 }, 100_000 * size);

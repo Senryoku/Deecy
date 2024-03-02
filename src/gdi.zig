@@ -116,6 +116,36 @@ const Track = struct {
         const control: u8 = if (self.track_type == 4) 0b0100 else 0b0000;
         return (control << 4) | adr;
     }
+
+    pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
+        const sector_start = (lba - self.offset) * self.format;
+        if (self.format == 2048) {
+            var offset = sector_start;
+            var copied: u32 = 0;
+            for (0..count) |_| {
+                const chunk_size = @min(self.format, dest.len - copied);
+                @memcpy(dest[copied .. copied + chunk_size], self.data[offset .. offset + chunk_size]);
+                copied += chunk_size;
+                offset += chunk_size;
+            }
+            return copied;
+        } else if (self.format == 2352) {
+            const header = self.data[sector_start .. sector_start + 0x10];
+            var offset = sector_start + 0x10;
+            std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
+            const size: u32 = if (header[0x0F] == 1) 2048 else 2336;
+            var copied: u32 = 0;
+            for (0..count) |_| {
+                const chunk_size = @min(size, dest.len - copied);
+                @memcpy(dest[copied .. copied + chunk_size], self.data[offset .. offset + chunk_size]);
+                copied += chunk_size;
+                offset += self.format;
+            }
+            return copied;
+        } else {
+            @panic("Unimplemented");
+        }
+    }
 };
 
 pub const SectorHeader = extern struct {
@@ -249,46 +279,30 @@ pub const GDI = struct {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
-                return self.load_sectors(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
+                return self.load_bytes(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
             }
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;
     }
 
-    pub fn load_sectors(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
+    // Bad wrapper around load_sectors. Don't use that in performance sensisive code :)
+    pub fn load_bytes(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(lba);
-        const sector_start = (lba - track.offset) * track.format;
-        if (track.format == 2048) {
-            var offset = sector_start;
-            var copied: u32 = 0;
-            var remaining: u32 = length;
-            while (remaining > 0) {
-                const chunk_size = @min(remaining, 2048);
-                @memcpy(dest[copied .. copied + chunk_size], track.data[offset .. offset + chunk_size]);
-                copied += chunk_size;
-                remaining -= chunk_size;
-                offset += 2048;
-            }
-            return copied;
-        } else if (track.format == 2352) {
-            const header = track.data[sector_start .. sector_start + 0x10];
-            var offset = sector_start + 0x10;
-            std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
-            const size: u32 = if (header[0x0F] == 1) 2048 else 2336;
-            var copied: u32 = 0;
-            var remaining: u32 = length;
-            while (remaining > 0) {
-                const chunk_size = @min(remaining, size);
-                @memcpy(dest[copied .. copied + chunk_size], track.data[offset .. offset + chunk_size]);
-                copied += chunk_size;
-                remaining -= chunk_size;
-                offset += 2352;
-            }
-            return copied;
-        } else {
-            @panic("Unimplemented");
+        var remaining = length;
+        var curr_sector = lba;
+        while (remaining > 0) {
+            std.debug.print("Loading sector {d}...\n", .{curr_sector});
+            std.debug.print("Remaining: {d} bytes\n", .{remaining});
+            remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
+            curr_sector += 1;
         }
+        return length;
+    }
+
+    pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(lba);
+        return track.load_sectors(lba, count, dest);
     }
 };
 
