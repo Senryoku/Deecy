@@ -1020,6 +1020,11 @@ pub fn cmppz_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn sts_MACH_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "mach"), .size = 32 } });
+    return false;
+}
+
 pub fn sts_MACL_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } });
     return false;
