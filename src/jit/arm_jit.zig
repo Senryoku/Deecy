@@ -525,8 +525,9 @@ fn handle_branch_and_exchange(b: *JITBlock, ctx: *JITContext, instruction: u32) 
 }
 
 fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+    const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
     try interpreter_fallback(b, ctx, instruction);
-    return true; // FIXME: Return true only if we're writing to PC
+    return inst.l == 1 and inst.reg(15);
 }
 
 fn handle_branch(b: *JITBlock, _: *JITContext, instruction: u32) !bool {
