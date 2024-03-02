@@ -1531,6 +1531,15 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn tst_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = try load_register(block, ctx, 0);
+    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = r0 });
+    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0 } } });
+    try set_t(block, ctx, .Zero);
+    return false;
+}
+
 pub fn rotcl_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try load_t(block, ctx);
