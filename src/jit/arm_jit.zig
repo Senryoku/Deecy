@@ -742,7 +742,6 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
     // FIXME: We can handle more cases, and generate better code.
     if (inst.s == 0 and
         (inst.i == 1 or sro.register_specified == 0) and
-        inst.rd != 15 and
         (inst.opcode == .AND or
         inst.opcode == .EOR or
         inst.opcode == .SUB or
@@ -878,6 +877,11 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 try store_register(b, inst.rd, op2);
             },
             else => @panic("Not implemented"),
+        }
+
+        // Simulate an additional fetch
+        if (inst.rd == 15) {
+            try b.add(guest_register(15), .{ .imm32 = 4 });
         }
     } else {
         try interpreter_fallback(b, ctx, instruction);
