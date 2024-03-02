@@ -1695,6 +1695,7 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
 
     // NOTE/FIXME: The overflow behavior is different between SH4 and x86. Might want to look into that. Thanks Raziel!
+    //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
 
     if (cpu.fpscr.pr == 0) {
         cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));

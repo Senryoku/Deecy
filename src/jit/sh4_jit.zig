@@ -1288,6 +1288,26 @@ pub fn float_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
     return false;
 }
 
+pub fn ftrc_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // FIXME: Overflow behaviour isn't accurate.
+    //        x86_64 will return the "indefinite integer value" (0x80000000 or 0x80000000_00000000 if operand size is 64 bits)
+    //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
+    const tmp: JIT.Operand = .{ .reg = ReturnRegister };
+    switch (ctx.fpscr_pr) {
+        .Single => try block.append(.{ .Convert = .{
+            .dst = tmp,
+            .src = try load_fp_register(block, ctx, instr.nmd.n),
+        } }),
+        .Double => try block.append(.{ .Convert = .{
+            .dst = tmp,
+            .src = try load_dfp_register(block, ctx, instr.nmd.n),
+        } }),
+        else => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, tmp);
+    return false;
+}
+
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 

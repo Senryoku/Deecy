@@ -1170,6 +1170,26 @@ pub const Emitter = struct {
 
     fn convert(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .freg32, .freg64 => |src_reg| {
+                        try self.emit_byte(switch (src) {
+                            .freg32 => 0xF3, // CVTTSS2SI - Convert With Truncation Scalar Single Precision Floating-Point Value to Integer
+                            .freg64 => 0xF2, // CVTTSD2SI - Convert With Truncation Scalar Double Precision Floating-Point Value to Integer
+                            else => unreachable,
+                        });
+                        try self.emit_rex_if_needed(.{
+                            .w = false,
+                            .r = need_rex(dst_reg),
+                            .b = need_rex(src_reg),
+                        });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0x2C);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    else => return error.InvalidConvertSource,
+                }
+            },
             .freg32 => |dst_reg| {
                 switch (src) {
                     .mem => |src_mem| {
