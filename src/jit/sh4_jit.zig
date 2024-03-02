@@ -1525,6 +1525,44 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn shad_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+
+    const amount: JIT.Operand = .{ .reg = .rcx };
+
+    try block.mov(amount, .{ .reg = rm });
+    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm32 = 0 } } });
+    var neg = try block.jmp(.Less);
+
+    try block.shl(.{ .reg = rn }, amount);
+    var end = try block.jmp(.Always);
+    defer end.patch();
+
+    neg.patch();
+    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm32 = 0xFFFFE000 } } });
+    var rm_neg_zero = try block.jmp(.Equal);
+    try block.append(.{ .Neg = .{ .dst = amount } });
+    try block.append(.{ .Sar = .{ .dst = .{ .reg = rn }, .amount = amount } });
+    var end_2 = try block.jmp(.Always);
+    defer end_2.patch();
+
+    // Right shift by zero special case.
+    rm_neg_zero.patch();
+    {
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+        var rn_neg = try block.jmp(.Less);
+        try block.mov(.{ .reg = rn }, .{ .imm32 = 0 });
+        var end_3 = try block.jmp(.Always);
+        defer end_3.patch();
+
+        rn_neg.patch();
+        try block.mov(.{ .reg = rn }, .{ .imm32 = 0xFFFFFFFF });
+    }
+
+    return false;
+}
+
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.shl(.{ .reg = rn }, .{ .imm8 = 1 });

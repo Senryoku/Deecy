@@ -862,7 +862,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 if (inst.i == 1) {
                     op2 = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) };
                 } else {
-                    try b.append(.{ .Not = .{ .dst = op2.reg } });
+                    try b.append(.{ .Not = .{ .dst = .{ .reg = op2.reg } } });
                 }
 
                 try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = op2 } });
@@ -873,7 +873,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
                 if (inst.i == 1) {
                     op2 = .{ .imm32 = ~arm7.interpreter.immediate_shifter_operand(inst.operand2) };
                 } else {
-                    try b.append(.{ .Not = .{ .dst = op2.reg } });
+                    try b.append(.{ .Not = .{ .dst = .{ .reg = op2.reg } } });
                 }
                 try store_register(b, inst.rd, op2);
             },

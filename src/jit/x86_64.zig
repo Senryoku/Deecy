@@ -267,6 +267,7 @@ pub const InstructionType = enum {
     Push,
     Pop,
     Not,
+    Neg,
     Add,
     Sub,
     Mul,
@@ -299,7 +300,8 @@ pub const Instruction = union(InstructionType) {
     Movsx: struct { dst: Operand, src: Operand },
     Push: Operand,
     Pop: Operand,
-    Not: struct { dst: Register },
+    Not: struct { dst: Operand },
+    Neg: struct { dst: Operand },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
     Mul: struct { dst: Operand, src: Operand },
@@ -335,6 +337,7 @@ pub const Instruction = union(InstructionType) {
             .Push => |push| writer.print("push {any}", .{push}),
             .Pop => |pop| writer.print("pop {any}", .{pop}),
             .Not => |not| writer.print("not {any}", .{not.dst}),
+            .Neg => |neg| writer.print("neg {any}", .{neg.dst}),
             .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
             .Mul => |sub| writer.print("mul {any}, {any}", .{ sub.dst, sub.src }),
@@ -528,7 +531,8 @@ pub const Emitter = struct {
                 .Sar => |r| try self.sar(r.dst, r.amount),
                 .Shr => |r| try self.shr(r.dst, r.amount),
                 .Shl => |r| try self.shl(r.dst, r.amount),
-                .Not => |r| try self.not(r.dst),
+                .Not => |r| try self.f7_op(r.dst, .Not),
+                .Neg => |r| try self.f7_op(r.dst, .Neg),
                 .Convert => |r| try self.convert(r.dst, r.src),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
 
@@ -1175,9 +1179,15 @@ pub const Emitter = struct {
         try self.shift_instruction(.Ror, dst, amount);
     }
 
-    fn not(self: *@This(), dst: Register) !void {
-        try self.emit(u8, 0xF7);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Not), .r_m = encode(dst) });
+    fn f7_op(self: *@This(), dst: Operand, opcode: OtherRegOpcode) !void {
+        switch (dst) {
+            .reg => |dst_reg| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
+                try self.emit(u8, 0xF7);
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(dst) });
+            },
+            else => return error.InvalidF7Destination,
+        }
     }
 
     fn convert(self: *@This(), dst: Operand, src: Operand) !void {
