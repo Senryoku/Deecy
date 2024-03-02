@@ -552,44 +552,54 @@ pub const AICA = struct {
         self.write_register(u32, addr, value);
     }
 
-    pub fn update(self: *AICA, _: *Dreamcast, cycles: u32) !void {
-        if (self.arm7.running and !DisableARMCore) {
-            self._timer_cycles_counter += @intCast(cycles);
-            const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+    fn check_sh4_interrupt(self: *AICA, dc: *Dreamcast) void {
+        if ((self.get_reg(u32, .MCIPD).* & self.get_reg(u32, .MCIEB).*) != 0) {
+            dc.raise_external_interrupt(.{ .AICA = 1 });
+        }
+    }
 
-            for (0..64) |i| {
-                self.channel_states[i].update(sample_count);
-            }
+    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) !void {
+        self._timer_cycles_counter += @intCast(cycles);
+        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
 
-            self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
-            const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
-            for (0..3) |i| {
-                var timer = self.get_reg(TimerControl, timer_registers[i]);
-                self._timer_counters[i] += sample_count;
-                const scaled = @as(u32, 1) << timer.prescale;
-                if (self._timer_counters[i] >= scaled) {
-                    self._timer_counters[i] -= scaled;
-                    if (timer.value == 0xFF) {
-                        self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
-                        if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
-                            aica_log.debug("Timer {d} interrupt.", .{i});
-                            if (i == 0) {
-                                self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 2) |
-                                    (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
-                                    (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0);
-                            } else {
-                                // Timer B and C share the same INTReq number.
-                                self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 2) |
-                                    (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
-                                    (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0);
-                            }
-                            self.arm7.fast_interrupt_request();
+        for (0..64) |i| {
+            self.channel_states[i].update(sample_count);
+        }
+
+        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+        const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+        for (0..3) |i| {
+            var timer = self.get_reg(TimerControl, timer_registers[i]);
+            self._timer_counters[i] += sample_count;
+            const scaled = @as(u32, 1) << timer.prescale;
+            if (self._timer_counters[i] >= scaled) {
+                self._timer_counters[i] -= scaled;
+                if (timer.value == 0xFF) {
+                    self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
+                    self.get_reg(u32, .MCIPD).* |= @as(u32, 1) << @intCast(6 + i);
+
+                    check_sh4_interrupt(self, dc);
+
+                    if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
+                        aica_log.debug("Timer {d} interrupt.", .{i});
+                        if (i == 0) {
+                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0) |
+                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
+                                (@as(u8, self.get_reg(InterruptBits, .SCILV2).*.TimerA) << 2);
+                        } else {
+                            // Timer B and C share the same INTReq number.
+                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0) |
+                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
+                                (@as(u8, self.get_reg(InterruptBits, .SCILV2).*.TimerB) << 2);
                         }
-                        timer.value = 0;
-                    } else timer.value += 1;
-                }
+                        self.arm7.fast_interrupt_request();
+                    }
+                    timer.value = 0;
+                } else timer.value += 1;
             }
+        }
 
+        if (self.arm7.running and !DisableARMCore) {
             self._arm_cycles_counter += @intCast(cycles);
             if (self.enable_arm_jit) {
                 if (self._arm_cycles_counter >= ARM7CycleRatio)
