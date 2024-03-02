@@ -1323,6 +1323,11 @@ pub fn lds_Rn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn sts_FPUL_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } });
+    return false;
+}
+
 pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback_cached(block, ctx, instr);
     switch (ctx.fpscr_sz) {
