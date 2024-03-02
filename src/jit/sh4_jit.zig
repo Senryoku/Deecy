@@ -676,6 +676,12 @@ fn store_dfp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: 
     try block.mov(.{ .freg64 = try ctx.guest_freg_cache(block, 64, guest_reg, false, true) }, value);
 }
 
+// Loads the guest t bit into the host carry flag
+fn load_t(block: *JITBlock, _: *JITContext) !void {
+    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+}
+
 // Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
 // TODO: We'll want to cache the T bit at some point too!
 fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
@@ -1525,6 +1531,14 @@ pub fn tst_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn rotcl_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try load_t(block, ctx);
+    try block.append(.{ .Rcl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    try set_t(block, ctx, .Carry);
+    return false;
+}
+
 pub fn shad_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
@@ -1615,8 +1629,7 @@ pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
-    try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+    try load_t(block, ctx);
     var skip_branch = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);

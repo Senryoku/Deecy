@@ -526,11 +526,13 @@ pub const Emitter = struct {
                     try self.jmp(j.condition, @intCast(idx + j.dst.rel));
                 },
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
-                .Rol => |r| try self.rol(r.dst, r.amount),
-                .Ror => |r| try self.ror(r.dst, r.amount),
-                .Sar => |r| try self.sar(r.dst, r.amount),
-                .Shr => |r| try self.shr(r.dst, r.amount),
-                .Shl => |r| try self.shl(r.dst, r.amount),
+                .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
+                .Ror => |r| try self.shift_instruction(.Ror, r.dst, r.amount),
+                .Rcl => |r| try self.shift_instruction(.Rcl, r.dst, r.amount),
+                .Rcr => |r| try self.shift_instruction(.Rcr, r.dst, r.amount),
+                .Sar => |r| try self.shift_instruction(.Sar, r.dst, r.amount),
+                .Shr => |r| try self.shift_instruction(.Shr, r.dst, r.amount),
+                .Shl => |r| try self.shift_instruction(.Shl, r.dst, r.amount),
                 .Not => |r| try self.f7_op(r.dst, .Not),
                 .Neg => |r| try self.f7_op(r.dst, .Neg),
                 .Convert => |r| try self.convert(r.dst, r.src),
@@ -538,7 +540,7 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
-                else => return error.UnsupportedInstruction,
+                // else => return error.UnsupportedInstruction,
             }
         }
         if (self.jumps_to_patch.count() > 0) {
@@ -1161,22 +1163,6 @@ pub const Emitter = struct {
             .mem => return error.TODOMemShift,
             else => return error.InvalidShiftDestination,
         }
-    }
-
-    fn sar(self: *@This(), dst: Operand, amount: Operand) !void {
-        try self.shift_instruction(.Sar, dst, amount);
-    }
-    fn shr(self: *@This(), dst: Operand, amount: Operand) !void {
-        try self.shift_instruction(.Shr, dst, amount);
-    }
-    fn shl(self: *@This(), dst: Operand, amount: Operand) !void {
-        try self.shift_instruction(.Shl, dst, amount);
-    }
-    fn rol(self: *@This(), dst: Operand, amount: Operand) !void {
-        try self.shift_instruction(.Rol, dst, amount);
-    }
-    fn ror(self: *@This(), dst: Operand, amount: Operand) !void {
-        try self.shift_instruction(.Ror, dst, amount);
     }
 
     fn f7_op(self: *@This(), dst: Operand, opcode: OtherRegOpcode) !void {
