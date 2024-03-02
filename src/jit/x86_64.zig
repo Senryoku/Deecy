@@ -1082,6 +1082,18 @@ pub const Emitter = struct {
 
     pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
+            .reg => |dst_reg| {
+                switch (src) {
+                    .reg => |src_reg| {
+                        if (dst_reg == .rax) {
+                            try self.emit_rex_if_needed(.{ .b = need_rex(src_reg) });
+                            try self.emit(u8, 0xF7);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(src_reg) });
+                        } else return error.InvalidMulDestination;
+                    },
+                    else => return error.InvalidMulSource,
+                }
+            },
             .freg32 => |dst_reg| {
                 switch (src) {
                     .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mul, dst_reg, src_reg),
