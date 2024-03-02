@@ -1199,6 +1199,33 @@ pub fn fmul_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     return false;
 }
 
+pub fn fmac_FR0_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_pr) {
+        .Single => {
+            const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+            const fr0 = try load_fp_register(block, ctx, 0);
+            const frm = try load_fp_register(block, ctx, instr.nmd.m);
+            // TODO: Actually use a FMA instruction (VFMADD132SS).
+            const tmp: JIT.Operand = .{ .freg32 = .xmm0 }; // Use a temporary register, we don't want to modify FR0 or FRm.
+            try block.mov(tmp, fr0);
+            try block.append(.{ .Mul = .{ .dst = tmp, .src = frm } });
+            try block.add(frn, tmp);
+        },
+        .Double => {
+            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
+            const fr0 = try load_dfp_register(block, ctx, 0);
+            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
+            // TODO: Actually use a FMA instruction (VFMADD132SD).
+            const tmp: JIT.Operand = .{ .freg64 = .xmm0 }; // Use a temporary register, we don't want to modify FR0 or FRm.
+            try block.mov(tmp, fr0);
+            try block.append(.{ .Mul = .{ .dst = tmp, .src = frm } });
+            try block.add(frn, tmp);
+        },
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn fdiv_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Div = .{
