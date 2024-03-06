@@ -850,6 +850,14 @@ pub const SH4 = struct {
         }
     }
 
+    inline fn check_type(comptime Valid: []const type, comptime T: type, comptime fmt: []const u8, param: anytype) void {
+        inline for (Valid) |V| {
+            if (T == V) return;
+        }
+        std.debug.print(fmt, param);
+        unreachable;
+    }
+
     pub fn read_p4(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
 
@@ -897,7 +905,7 @@ pub const SH4 = struct {
 
                     switch (@as(P4Register, @enumFromInt(virtual_addr))) {
                         P4Register.RFCR => {
-                            if (T != u16) unreachable;
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RFCR\n", .{T});
                             // Hack: This is the Refresh Count Register, related to DRAM control.
                             //       If don't think its proper emulation is needed, but it's accessed by the bios,
                             //       probably for synchronization purposes. I assume returning a contant value to pass this check
@@ -907,7 +915,7 @@ pub const SH4 = struct {
                             // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                         },
                         P4Register.PDTRA => {
-                            if (T != u16) unreachable;
+                            check_type(&[_]type{u16}, T, "Invalid P4 Read({any}) to PDTRA\n", .{T});
                             // Note: I have absolutely no idea what's going on here.
                             //       This is directly taken from Flycast, which already got it from Chankast.
                             //       This is needed for the bios to work properly, without it, it will
@@ -1000,7 +1008,7 @@ pub const SH4 = struct {
                             return;
                         },
                         @intFromEnum(P4Register.SCFTDR2) => {
-                            if (T != u8) unreachable;
+                            check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
                             sh4_log.warn(termcolor.yellow("Write to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
                             // Immediately mark transfer as complete.
                             //   Or rather, attempts to, this is not enough.
@@ -1010,13 +1018,13 @@ pub const SH4 = struct {
                             return;
                         },
                         @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
-                            if (T != u16) unreachable;
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RTCSR\n", .{T});
                             std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0xFF);
                             return;
                         },
                         @intFromEnum(P4Register.RFCR) => {
-                            if (T != u16) unreachable;
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RFCR\n", .{T});
                             std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0b11_11111111);
                             return;
@@ -1032,13 +1040,13 @@ pub const SH4 = struct {
                         },
                         // Serial Interface
                         @intFromEnum(P4Register.SCFSR2) => {
-                            if (T != u16) unreachable;
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to SCFSR2\n", .{T});
                             // Writable bits can only be cleared.
                             self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                             return;
                         },
                         @intFromEnum(P4Register.CCR) => {
-                            if (T != u32) unreachable;
+                            check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to CCR\n", .{T});
                             const ccr: P4.CCR = @bitCast(value);
                             if (ccr.ici == 1) {
                                 // Instruction cache invalidation
@@ -1051,7 +1059,7 @@ pub const SH4 = struct {
                             }
                         },
                         @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
-                            if (T != u32) unreachable;
+                            check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to 0x{X:0>8}\n", .{ T, virtual_addr });
                             const chcr: P4.CHCR = @bitCast(value);
                             if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
                                 sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
@@ -1082,10 +1090,7 @@ pub const SH4 = struct {
             0x005F6800...0x005F7FFF => {
                 switch (addr) {
                     0x005F7000...0x005F709C => {
-                        if (T != u8 and T != u16) {
-                            std.debug.print("Invalid Read({any}) from GDROM register @{X:0>8}.\n", .{ T, addr });
-                            unreachable;
-                        }
+                        check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
                         return self._dc.?.gdrom.read_register(T, addr);
                     },
                     @intFromEnum(HardwareRegister.SB_ADSUSP), @intFromEnum(HardwareRegister.SB_E1SUSP), @intFromEnum(HardwareRegister.SB_E2SUSP), @intFromEnum(HardwareRegister.SB_DDSUSP) => {
@@ -1110,7 +1115,7 @@ pub const SH4 = struct {
                 }
             },
             0x00700000...0x00707FE0 => {
-                if (T == u16) unreachable;
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.read_register(T, addr);
             },
             0x00710000...0x00710008 => {
@@ -1121,7 +1126,7 @@ pub const SH4 = struct {
             },
             // Area 0 Mirrors
             0x02700000...0x02707FE0 => {
-                if (T == u16) unreachable;
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.read_register(T, addr - 0x02000000);
             },
             0x02710000...0x02710008 => {
@@ -1201,16 +1206,13 @@ pub const SH4 = struct {
             0x005F6800...0x005F7FFF => {
                 const reg: HardwareRegister = @enumFromInt(addr);
                 if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                    if (T != u8 and T != u16) {
-                        std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                        unreachable;
-                    }
+                    check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                     return self._dc.?.gdrom.write_register(T, addr, value);
                 }
                 // Hardware registers
                 switch (reg) {
                     .SB_SFRES => {
-                        if (T != u32) unreachable;
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // SB_SFRES, Software Reset
                         if (value == 0x00007611) {
                             self.software_reset();
@@ -1237,7 +1239,7 @@ pub const SH4 = struct {
                         }
                     },
                     .SB_MDAPRO => {
-                        if (T != u32) unreachable;
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // This register specifies the address range for Maple-DMA involving the system (work) memory.
                         // Check "Security code"
                         if (value & 0xFFFF0000 != 0x61550000) return;
@@ -1249,19 +1251,19 @@ pub const SH4 = struct {
                         }
                     },
                     .SB_ISTNRM => {
-                        if (T != u32) unreachable;
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
                         return;
                     },
                     .SB_ISTERR => {
-                        if (T != u32) unreachable;
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
                         return;
                     },
                     .SB_C2DSTAT => {
-                        if (T != u32) unreachable;
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
                         return;
                     },
@@ -1279,14 +1281,11 @@ pub const SH4 = struct {
                 }
             },
             0x005F8000...0x005F9FFF => {
-                if (T == u8 or T == u16) {
-                    std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                    unreachable;
-                }
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.gpu.write_register(addr, value);
             },
             0x00700000...0x0070FFFF => {
-                if (T == u16) unreachable;
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.write_register(T, addr, value);
             },
             0x00710000...0x00710008 => {
@@ -1297,7 +1296,7 @@ pub const SH4 = struct {
             },
             // Area 0 Mirrors
             0x02700000...0x0270FFFF => {
-                if (T == u16) unreachable;
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.write_register(T, addr - 0x02000000, value);
             },
             0x02710000...0x02710008 => {
@@ -1308,10 +1307,7 @@ pub const SH4 = struct {
             },
 
             0x10000000...0x13FFFFFF => {
-                if (T == u8 or T == u16) {
-                    std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                    unreachable;
-                }
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.gpu.write_ta(addr, value);
             },
             else => {},
