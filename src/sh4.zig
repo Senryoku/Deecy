@@ -949,6 +949,127 @@ pub const SH4 = struct {
         return 0;
     }
 
+    pub fn write_p4(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+        std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
+
+        switch (virtual_addr) {
+            0xE0000000...0xE3FFFFFF => {
+                // Store Queue
+                self.store_queue_write(virtual_addr, value);
+                return;
+            },
+            0xE4000000...0xEFFFFFFF => {
+                // Reserved
+                @panic("Reserved");
+            },
+            0xF0000000...0xF0FFFFFF => {
+                // Instruction cache address array
+            },
+            0xF1000000...0xF1FFFFFF => {
+                // Instruction cache data array
+            },
+            0xF2000000...0xF2FFFFFF => {
+                // Instruction TLB address array
+            },
+            0xF3000000...0xF3FFFFFF => {
+                // Instruction TLB data arrays 1 and 2
+            },
+            0xF4000000...0xF4FFFFFF => {
+                // Operand cache address array
+            },
+            0xF5000000...0xF5FFFFFF => {
+                // Operand cache data array
+            },
+            0xF6000000...0xF6FFFFFF => {
+                // Unified TLB address array
+            },
+            0xF7000000...0xF7FFFFFF => {
+                // Unified TLB data arrays 1 and 2
+            },
+            0xF8000000...0xFBFFFFFF => {
+                // Reserved
+                @panic("Reserved");
+            },
+            0xFC000000...0xFFFFFFFF => {
+                // Control register area
+                if (virtual_addr >= 0xFF000000) {
+                    switch (virtual_addr) {
+                        // SDMR2/SDMR3
+                        0xFF900000...0xFF90FFFF, 0xFF940000...0xFF94FFFF => {
+                            // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
+                            return;
+                        },
+                        @intFromEnum(P4Register.SCFTDR2) => {
+                            if (T != u8) unreachable;
+                            sh4_log.warn(termcolor.yellow("Write to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
+                            // Immediately mark transfer as complete.
+                            //   Or rather, attempts to, this is not enough.
+                            const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
+                            SCFSR2.*.tend = 1;
+                            // FIXME: The serial interface is not implemented at all.
+                            return;
+                        },
+                        @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
+                            if (T != u16) unreachable;
+                            std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
+                            self.p4_register_addr(u16, virtual_addr).* = (value & 0xFF);
+                            return;
+                        },
+                        @intFromEnum(P4Register.RFCR) => {
+                            if (T != u16) unreachable;
+                            std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
+                            self.p4_register_addr(u16, virtual_addr).* = (value & 0b11_11111111);
+                            return;
+                        },
+                        // FIXME: Not emulated at all, these clash with my P4 access pattern :(
+                        @intFromEnum(P4Register.PMCR1) => {
+                            sh4_log.warn("Write to non implemented P4 register PMCR1: {X:0>4}.", .{value});
+                            return;
+                        },
+                        @intFromEnum(P4Register.PMCR2) => {
+                            sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
+                            return;
+                        },
+                        // Serial Interface
+                        @intFromEnum(P4Register.SCFSR2) => {
+                            if (T != u16) unreachable;
+                            // Writable bits can only be cleared.
+                            self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            return;
+                        },
+                        @intFromEnum(P4Register.CCR) => {
+                            if (T != u32) unreachable;
+                            const ccr: P4.CCR = @bitCast(value);
+                            if (ccr.ici == 1) {
+                                // Instruction cache invalidation
+                                // We'll use it as a clue to flush our JIT cache.
+                                sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
+                                self._dc.?.sh4_jit.block_cache.reset() catch {
+                                    sh4_log.err("Failed to purge JIT cache.", .{});
+                                    @panic("Failed to purge JIT cache.");
+                                };
+                            }
+                        },
+                        @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
+                            if (T != u32) unreachable;
+                            const chcr: P4.CHCR = @bitCast(value);
+                            if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
+                                sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
+                                @panic("Unimplemented");
+                            }
+                        },
+                        else => {
+                            sh4_log.debug("  Write({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
+                        },
+                    }
+
+                    self.p4_register_addr(T, virtual_addr).* = value;
+                } else @panic("Unhandled Control register area write.");
+            },
+            else => @panic("Unhandled P4 write."),
+        }
+    }
+
     pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
         return read8(self, virtual_addr);
     }
@@ -1097,30 +1218,13 @@ pub const SH4 = struct {
     }
 
     pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
-        if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                // SDMR2/SDMR3
-                0xFF900000...0xFF90FFFF, 0xFF940000...0xFF94FFFF => {
-                    // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
-                    return;
-                },
-                @intFromEnum(P4Register.SCFTDR2) => {
-                    sh4_log.warn(termcolor.yellow("Write8 to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
-                    // Immediately mark transfer as complete.
-                    //   Or rather, attempts to, this is not enough.
-                    const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
-                    SCFSR2.*.tend = 1;
-                    // FIXME: The serial interface is not implemented at all.
-                    return;
-                },
-                else => {
-                    sh4_log.debug("  Write8 to P4 register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
-                },
-            }
-        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u8, virtual_addr).* = value;
             return;
         }
+
+        if (virtual_addr >= 0xE0000000)
+            return write_p4(self, u8, virtual_addr, value);
 
         const addr = virtual_addr & 0x1FFFFFFF;
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
@@ -1150,43 +1254,15 @@ pub const SH4 = struct {
     }
 
     pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        const addr = virtual_addr & 0x1FFFFFFF;
-
-        if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
-                    std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
-                    self.p4_register_addr(u16, addr).* = (value & 0xFF);
-                    return;
-                },
-                @intFromEnum(P4Register.RFCR) => {
-                    std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
-                    self.p4_register_addr(u16, addr).* = (value & 0b11_11111111);
-                    return;
-                },
-                // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                @intFromEnum(P4Register.PMCR1) => {
-                    sh4_log.warn("Write to non implemented P4 register PMCR1: {X:0>4}.", .{value});
-                    return;
-                },
-                @intFromEnum(P4Register.PMCR2) => {
-                    sh4_log.warn("Write to non implemented P4 register PMCR2: {X:0>4}.", .{value});
-                    return;
-                },
-                // Serial Interface
-                @intFromEnum(P4Register.SCFSR2) => {
-                    // Writable bits can only be cleared.
-                    self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
-                    return;
-                },
-                else => {
-                    sh4_log.debug("  Write16 to P4 register @{X:0>8} {s} = 0x{X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
-                },
-            }
-        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u16, virtual_addr).* = value;
             return;
         }
+
+        if (virtual_addr >= 0xE0000000)
+            return write_p4(self, u16, virtual_addr, value);
+
+        const addr = virtual_addr & 0x1FFFFFFF;
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             switch (addr) {
@@ -1214,42 +1290,13 @@ pub const SH4 = struct {
     }
 
     pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        if (virtual_addr >= 0xE0000000) {
-            // P4
-            if (virtual_addr < 0xE4000000) {
-                self.store_queue_write(virtual_addr, value);
-                return;
-            }
-            if (virtual_addr >= 0xFF000000) {
-                switch (virtual_addr) {
-                    @intFromEnum(P4Register.CCR) => {
-                        const ccr: P4.CCR = @bitCast(value);
-                        if (ccr.ici == 1) {
-                            // Instruction cache invalidation
-                            // We'll use it as a clue to flush our JIT cache.
-                            sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
-                            self._dc.?.sh4_jit.block_cache.reset() catch {
-                                sh4_log.err("Failed to purge JIT cache.", .{});
-                                @panic("Failed to purge JIT cache.");
-                            };
-                        }
-                    },
-                    @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
-                        const chcr: P4.CHCR = @bitCast(value);
-                        if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
-                            sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
-                            @panic("Unimplemented");
-                        }
-                    },
-                    else => {
-                        sh4_log.debug("  Write32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), value });
-                    },
-                }
-            }
-        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(u32, virtual_addr).* = value;
             return;
         }
+
+        if (virtual_addr >= 0xE0000000)
+            return write_p4(self, u32, virtual_addr, value);
 
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
