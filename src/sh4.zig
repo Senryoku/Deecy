@@ -611,11 +611,18 @@ pub const SH4 = struct {
         self.add_cycles(desc.issue_cycles);
     }
 
-    pub fn store_queue_write(self: *@This(), virtual_addr: addr_t, value: u32) void {
+    pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
         sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
-        self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value;
+        switch (T) {
+            u32 => self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value,
+            u64 => {
+                self.store_queues[sq_addr.sq][sq_addr.lw_spec] = @truncate(value);
+                self.store_queues[sq_addr.sq][sq_addr.lw_spec + 1] = @truncate(value >> 32);
+            },
+            else => unreachable,
+        }
     }
 
     pub fn start_dmac(self: *@This(), comptime channel: u8) void {
@@ -963,7 +970,7 @@ pub const SH4 = struct {
         switch (virtual_addr) {
             0xE0000000...0xE3FFFFFF => {
                 // Store Queue
-                self.store_queue_write(virtual_addr, value);
+                self.store_queue_write(T, virtual_addr, value);
                 return;
             },
             0xE4000000...0xEFFFFFFF => {
@@ -1119,6 +1126,7 @@ pub const SH4 = struct {
                 return self._dc.?.aica.read_register(T, addr);
             },
             0x00710000...0x00710008 => {
+                check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return @truncate(self._dc.?.aica.read_rtc_register(addr));
             },
             0x00800000...0x00FFFFFF => {
@@ -1130,6 +1138,7 @@ pub const SH4 = struct {
                 return self._dc.?.aica.read_register(T, addr - 0x02000000);
             },
             0x02710000...0x02710008 => {
+                check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return @truncate(self._dc.?.aica.read_rtc_register(addr - 0x02000000));
             },
             0x02800000...0x02FFFFFF => {
@@ -1172,24 +1181,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
-        const addr = virtual_addr & 0x1FFFFFFF;
-
-        std.debug.assert(!(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF));
-        std.debug.assert(!(virtual_addr >= 0xE0000000));
-
-        const r = @as(*const u64, @alignCast(@ptrCast(
-            @constCast(self)._get_memory(addr),
-        ))).*;
-
-        // Small sanity check.
-        if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-            const low: u64 = self.read32(addr);
-            const high: u64 = self.read32(addr + 4);
-            const check = high << 32 | low;
-            std.debug.assert(check == r);
-        }
-
-        return r;
+        return self.read(u64, virtual_addr);
     }
 
     pub inline fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
@@ -1289,6 +1281,7 @@ pub const SH4 = struct {
                 return self._dc.?.aica.write_register(T, addr, value);
             },
             0x00710000...0x00710008 => {
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.write_rtc_register(addr, value);
             },
             0x00800000...0x00FFFFFF => {
@@ -1300,6 +1293,7 @@ pub const SH4 = struct {
                 return self._dc.?.aica.write_register(T, addr - 0x02000000, value);
             },
             0x02710000...0x02710008 => {
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.aica.write_rtc_register(addr - 0x02000000, value);
             },
             0x02800000...0x02FFFFFF => {
@@ -1347,9 +1341,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
-        // This isn't efficient, but avoids repeating all the logic of write32.
-        self.write32(virtual_addr, @truncate(value));
-        self.write32(virtual_addr + 4, @truncate(value >> 32));
+        self.write(u64, virtual_addr, value);
     }
 
     // MMU Stub functions
