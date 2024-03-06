@@ -850,6 +850,105 @@ pub const SH4 = struct {
         }
     }
 
+    pub fn read_p4(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+        std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
+
+        switch (virtual_addr) {
+            0xE0000000...0xE3FFFFFF => {
+                // Store Queue
+                @panic("Store Queue Read?");
+            },
+            0xE4000000...0xEFFFFFFF => {
+                // Reserved
+                @panic("Reserved");
+            },
+            0xF0000000...0xF0FFFFFF => {
+                // Instruction cache address array
+            },
+            0xF1000000...0xF1FFFFFF => {
+                // Instruction cache data array
+            },
+            0xF2000000...0xF2FFFFFF => {
+                // Instruction TLB address array
+            },
+            0xF3000000...0xF3FFFFFF => {
+                // Instruction TLB data arrays 1 and 2
+            },
+            0xF4000000...0xF4FFFFFF => {
+                // Operand cache address array
+            },
+            0xF5000000...0xF5FFFFFF => {
+                // Operand cache data array
+            },
+            0xF6000000...0xF6FFFFFF => {
+                // Unified TLB address array
+            },
+            0xF7000000...0xF7FFFFFF => {
+                // Unified TLB data arrays 1 and 2
+            },
+            0xF8000000...0xFBFFFFFF => {
+                // Reserved
+                @panic("Reserved");
+            },
+            0xFC000000...0xFFFFFFFF => {
+                // Control register area
+                if (virtual_addr >= 0xFF000000) {
+                    sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr) });
+
+                    switch (@as(P4Register, @enumFromInt(virtual_addr))) {
+                        P4Register.RFCR => {
+                            if (T != u16) unreachable;
+                            // Hack: This is the Refresh Count Register, related to DRAM control.
+                            //       If don't think its proper emulation is needed, but it's accessed by the bios,
+                            //       probably for synchronization purposes. I assume returning a contant value to pass this check
+                            //       is enough for now, as games shouldn't access that themselves.
+                            sh4_log.debug("[Note] Access to Refresh Count Register.", .{});
+                            return 0x0011;
+                            // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
+                        },
+                        P4Register.PDTRA => {
+                            if (T != u16) unreachable;
+                            // Note: I have absolutely no idea what's going on here.
+                            //       This is directly taken from Flycast, which already got it from Chankast.
+                            //       This is needed for the bios to work properly, without it, it will
+                            //       go to sleep mode with all interrupts disabled early on.
+                            const tpctra: u32 = self.read_p4_register(u32, .PCTRA);
+                            const tpdtra: u32 = self.read_p4_register(u32, .PDTRA);
+
+                            var tfinal: u16 = 0;
+                            if ((tpctra & 0xf) == 0x8) {
+                                tfinal = 3;
+                            } else if ((tpctra & 0xf) == 0xB) {
+                                tfinal = 3;
+                            } else {
+                                tfinal = 0;
+                            }
+
+                            if ((tpctra & 0xf) == 0xB and (tpdtra & 0xf) == 2) {
+                                tfinal = 0;
+                            } else if ((tpctra & 0xf) == 0xC and (tpdtra & 0xf) == 2) {
+                                tfinal = 3;
+                            }
+
+                            tfinal |= @intFromEnum(self._dc.?.cable_type) << 8;
+
+                            return tfinal;
+                        },
+                        // FIXME: Not emulated at all, these clash with my P4 access pattern :(
+                        P4Register.PMCR1 => return 0,
+                        P4Register.PMCR2 => return 0,
+                        else => {},
+                    }
+
+                    return @constCast(self).p4_register_addr(T, virtual_addr).*;
+                } else @panic("Unhandled Control register area read.");
+            },
+            else => @panic("Unhandled P4 read."),
+        }
+
+        return 0;
+    }
+
     pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
         return read8(self, virtual_addr);
     }
@@ -857,17 +956,10 @@ pub const SH4 = struct {
     pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
-        if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                else => {
-                    sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u8, @alignCast(@ptrCast(
-                        @constCast(self)._get_memory(addr),
-                    ))).* });
-                },
-            }
-        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
             return self.read_operand_cache(u8, virtual_addr);
-        }
+
+        if (virtual_addr >= 0xE0000000) return self.read_p4(u8, virtual_addr);
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             if (addr >= 0x005F7000 and addr <= 0x005F709C) {
@@ -889,57 +981,10 @@ pub const SH4 = struct {
     pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
-        // SH4 Hardware registers
-        if (virtual_addr >= 0xFF000000) {
-            switch (@as(P4Register, @enumFromInt(virtual_addr))) {
-                P4Register.RFCR => {
-                    // Hack: This is the Refresh Count Register, related to DRAM control.
-                    //       If don't think its proper emulation is needed, but it's accessed by the bios,
-                    //       probably for synchronization purposes. I assume returning a contant value to pass this check
-                    //       is enough for now, as games shouldn't access that themselves.
-                    sh4_log.debug("[Note] Access to Refresh Count Register.", .{});
-                    return 0x0011;
-                    // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
-                },
-                P4Register.PDTRA => {
-                    // Note: I have absolutely no idea what's going on here.
-                    //       This is directly taken from Flycast, which already got it from Chankast.
-                    //       This is needed for the bios to work properly, without it, it will
-                    //       go to sleep mode with all interrupts disabled early on.
-                    const tpctra: u32 = self.read_p4_register(u32, .PCTRA);
-                    const tpdtra: u32 = self.read_p4_register(u32, .PDTRA);
-
-                    var tfinal: u16 = 0;
-                    if ((tpctra & 0xf) == 0x8) {
-                        tfinal = 3;
-                    } else if ((tpctra & 0xf) == 0xB) {
-                        tfinal = 3;
-                    } else {
-                        tfinal = 0;
-                    }
-
-                    if ((tpctra & 0xf) == 0xB and (tpdtra & 0xf) == 2) {
-                        tfinal = 0;
-                    } else if ((tpctra & 0xf) == 0xC and (tpdtra & 0xf) == 2) {
-                        tfinal = 3;
-                    }
-
-                    tfinal |= @intFromEnum(self._dc.?.cable_type) << 8;
-
-                    return tfinal;
-                },
-                // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                P4Register.PMCR1 => return 0,
-                P4Register.PMCR2 => return 0,
-                else => {
-                    sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
-                        @constCast(self)._get_memory(addr),
-                    ))).* });
-                },
-            }
-        } else if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
             return self.read_operand_cache(u16, virtual_addr);
-        }
+
+        if (virtual_addr >= 0xE0000000) return self.read_p4(u16, virtual_addr);
 
         if (addr >= 0x005F6800 and addr < 0x005F8000) {
             if (addr >= 0x005F7000 and addr <= 0x005F709C) {
@@ -964,17 +1009,10 @@ pub const SH4 = struct {
     pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
-        switch (virtual_addr) {
-            0xFF000000...0xFFFFFFFF => {
-                sh4_log.debug("  Read32 to P4 register @{X:0>8} {s} = 0x{X:0>8}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u32, @alignCast(@ptrCast(
-                    @constCast(self)._get_memory(addr),
-                ))).* });
-            },
-            0x7C000000...0x7FFFFFFF => {
-                return self.read_operand_cache(u32, virtual_addr);
-            },
-            else => {},
-        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
+            return self.read_operand_cache(u32, virtual_addr);
+
+        if (virtual_addr >= 0xE0000000) return self.read_p4(u32, virtual_addr);
 
         switch (addr) {
             0x005F6800...0x005F7FFF => {
@@ -1033,6 +1071,11 @@ pub const SH4 = struct {
 
     pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
+
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
+            return self.read_operand_cache(u64, virtual_addr);
+
+        if (virtual_addr >= 0xE0000000) return self.read_p4(u64, virtual_addr);
 
         const r = @as(*const u64, @alignCast(@ptrCast(
             @constCast(self)._get_memory(addr),
