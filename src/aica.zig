@@ -368,6 +368,7 @@ pub const AICA = struct {
 
         return switch (T) {
             u8 => @as([*]const u8, @ptrCast(&self.regs[0]))[local_addr],
+            u16 => @truncate(self.regs[local_addr / 4]),
             u32 => self.regs[local_addr / 4],
             else => @compileError("Invalid value type"),
         };

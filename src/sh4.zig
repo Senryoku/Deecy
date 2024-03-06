@@ -1070,74 +1070,24 @@ pub const SH4 = struct {
         }
     }
 
-    pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
-        return read8(self, virtual_addr);
-    }
-
-    pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
+    pub inline fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.read_operand_cache(u8, virtual_addr);
+            return self.read_operand_cache(T, virtual_addr);
 
-        if (virtual_addr >= 0xE0000000) return self.read_p4(u8, virtual_addr);
-
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                return self._dc.?.gdrom.read_register(u8, addr);
-            } else {
-                sh4_log.debug("  Read8 to hardware register @{X:0>8} {s} ", .{ addr, P4.getP4RegisterName(addr) });
-            }
-        }
-
-        return @as(*const u8, @alignCast(@ptrCast(
-            @constCast(self)._get_memory(addr),
-        ))).*;
-    }
-
-    pub noinline fn _out_of_line_read16(self: *const @This(), virtual_addr: addr_t) u16 {
-        return read16(self, virtual_addr);
-    }
-
-    pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
-        const addr = virtual_addr & 0x1FFFFFFF;
-
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.read_operand_cache(u16, virtual_addr);
-
-        if (virtual_addr >= 0xE0000000) return self.read_p4(u16, virtual_addr);
-
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                return self._dc.?.gdrom.read_register(u16, addr);
-            } else {
-                sh4_log.debug("  Read16 to hardware register @{X:0>8} {s} ", .{ virtual_addr, P4.getP4RegisterName(virtual_addr) });
-            }
-        }
-        if (addr >= 0x00710000 and addr <= 0x00710008) {
-            return @truncate(self._dc.?.aica.read_rtc_register(addr));
-        }
-
-        return @as(*const u16, @alignCast(@ptrCast(
-            @constCast(self)._get_memory(addr),
-        ))).*;
-    }
-
-    pub noinline fn _out_of_line_read32(self: *const @This(), virtual_addr: addr_t) u32 {
-        return read32(self, virtual_addr);
-    }
-
-    pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
-        const addr = virtual_addr & 0x1FFFFFFF;
-
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.read_operand_cache(u32, virtual_addr);
-
-        if (virtual_addr >= 0xE0000000) return self.read_p4(u32, virtual_addr);
+        if (virtual_addr >= 0xE0000000) return self.read_p4(T, virtual_addr);
 
         switch (addr) {
             0x005F6800...0x005F7FFF => {
                 switch (addr) {
+                    0x005F7000...0x005F709C => {
+                        if (T != u8 and T != u16) {
+                            std.debug.print("Invalid Read({any}) from GDROM register @{X:0>8}.\n", .{ T, addr });
+                            unreachable;
+                        }
+                        return self._dc.?.gdrom.read_register(T, addr);
+                    },
                     @intFromEnum(HardwareRegister.SB_ADSUSP), @intFromEnum(HardwareRegister.SB_E1SUSP), @intFromEnum(HardwareRegister.SB_E2SUSP), @intFromEnum(HardwareRegister.SB_DDSUSP) => {
                         // DMA status, always report transfer possible and not in progress.
                         //    Bit 5: DMA Request Input State
@@ -1146,44 +1096,68 @@ pub const SH4 = struct {
                         //    Bit 4: DMA Suspend or DMA Stop
                         //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
                         //      1: DMA transfer has ended, or is stopped due to a suspen
-                        sh4_log.warn("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                        sh4_log.warn("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(self)._get_memory(addr),
                         ))).* });
                         return 0x30;
                     },
+                    @intFromEnum(HardwareRegister.SB_ISTNRM) => {}, // Too spammy even for debugging.
                     else => {
-                        if (addr != 0x005F6900) // SB_ISTNRM is way too spammy
-                            sh4_log.debug("  Read32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                                @constCast(self)._get_memory(addr),
-                            ))).* });
+                        sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
+                            @constCast(self)._get_memory(addr),
+                        ))).* });
                     },
                 }
             },
             0x00700000...0x00707FE0 => {
-                return self._dc.?.aica.read_register(u32, addr);
+                return self._dc.?.aica.read_register(T, addr);
             },
             0x00710000...0x00710008 => {
-                return self._dc.?.aica.read_rtc_register(addr);
+                return @truncate(self._dc.?.aica.read_rtc_register(addr));
             },
             0x00800000...0x00FFFFFF => {
-                return self._dc.?.aica.read_mem(u32, addr);
+                return self._dc.?.aica.read_mem(T, addr);
             },
             // Area 0 Mirrors
             0x02700000...0x02707FE0 => {
-                return self._dc.?.aica.read_register(u32, addr - 0x02000000);
+                return self._dc.?.aica.read_register(T, addr - 0x02000000);
             },
             0x02710000...0x02710008 => {
-                return self._dc.?.aica.read_rtc_register(addr - 0x02000000);
+                return @truncate(self._dc.?.aica.read_rtc_register(addr - 0x02000000));
             },
             0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.read_mem(u32, addr - 0x02000000);
+                return self._dc.?.aica.read_mem(T, addr - 0x02000000);
             },
             else => {},
         }
 
-        return @as(*const u32, @alignCast(@ptrCast(
+        return @as(*const T, @alignCast(@ptrCast(
             @constCast(self)._get_memory(addr),
         ))).*;
+    }
+
+    pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
+        return read8(self, virtual_addr);
+    }
+
+    pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
+        return self.read(u8, virtual_addr);
+    }
+
+    pub noinline fn _out_of_line_read16(self: *const @This(), virtual_addr: addr_t) u16 {
+        return read16(self, virtual_addr);
+    }
+
+    pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
+        return self.read(u16, virtual_addr);
+    }
+
+    pub noinline fn _out_of_line_read32(self: *const @This(), virtual_addr: addr_t) u32 {
+        return read32(self, virtual_addr);
+    }
+
+    pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
+        return self.read(u32, virtual_addr);
     }
 
     pub noinline fn _out_of_line_read64(self: *const @This(), virtual_addr: addr_t) u64 {
@@ -1193,10 +1167,8 @@ pub const SH4 = struct {
     pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
         const addr = virtual_addr & 0x1FFFFFFF;
 
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.read_operand_cache(u64, virtual_addr);
-
-        if (virtual_addr >= 0xE0000000) return self.read_p4(u64, virtual_addr);
+        std.debug.assert(!(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF));
+        std.debug.assert(!(virtual_addr >= 0xE0000000));
 
         const r = @as(*const u64, @alignCast(@ptrCast(
             @constCast(self)._get_memory(addr),
