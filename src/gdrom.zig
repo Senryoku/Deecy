@@ -168,6 +168,10 @@ const SPIPacketCommandCode = enum(u8) {
     _,
 };
 
+pub fn msf_to_lba(minutes: u8, seconds: u8, frame: u8) u32 {
+    return @as(u32, minutes) * 60 * 75 + @as(u32, seconds) * 75 + @as(u32, frame);
+}
+
 pub const GDROM = struct {
     disk: ?GDI = null,
 
@@ -347,7 +351,7 @@ pub const GDROM = struct {
                         self.packet_command_idx = 0;
 
                         self.schedule_event(.{
-                            .cycles = 100, // FIXME: Random value
+                            .cycles = 0, // FIXME: Random value
                             .status = .{ .bsy = 0, .drq = 1 },
                             .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
                         });
@@ -450,11 +454,11 @@ pub const GDROM = struct {
                     }
 
                     switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
-                        .TestUnit => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit: {X:0>2}"), .{self.packet_command}),
+                        .TestUnit => self.test_unit(),
                         .ReqStat => self.req_stat(),
                         .ReqMode => self.req_mode(),
                         .SetMode => self.set_mode(),
-                        .ReqError => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqError: {X:0>2}"), .{self.packet_command}),
+                        .ReqError => self.req_error(),
                         .GetToC => self.get_toc(),
                         .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
                         .CDPlay => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command}),
@@ -499,11 +503,19 @@ pub const GDROM = struct {
         });
     }
 
+    fn test_unit(self: *@This()) void {
+        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit: {X:0>2}"), .{self.packet_command});
+        self.schedule_event(.{
+            .cycles = 100, // FIXME: Random value
+            .status = .{},
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
+    }
+
     fn req_stat(self: *@This()) void {
-        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand ReqStat"), .{});
         const start_addr = self.packet_command[2];
-        _ = start_addr;
         const alloc_length = self.packet_command[4];
+        gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}"), .{ start_addr, alloc_length });
 
         // 0 |  0 0 0 0 STATUS
         // 1 |  Disc Format - Repeat Count
@@ -568,6 +580,29 @@ pub const GDROM = struct {
 
         // Data transfer is the same as ReqMode
         self.req_mode();
+    }
+
+    fn req_error(self: *@This()) void {
+        gdrom_log.info("GDROM PacketCommand ReqError", .{});
+        const alloc_length = self.packet_command[4];
+
+        const response = [_]u8{
+            0xF0,                                        0x00,
+            @intFromEnum(self.error_register.sense_key), 0x00,
+            0x00, 0x00, 0x00, // Command Specific Information
+            0x00, // Additional Sense Code (ASC)
+            0x00, // Additional Sense Code Qualifier (ASCQ)
+        };
+
+        if (alloc_length > 0) {
+            self.data_queue.writeAssumeCapacity(response[0..@min(response.len, alloc_length)]);
+            if (alloc_length > response.len) {
+                for (0..alloc_length - response.len) |_| {
+                    self.data_queue.writeItemAssumeCapacity(0xFF);
+                }
+            }
+        }
+        self.byte_count = alloc_length;
     }
 
     fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
@@ -641,16 +676,19 @@ pub const GDROM = struct {
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
 
-        var start_addr = (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4]; // Start FAD
-        // FIXME: Depending on parameter_type, start_addr may be a MSF: Minutes, Seconds, Frame
-        const transfer_length = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
+        var start_addr: u32 = if (parameter_type == 0)
+            (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
+        else
+            msf_to_lba(self.packet_command[2], self.packet_command[1], self.packet_command[0]);
+
+        const transfer_length: u32 = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
 
         gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
         gdrom_log.info("Command: {X}", .{self.packet_command});
 
         // FIXME: Everything else isn't implemented
-        std.debug.assert(parameter_type == 0); // start_addr is a FAD
-        std.debug.assert(data_select == 0b0010); // Data (no header or subheader)
+        if (data_select != 0b0010) // Data (no header or subheader)
+            gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
 
         switch (expected_data_type) {
             0b000 => {
@@ -686,7 +724,7 @@ pub const GDROM = struct {
             else => unreachable,
         }
 
-        if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still donhave to figure out correctly... The offset is only applied on track 3? 3+?
+        if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
 
         const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, self.data_queue.writableWithSize(2352 * transfer_length) catch unreachable);
         self.data_queue.update(bytes_written);

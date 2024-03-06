@@ -292,8 +292,6 @@ pub const GDI = struct {
         var remaining = length;
         var curr_sector = lba;
         while (remaining > 0) {
-            std.debug.print("Loading sector {d}...\n", .{curr_sector});
-            std.debug.print("Remaining: {d} bytes\n", .{remaining});
             remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
             curr_sector += 1;
         }

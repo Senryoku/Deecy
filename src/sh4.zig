@@ -891,8 +891,8 @@ pub const SH4 = struct {
 
         // SH4 Hardware registers
         if (virtual_addr >= 0xFF000000) {
-            switch (virtual_addr) {
-                @intFromEnum(P4Register.RFCR) => {
+            switch (@as(P4Register, @enumFromInt(virtual_addr))) {
+                P4Register.RFCR => {
                     // Hack: This is the Refresh Count Register, related to DRAM control.
                     //       If don't think its proper emulation is needed, but it's accessed by the bios,
                     //       probably for synchronization purposes. I assume returning a contant value to pass this check
@@ -901,7 +901,7 @@ pub const SH4 = struct {
                     return 0x0011;
                     // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                 },
-                @intFromEnum(P4Register.PDTRA) => {
+                P4Register.PDTRA => {
                     // Note: I have absolutely no idea what's going on here.
                     //       This is directly taken from Flycast, which already got it from Chankast.
                     //       This is needed for the bios to work properly, without it, it will
@@ -929,12 +929,8 @@ pub const SH4 = struct {
                     return tfinal;
                 },
                 // FIXME: Not emulated at all, these clash with my P4 access pattern :(
-                @intFromEnum(P4Register.PMCR1) => {
-                    return 0;
-                },
-                @intFromEnum(P4Register.PMCR2) => {
-                    return 0;
-                },
+                P4Register.PMCR1 => return 0,
+                P4Register.PMCR2 => return 0,
                 else => {
                     sh4_log.debug("  Read16 to P4 register @{X:0>8} {s} = {X:0>4}", .{ virtual_addr, P4.getP4RegisterName(virtual_addr), @as(*const u16, @alignCast(@ptrCast(
                         @constCast(self)._get_memory(addr),

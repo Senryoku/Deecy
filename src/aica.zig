@@ -562,40 +562,51 @@ pub const AICA = struct {
         self._timer_cycles_counter += @intCast(cycles);
         const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
 
-        for (0..64) |i| {
-            self.channel_states[i].update(sample_count);
-        }
+        if (sample_count > 0) {
+            if (self.get_reg(InterruptBits, .SCIEB).*.One_sample_interval == 1) {
+                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.One_sample_interval) << 0) |
+                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.One_sample_interval) << 1) |
+                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.One_sample_interval) << 2);
+                self.arm7.fast_interrupt_request();
+            }
 
-        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
-        const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
-        for (0..3) |i| {
-            var timer = self.get_reg(TimerControl, timer_registers[i]);
-            self._timer_counters[i] += sample_count;
-            const scaled = @as(u32, 1) << timer.prescale;
-            if (self._timer_counters[i] >= scaled) {
-                self._timer_counters[i] -= scaled;
-                if (timer.value == 0xFF) {
-                    self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @intCast(6 + i);
-                    self.get_reg(u32, .MCIPD).* |= @as(u32, 1) << @intCast(6 + i);
+            for (0..64) |i| {
+                self.channel_states[i].update(sample_count);
+            }
 
-                    check_sh4_interrupt(self, dc);
+            self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+            const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+            for (0..3) |i| {
+                var timer = self.get_reg(TimerControl, timer_registers[i]);
+                self._timer_counters[i] += sample_count;
+                const scaled = @as(u32, 1) << timer.prescale;
+                if (self._timer_counters[i] >= scaled) {
+                    self._timer_counters[i] -= scaled;
+                    if (timer.value == 0xFF) {
+                        const mask: u32 = @as(u32, 1) << @intCast(6 + i);
 
-                    if (self.get_reg(u32, .SCIEB).* & (@as(u32, 1) << @intCast(6 + i)) != 0) {
-                        aica_log.debug("Timer {d} interrupt.", .{i});
-                        if (i == 0) {
-                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV2).*.TimerA) << 2);
-                        } else {
-                            // Timer B and C share the same INTReq number.
-                            self.get_reg(u32, .INTRequest).* = (@as(u8, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
-                                (@as(u8, self.get_reg(InterruptBits, .SCILV2).*.TimerB) << 2);
+                        self.get_reg(u32, .SCIPD).* |= mask;
+                        self.get_reg(u32, .MCIPD).* |= mask;
+
+                        check_sh4_interrupt(self, dc);
+
+                        if ((self.get_reg(u32, .SCIEB).* & mask) != 0) {
+                            aica_log.debug("Timer {d} interrupt.", .{i});
+                            if (i == 0) {
+                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.TimerA) << 2);
+                            } else {
+                                // Timer B and C share the same INTReq number.
+                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.TimerB) << 2);
+                            }
+                            self.arm7.fast_interrupt_request();
                         }
-                        self.arm7.fast_interrupt_request();
-                    }
-                    timer.value = 0;
-                } else timer.value += 1;
+                        timer.value = 0;
+                    } else timer.value += 1;
+                }
             }
         }
 
