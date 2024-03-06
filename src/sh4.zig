@@ -1113,36 +1113,26 @@ pub const SH4 = struct {
                         ))).* });
                         return 0x30;
                     },
-                    @intFromEnum(HardwareRegister.SB_ISTNRM) => {}, // Too spammy even for debugging.
+                    @intFromEnum(HardwareRegister.SB_ISTNRM) => return self._dc.?.hw_register_addr(T, addr).*, // Too spammy even for debugging.
                     else => {
                         sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(self)._get_memory(addr),
                         ))).* });
+                        return self._dc.?.hw_register_addr(T, addr).*;
                     },
                 }
             },
-            0x00700000...0x00707FE0 => {
+            // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+            0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
                 check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.read_register(T, addr);
+                return self._dc.?.aica.read_register(T, addr & 0x00FFFFFF);
             },
-            0x00710000...0x00710008 => {
+            0x00710000...0x00710008, 0x02710000...0x02710008 => {
                 check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return @truncate(self._dc.?.aica.read_rtc_register(addr));
+                return @truncate(self._dc.?.aica.read_rtc_register(addr & 0x00FFFFFF));
             },
-            0x00800000...0x00FFFFFF => {
-                return self._dc.?.aica.read_mem(T, addr);
-            },
-            // Area 0 Mirrors
-            0x02700000...0x02707FE0 => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.read_register(T, addr - 0x02000000);
-            },
-            0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return @truncate(self._dc.?.aica.read_rtc_register(addr - 0x02000000));
-            },
-            0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.read_mem(T, addr - 0x02000000);
+            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
+                return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
             },
             else => {},
         }
@@ -1203,31 +1193,24 @@ pub const SH4 = struct {
                 }
                 // Hardware registers
                 switch (reg) {
-                    .SB_SFRES => {
+                    .SB_SFRES => { // Software Reset
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                        // SB_SFRES, Software Reset
-                        if (value == 0x00007611) {
+                        if (value == 0x00007611)
                             self.software_reset();
-                        }
-                        return;
                     },
                     .SB_ADST => {
-                        if (value == 1) {
+                        if (value == 1)
                             self._dc.?.aica.start_dma(self._dc.?);
-                            return;
-                        }
                     },
                     .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
                         if (value == 1) {
                             sh4_log.warn(termcolor.yellow("Unimplemented {any} DMA initiation!"), .{reg});
-                            return;
                         }
                     },
                     .SB_GDST => {
                         if (value == 1) {
                             sh4_log.info("{any} DMA (ch0-DMA) initiation!", .{reg});
                             self._dc.?.start_gd_dma();
-                            return;
                         }
                     },
                     .SB_MDAPRO => {
@@ -1235,29 +1218,25 @@ pub const SH4 = struct {
                         // This register specifies the address range for Maple-DMA involving the system (work) memory.
                         // Check "Security code"
                         if (value & 0xFFFF0000 != 0x61550000) return;
+                        self._dc.?.hw_register_addr(T, addr).* = value;
                     },
                     .SB_MDST => {
-                        if (value == 1) {
+                        if (value == 1)
                             self._dc.?.start_maple_dma();
-                            return;
-                        }
                     },
                     .SB_ISTNRM => {
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
-                        return;
                     },
                     .SB_ISTERR => {
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
-                        return;
                     },
                     .SB_C2DSTAT => {
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                         self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
-                        return;
                     },
                     .SB_C2DST => {
                         if (value == 1) {
@@ -1265,39 +1244,29 @@ pub const SH4 = struct {
                         } else {
                             self._dc.?.end_ch2_dma();
                         }
-                        return;
                     },
                     else => {
                         sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
+                        self._dc.?.hw_register_addr(T, addr).* = value;
                     },
                 }
+                return;
             },
             0x005F8000...0x005F9FFF => {
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
                 return self._dc.?.gpu.write_register(addr, value);
             },
-            0x00700000...0x0070FFFF => {
+            // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+            0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
                 check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.write_register(T, addr, value);
+                return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
             },
-            0x00710000...0x00710008 => {
+            0x00710000...0x00710008, 0x02710000...0x02710008 => {
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.write_rtc_register(addr, value);
+                return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
             },
-            0x00800000...0x00FFFFFF => {
-                return self._dc.?.aica.write_mem(T, addr, value);
-            },
-            // Area 0 Mirrors
-            0x02700000...0x0270FFFF => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.write_register(T, addr - 0x02000000, value);
-            },
-            0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.write_rtc_register(addr - 0x02000000, value);
-            },
-            0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.write_mem(T, addr - 0x02000000, value);
+            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
+                return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value);
             },
 
             0x10000000...0x13FFFFFF => {
