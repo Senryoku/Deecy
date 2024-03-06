@@ -1110,6 +1110,7 @@ pub const SH4 = struct {
                 }
             },
             0x00700000...0x00707FE0 => {
+                if (T == u16) unreachable;
                 return self._dc.?.aica.read_register(T, addr);
             },
             0x00710000...0x00710008 => {
@@ -1120,6 +1121,7 @@ pub const SH4 = struct {
             },
             // Area 0 Mirrors
             0x02700000...0x02707FE0 => {
+                if (T == u16) unreachable;
                 return self._dc.?.aica.read_register(T, addr - 0x02000000);
             },
             0x02710000...0x02710008 => {
@@ -1185,98 +1187,30 @@ pub const SH4 = struct {
         return r;
     }
 
-    pub noinline fn _out_of_line_write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
-        write8(self, virtual_addr, value);
-    }
-
-    pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+    pub inline fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.operand_cache(u8, virtual_addr).* = value;
+            self.operand_cache(T, virtual_addr).* = value;
             return;
         }
 
         if (virtual_addr >= 0xE0000000)
-            return write_p4(self, u8, virtual_addr, value);
-
-        const addr = virtual_addr & 0x1FFFFFFF;
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            // Hardware registers
-            switch (addr) {
-                0x005F7000...0x005F709C => {
-                    return self._dc.?.gdrom.write_register(u8, addr, value);
-                },
-                else => {
-                    sh4_log.debug("  Write8 to hardware register @{X:0>8} {s} = 0x{X:0>2}", .{ addr, P4.getP4RegisterName(addr), value });
-                },
-            }
-        }
-
-        // write8 to GPU registers not implemented
-        std.debug.assert(!(addr >= 0x005F8000 and addr <= 0x005FA000));
-        // write8 to TA not implemented
-        std.debug.assert(!(addr >= 0x10000000 and addr <= 0x14000000));
-
-        @as(*u8, @alignCast(@ptrCast(
-            self._get_memory(addr),
-        ))).* = value;
-    }
-
-    pub noinline fn _out_of_line_write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        write16(self, virtual_addr, value);
-    }
-
-    pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.operand_cache(u16, virtual_addr).* = value;
-            return;
-        }
-
-        if (virtual_addr >= 0xE0000000)
-            return write_p4(self, u16, virtual_addr, value);
-
-        const addr = virtual_addr & 0x1FFFFFFF;
-
-        if (addr >= 0x005F6800 and addr < 0x005F8000) {
-            switch (addr) {
-                0x005F7000...0x005F70A0 => {
-                    return self._dc.?.gdrom.write_register(u16, addr, value);
-                },
-                else => {
-                    sh4_log.debug("  Write16 to hardware register @{X:0>8} {s} = 0x{X:0>4}", .{ addr, P4.getP4RegisterName(addr), value });
-                },
-            }
-        }
-
-        // write16 to GPU registers not implemented
-        std.debug.assert(!(addr >= 0x005F8000 and addr <= 0x005FA000));
-        // write16 to TA not implemented
-        std.debug.assert(!(addr >= 0x10000000 and addr <= 0x14000000));
-
-        @as(*u16, @alignCast(@ptrCast(
-            self._get_memory(addr),
-        ))).* = value;
-    }
-
-    pub noinline fn _out_of_line_write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        write32(self, virtual_addr, value);
-    }
-
-    pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.operand_cache(u32, virtual_addr).* = value;
-            return;
-        }
-
-        if (virtual_addr >= 0xE0000000)
-            return write_p4(self, u32, virtual_addr, value);
+            return write_p4(self, T, virtual_addr, value);
 
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
             0x005F6800...0x005F7FFF => {
                 const reg: HardwareRegister = @enumFromInt(addr);
+                if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+                    if (T != u8 and T != u16) {
+                        std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        unreachable;
+                    }
+                    return self._dc.?.gdrom.write_register(T, addr, value);
+                }
                 // Hardware registers
                 switch (reg) {
                     .SB_SFRES => {
+                        if (T != u32) unreachable;
                         // SB_SFRES, Software Reset
                         if (value == 0x00007611) {
                             self.software_reset();
@@ -1303,6 +1237,7 @@ pub const SH4 = struct {
                         }
                     },
                     .SB_MDAPRO => {
+                        if (T != u32) unreachable;
                         // This register specifies the address range for Maple-DMA involving the system (work) memory.
                         // Check "Security code"
                         if (value & 0xFFFF0000 != 0x61550000) return;
@@ -1314,16 +1249,19 @@ pub const SH4 = struct {
                         }
                     },
                     .SB_ISTNRM => {
+                        if (T != u32) unreachable;
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
                         return;
                     },
                     .SB_ISTERR => {
+                        if (T != u32) unreachable;
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
                         return;
                     },
                     .SB_C2DSTAT => {
+                        if (T != u32) unreachable;
                         self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
                         return;
                     },
@@ -1341,37 +1279,71 @@ pub const SH4 = struct {
                 }
             },
             0x005F8000...0x005F9FFF => {
+                if (T == u8 or T == u16) {
+                    std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                    unreachable;
+                }
                 return self._dc.?.gpu.write_register(addr, value);
             },
             0x00700000...0x0070FFFF => {
-                return self._dc.?.aica.write_register(u32, addr, value);
+                if (T == u16) unreachable;
+                return self._dc.?.aica.write_register(T, addr, value);
             },
             0x00710000...0x00710008 => {
                 return self._dc.?.aica.write_rtc_register(addr, value);
             },
             0x00800000...0x00FFFFFF => {
-                return self._dc.?.aica.write_mem(u32, addr, value);
+                return self._dc.?.aica.write_mem(T, addr, value);
             },
             // Area 0 Mirrors
             0x02700000...0x0270FFFF => {
-                return self._dc.?.aica.write_register(u32, addr - 0x02000000, value);
+                if (T == u16) unreachable;
+                return self._dc.?.aica.write_register(T, addr - 0x02000000, value);
             },
             0x02710000...0x02710008 => {
                 return self._dc.?.aica.write_rtc_register(addr - 0x02000000, value);
             },
             0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.write_mem(u32, addr - 0x02000000, value);
+                return self._dc.?.aica.write_mem(T, addr - 0x02000000, value);
             },
 
             0x10000000...0x13FFFFFF => {
+                if (T == u8 or T == u16) {
+                    std.debug.print("Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                    unreachable;
+                }
                 return self._dc.?.gpu.write_ta(addr, value);
             },
             else => {},
         }
 
-        @as(*u32, @alignCast(@ptrCast(
+        @as(*T, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
+    }
+
+    pub noinline fn _out_of_line_write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        write8(self, virtual_addr, value);
+    }
+
+    pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
+        self.write(u8, virtual_addr, value);
+    }
+
+    pub noinline fn _out_of_line_write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        write16(self, virtual_addr, value);
+    }
+
+    pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
+        self.write(u16, virtual_addr, value);
+    }
+
+    pub noinline fn _out_of_line_write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        write32(self, virtual_addr, value);
+    }
+
+    pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
+        self.write(u32, virtual_addr, value);
     }
 
     pub noinline fn _out_of_line_write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
@@ -1438,18 +1410,18 @@ pub const SH4 = struct {
         unreachable;
     }
 
-    pub fn check_memory_protection(self: *const @This(), entry: mmu.UTLBEntry, write: bool) !void {
+    pub fn check_memory_protection(self: *const @This(), entry: mmu.UTLBEntry, writing: bool) !void {
         if (self.sr.md == 0) {
             switch (entry.pr) {
                 0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
-                0b10 => if (write and entry.w) return error.DataTLBProtectionViolationExpection,
-                0b11 => if (write and entry.w and entry.d == 0) return error.InitalPageWriteException,
+                0b10 => if (writing and entry.w) return error.DataTLBProtectionViolationExpection,
+                0b11 => if (writing and entry.w and entry.d == 0) return error.InitalPageWriteException,
                 else => {},
             }
         } else {
             // switch (entry.pr) {
-            //    0b01, 0b11 => if(write and entry.d) return error.InitalPageWriteException,
-            //    0b00, 0b01 => if(write) return error.DataTLBProtectionViolationExpection,
+            //    0b01, 0b11 => if(writing and entry.d) return error.InitalPageWriteException,
+            //    0b00, 0b01 => if(writing) return error.DataTLBProtectionViolationExpection,
             // }
         }
     }
