@@ -247,3 +247,34 @@ pub const DMAOR = packed struct(u32) {
     ddt: u1 = 0, // On-Demand Data Transfer
     _r2: u16 = 0,
 };
+
+pub const IPRA = packed struct(u16) {
+    rtc: u4 = 0,
+    tmu2: u4 = 0,
+    tmu1: u4 = 0,
+    tmu0: u4 = 0,
+};
+
+pub const IPRB = packed struct(u16) {
+    _: u4 = 0,
+    sci1: u4 = 0,
+    ref: u4 = 0,
+    wdt: u4 = 0,
+};
+
+pub const IPRC = packed struct(u16) {
+    hitachiudi: u4 = 0,
+    scif: u4 = 0,
+    dmac: u4 = 0,
+    gpio: u4 = 0,
+};
+
+pub const ICR = packed struct(u16) {
+    _r0: u7 = 0,
+    irlm: u1 = 0, // IRL Pin Mode (IRLM): Specifies whether pins IRL3-IRL0 are to be used as level-encoded interrupt requests or as four independent interrupt requests.
+    nmie: u1 = 0, // NMI Edge Select (NMIE): Specifies whether the falling or rising edge of the interrupt request signal to the NMI pin is detected.
+    nmib: u1 = 0, // NMI Block Mode (NMIB): Specifies whether an NMI request is to be held pending or detected immediately while the SR.BL bit is set to 1.
+    _r1: u4 = 0,
+    mai: u1 = 0, // NMI Interrupt Mask (MAI): Specifies whether or not all interrupts are to be masked while the NMI pin input level is low, irrespective of the CPU’s SR.BL bit.
+    nmil: u1 = 0, // NMI Input Level (NMIL): Sets the level of the signal input at the NMI pin. This bit can be read to determine the NMI pin level. It cannot be modified.
+};

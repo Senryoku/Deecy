@@ -158,6 +158,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.text("  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} ICPE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.icpe, control.unf });
                 zgui.endGroup();
             }
+
+            zgui.text("IPRA: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRA), dc.cpu.read_p4_register(sh4.P4.IPRA, .IPRA) });
+            zgui.text("IPRB: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRB), dc.cpu.read_p4_register(sh4.P4.IPRB, .IPRB) });
+            zgui.text("IPRC: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRC), dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC) });
         }
         zgui.end();
 

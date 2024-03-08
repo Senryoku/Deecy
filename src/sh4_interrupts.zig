@@ -2,37 +2,7 @@ const std = @import("std");
 
 // SH4 internal interrupts
 
-pub const IPRA = packed struct(u8) {
-    rtc: u4 = 0,
-    tmu2: u4 = 0,
-    tmu1: u4 = 0,
-    tmu0: u4 = 0,
-};
-
-pub const IPRB = packed struct(u8) {
-    _: u4 = 0,
-    sci1: u4 = 0,
-    ref: u4 = 0,
-    wdt: u4 = 0,
-};
-
-pub const IPRC = packed struct(u8) {
-    hitachiudi: u4 = 0,
-    scif: u4 = 0,
-    dmac: u4 = 0,
-    gpio: u4 = 0,
-};
-
-pub const ICR = packed struct(u8) {
-    _r0: u7 = 0,
-    irlm: u1 = 0, // IRL Pin Mode (IRLM): Specifies whether pins IRL3-IRL0 are to be used as level-encoded interrupt requests or as four independent interrupt requests.
-    nmie: u1 = 0, // NMI Edge Select (NMIE): Specifies whether the falling or rising edge of the interrupt request signal to the NMI pin is detected.
-    nmib: u1 = 0, // NMI Block Mode (NMIB): Specifies whether an NMI request is to be held pending or detected immediately while the SR.BL bit is set to 1.
-    _r1: u4 = 0,
-    mai: u1 = 0, // NMI Interrupt Mask (MAI): Specifies whether or not all interrupts are to be masked while the NMI pin input level is low, irrespective of the CPU’s SR.BL bit.
-    nmil: u1 = 0, // NMI Input Level (NMIL): Sets the level of the signal input at the NMI pin. This bit can be read to determine the NMI pin level. It cannot be modified.
-};
-
+// Ordered by fixed priorities. For configurable priorities, this can also be used as a tie breaker.
 pub const Interrupt = enum {
     NMI,
     IRL0,
@@ -50,6 +20,7 @@ pub const Interrupt = enum {
     IRL12,
     IRL13,
     IRL14,
+    // Configurable priorities
     HitachiUDI,
     GPIO,
     DMTE0,
@@ -138,29 +109,30 @@ pub const InterruptLevel: [41]u32 = .{
     3, // IRL12
     2, // IRL13
     1, // IRL14
-    4, // Hitachi
-    4, // GPIO
-    4, // DMTE0
-    4, // DMTE1
-    4, // DMTE2
-    4, // DMTE3
-    4, // DMAE
-    4, // TUNI0
-    4, // TUNI1
-    4, // TUNI2
-    4, // TICPI2
-    4, // ATI
-    4, // PRI
-    4, // CUI
-    4, // SCI1_ERI
-    4, // SCI1_RXI
-    4, // SCI1_TXI
-    4, // SCI1_TEI
-    4, // SCIF_ERI
-    4, // SCIF_RXI
-    4, // SCIF_TXI
-    4, // SCIF_TEI
-    4, // ITI
-    4, // RCMI
-    4, // ROVI
+    // Configurable priorities
+    0, // Hitachi
+    0, // GPIO
+    0, // DMTE0
+    0, // DMTE1
+    0, // DMTE2
+    0, // DMTE3
+    0, // DMAE
+    0, // TUNI0
+    0, // TUNI1
+    0, // TUNI2
+    0, // TICPI2
+    0, // ATI
+    0, // PRI
+    0, // CUI
+    0, // SCI1_ERI
+    0, // SCI1_RXI
+    0, // SCI1_TXI
+    0, // SCI1_TEI
+    0, // SCIF_ERI
+    0, // SCIF_RXI
+    0, // SCIF_TXI
+    0, // SCIF_TEI
+    0, // ITI
+    0, // RCMI
+    0, // ROVI
 };

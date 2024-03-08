@@ -13,7 +13,7 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 pub const mmu = @import("./mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
-const Interrupts = @import("Interrupts.zig");
+const Interrupts = @import("sh4_interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
 const addr_t = common.addr_t;
@@ -238,7 +238,11 @@ pub const SH4 = struct {
         self.p4_register(u32, .BCR2).* = 0x3FFC;
         self.p4_register(u32, .PCTRA).* = 0;
 
-        self.p4_register(u16, .SCSMR2).* = 0x0000;
+        self.p4_register(u16, .ICR).* = 0x0000;
+        self.p4_register(u16, .IPRA).* = 0x0000;
+        self.p4_register(u16, .IPRB).* = 0x0000;
+        self.p4_register(u16, .IPRC).* = 0x0000;
+
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
         self.p4_register(u16, .SCFSR2).* = 0x0060;
@@ -479,6 +483,8 @@ pub const SH4 = struct {
         if (!self.sr.bl or self.execution_state != .Running) {
             if (self.interrupt_requests != 0) {
                 // TODO: Search the highest priority interrupt.
+                //       NMI and IRL0-15 have fixed priorities (2, 4 and 6 for the 3 used), but other interrupts priorities are set by IPRA-C.
+                //       However, I have yet to find a game that sets IPRA-C to anything else than 0 (meaning they're all masked)... Maybe I can get away with that?
                 const first_set = @ctz(self.interrupt_requests);
                 // Check it against the cpu interrupt mask
                 if (Interrupts.InterruptLevel[first_set] > self.sr.imask) {
@@ -613,7 +619,7 @@ pub const SH4 = struct {
 
     pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
-        sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
+        // sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
         switch (T) {
             u32 => self.store_queues[sq_addr.sq][sq_addr.lw_spec] = value,
@@ -908,8 +914,6 @@ pub const SH4 = struct {
             0xFC000000...0xFFFFFFFF => {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
-                    sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr) });
-
                     switch (@as(P4Register, @enumFromInt(virtual_addr))) {
                         P4Register.RFCR => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RFCR\n", .{T});
@@ -952,10 +956,13 @@ pub const SH4 = struct {
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
                         P4Register.PMCR1 => return 0,
                         P4Register.PMCR2 => return 0,
-                        else => {},
+                        // Too spammy, even for debugging.
+                        P4Register.TCNT0 => return @constCast(self).p4_register_addr(T, virtual_addr).*,
+                        else => {
+                            sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
+                            return @constCast(self).p4_register_addr(T, virtual_addr).*;
+                        },
                     }
-
-                    return @constCast(self).p4_register_addr(T, virtual_addr).*;
                 } else @panic("Unhandled Control register area read.");
             },
             else => @panic("Unhandled P4 read."),
@@ -1073,6 +1080,12 @@ pub const SH4 = struct {
                                 @panic("Unimplemented");
                             }
                         },
+                        @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
+                            if (value != 0) {
+                                std.debug.print(termcolor.red("We don't handle interrupts correctly when IPRA-C are non-zero! Stop procrastinating!\n"), .{});
+                                @panic("TODO!");
+                            }
+                        },
                         else => {
                             sh4_log.debug("  Write({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                         },
@@ -1113,7 +1126,7 @@ pub const SH4 = struct {
                         ))).* });
                         return 0x30;
                     },
-                    @intFromEnum(HardwareRegister.SB_ISTNRM) => return self._dc.?.hw_register_addr(T, addr).*, // Too spammy even for debugging.
+                    @intFromEnum(HardwareRegister.SB_ISTNRM), @intFromEnum(HardwareRegister.SB_FFST) => return self._dc.?.hw_register_addr(T, addr).*, // Too spammy even for debugging.
                     else => {
                         sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
                             @constCast(self)._get_memory(addr),

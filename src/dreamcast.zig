@@ -7,7 +7,7 @@ const termcolor = @import("termcolor.zig");
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-const Interrupts = @import("Interrupts.zig");
+const Interrupts = @import("sh4_interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
 const sh4 = @import("sh4.zig");
@@ -21,6 +21,31 @@ const MapleHost = @import("maple.zig").MapleHost;
 const GDROM = @import("gdrom.zig").GDROM;
 
 const dc_log = std.log.scoped(.dc);
+
+const Region = enum(u8) {
+    Japan = 0,
+    USA = 1,
+    Europe = 2,
+    Unknown = 3,
+};
+
+const Language = enum(u8) {
+    Japanese = 0,
+    English = 1,
+    German = 2,
+    French = 3,
+    Spanish = 4,
+    Italian = 5,
+    Unknown = 6,
+};
+
+const VideoMode = enum(u8) {
+    NTSC = 0,
+    PAL = 1,
+    PAL_M = 2,
+    PAL_N = 3,
+    Unknown = 4,
+};
 
 const CableType = enum(u16) {
     VGA = 0,
@@ -298,6 +323,15 @@ pub const Dreamcast = struct {
         // Holly Version. TODO: Make it configurable?
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
+    }
+
+    pub fn set_flash_settings(self: *@This(), region: Region, lang: Language, video_mode: VideoMode) void {
+        self.flash[0x1A002] = @as(u8, '0') + @intFromEnum(region);
+        self.flash[0x1A0A2] = @as(u8, '0') + @intFromEnum(region);
+        self.flash[0x1A003] = @as(u8, '0') + @intFromEnum(lang);
+        self.flash[0x1A0A3] = @as(u8, '0') + @intFromEnum(lang);
+        self.flash[0x1A004] = @as(u8, '0') + @intFromEnum(video_mode);
+        self.flash[0x1A0A4] = @as(u8, '0') + @intFromEnum(video_mode);
     }
 
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {

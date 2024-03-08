@@ -206,10 +206,10 @@ pub const AICAChannelState = struct {
             else => .Release,
         };
 
-        if (self.status.EnvelopeState == .Attack) {
-            self.status.EnvelopeLevel -%= 1;
-        } else if (self.status.EnvelopeState == .Decay) {
-            self.status.EnvelopeLevel +%= 1;
+        if (self.status.EnvelopeState == .Attack and self.status.EnvelopeLevel > 0) {
+            self.status.EnvelopeLevel -= 1;
+        } else if (self.status.EnvelopeState == .Decay and self.status.EnvelopeLevel < 0x1FFF) {
+            self.status.EnvelopeLevel += 1;
         }
 
         if (self.status.EnvelopeLevel > 0x03BF) {
@@ -392,6 +392,8 @@ pub const AICA = struct {
                                 self.channel_states[i].status.EnvelopeLevel = 0x280;
                                 self.channel_states[i].status.EnvelopeState = .Attack;
                                 self.channel_states[i].status.LoopEndFlag = 0;
+                            } else {
+                                self.channel_states[i].status.EnvelopeState = .Release;
                             }
                         }
 
