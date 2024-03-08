@@ -228,23 +228,23 @@ pub fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + opcode.nd8.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + zero_extend(opcode.nd8.d))));
 }
 pub fn movw_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (opcode.nd8.d << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
 }
 pub fn movl_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu.read32(cpu.gbr + (opcode.nd8.d << 2));
+    cpu.R(0).* = cpu.read32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2));
 }
 
 pub fn movb_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
 pub fn movw_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.gbr + (opcode.nd8.d << 1), @truncate(cpu.R(0).*));
+    cpu.write16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1), @truncate(cpu.R(0).*));
 }
 pub fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.gbr + (opcode.nd8.d << 2), cpu.R(0).*);
+    cpu.write32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2), cpu.R(0).*);
 }
 
 pub fn movt_Rn(cpu: *SH4, opcode: Instr) void {
