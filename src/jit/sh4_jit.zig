@@ -1387,13 +1387,9 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
     const addr = ctx.address + 4 + d;
-    if (addr < 0x00200000) {
-        const abs_addr = @intFromPtr(&ctx.dc.boot[addr]);
-        // Set it to a scratch register
-        try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-        // Load the pointed value and sign extend it to 32-bits.
-        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = ReturnRegister, .size = 16 } });
-    } else {
+    if (addr < 0x00200000) { // We're in ROM.
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.dc.cpu.read16(addr))) });
+    } else { // Load from RAM and sign extend
         try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 16 } });
     }
     return false;
@@ -1405,12 +1401,8 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
-    if (addr < 0x00200000) {
-        const abs_addr = @intFromPtr(&ctx.dc.boot[addr]);
-        // Set it to a scratch register
-        try block.mov(.{ .reg = ReturnRegister }, .{ .imm64 = abs_addr });
-        // Load the pointed value and store it into Rn
-        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = ReturnRegister, .size = 32 } });
+    if (addr < 0x00200000) { // We're in ROM.
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.dc.cpu.read32(addr) });
     } else {
         try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 32 } });
     }
