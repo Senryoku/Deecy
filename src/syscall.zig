@@ -28,8 +28,8 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
         0 => {
             // Prepares the other two SYSINFO calls for use by copying the relevant data from the system flashrom into 8C000068-8C00007F. Always call this function before using the other two calls.
 
-            @memcpy(dc.ram[0x00000068 .. 0x00000068 + 8], dc.flash[0x1A056 .. 0x1A056 + 8]);
-            @memcpy(dc.ram[0x00000068 + 8 .. 0x00000068 + 8 + 6], dc.flash[0x1A000 .. 0x1A000 + 6]);
+            @memcpy(dc.ram[0x00000068 .. 0x00000068 + 8], dc.flash.data[0x1A056 .. 0x1A056 + 8]);
+            @memcpy(dc.ram[0x00000068 + 8 .. 0x00000068 + 8 + 6], dc.flash.data[0x1A000 .. 0x1A000 + 6]);
 
             dc.cpu.R(0).* = 0;
         },
@@ -116,7 +116,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             const start = dc.cpu.R(4).*;
             const dest = (dc.cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
             const len = dc.cpu.R(6).*;
-            @memcpy(dc.ram[dest .. dest + len], dc.flash[start .. start + len]);
+            @memcpy(dc.ram[dest .. dest + len], dc.flash.data[start .. start + len]);
             dc.cpu.R(0).* = len;
         },
         2 => {
@@ -128,12 +128,11 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             const start = dc.cpu.R(4).*;
             const source = (dc.cpu.R(5).* & 0x1FFFFFFF) - 0x0C000000;
             const len = dc.cpu.R(6).*;
-            @memcpy(dc.flash[start .. start + len], dc.ram[source .. source + len]);
+            @memcpy(dc.flash.data[start .. start + len], dc.ram[source .. source + len]);
             dc.cpu.R(0).* = len;
         },
         3 => {
-            // FlashROM Delete
-            // Return a flashrom partition to all ones, so that it may be rewritten. Danger Will Robinson: ALL data in the entire partition will be lost.
+            // FlashROM Delete - Return a flashrom partition to all ones, so that it may be rewritten. Danger: ALL data in the entire partition will be lost.
             //     r4 = offset of the start of the partition you want to delete, in bytes from the start of the flashrom
             // Returns: zero if successful, -1 if delete failed
             const start = dc.cpu.R(4).*;

@@ -118,28 +118,27 @@ const Track = struct {
     }
 
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-        const sector_start = (lba - self.offset) * self.format;
+        var sector_start = (lba - self.offset) * self.format;
         if (self.format == 2048) {
-            var offset = sector_start;
             var copied: u32 = 0;
             for (0..count) |_| {
                 const chunk_size = @min(self.format, dest.len - copied);
-                @memcpy(dest[copied .. copied + chunk_size], self.data[offset .. offset + chunk_size]);
+                @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
                 copied += chunk_size;
-                offset += chunk_size;
+                sector_start += chunk_size;
             }
             return copied;
         } else if (self.format == 2352) {
-            const header = self.data[sector_start .. sector_start + 0x10];
-            var offset = sector_start + 0x10;
-            std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
-            const size: u32 = if (header[0x0F] == 1) 2048 else 2336;
             var copied: u32 = 0;
             for (0..count) |_| {
-                const chunk_size = @min(size, dest.len - copied);
-                @memcpy(dest[copied .. copied + chunk_size], self.data[offset .. offset + chunk_size]);
+                const header = self.data[sector_start .. sector_start + self.header_size()];
+                std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
+                const data_size: u32 = if (header[0x0F] == 1) 2048 else 2336;
+
+                const chunk_size = @min(data_size, dest.len - copied);
+                @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start + self.header_size() .. sector_start + self.header_size() + chunk_size]);
                 copied += chunk_size;
-                offset += self.format;
+                sector_start += self.format;
             }
             return copied;
         } else {
@@ -279,6 +278,7 @@ pub const GDI = struct {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
+                std.debug.print("Loading '{s}' from LBA {X}\n", .{ filename, dir_record.location + GDI_SECTOR_OFFSET });
                 return self.load_bytes(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
             }
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?

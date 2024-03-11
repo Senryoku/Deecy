@@ -13,6 +13,7 @@ const Interrupt = Interrupts.Interrupt;
 const sh4 = @import("sh4.zig");
 const SH4 = sh4.SH4;
 const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
+const Flash = @import("flash.zig").Flash;
 const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
 const AICAModule = @import("aica.zig");
@@ -105,7 +106,7 @@ pub const Dreamcast = struct {
     cable_type: CableType = .VGA,
 
     boot: []u8 align(4) = undefined,
-    flash: []u8 align(4) = undefined,
+    flash: Flash,
     ram: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4) = undefined, // FIXME
 
@@ -125,6 +126,7 @@ pub const Dreamcast = struct {
             .maple = try MapleHost.init(allocator),
             .gdrom = GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
+            .flash = try Flash.init(allocator),
             .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
             .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
@@ -147,8 +149,6 @@ pub const Dreamcast = struct {
         // dc.boot[0x077A] = 0x09;
 
         // Load Flash
-        dc.flash = try dc._allocator.alloc(u8, 0x20000);
-
         var flash_file = std.fs.cwd().openFile("./userdata/flash.bin", .{}) catch |err| f: {
             if (err == error.FileNotFound) {
                 dc_log.info("Loading default flash ROM.", .{});
@@ -157,7 +157,7 @@ pub const Dreamcast = struct {
         };
 
         defer flash_file.close();
-        const flash_bytes_read = try flash_file.readAll(dc.flash);
+        const flash_bytes_read = try flash_file.readAll(dc.flash.data);
         std.debug.assert(flash_bytes_read == 0x20000);
 
         try dc.reset();
@@ -166,8 +166,8 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disk
-        if (!@import("builtin").is_test) {
+        // Write flash to disk, FIXME: Disabled for now, there are some CRC I'm not emulating correctly.
+        if (!@import("builtin").is_test and false) {
             if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
                 defer file.close();
                 _ = file.writeAll(self.flash) catch |err| {
@@ -185,7 +185,7 @@ pub const Dreamcast = struct {
         self.aica.deinit();
         self.gpu.deinit();
         self.cpu.deinit();
-        self._allocator.free(self.flash);
+        self.flash.deinit();
         self._allocator.free(self.boot);
         self._allocator.free(self.hardware_registers);
         self._allocator.free(self.ram);
@@ -197,8 +197,17 @@ pub const Dreamcast = struct {
 
         try self.sh4_jit.block_cache.reset();
 
+        @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
+
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
+        self.hw_register(u32, .SB_MDST).* = 0;
+        self.hw_register(u32, .SB_DDST).* = 0;
         self.hw_register(u32, .SB_ISTNRM).* = 0;
+
+        // Holly Version. TODO: Make it configurable?
+        self.hw_register(u32, .SB_SBREV).* = 0x0B;
+        self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
+
     }
 
     pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
@@ -208,8 +217,6 @@ pub const Dreamcast = struct {
 
     pub fn skip_bios(self: *@This()) void {
         self.cpu.state_after_boot_rom();
-
-        @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
 
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
 
@@ -319,10 +326,6 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
-
-        // Holly Version. TODO: Make it configurable?
-        self.hw_register(u32, .SB_SBREV).* = 0x0B;
-        self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
     }
 
     pub fn set_flash_settings(self: *@This(), region: Region, lang: Language, video_mode: VideoMode) void {
@@ -467,16 +470,27 @@ pub const Dreamcast = struct {
                 return;
             }
 
+            self.hw_register(u32, .SB_GDST).* = 1;
+            self.hw_register(u32, .SB_GDLEND).* = 0;
+            self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
+
             dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
+            // Simulate using ch0
+            self.cpu.p4_register(sh4.P4.CHCR, .CHCR0).*.sm = 0;
+            self.cpu.p4_register(sh4.P4.CHCR, .CHCR0).*.dm = 1;
+            self.cpu.p4_register(u32, .DAR0).* = dst_addr;
+            self.cpu.end_dmac(0);
+
             dc_log.info("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
 
             std.debug.assert(copied == len);
 
+            // TODO: Delay?
             self.hw_register(u32, .SB_GDST).* = 0;
             self.hw_register(u32, .SB_GDLEND).* += len;
             self.hw_register(u32, .SB_GDSTARD).* += len;

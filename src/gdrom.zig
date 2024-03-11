@@ -183,7 +183,7 @@ pub const GDROM = struct {
     interrupt_reason_register: InterruptReasonRegister = .{},
     byte_count: u16 = 0,
 
-    data_queue: std.fifo.LinearFifo(u8, .{ .Static = 1024 * 2048 }),
+    data_queue: std.fifo.LinearFifo(u8, .Dynamic),
 
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = undefined,
@@ -202,7 +202,7 @@ pub const GDROM = struct {
 
     pub fn init(allocator: std.mem.Allocator) GDROM {
         var gdrom = GDROM{
-            .data_queue = std.fifo.LinearFifo(u8, .{ .Static = 1024 * 2048 }).init(),
+            .data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
             ._allocator = allocator,
         };
         gdrom.reinit();
@@ -362,23 +362,23 @@ pub const GDROM = struct {
                         self.status_register.drq = 0;
 
                         // 0x00 Manufacturer's ID
-                        self.data_queue.writeAssumeCapacity(&[_]u8{0x0});
+                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
                         // 0x01 Model ID
-                        self.data_queue.writeAssumeCapacity(&[_]u8{0x0});
+                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
                         // 0x02 Version ID
-                        self.data_queue.writeAssumeCapacity(&[_]u8{0x0});
+                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
                         // 0x03 - 0x0F Reserved
                         for (0..0x10 - 0x03) |_| {
-                            self.data_queue.writeAssumeCapacity(&[_]u8{0x0});
+                            self.data_queue.write(&[_]u8{0x0}) catch unreachable;
                         }
                         // 0x10 - 0x1F Manufacturer's name (16 ASCII characters)
-                        self.data_queue.writeAssumeCapacity("            SEGA");
+                        self.data_queue.write("            SEGA") catch unreachable;
                         // 0x20 - 0x2F Model name (16 ASCII characters)
-                        self.data_queue.writeAssumeCapacity("                ");
+                        self.data_queue.write("                ") catch unreachable;
                         // 0x30 - 0x3F Firmware version (16 ASCII characters)
-                        self.data_queue.writeAssumeCapacity("                ");
+                        self.data_queue.write("                ") catch unreachable;
                         // 0x40 - 0x4F Reserved
-                        self.data_queue.writeAssumeCapacity("                ");
+                        self.data_queue.write("                ") catch unreachable;
 
                         self.schedule_event(.{
                             .cycles = 0, // FIXME: Random value
@@ -455,20 +455,20 @@ pub const GDROM = struct {
 
                     switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
                         .TestUnit => self.test_unit(),
-                        .ReqStat => self.req_stat(),
-                        .ReqMode => self.req_mode(),
-                        .SetMode => self.set_mode(),
-                        .ReqError => self.req_error(),
-                        .GetToC => self.get_toc(),
+                        .ReqStat => self.req_stat() catch unreachable,
+                        .ReqMode => self.req_mode() catch unreachable,
+                        .SetMode => self.set_mode() catch unreachable,
+                        .ReqError => self.req_error() catch unreachable,
+                        .GetToC => self.get_toc() catch unreachable,
                         .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
                         .CDPlay => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command}),
                         .CDSeek => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command}),
                         .CDScan => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command}),
-                        .CDRead => self.cd_read(),
+                        .CDRead => self.cd_read() catch unreachable,
                         .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
                         .GetSCD => self.get_subcode(),
                         .SYS_CHK_SECU => self.byte_count = 0,
-                        .SYS_REQ_SECU => self.req_secu(),
+                        .SYS_REQ_SECU => self.req_secu() catch unreachable,
                         else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
                     }
 
@@ -512,7 +512,7 @@ pub const GDROM = struct {
         });
     }
 
-    fn req_stat(self: *@This()) void {
+    fn req_stat(self: *@This()) !void {
         const start_addr = self.packet_command[2];
         const alloc_length = self.packet_command[4];
         gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}"), .{ start_addr, alloc_length });
@@ -529,16 +529,16 @@ pub const GDROM = struct {
         // 9 |  0 0 0 0 0 0 0 0
 
         if (alloc_length > 0) {
-            self.data_queue.writeItemAssumeCapacity(if (self.status_register.drdy == 0) @intFromEnum(GDROMStatus.Busy) else @intFromEnum(GDROMStatus.Standby));
-            self.data_queue.writeItemAssumeCapacity(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE);
-            self.data_queue.writeItemAssumeCapacity(0x04);
-            self.data_queue.writeItemAssumeCapacity(0x02);
-            self.data_queue.writeItemAssumeCapacity(0x00);
-            self.data_queue.writeItemAssumeCapacity(0x00); // FAD
-            self.data_queue.writeItemAssumeCapacity(0x00); // FAD
-            self.data_queue.writeItemAssumeCapacity(0x00); // FAD
-            self.data_queue.writeItemAssumeCapacity(0x00);
-            self.data_queue.writeItemAssumeCapacity(0x00);
+            try self.data_queue.writeItem(if (self.status_register.drdy == 0) @intFromEnum(GDROMStatus.Busy) else @intFromEnum(GDROMStatus.Standby));
+            try self.data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE);
+            try self.data_queue.writeItem(0x04);
+            try self.data_queue.writeItem(0x02);
+            try self.data_queue.writeItem(0x00);
+            try self.data_queue.writeItem(0x00); // FAD
+            try self.data_queue.writeItem(0x00); // FAD
+            try self.data_queue.writeItem(0x00); // FAD
+            try self.data_queue.writeItem(0x00);
+            try self.data_queue.writeItem(0x00);
 
             self.schedule_event(.{
                 .cycles = 0,
@@ -548,7 +548,7 @@ pub const GDROM = struct {
         }
     }
 
-    fn req_mode(self: *@This()) void {
+    fn req_mode(self: *@This()) !void {
         gdrom_log.info(" GDROM PacketCommand ReqMode", .{});
         const start_addr = self.packet_command[2];
         const alloc_length = self.packet_command[4];
@@ -569,20 +569,20 @@ pub const GDROM = struct {
         };
 
         if (alloc_length > 0) {
-            self.data_queue.writeAssumeCapacity(response[start_addr..][0..alloc_length]);
+            try self.data_queue.write(response[start_addr..][0..alloc_length]);
         }
         self.byte_count = alloc_length;
     }
 
-    fn set_mode(self: *@This()) void {
+    fn set_mode(self: *@This()) !void {
         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
         // TODO: Set some stuff?
 
         // Data transfer is the same as ReqMode
-        self.req_mode();
+        try self.req_mode();
     }
 
-    fn req_error(self: *@This()) void {
+    fn req_error(self: *@This()) !void {
         gdrom_log.info("GDROM PacketCommand ReqError", .{});
         const alloc_length = self.packet_command[4];
 
@@ -595,10 +595,10 @@ pub const GDROM = struct {
         };
 
         if (alloc_length > 0) {
-            self.data_queue.writeAssumeCapacity(response[0..@min(response.len, alloc_length)]);
+            try self.data_queue.write(response[0..@min(response.len, alloc_length)]);
             if (alloc_length > response.len) {
                 for (0..alloc_length - response.len) |_| {
-                    self.data_queue.writeItemAssumeCapacity(0xFF);
+                    try self.data_queue.writeItem(0xFF);
                 }
             }
         }
@@ -644,7 +644,7 @@ pub const GDROM = struct {
         return 0;
     }
 
-    fn get_toc(self: *@This()) void {
+    fn get_toc(self: *@This()) !void {
         // Selects the type of volume.
         //   0: Get TOC information from single-density area.
         //   1: Get TOC information from double-density area
@@ -654,7 +654,7 @@ pub const GDROM = struct {
         gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
 
         if (alloc_length > 0) {
-            const bytes_written = self.write_toc(self.data_queue.writableWithSize(408) catch unreachable, if (select == 1) .DoubleDensity else .SingleDensity);
+            const bytes_written = self.write_toc(try self.data_queue.writableWithSize(408), if (select == 1) .DoubleDensity else .SingleDensity);
             self.data_queue.update(@min(bytes_written, alloc_length));
 
             // Debug Dump
@@ -671,7 +671,7 @@ pub const GDROM = struct {
         }
     }
 
-    fn cd_read(self: *@This()) void {
+    fn cd_read(self: *@This()) !void {
         const parameter_type = self.packet_command[1] & 0x1;
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
@@ -726,7 +726,7 @@ pub const GDROM = struct {
 
         if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
 
-        const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, self.data_queue.writableWithSize(2352 * transfer_length) catch unreachable);
+        const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
         self.data_queue.update(bytes_written);
 
         gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
@@ -752,11 +752,11 @@ pub const GDROM = struct {
         });
     }
 
-    fn req_secu(self: *@This()) void {
+    fn req_secu(self: *@This()) !void {
         gdrom_log.info(" GDROM PacketCommand ReqSecu: {X:0>2}", .{self.packet_command});
         const parameter = self.packet_command[1];
         _ = parameter;
-        self.data_queue.writeAssumeCapacity(&GDROMCommand71Reply);
+        try self.data_queue.write(&GDROMCommand71Reply);
     }
 
     // HLE - Used by the BIOS syscalls

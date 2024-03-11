@@ -106,6 +106,12 @@ const ExecutionState = enum {
     ModuleStandby, // Not implemented at all
 };
 
+const DMACChannels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Register, dmatcr: P4Register, dmte: Interrupts.Interrupt } = .{
+    .{ .chcr = .CHCR0, .sar = .SAR0, .dar = .DAR0, .dmatcr = .DMATCR0, .dmte = .DMTE0 },
+    .{ .chcr = .CHCR1, .sar = .SAR1, .dar = .DAR1, .dmatcr = .DMATCR1, .dmte = .DMTE1 },
+    .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2 },
+};
+
 pub const SH4 = struct {
     on_trapa: ?*const fn () void = null, // Debugging callback
 
@@ -304,7 +310,7 @@ pub const SH4 = struct {
         self.R(0x4).* = 0xAC008300;
         self.R(0x5).* = 0xF4000000;
         self.R(0x6).* = 0xF4002000;
-        self.R(0x7).* = 0x00000070;
+        self.R(0x7).* = 0x00000044; // 0x00000070;
         self.R(0x8).* = 0x00000000;
         self.R(0x9).* = 0x00000000;
         self.R(0xA).* = 0x00000000;
@@ -329,7 +335,7 @@ pub const SH4 = struct {
         self.sgr = 0x8D000000;
         self.dbr = 0x8C000010;
         self.vbr = 0x8C000000;
-        self.pr = 0xAC00043C;
+        self.pr = 0x0C00043C; // 0xAC00043C;
         self.fpul = 0x00000000;
 
         self.pc = 0xAC008300; // Start address of IP.bin Licence screen
@@ -632,13 +638,7 @@ pub const SH4 = struct {
     }
 
     pub fn start_dmac(self: *@This(), comptime channel: u8) void {
-        const channels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Register, dmatcr: P4Register, dmte: Interrupts.Interrupt } = .{
-            .{ .chcr = .CHCR0, .sar = .SAR0, .dar = .DAR0, .dmatcr = .DMATCR0, .dmte = .DMTE0 },
-            .{ .chcr = .CHCR1, .sar = .SAR1, .dar = .DAR1, .dmatcr = .DMATCR1, .dmte = .DMTE1 },
-            .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2 },
-        };
-        const c = channels[channel];
-
+        const c = DMACChannels[channel];
         const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
         sh4_log.debug("DMAC ({d}) CHCR: {any}", .{ channel, chcr });
@@ -717,10 +717,20 @@ pub const SH4 = struct {
         }
 
         // TODO: Schedule for later?
+        end_dmac(self, channel);
+    }
+
+    pub fn end_dmac(self: *@This(), channel: u32) void {
+        const c = DMACChannels[channel];
+        const chcr = self.read_p4_register(P4.CHCR, c.chcr);
+
+        const len = self.read_p4_register(u32, c.dmatcr);
         if (chcr.ie == 1)
             self.request_interrupt(c.dmte);
-        self.p4_register(u32, c.sar).* += len;
-        self.p4_register(u32, c.dar).* += len;
+        if (chcr.sm != 0)
+            self.p4_register(u32, c.sar).* += len;
+        if (chcr.dm != 0)
+            self.p4_register(u32, c.dar).* += len;
         self.p4_register(u32, c.dmatcr).* = 0;
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
@@ -776,7 +786,7 @@ pub const SH4 = struct {
                         return &self._dc.?.boot[area_0_addr];
                     },
                     0x00200000...0x0021FFFF => {
-                        return &self._dc.?.flash[area_0_addr - 0x200000];
+                        return &self._dc.?.flash.data[area_0_addr - 0x200000];
                     },
                     0x005F6800...0x005F6FFF => {
                         return self._dc.?.hw_register_addr(u8, area_0_addr);
@@ -1263,6 +1273,11 @@ pub const SH4 = struct {
                         self._dc.?.hw_register_addr(T, addr).* = value;
                     },
                 }
+                return;
+            },
+            0x00200000...0x0021FFFF => {
+                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                self._dc.?.flash.write(addr & 0x1FFFF, value);
                 return;
             },
             0x005F8000...0x005F9FFF => {
