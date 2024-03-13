@@ -1258,7 +1258,8 @@ pub const Holly = struct {
 
     pub fn write_register(self: *@This(), addr: u32, v: u32) void {
         switch (@as(HollyRegister, @enumFromInt(addr))) {
-            HollyRegister.SOFTRESET => {
+            .ID, .REVISION => return, // Read-only
+            .SOFTRESET => {
                 holly_log.debug("TODO SOFTRESET: {X:0>8}", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
@@ -1275,7 +1276,7 @@ pub const Holly = struct {
                 }
                 return;
             },
-            HollyRegister.STARTRENDER => {
+            .STARTRENDER => {
                 holly_log.debug(termcolor.green("STARTRENDER!"), .{});
 
                 self.render_start = true;
@@ -1284,7 +1285,7 @@ pub const Holly = struct {
                 self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 400);
                 self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 600);
             },
-            HollyRegister.TA_LIST_INIT => {
+            .TA_LIST_INIT => {
                 if (v == 0x80000000) {
                     holly_log.debug("TA_LIST_INIT: {X:0>8}", .{v});
                     if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
@@ -1302,10 +1303,10 @@ pub const Holly = struct {
                     self._ta_volume_triangles.clearRetainingCapacity();
                 }
             },
-            HollyRegister.TA_LIST_CONT => {
+            .TA_LIST_CONT => {
                 holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
             },
-            HollyRegister.SPG_CONTROL, HollyRegister.SPG_LOAD => {
+            .SPG_CONTROL, .SPG_LOAD => {
                 holly_log.warn("TODO SPG_CONTROL/SPG_LOAD: {X:0>8}", .{v});
             },
             else => |reg| {

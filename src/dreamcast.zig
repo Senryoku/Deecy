@@ -166,11 +166,11 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disk, FIXME: Disabled for now, there are some CRC I'm not emulating correctly.
-        if (!@import("builtin").is_test and false) {
+        // Write flash to disk
+        if (!@import("builtin").is_test) {
             if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
                 defer file.close();
-                _ = file.writeAll(self.flash) catch |err| {
+                _ = file.writeAll(self.flash.data) catch |err| {
                     dc_log.err("Failed to save user flash: {any}", .{err});
                 };
             } else |err| {

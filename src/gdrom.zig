@@ -55,14 +55,13 @@ pub const GDROMCommand = enum(u32) {
     _,
 };
 
-// According to KallistiOS
-const CDAudioStatus = enum(u32) {
-    Invalid = 0x00,
-    Playing = 0x11,
-    Paused = 0x12,
-    Ended = 0x13,
-    Error = 0x14,
-    NoInfo = 0x15,
+const CDAudioStatus = enum(u8) {
+    Invalid = 0x00, // Audio status byte not supported or invalid
+    Playing = 0x11, // Audio playback in progress
+    Paused = 0x12, // Audio playback paused
+    Ended = 0x13, // Audio playback ended normally
+    Error = 0x14, // Audio playback ended abnormally (error)
+    NoInfo = 0x15, // No audio status information
 };
 
 // LLE Commands
@@ -466,19 +465,11 @@ pub const GDROM = struct {
                         .CDScan => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command}),
                         .CDRead => self.cd_read() catch unreachable,
                         .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
-                        .GetSCD => self.get_subcode(),
-                        .SYS_CHK_SECU => self.byte_count = 0,
+                        .GetSCD => self.get_subcode() catch unreachable,
+                        .SYS_CHK_SECU => self.chk_secu() catch unreachable,
                         .SYS_REQ_SECU => self.req_secu() catch unreachable,
                         else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
                     }
-
-                    // Packet handlers might have already raised it
-                    if (self.scheduled_event == null)
-                        self.schedule_event(.{
-                            .cycles = 0, // FIXME: Random value
-                            .status = .{ .bsy = 0, .drq = 1 },
-                            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-                        });
                 }
             },
             else => {
@@ -572,14 +563,26 @@ pub const GDROM = struct {
             try self.data_queue.write(response[start_addr..][0..alloc_length]);
         }
         self.byte_count = alloc_length;
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
     }
 
     fn set_mode(self: *@This()) !void {
         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
         // TODO: Set some stuff?
 
-        // Data transfer is the same as ReqMode
-        try self.req_mode();
+        self.interrupt_reason_register.io = .HostToDevice;
+        self.interrupt_reason_register.cod = .Command;
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 0 },
+            .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
+        });
     }
 
     fn req_error(self: *@This()) !void {
@@ -603,6 +606,12 @@ pub const GDROM = struct {
             }
         }
         self.byte_count = alloc_length;
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
     }
 
     fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
@@ -638,6 +647,12 @@ pub const GDROM = struct {
                     0x00, 0x00, 0x33, 0x1D, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
                 });
             }
+
+            self.schedule_event(.{
+                .cycles = 0, // FIXME: Random value
+                .status = .{ .bsy = 0, .drq = 1 },
+                .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+            });
 
             return 408;
         }
@@ -738,12 +753,31 @@ pub const GDROM = struct {
         });
     }
 
-    fn get_subcode(self: *@This()) void {
-        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand GetSCD"), .{});
-        // Absolutely no idea what this does.
+    fn get_subcode(self: *@This()) !void {
+        const data_format = self.packet_command[1] & 0xF;
         const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
+        gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+        try self.data_queue.writeItem(0); // Reserved
+        try self.data_queue.writeItem(@intFromEnum(CDAudioStatus.NoInfo)); // Audio Status
+        switch (data_format) {
+            0 => {
+                // All subcode information is transferred as raw data
+            },
+            1 => {
+                // Subcode Q data only
+            },
+            2 => {
+                // Media catalog number (UPC/bar code)
+            },
+            3 => {
+                // International standard recording code (ISRC)
+            },
+            else => {
+                // Reserved
+            },
+        }
         for (0..alloc_length) |_| {
-            self.data_queue.writeItemAssumeCapacity(0);
+            try self.data_queue.writeItem(0);
         }
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value
@@ -752,11 +786,26 @@ pub const GDROM = struct {
         });
     }
 
+    fn chk_secu(self: *@This()) !void {
+        self.byte_count = 0;
+        self.schedule_event(.{
+            .cycles = 0,
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
+    }
+
     fn req_secu(self: *@This()) !void {
         gdrom_log.info(" GDROM PacketCommand ReqSecu: {X:0>2}", .{self.packet_command});
         const parameter = self.packet_command[1];
         _ = parameter;
         try self.data_queue.write(&GDROMCommand71Reply);
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
     }
 
     // HLE - Used by the BIOS syscalls
