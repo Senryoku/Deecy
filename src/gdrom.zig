@@ -459,6 +459,7 @@ pub const GDROM = struct {
                         .SetMode => self.set_mode() catch unreachable,
                         .ReqError => self.req_error() catch unreachable,
                         .GetToC => self.get_toc() catch unreachable,
+                        .ReqSes => self.req_ses() catch unreachable,
                         .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
                         .CDPlay => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command}),
                         .CDSeek => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command}),
@@ -686,6 +687,41 @@ pub const GDROM = struct {
         }
     }
 
+    fn req_ses(self: *@This()) !void {
+        std.debug.assert(self.packet_command[0] == @intFromEnum(SPIPacketCommandCode.ReqSes));
+
+        const session_number = self.packet_command[2];
+        const alloc_length = self.packet_command[4];
+
+        gdrom_log.warn(" GDROM PacketCommand ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
+
+        try self.data_queue.writeItem(@intFromEnum(self.state));
+        try self.data_queue.writeItem(0);
+        switch (session_number) {
+            0 => {
+                try self.data_queue.writeItem(2); // Number of Session
+                try self.data_queue.write(&[_]u8{ 0x08, 0x61, 0xB4 }); // End FAD
+            },
+            1 => {
+                try self.data_queue.writeItem(0); // Starting TNO
+                try self.data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // Start FAD
+            },
+            2 => {
+                try self.data_queue.writeItem(2); // Starting TNO
+                try self.data_queue.write(&[_]u8{ 0x00, 0xB0, 0x5E }); // Start FAD
+            },
+            else => {
+                gdrom_log.err(termcolor.red("  Unhandled Session Number: {d}"), .{session_number});
+            },
+        }
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 1 },
+            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
+        });
+    }
+
     fn cd_read(self: *@This()) !void {
         const parameter_type = self.packet_command[1] & 0x1;
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
@@ -776,9 +812,12 @@ pub const GDROM = struct {
                 // Reserved
             },
         }
-        for (0..alloc_length) |_| {
+
+        // TODO
+        for (0..alloc_length - 2) |_| {
             try self.data_queue.writeItem(0);
         }
+
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value
             .status = .{ .bsy = 0, .drq = 1 },
