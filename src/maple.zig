@@ -612,7 +612,7 @@ pub const MapleHost = struct {
         return .{
             .ports = .{
                 .{ .main = .{ .Controller = .{} }, .subperipherals = .{ .{ .VMU = try VMU.init(allocator) }, null, null, null, null } },
-                .{},
+                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
                 .{},
                 .{},
             },

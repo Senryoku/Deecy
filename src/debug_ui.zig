@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
+const zglfw = @import("zglfw");
 
 const P4Register = @import("./sh4.zig").P4Register;
 
@@ -77,6 +78,49 @@ pub fn deinit(self: *@This()) void {
 pub fn draw(self: *@This(), d: *Deecy) !void {
     if (self.draw_debug_ui) {
         var dc = d.dc;
+
+        if (zgui.begin("Controls", .{})) {
+            var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick.Id, name: [:0]const u8 }).init(self._allocator);
+            defer available_controllers.deinit();
+
+            try available_controllers.append(.{ .id = null, .name = "None" });
+
+            for (0..zglfw.Joystick.maximum_supported) |idx| {
+                const jid: zglfw.Joystick.Id = @intCast(idx);
+                if (zglfw.Joystick.get(jid)) |joystick| {
+                    if (joystick.asGamepad()) |gamepad| {
+                        try available_controllers.append(.{ .id = jid, .name = gamepad.getName() });
+                    }
+                }
+            }
+
+            inline for (0..4) |i| {
+                var connected: bool = d.dc.maple.ports[i].main != null;
+                if (zgui.checkbox("Connected##" ++ std.fmt.comptimePrint("{d}", .{i + 1}), .{ .v = &connected })) {
+                    if (d.dc.maple.ports[i].main != null) {
+                        d.dc.maple.ports[i].main = null;
+                    } else {
+                        d.dc.maple.ports[i].main = .{ .Controller = .{} };
+                    }
+                }
+                const name = if (d.controllers[i]) |jid|
+                    (if (zglfw.Joystick.get(jid)) |joystick|
+                        (if (joystick.asGamepad()) |gamepad| gamepad.getName() else "None")
+                    else
+                        "None")
+                else
+                    "None";
+                if (zgui.beginCombo("Controller #" ++ std.fmt.comptimePrint("{d}", .{i + 1}), .{ .preview_value = name })) {
+                    for (available_controllers.items, 0..) |item, index| {
+                        const idx = @as(u32, @intCast(index));
+                        if (zgui.selectable(item.name, .{ .selected = d.controllers[i] == available_controllers.items[idx].id }))
+                            d.controllers[i] = available_controllers.items[idx].id;
+                    }
+                    zgui.endCombo();
+                }
+            }
+        }
+        zgui.end();
 
         if (zgui.begin("CPU State", .{})) {
             _ = zgui.checkbox("JIT", .{ .v = &d.enable_jit });
