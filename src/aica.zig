@@ -192,36 +192,20 @@ pub const AICAChannelState = struct {
     playing: bool = false,
     status: PlayStatus = .{},
     play_position: u32 = 0,
+};
 
-    pub fn update(self: *@This(), samples: u32) void {
-        if (!self.playing) return;
-
-        self.play_position +%= samples;
-
-        // FIXME: Obviously wrong, just trying to vary it
-        self.status.EnvelopeState = switch (self.play_position) {
-            0x0000...0x4000 => .Attack,
-            0x4001...0x8000 => .Decay,
-            0x8001...0xC000 => .Sustain,
-            else => .Release,
-        };
-
-        if (self.status.EnvelopeState == .Attack and self.status.EnvelopeLevel > 0) {
-            self.status.EnvelopeLevel -= 1;
-        } else if (self.status.EnvelopeState == .Decay and self.status.EnvelopeLevel < 0x1FFF) {
-            self.status.EnvelopeLevel += 1;
-        }
-
-        if (self.status.EnvelopeLevel > 0x03BF) {
-            self.status.EnvelopeLevel = 0x1FFF;
-        }
-
-        if (self.status.EnvelopeState == .Release) {
-            self.playing = false;
-            self.status.EnvelopeLevel = 0x1FFF;
-            self.status.LoopEndFlag = 1;
-        }
-    }
+// AICA User Manual p. 23
+// Effective Rate => Transition Time (ms)
+const AEGAttack = [_]f64{
+    std.math.inf(f64), std.math.inf(f64), 8100.0, 6900.0, 6000.0, 4800.0, 4000.0, 3400.0, 3000.0, 2400.0, 2000.0, 1700.0, 1500.0, 1200.0, 1000.0, 860.0, 760.0, 600.0, 500.0, 430.0, 380.0, 300.0, 250.0, 220.0, 190.0, 150.0, 130.0, 110.0, 95.0, 76.0, 63.0, 55.0, 47.0, 38.0, 31.0, 27.0, 24.0, 19.0, 15.0, 13.0, 12.0, 9.4, 7.9, 6.8, 6.0, 4.7, 3.8, 3.4, 3.0, 2.4, 2.0, 1.8, 1.6, 1.3, 1.1, 0.93, 0.85, 0.65, 0.53, 0.44, 0.40, 0.35, 0.0, 0.0,
+};
+// Effective Rate => Transition Time (ms)
+const AEGDecay = [_]f64{
+    std.math.inf(f64), std.math.inf(f64), 118200.0, 101300.0, 88600.0, 70900.0, 59100.0, 50700.0, 44300.0, 35500.0, 29600.0, 25300.0, 22200.0, 17700.0, 14800.0, 12700.0, 11100.0, 8900.0, 7400.0, 6300.0, 5500.0, 4400.0, 3700.0, 3200.0, 2800.0, 2200.0, 1800.0, 1600.0, 1400.0, 1100.0, 920.0, 790.0, 690.0, 550.0, 460.0, 390.0, 340.0, 270.0, 230.0, 200.0, 170.0, 140.0, 110.0, 98.0, 85.0, 68.0, 57.0, 49.0, 43.0, 34.0, 28.0, 25.0, 22.0, 18.0, 14.0, 12.0, 11.0, 8.5, 7.1, 6.1, 5.4, 4.3, 3.6, 3.1,
+};
+// Effective Rate => Transition Time (ms)
+const FEGTransitionTime = [_]f64{
+    std.math.inf(f64), std.math.inf(f64), 118200.0, 101300.0, 88600.0, 70900.0, 59100.0, 50700.0, 44300.0, 35500.0, 29600.0, 25300.0, 22200.0, 17700.0, 14800.0, 12700.0, 11100.0, 8900.0, 7400.0, 6300.0, 5500.0, 4400.0, 3700.0, 3200.0, 2800.0, 2200.0, 1800.0, 1600.0, 1400.0, 1100.0, 920.0, 790.0, 690.0, 550.0, 460.0, 390.0, 340.0, 270.0, 230.0, 200.0, 170.0, 140.0, 110.0, 98.0, 85.0, 68.0, 57.0, 49.0, 43.0, 34.0, 28.0, 25.0, 22.0, 18.0, 14.0, 12.0, 11.0, 8.5, 7.1, 6.1, 5.4, 4.3, 3.6, 3.1,
 };
 
 // Memory Map
@@ -330,7 +314,7 @@ pub const AICA = struct {
         @as(*T, @alignCast(@ptrCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).* = value;
     }
 
-    pub fn get_channel(self: *const AICA, number: u8) *const AICAChannel {
+    pub fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
         std.debug.assert(number < 64);
         return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
@@ -353,7 +337,7 @@ pub const AICA = struct {
             .PlayStatus => {
                 // TODO:
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                const channel = self.get_channel(req.MonitorSelect);
+                const channel = self.get_channel_registers(req.MonitorSelect);
                 _ = channel;
                 const status = self.channel_states[req.MonitorSelect].status;
                 self.channel_states[req.MonitorSelect].status.LoopEndFlag = 0;
@@ -386,7 +370,7 @@ pub const AICA = struct {
                     // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
                     if (value & 0x1 == 1) {
                         for (0..64) |i| {
-                            if (self.get_channel(@intCast(i)).play_control.key_on_bit) {
+                            if (self.get_channel_registers(@intCast(i)).play_control.key_on_bit) {
                                 self.channel_states[i].playing = true;
                                 self.channel_states[i].play_position = 0;
                                 self.channel_states[i].status.EnvelopeLevel = 0x280;
@@ -567,7 +551,7 @@ pub const AICA = struct {
             }
 
             for (0..64) |i| {
-                self.channel_states[i].update(sample_count);
+                self.update_channel(@intCast(i), sample_count);
             }
 
             self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
@@ -619,6 +603,52 @@ pub const AICA = struct {
                     arm7.interpreter.tick(&self.arm7);
                 }
             }
+        }
+    }
+
+    pub fn update_channel(self: *@This(), channel_number: u8, samples: u32) void {
+        const registers = self.get_channel_registers(channel_number);
+        var state = &self.channel_states[channel_number];
+
+        if (!state.playing) return;
+
+        state.play_position +%= samples;
+
+        switch (state.status.EnvelopeState) {
+            .Attack => {
+                if (state.status.EnvelopeLevel < registers.amp_env_1.attack_rate) {
+                    state.status.EnvelopeLevel = 0;
+                    state.status.EnvelopeState = .Decay;
+                } else {
+                    state.status.EnvelopeLevel -= registers.amp_env_1.attack_rate;
+                }
+            },
+            .Decay => {
+                state.status.EnvelopeLevel += registers.amp_env_1.decay_rate;
+                if (state.status.EnvelopeLevel >= registers.amp_env_2.decay_level) {
+                    state.status.EnvelopeLevel = registers.amp_env_2.decay_level;
+                    state.status.EnvelopeState = .Sustain;
+                }
+            },
+            .Sustain => {
+                state.status.EnvelopeLevel += registers.amp_env_1.sustain_rate;
+                if (state.status.EnvelopeLevel >= 0x3FF) {
+                    state.status.EnvelopeLevel = 0x3FF;
+                    state.status.EnvelopeState = .Release;
+                }
+            },
+            .Release => {
+                state.status.EnvelopeLevel += registers.amp_env_2.release_rate;
+                if (state.status.EnvelopeLevel >= 0x3FF) {
+                    state.status.EnvelopeLevel = 0x3FF;
+                }
+            },
+        }
+
+        if (state.status.EnvelopeState == .Release) {
+            state.playing = false;
+            state.status.EnvelopeLevel = 0x1FFF;
+            state.status.LoopEndFlag = 1;
         }
     }
 

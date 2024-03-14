@@ -230,7 +230,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
-                const channel = dc.aica.get_channel(@intCast(i));
+                const channel = dc.aica.get_channel_registers(@intCast(i));
                 if (self.show_disabled_channels or channel.play_control.key_on_bit) {
                     if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
                         const start_addr = (@as(u16, channel.play_control.start_address) << 7) + channel.sample_address;

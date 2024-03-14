@@ -703,11 +703,11 @@ pub const GDROM = struct {
                 try self.data_queue.write(&[_]u8{ 0x08, 0x61, 0xB4 }); // End FAD
             },
             1 => {
-                try self.data_queue.writeItem(0); // Starting TNO
+                try self.data_queue.writeItem(0); // Starting Track Number
                 try self.data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // Start FAD
             },
             2 => {
-                try self.data_queue.writeItem(2); // Starting TNO
+                try self.data_queue.writeItem(2); // Starting Track Number
                 try self.data_queue.write(&[_]u8{ 0x00, 0xB0, 0x5E }); // Start FAD
             },
             else => {
