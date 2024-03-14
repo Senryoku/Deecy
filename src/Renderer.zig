@@ -55,7 +55,7 @@ fn uv16(val: u16) f32 {
 fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u32 {
     var r: u32 = 0;
     var addr = (start + 4) & 0xFFFFFFC;
-    while (addr < end & 0xFFFFFFC) {
+    while (addr < @min(gpu.vram.len & 0xFFFFFFC, end & 0xFFFFFFC)) {
         r ^= @as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
         addr += 4;
     }
