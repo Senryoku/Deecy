@@ -248,6 +248,7 @@ pub const SH4 = struct {
         self.p4_register(u16, .IPRA).* = 0x0000;
         self.p4_register(u16, .IPRB).* = 0x0000;
         self.p4_register(u16, .IPRC).* = 0x0000;
+        self.compute_interrupt_priorities();
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
@@ -488,14 +489,12 @@ pub const SH4 = struct {
         // See h14th002d2.pdf page 665 (or 651)
         if (!self.sr.bl or self.execution_state != .Running) {
             if (self.interrupt_requests != 0) {
-                // TODO: Search the highest priority interrupt.
-                //       NMI and IRL0-15 have fixed priorities (2, 4 and 6 for the 3 used), but other interrupts priorities are set by IPRA-C.
-                //       However, I have yet to find a game that sets IPRA-C to anything else than 0 (meaning they're all masked)... Maybe I can get away with that?
-                const first_set = @ctz(self.interrupt_requests);
+                const int_index = @ctz(self.interrupt_requests);
+                const interrupt = Interrupts.SortedInterrupts[int_index];
                 // Check it against the cpu interrupt mask
-                if (Interrupts.InterruptLevel[first_set] > self.sr.imask) {
-                    self.interrupt_requests &= ~(@as(u64, 1) << @truncate(first_set)); // Clear the request
-                    self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[first_set];
+                if (Interrupts.InterruptLevels[@intFromEnum(interrupt)] > self.sr.imask) {
+                    self.interrupt_requests &= ~(@as(u64, 1) << @truncate(int_index)); // Clear the request
+                    self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@intFromEnum(interrupt)];
                     self.jump_to_interrupt();
                 }
             } else if (false) {
@@ -541,7 +540,66 @@ pub const SH4 = struct {
 
     pub fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
-        self.interrupt_requests |= @as(u33, 1) << @intFromEnum(int);
+        self.interrupt_requests |= @as(u64, 1) << @intCast(Interrupts.InterruptsIndices[@intFromEnum(int)]);
+    }
+
+    pub fn compute_interrupt_priorities(self: *@This()) void {
+        // If any requests are pending, we have to convert them to the new indices.
+        var saved_requests: u64 = 0;
+        if (self.interrupt_requests != 0) {
+            // Convert priority indices to the base enum
+            for (0..Interrupts.SortedInterrupts.len) |i| {
+                if ((self.interrupt_requests >> @intCast(i)) & 1 == 1) {
+                    saved_requests |= (@as(u64, 1) << @intFromEnum(Interrupts.SortedInterrupts[i]));
+                }
+            }
+        }
+
+        const IPRA = self.read_p4_register(P4.IPRA, .IPRA);
+        const IPRB = self.read_p4_register(P4.IPRB, .IPRB);
+        const IPRC = self.read_p4_register(P4.IPRC, .IPRC);
+
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.HitachiUDI)] = IPRC.hitachiudi;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.GPIO)] = IPRC.gpio;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE0)] = IPRC.dmac;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE1)] = IPRC.dmac;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE2)] = IPRC.dmac;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE3)] = IPRC.dmac;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMAE)] = IPRC.dmac;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI0)] = IPRA.tmu0;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI1)] = IPRA.tmu1;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI2)] = IPRA.tmu2;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TICPI2)] = IPRA.tmu2;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ATI)] = IPRA.rtc;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.PRI)] = IPRA.rtc;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.CUI)] = IPRA.rtc;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_ERI)] = IPRB.sci1;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_RXI)] = IPRB.sci1;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_TXI)] = IPRB.sci1;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_TEI)] = IPRC.scif;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
+        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
+
+        std.sort.insertion(Interrupt, &Interrupts.SortedInterrupts, {}, Interrupts.order_interrupt);
+        // Update reverse mapping (Interrupt enum to its index in the interrupt_requests bitfield)
+        for (0..Interrupts.SortedInterrupts.len) |i| {
+            Interrupts.InterruptsIndices[@intFromEnum(Interrupts.SortedInterrupts[i])] = @intCast(i);
+        }
+
+        if (saved_requests != 0) {
+            self.interrupt_requests = 0;
+            // Interrupt enum to new priority indices.
+            for (0..Interrupts.InterruptsIndices.len) |i| {
+                if ((saved_requests >> @intCast(i)) & 1 == 1) {
+                    self.interrupt_requests |= (@as(u64, 1) << @intCast(Interrupts.InterruptsIndices[i]));
+                }
+            }
+        }
     }
 
     inline fn timer_prescaler(value: u3) u32 {
@@ -1091,10 +1149,9 @@ pub const SH4 = struct {
                             }
                         },
                         @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
-                            if (value != 0) {
-                                std.debug.print(termcolor.red("We don't handle interrupts correctly when IPRA-C are non-zero! Stop procrastinating!\n"), .{});
-                                @panic("TODO!");
-                            }
+                            self.p4_register_addr(T, virtual_addr).* = value;
+                            self.compute_interrupt_priorities();
+                            return;
                         },
                         else => {
                             sh4_log.debug("  Write({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
