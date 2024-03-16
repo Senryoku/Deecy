@@ -67,7 +67,7 @@ fn main(
         default: {}
     }
 
-    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w);
+    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w, false);
 
     // Add the fragment to the linked list
 

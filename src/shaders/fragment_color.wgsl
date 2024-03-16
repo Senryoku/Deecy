@@ -96,6 +96,7 @@ fn fragment_color(
     uv: vec2<f32>,
     tex: vec2<u32>,
     inv_w: f32,
+    punch_through: bool,
 ) -> FragmentColor {
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);
@@ -107,6 +108,11 @@ fn fragment_color(
         let shading = (tex[1] >> 1) & 0x3;
         let ignore_tex_alpha = ((tex[1] >> 3) & 0x1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
+
+        if(punch_through && tex_a < uniforms.pt_alpha_ref) {
+            discard;
+        }
+
         switch(shading)  {
             // Decal
             case 0u: {

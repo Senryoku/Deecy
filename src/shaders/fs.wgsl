@@ -11,14 +11,14 @@ fn main(
     @location(3) inv_w: f32,
     @location(4) @interpolate(flat) tex: vec2<u32>,
 ) -> FragmentOutput {
-    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w);
-
-    if final_color.area0.a == 0.0 {
-        discard;
-    }
+    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w, true);
 
     var output: FragmentOutput;
     output.area0 = final_color.area0;
     output.area1 = final_color.area1;
+
+    output.area0.a = 1.0;
+    output.area1.a = 1.0;
+
     return output;
 }

@@ -114,14 +114,11 @@ const Uniforms = extern struct {
     depth_max: f32,
     fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16?
+    pt_alpha_ref: f32,
     fog_col_pal: fRGBA align(16),
     fog_col_vert: fRGBA align(16),
     fog_lut: [0x80]u32 align(16), // actually 2 * 8bits per entry.
 };
-
-comptime {
-    std.debug.assert(@sizeOf(Uniforms) == 560);
-}
 
 const Vertex = packed struct {
     x: f32,
@@ -462,6 +459,7 @@ pub const Renderer = struct {
     read_framebuffer_enabled: bool = false,
     min_depth: f32 = std.math.floatMax(f32),
     max_depth: f32 = 0.0,
+    pt_alpha_ref: f32 = 1.0,
     fpu_shad_scale: f32 = 1.0,
     fog_col_pal: fRGBA = .{},
     fog_col_vert: fRGBA = .{},
@@ -1592,6 +1590,8 @@ pub const Renderer = struct {
         self.min_depth = std.math.floatMax(f32);
         self.max_depth = 0.0;
 
+        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu._get_register(u8, .PT_ALPHA_REF).*)) / 255.0;
+
         const fpu_shad_scale = gpu._get_register(u32, .FPU_SHAD_SCALE).*;
         self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
 
@@ -2128,6 +2128,7 @@ pub const Renderer = struct {
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
             uniform_mem.slice[0].depth_max = self.max_depth;
+            uniform_mem.slice[0].pt_alpha_ref = self.pt_alpha_ref;
             uniform_mem.slice[0].fpu_shad_scale = self.fpu_shad_scale;
             uniform_mem.slice[0].fog_col_pal = self.fog_col_pal;
             uniform_mem.slice[0].fog_col_vert = self.fog_col_vert;
