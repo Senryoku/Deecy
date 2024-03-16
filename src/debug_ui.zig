@@ -452,7 +452,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     var scale: f32 = 512.0 / 8.0;
                     var size: i32 = 0;
                 };
-                if (zgui.inputInt("Size", .{ .v = &static.size, .step = 1 })) {
+                if (zgui.button("Clear Texture Cache", .{})) {
+                    for (0..d.renderer.texture_metadata.len) |size_index| {
+                        for (0..d.renderer.texture_metadata[size_index].len) |i| {
+                            d.renderer.texture_metadata[size_index][i].status = .Invalid;
+                        }
+                    }
+                }
+                if (zgui.inputInt("Size", .{
+                    .v = &static.size,
+                    .step = 1,
+                })) {
                     static.size = std.math.clamp(static.size, 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
                     static.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(static.size))));
                     static.index = std.math.clamp(static.index, 0, RendererModule.Renderer.MaxTextures[@intCast(static.size)] - 1);
