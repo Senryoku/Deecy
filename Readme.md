@@ -6,7 +6,8 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 
 ## Things I know I have to do
 
--   Better low level emulation: Boot ROM currently hangs after the logo animation.
+-   Debug, debug, debug.
+-   Better low level emulation: Most games do not work as well when not using the HLE'd syscalls.
 -   ch0-DMA and ch1-DMA?
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
@@ -29,8 +30,6 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
     The fact that the issue arise before issuing a pref instruction with the MMU on lead me to think there's more to it.
-- Some games (e.g. Legacy of Kain) seem to try to directly access the GDROM, I was hoping I could skip it by only implementing the related syscalls :(
-
 
 ## Things I don't know I have to do
 
