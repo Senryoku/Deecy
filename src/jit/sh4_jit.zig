@@ -1474,6 +1474,19 @@ pub fn mull_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn neg_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.append(.{ .Neg = .{ .dst = .{ .reg = rn } } });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.mov(rn, .{ .reg = rm });
+        try block.append(.{ .Neg = .{ .dst = rn } });
+    }
+    return false;
+}
+
 pub fn sub_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
