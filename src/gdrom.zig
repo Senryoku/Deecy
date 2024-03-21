@@ -239,7 +239,6 @@ pub const GDROM = struct {
     fn schedule_event(self: *@This(), event: ScheduledEvent) void {
         if (self.scheduled_event) |*e| {
             gdrom_log.warn(termcolor.yellow("Scheduled event already in progress: {any}"), .{e});
-            return;
         }
         self.scheduled_event = event;
     }
@@ -496,9 +495,9 @@ pub const GDROM = struct {
     }
 
     fn test_unit(self: *@This()) void {
-        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand TestUnit: {X:0>2}"), .{self.packet_command});
+        gdrom_log.info("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
         self.schedule_event(.{
-            .cycles = 100, // FIXME: Random value
+            .cycles = 0, // FIXME: Random value
             .status = .{},
             .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
         });
@@ -602,7 +601,7 @@ pub const GDROM = struct {
             try self.data_queue.write(response[0..@min(response.len, alloc_length)]);
             if (alloc_length > response.len) {
                 for (0..alloc_length - response.len) |_| {
-                    try self.data_queue.writeItem(0xFF);
+                    try self.data_queue.writeItem(0x00);
                 }
             }
         }
@@ -737,50 +736,56 @@ pub const GDROM = struct {
         gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
         gdrom_log.info("Command: {X}", .{self.packet_command});
 
-        // FIXME: Everything else isn't implemented
-        if (data_select != 0b0010) // Data (no header or subheader)
-            gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
-
-        switch (expected_data_type) {
-            0b000 => {
-                // No check for sector type.
-                // However, if reading of mode 2 track or Form 1/Form 2 is
-                // attempted in the case of a disc which is not a CD-ROM XA,
-                // the Mode 2 disc reading will fail.
-            },
-            0b001 => {
-                // CD-DA
-                // Error if sector other than CD-DA is read.
-            },
-            0b010 => {
-                // Mode 1
-                // Error if sector other than 2048 byte (Yellow Book) is read
-            },
-            0b011 => {
-                // Mode 2, Form 1 or Mode 2, Form 1
-                // Error if sector other than 2352 byte (Yellow Book) is read
-            },
-            0b100 => {
-                // Mode 2, Form 1.
-                // Error if sector other than 2048 byte (Green Book) is read
-            },
-            0b101 => {
-                // Mode 2, Form 2
-                // Error if sector other than 2324 byte (Green Book) is read
-            },
-            0b110 => {
-                // Mode 2 of non-CD-ROM XA disc
-                // 2336 bytes are read. No sector type check is performed
-            },
-            else => unreachable,
-        }
-
         if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
 
-        const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
-        self.data_queue.update(bytes_written);
+        if (data_select == 0b0001) {
+            // Raw data (all 2352 bytes of each sector)
+            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
+            self.data_queue.update(bytes_written);
+        } else {
+            // FIXME: Everything else isn't implemented
+            if (data_select != 0b0010) // Data (no header or subheader)
+                gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
 
-        gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
+            switch (expected_data_type) {
+                0b000 => {
+                    // No check for sector type.
+                    // However, if reading of mode 2 track or Form 1/Form 2 is
+                    // attempted in the case of a disc which is not a CD-ROM XA,
+                    // the Mode 2 disc reading will fail.
+                },
+                0b001 => {
+                    // CD-DA
+                    // Error if sector other than CD-DA is read.
+                },
+                0b010 => {
+                    // Mode 1
+                    // Error if sector other than 2048 byte (Yellow Book) is read
+                },
+                0b011 => {
+                    // Mode 2, Form 1 or Mode 2, Form 1
+                    // Error if sector other than 2352 byte (Yellow Book) is read
+                },
+                0b100 => {
+                    // Mode 2, Form 1.
+                    // Error if sector other than 2048 byte (Green Book) is read
+                },
+                0b101 => {
+                    // Mode 2, Form 2
+                    // Error if sector other than 2324 byte (Green Book) is read
+                },
+                0b110 => {
+                    // Mode 2 of non-CD-ROM XA disc
+                    // 2336 bytes are read. No sector type check is performed
+                },
+                else => unreachable,
+            }
+
+            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
+            self.data_queue.update(bytes_written);
+
+            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
+        }
 
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value

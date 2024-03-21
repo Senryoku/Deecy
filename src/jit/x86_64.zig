@@ -7,8 +7,6 @@ const BasicBlock = @import("basic_block.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
 
-// Tried using builtin.abi, but it returns .gnu on Windows.
-
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
@@ -17,7 +15,8 @@ pub const ABI = enum {
     Win64,
 };
 
-pub const JITABI = switch (builtin.os.tag) {
+// Tried using builtin.abi, but it returns .gnu on Windows.
+pub const JITABI: ABI = switch (builtin.os.tag) {
     .windows => .Win64,
     .linux => .SystemV,
     else => @compileError("Unsupported OS"),
@@ -27,7 +26,6 @@ pub const JITABI = switch (builtin.os.tag) {
 pub const ArgRegisters = switch (JITABI) {
     .Win64 => [_]Register{ .rcx, .rdx, .r8, .r9 },
     .SystemV => [_]Register{ .rdi, .rsi, .rdx, .rcx, .r8, .r9 },
-    else => @compileError("Unsupported ABI"),
 };
 pub const SavedRegisters = switch (JITABI) {
     .Win64 => [_]Register{
@@ -51,33 +49,58 @@ pub const SavedRegisters = switch (JITABI) {
         // .rbp,
         // .rsp,
     },
-    else => @compileError("Unsupported ABI"),
 };
 
-pub const FPArgRegisters = [_]FPRegister{
-    .xmm0,
-    .xmm1,
-    .xmm2,
-    .xmm3,
+pub const FPArgRegisters = switch (JITABI) {
+    .Win64 => [_]FPRegister{
+        .xmm0,
+        .xmm1,
+        .xmm2,
+        .xmm3,
+    },
+    .SystemV => [_]FPRegister{
+        .xmm0,
+        .xmm1,
+        .xmm2,
+        .xmm3,
+        .xmm4,
+        .xmm5,
+        .xmm6,
+        .xmm7,
+    },
 };
 
-pub const FPScratchRegisters = [_]FPRegister{
-    .xmm4,
-    .xmm5,
+pub const FPScratchRegisters = switch (JITABI) {
+    .Win64 => [_]FPRegister{
+        .xmm4,
+        .xmm5,
+    },
+    .SystemV => [_]FPRegister{
+        .xmm8,
+        .xmm9,
+        .xmm10,
+        .xmm11,
+        .xmm12,
+        .xmm13,
+        .xmm14,
+        .xmm15,
+    },
 };
 
-// This is only true for Win64
-pub const FPSavedRegisters = [_]FPRegister{
-    .xmm6,
-    .xmm7,
-    .xmm8,
-    .xmm9,
-    .xmm10,
-    .xmm11,
-    .xmm12,
-    .xmm13,
-    .xmm14,
-    .xmm15,
+pub const FPSavedRegisters = switch (JITABI) {
+    .Win64 => [_]FPRegister{
+        .xmm6,
+        .xmm7,
+        .xmm8,
+        .xmm9,
+        .xmm10,
+        .xmm11,
+        .xmm12,
+        .xmm13,
+        .xmm14,
+        .xmm15,
+    },
+    .SystemV => [_]FPRegister{}, // FIXME: This is an issue :))
 };
 
 const PatchableJump = struct {
@@ -334,17 +357,17 @@ pub const Instruction = union(InstructionType) {
             .FunctionCall => |function| writer.print("call {any}", .{function}),
             .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
             .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
-            .Push => |push| writer.print("push {any}", .{push}),
-            .Pop => |pop| writer.print("pop {any}", .{pop}),
+            .Push => |reg| writer.print("push {any}", .{reg}),
+            .Pop => |reg| writer.print("pop {any}", .{reg}),
             .Not => |not| writer.print("not {any}", .{not.dst}),
             .Neg => |neg| writer.print("neg {any}", .{neg.dst}),
             .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
-            .Mul => |sub| writer.print("mul {any}, {any}", .{ sub.dst, sub.src }),
-            .Div => |sub| writer.print("div {any}, {any}", .{ sub.dst, sub.src }),
+            .Mul => |mul| writer.print("mul {any}, {any}", .{ mul.dst, mul.src }),
+            .Div => |div| writer.print("div {any}, {any}", .{ div.dst, div.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
-            .Xor => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
+            .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
             .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),

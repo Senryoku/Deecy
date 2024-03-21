@@ -302,6 +302,12 @@ pub const GDI = struct {
         const track = try self.get_corresponding_track(lba);
         return track.load_sectors(lba, count, dest);
     }
+
+    pub fn load_sectors_raw(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(lba);
+        @memcpy(dest[0 .. 2352 * count], track.data[(lba - track.offset) * 2352 .. 2352 * ((lba - track.offset) + count)]);
+        return 2352 * count;
+    }
 };
 
 test "gdi" {
