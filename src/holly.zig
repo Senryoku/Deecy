@@ -1160,6 +1160,7 @@ pub const Holly = struct {
         self._get_register(u32, .SDRAM_REFRESH).* = 0x00000020;
         self._get_register(u32, .SDRAM_CFG).* = 0x15D1C951;
         self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
+        self._get_register(u8, .PT_ALPHA_REF).* = 0xFF;
 
         self._get_register(SPG_LOAD, .SPG_LOAD).* = .{};
         self._get_register(SPG_HBLANK, .SPG_HBLANK).* = .{};
