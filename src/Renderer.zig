@@ -466,6 +466,8 @@ pub const Renderer = struct {
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
 
+    palette_ram_hash: u32 = 0,
+
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
     opaque_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
@@ -1322,12 +1324,18 @@ pub const Renderer = struct {
     }
 
     fn reset_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
+        const palette_ram = @as([*]u8, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0 .. 4 * 1024];
+        const palette_hash = std.hash.Murmur3_32.hash(palette_ram);
+        const invalidate_palette_textures = palette_hash != self.palette_ram_hash;
+        self.palette_ram_hash = palette_hash;
+
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].status != .Invalid) {
                     self.texture_metadata[j][i].usage = 0;
-                    if (texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash) {
-                        // Texture appears to have changed in memory. Force re-upload.
+                    const is_palette_texture = self.texture_metadata[j][i].control_word.pixel_format == .Palette4BPP or self.texture_metadata[j][i].control_word.pixel_format == .Palette8BPP;
+                    if ((invalidate_palette_textures and is_palette_texture) or (texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash)) {
+                        // Texture appears to have changed in memory, or palette has changed. Force re-upload.
                         self.texture_metadata[j][i].status = .Invalid;
                     }
                 }
