@@ -1653,6 +1653,11 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     try load_t(block, ctx);
     var skip_branch = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
+    // TODO: We could probably optimize very small forward jumps (like skipping a single instruction), but we need to be able to iterate
+    //       over the next instructions right here if we don't want to rewrite all of this (just add instructions array to the JITContext?)
+    //       and be careful about branches in the potentially skipped instructions (might have to check the next instructions before
+    //       applying the optimization).
+
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
 
