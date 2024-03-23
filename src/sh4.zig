@@ -180,8 +180,6 @@ pub const SH4 = struct {
         //   I ignore them in read16/write16.
         sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
 
-        sh4_instructions.init_jump_table();
-
         sh4.reset();
 
         return sh4;

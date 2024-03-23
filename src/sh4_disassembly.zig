@@ -66,7 +66,6 @@ fn test_decoding(instruction: Instr, comptime expected: []const u8) !void {
 
 test "Instruction Decoding" {
     defer free_disassembly_cache(std.testing.allocator);
-    sh4_instructions.init_jump_table();
 
     try test_decoding(.{ .value = 0b1110_0000_0000_0001 }, "mov #1,R0");
 

@@ -6,7 +6,27 @@ const interpreter = @import("sh4_interpreter.zig");
 const sh4_jit = @import("jit/sh4_jit.zig");
 const JITBlock = @import("jit/jit_block.zig").JITBlock;
 
-pub var JumpTable: [0x10000]u8 = .{1} ** 0x10000;
+pub const JumpTable: [0x10000]u8 = t: {
+    @setEvalBranchQuota(0xFFFFFFFF);
+
+    comptime var table: [0x10000]u8 = .{1} ** 0x10000;
+
+    table[0] = 0; // NOP
+    for (1..0x10000) |i| {
+        for (2..Opcodes.len) |idx| {
+            if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
+                //if (table[i] != 1) {
+                //    std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
+                //    @panic("Duplicate matching instruction.");
+                //}
+                table[i] = @intCast(idx);
+                break;
+            }
+        }
+    }
+
+    break :t table;
+};
 
 const CacheAccess = struct {
     r0: bool = false,
@@ -293,21 +313,3 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = interpreter.frchg, .name = "frchg", .privileged = false, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = interpreter.fschg, .name = "fschg", .privileged = false, .jit_emit_fn = sh4_jit.fschg, .access = .{ .r = .{}, .w = .{} } },
 };
-
-pub fn init_jump_table() void {
-    if (JumpTable[0] == 1) {
-        JumpTable[0] = 0; // NOP
-        for (1..0x10000) |i| {
-            for (2..Opcodes.len) |idx| {
-                if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
-                    if (JumpTable[i] != 1) {
-                        std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
-                        @panic("Duplicate matching instruction.");
-                    }
-                    JumpTable[i] = @intCast(idx);
-                    //break;
-                }
-            }
-        }
-    }
-}
