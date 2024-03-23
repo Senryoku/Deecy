@@ -1195,11 +1195,7 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => {
-                    // FIXME: SoulCalibur has broken 8BPP textures. Not sure why yet.
-
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                    // NOTE: I'm not sure if this is garanteed to still be correct, I might have to check it when the palette is set (when the program writes to PALETTE_RAM).
-                    //       But the docs also says "Only one format can be specified per screen, in the PAL_RAM_CTRL register".
                     const palette_ctrl_ram: u2 = @truncate(gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11);
                     const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
@@ -1242,8 +1238,8 @@ pub const Renderer = struct {
                         for (0..v_size) |v| {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = v * u_size + 2 * u;
-                                const texel_idx = pixel_idx;
-                                const texel: HollyModule.YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*);
+                                const texel_idx = 2 * pixel_idx;
+                                const texel: HollyModule.YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
                                 const colors = HollyModule.yuv_to_rgba(texel);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };

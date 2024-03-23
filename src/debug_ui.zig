@@ -5,6 +5,7 @@ const zgui = @import("zgui");
 const zglfw = @import("zglfw");
 
 const P4Register = @import("./sh4.zig").P4Register;
+const HardwareRegisters = @import("./hardware_registers.zig");
 
 const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
@@ -30,6 +31,17 @@ pixels: []u8 = undefined,
 
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
+
+fn display(self: anytype) void {
+    const info = @typeInfo(@TypeOf(self));
+    comptime var max_length = 0;
+    inline for (info.Struct.fields) |field| {
+        max_length = @max(max_length, field.name.len);
+    }
+    inline for (info.Struct.fields) |field| {
+        zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, @field(self, field.name) });
+    }
+}
 
 pub fn init(d: *Deecy) !@This() {
     var self = @This(){
@@ -203,9 +215,20 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.endGroup();
             }
 
-            zgui.text("IPRA: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRA), dc.cpu.read_p4_register(sh4.P4.IPRA, .IPRA) });
-            zgui.text("IPRB: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRB), dc.cpu.read_p4_register(sh4.P4.IPRB, .IPRB) });
-            zgui.text("IPRC: {X:0>4} {any}", .{ dc.cpu.read_p4_register(u16, .IPRC), dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC) });
+            zgui.beginGroup();
+            zgui.text("IPRA: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRA)});
+            display(dc.cpu.read_p4_register(sh4.P4.IPRA, .IPRA));
+            zgui.endGroup();
+            zgui.sameLine(.{});
+            zgui.beginGroup();
+            zgui.text("IPRB: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRB)});
+            display(dc.cpu.read_p4_register(sh4.P4.IPRB, .IPRB));
+            zgui.endGroup();
+            zgui.sameLine(.{});
+            zgui.beginGroup();
+            zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
+            display(dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC));
+            zgui.endGroup();
         }
         zgui.end();
 
@@ -482,8 +505,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
                 const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(static.size)]).?;
                 zgui.image(tex_id, .{ .w = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))), .h = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))) });
-                zgui.text("Parameter Control Word: {any}", .{d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].control_word});
-                zgui.text("TSP Instruction: {any}", .{d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].tsp_instruction});
+                if (zgui.collapsingHeader("Parameter Control Word", .{ .default_open = true })) {
+                    const control_word = d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].control_word;
+                    display(control_word);
+                }
+                if (zgui.collapsingHeader("TSP Instruction", .{ .default_open = true })) {
+                    const tsp_instruction = d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].tsp_instruction;
+                    display(tsp_instruction);
+                }
             }
             if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
                 const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer_texture_view).?;
@@ -502,61 +531,23 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
             zgui.separator();
 
-            if (zgui.button("Trigger RenderDoneVideo Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .RenderDoneVideo = 1 });
-            if (zgui.button("Trigger RenderDoneISP Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .RenderDoneISP = 1 });
-            if (zgui.button("Trigger RenderDoneTSP Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .RenderDoneTSP = 1 });
-            if (zgui.button("Trigger VBlankIn Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
-            if (zgui.button("Trigger VBlankOut Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
-            if (zgui.button("Trigger HBlankIn Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
-            if (zgui.button("Trigger EoT_YUV Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoT_YUV = 1 });
-            if (zgui.button("Trigger EoT_OpaqueList Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoT_OpaqueList = 1 });
-            if (zgui.button("Trigger EoT_OpaqueModifierVolumeList Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoT_OpaqueModifierVolumeList = 1 });
-            if (zgui.button("Trigger EoT_TranslucentList Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoT_TranslucentList = 1 });
-            if (zgui.button("Trigger EoT_TranslucentModifierVolumeList Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoT_TranslucentModifierVolumeList = 1 });
-            if (zgui.button("Trigger EoD_PVR Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_PVR = 1 });
-            if (zgui.button("Trigger EoD_Maple Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_Maple = 1 });
-            if (zgui.button("Trigger MapleVBlankOver Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .MapleVBlankOver = 1 });
-            if (zgui.button("Trigger EoD_GDROM Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
-            if (zgui.button("Trigger EoD_AICA Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
-            if (zgui.button("Trigger EoD_EXT1 Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_EXT1 = 1 });
-            if (zgui.button("Trigger EoD_EXT2 Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_EXT2 = 1 });
-            if (zgui.button("Trigger EoD_DEV Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_DEV = 1 });
-            if (zgui.button("Trigger EoD_CH2 Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_CH2 = 1 });
-            if (zgui.button("Trigger EoD_PVRSort Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_PVRSort = 1 });
-            if (zgui.button("Trigger EoD_PunchThroughList Interrupt", .{}))
-                dc.raise_normal_interrupt(.{ .EoD_PunchThroughList = 1 });
+            inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).Struct.fields) |field| {
+                if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
+                    comptime var val: HardwareRegisters.SB_ISTNRM = .{};
+                    @field(val, field.name) = 1;
+                    dc.raise_normal_interrupt(val);
+                }
+            }
 
             zgui.separator();
 
-            if (zgui.button("Trigger GDRom Interrupt", .{}))
-                dc.raise_external_interrupt(.{ .GDRom = 1 });
-            if (zgui.button("Trigger AICA Interrupt", .{}))
-                dc.raise_external_interrupt(.{ .AICA = 1 });
-            if (zgui.button("Trigger Modem Interrupt", .{}))
-                dc.raise_external_interrupt(.{ .Modem = 1 });
-            if (zgui.button("Trigger ExternalDevice Interrupt", .{}))
-                dc.raise_external_interrupt(.{ .ExternalDevice = 1 });
+            inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).Struct.fields) |field| {
+                if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
+                    comptime var val: HardwareRegisters.SB_ISTEXT = .{};
+                    @field(val, field.name) = 1;
+                    dc.raise_external_interrupt(val);
+                }
+            }
         }
         zgui.end();
     }
