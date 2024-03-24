@@ -89,6 +89,10 @@ const BlockCache = struct {
     }
 };
 
+inline fn instr_lookup(instr: u16) sh4_instructions.OpcodeDescription {
+    return sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]];
+}
+
 const FPPrecision = enum(u2) {
     Single = 0,
     Double = 1,
@@ -193,15 +197,19 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 }
 
 pub const JITContext = struct {
+    cpu: *sh4.SH4,
     address: u32,
-    dc: *Dreamcast,
 
-    // Hacked on state to support delayed branches.
-    delay_slot: ?u32 = null,
+    instructions: [*]u16 = undefined,
+
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
-    // Unconditional forward jump
-    skip_instructions: u32 = 0,
+
+    start_address: u32 = undefined,
+    start_index: u32 = undefined, // Index in the block corresponding to the first guest instruction.
+
+    index: u32 = 0,
+    cycles: u32 = 0,
 
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
@@ -230,6 +238,39 @@ pub const JITContext = struct {
             .{ .host = FPSavedRegisters[7] },
         },
     },
+
+    pub fn init(cpu: *sh4.SH4) @This() {
+        const pc = cpu.pc & 0x1FFFFFFF;
+        return .{
+            .cpu = cpu,
+            .address = pc,
+            .start_address = pc,
+            .instructions = @alignCast(@ptrCast(cpu._get_memory(pc))),
+            .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
+            .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
+        };
+    }
+
+    // Unconditional forward jump
+    pub fn skip_instructions(self: *@This(), count: u32) void {
+        self.index += count;
+        self.address += 2 * count;
+    }
+
+    pub fn compile_delay_slot(self: *@This(), b: *JITBlock) !void {
+        const instr = self.instructions[self.index + 1];
+        const op = instr_lookup(instr);
+        sh4_jit_log.debug("[{X:0>8}] \\  {s} {s}", .{
+            self.address,
+            if (op.jit_emit_fn == interpreter_fallback or op.jit_emit_fn == interpreter_fallback_branch or op.jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+            try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
+        });
+        self.address += 2; // Same thing as in the interpreter, this in probably useless as instructions refering to PC should be illegal here, but just in case...
+        const branch = try op.jit_emit_fn(b, self, @bitCast(instr));
+        std.debug.assert(!branch);
+        self.address -= 2;
+        self.cycles += op.issue_cycles;
+    }
 
     pub fn guest_reg_memory(comptime reg_type: type, size: u8, guest_reg: u4) JIT.Operand {
         std.debug.assert(size == 32 or size == 64);
@@ -350,81 +391,67 @@ pub const SH4JIT = struct {
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
             if (block == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
-                const instructions: [*]u16 = @alignCast(@ptrCast(cpu._get_memory(pc)));
-                block = try (self.compile(.{
-                    .address = pc,
-                    .dc = cpu._dc.?,
-                    .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
-                    .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
-                }, instructions) catch |err| retry: {
+                block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
                     if (err == error.JITCacheFull) {
                         try self.block_cache.reset();
                         sh4_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.compile(.{
-                            .address = pc,
-                            .dc = cpu._dc.?,
-                            .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
-                            .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
-                        }, instructions);
+                        break :retry self.compile(JITContext.init(cpu));
                     } else break :retry err;
                 });
             }
             block.?.execute(cpu);
 
-            cpu.add_cycles(block.?.cycles);
+            const cycles = block.?.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
-            return block.?.cycles;
+            cpu.advance_timers(cycles);
+            return cycles;
         } else {
             // FIXME: Not sure if this is a thing.
-            cpu.add_cycles(8);
-            const cycles = cpu._pending_cycles;
-            cpu._pending_cycles = 0;
-            return cycles;
+            cpu.advance_timers(8);
+            return 8;
         }
     }
 
-    inline fn instr_lookup(instr: u16) sh4_instructions.OpcodeDescription {
-        return sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]];
-    }
-
     // Try to match some common division patterns and replace them with a "single" instruction.
-    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext, instructions: [*]u16) !?struct { instructions: u32 = 0, cycles: u32 = 0 } {
+    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext) !void {
         _ = self;
         // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
         //        Tested by looking at the timer in Soulcalibur :^)
-        if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0u) {
+        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0u) {
             var index: u32 = 1;
-            var cycles: u32 = instr_lookup(instructions[0]).issue_cycles;
+            var cycles: u32 = instr_lookup(ctx.instructions[ctx.index]).issue_cycles;
             var rotcl_Rn_div1_count: u32 = 0;
             while (true) {
-                if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.rotcl_Rn) break;
+                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.rotcl_Rn) break;
                 index += 1;
-                cycles += instr_lookup(instructions[index]).issue_cycles;
-                if (instr_lookup(instructions[index]).fn_ != sh4_interpreter.div1) break;
+                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
+                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.div1) break;
                 index += 1;
-                cycles += instr_lookup(instructions[index]).issue_cycles;
+                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
                 rotcl_Rn_div1_count += 1;
             }
             if (rotcl_Rn_div1_count == 32 and (index % 2) == 0) {
-                const dividend_low = (sh4.Instr{ .value = instructions[1] }).nmd.n;
-                const dividend_high = (sh4.Instr{ .value = instructions[2] }).nmd.n;
-                const divisor = (sh4.Instr{ .value = instructions[2] }).nmd.m;
+                const dividend_low = (sh4.Instr{ .value = ctx.instructions[ctx.index + 1] }).nmd.n;
+                const dividend_high = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.n;
+                const divisor = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.m;
 
                 const dl = try load_register_for_writing(b, ctx, dividend_low);
                 const dh = try load_register(b, ctx, dividend_high);
                 const div = try load_register(b, ctx, divisor);
 
                 try b.append(.{ .Div64_32 = .{ .dividend_high = dh, .dividend_low = dl, .divisor = div, .result = dl } });
-                return .{ .instructions = index, .cycles = cycles };
+
+                ctx.skip_instructions(index);
+                ctx.cycles += cycles;
+                return;
             }
         }
-        if (instr_lookup(instructions[0]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
+        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
             // TODO: Or not. This case seems messier?
         }
-        return null;
     }
 
-    pub noinline fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u16) !BasicBlock {
+    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !BasicBlock {
         var ctx = start_ctx;
 
         var b = JITBlock.init(self._allocator);
@@ -445,55 +472,30 @@ pub const SH4JIT = struct {
         const optional_saved_fp_register_offset = b.instructions.items.len;
         try b.append(.Nop);
 
-        const ram_addr: u64 = @intFromPtr(ctx.dc.ram.ptr);
-
-        try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr });
-
+        const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
+        try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
-        var cycles: u32 = 0;
+        ctx.start_index = @intCast(b.instructions.items.len);
 
-        var index: u32 = 0;
         while (true) {
-            if (try self.simplify_div(&b, &ctx, instructions[index..])) |s| {
-                index += s.instructions;
-                cycles += s.cycles;
-            }
+            try self.simplify_div(&b, &ctx);
 
-            const instr = instructions[index];
-
-            sh4_jit_log.debug(" [{X:0>8}] {s} {s}", .{
+            const instr = ctx.instructions[ctx.index];
+            const op = instr_lookup(instr);
+            sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
                 ctx.address,
-                if (instr_lookup(instr).jit_emit_fn == interpreter_fallback or instr_lookup(instr).jit_emit_fn == interpreter_fallback_branch or instr_lookup(instr).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+                if (op.jit_emit_fn == interpreter_fallback or op.jit_emit_fn == interpreter_fallback_branch or op.jit_emit_fn == interpreter_fallback_cached) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
-            const branch = try instr_lookup(instr).jit_emit_fn(&b, &ctx, @bitCast(instr));
-            cycles += instr_lookup(instr).issue_cycles;
-            index += 1;
+            const branch = try op.jit_emit_fn(&b, &ctx, @bitCast(instr));
+
+            ctx.cycles += op.issue_cycles;
+            ctx.index += 1;
             ctx.address += 2;
-
-            if (ctx.delay_slot != null) {
-                const delay_slot = instructions[index];
-                sh4_jit_log.debug(" [{X:0>8}] {s}  {s}", .{
-                    ctx.address,
-                    if (instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_branch or instr_lookup(delay_slot).jit_emit_fn == interpreter_fallback_cached) "!" else " ",
-                    try sh4_disassembly.disassemble(@bitCast(delay_slot), self._allocator),
-                });
-                const branch_delay_slot = try instr_lookup(delay_slot).jit_emit_fn(&b, &ctx, @bitCast(delay_slot));
-                cycles += instr_lookup(delay_slot).issue_cycles;
-                std.debug.assert(!branch_delay_slot);
-
-                ctx.delay_slot = null;
-            }
 
             if (branch)
                 break;
-
-            if (ctx.skip_instructions > 0) {
-                index += ctx.skip_instructions;
-                ctx.address += 2 * ctx.skip_instructions;
-                ctx.skip_instructions = 0;
-            }
         }
 
         // Crude appromixation, better purging slightly too often than crashing.
@@ -548,7 +550,7 @@ pub const SH4JIT = struct {
 
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         self.block_cache.cursor += block.buffer.len;
-        block.cycles = cycles;
+        block.cycles = ctx.cycles;
 
         sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
 
@@ -1388,7 +1390,7 @@ pub fn movw_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
     const addr = ctx.address + 4 + d;
     if (addr < 0x00200000) { // We're in ROM.
-        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.dc.cpu.read16(addr))) });
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read16(addr))) });
     } else { // Load from RAM and sign extend
         try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 16 } });
     }
@@ -1402,7 +1404,7 @@ pub fn movl_atdispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
     if (addr < 0x00200000) { // We're in ROM.
-        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.dc.cpu.read32(addr) });
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read32(addr) });
     } else {
         try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 32 } });
     }
@@ -1650,8 +1652,6 @@ pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
-    try load_t(block, ctx);
-    var skip_branch = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
     // TODO: We could probably optimize very small forward jumps (like skipping a single instruction), but we need to be able to iterate
     //       over the next instructions right here if we don't want to rewrite all of this (just add instructions array to the JITContext?)
@@ -1659,20 +1659,51 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     //       applying the optimization).
 
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
 
-    var to_end = try block.jmp(.Always);
-    skip_branch.patch();
+    // Jump back at the start of this block
+    if (dest == ctx.start_address) {
+        if (delay_slot) try ctx.compile_delay_slot(block);
 
-    if (delay_slot) {
-        ctx.delay_slot = ctx.address + 2;
-        // Don't execute delay slot twice when not taking the branch.
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+        const loop_cycles = ctx.cycles + instr_lookup(@bitCast(instr)).issue_cycles;
+
+        // Here we have to flush all registers to memory since jumping back to the start of the block means reloading them from memory.
+        try ctx.gpr_cache.commit_and_invalidate_all(block);
+        try ctx.fpr_cache.commit_and_invalidate_all(block);
+
+        try load_t(block, ctx);
+        var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
+
+        // Break out if we already spent too many cycles here.
+        const MaxCycles = 256;
+        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCycles } } });
+        var break_loop = try block.jmp(.Greater);
+
+        try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = loop_cycles });
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .reg = ReturnRegister });
+
+        const rel: i32 = @as(i32, @intCast(ctx.start_index)) - @as(i32, @intCast(block.instructions.items.len));
+        try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .rel = rel } } }); // Jump back
+
+        break_loop.patch(); // Branch taken, but we already spend enough cycles here. Break out to handle interrupts.
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+        var to_end = try block.jmp(.Always);
+
+        not_taken.patch();
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
+        to_end.patch();
     } else {
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + 2 });
-    }
+        try load_t(block, ctx);
+        var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+        var to_end = try block.jmp(.Always);
 
-    to_end.patch();
+        not_taken.patch();
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
+        to_end.patch();
+
+        if (delay_slot) try ctx.compile_delay_slot(block);
+    }
 
     ctx.outdated_pc = false;
     return true;
@@ -1695,12 +1726,12 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
     // Unconditional branch, and fixed destination, don't treat it like a branch.
     if (dest > ctx.address) {
-        ctx.delay_slot = ctx.address + 2;
-        ctx.skip_instructions = (dest - ctx.address) / 2 - 1;
+        try ctx.compile_delay_slot(block);
+        ctx.skip_instructions((dest - ctx.address) / 2 - 1);
         return false;
     } else {
         try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-        ctx.delay_slot = ctx.address + 2;
+        try ctx.compile_delay_slot(block);
         ctx.outdated_pc = false;
         return true;
     }
@@ -1713,7 +1744,7 @@ pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.address });
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1723,7 +1754,8 @@ pub fn bsr_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-    ctx.delay_slot = ctx.address + 2;
+
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1737,7 +1769,7 @@ pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.address });
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1747,7 +1779,7 @@ pub fn jmp_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1759,7 +1791,7 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1769,7 +1801,7 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }
@@ -1788,7 +1820,7 @@ pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "spc"), .size = 32 } });
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
 
-    ctx.delay_slot = ctx.address + 2;
+    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
     return true;
 }

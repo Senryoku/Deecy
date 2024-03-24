@@ -341,7 +341,7 @@ pub const Instruction = union(InstructionType) {
     Shl: struct { dst: Operand, amount: Operand },
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
-    Jmp: struct { condition: Condition, dst: struct { rel: u32 } },
+    Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
     Convert: struct { dst: Operand, src: Operand },
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
 
@@ -481,6 +481,8 @@ pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
 
+    instruction_offsets: []u32 = undefined,
+
     jumps_to_patch: std.AutoHashMap(u32, std.ArrayList(PatchableJump)) = undefined,
 
     _allocator: std.mem.Allocator,
@@ -498,7 +500,12 @@ pub const Emitter = struct {
     }
 
     pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
+        self.instruction_offsets = try self._allocator.alloc(u32, instructions.len);
+        defer self._allocator.free(self.instruction_offsets);
+
         for (instructions, 0..) |instr, idx| {
+            self.instruction_offsets[idx] = self.block_size;
+
             if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
                     const rel: u32 = @intCast(self.block_size - jump.source);
@@ -544,10 +551,7 @@ pub const Emitter = struct {
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
-                .Jmp => |j| {
-                    std.debug.assert(j.dst.rel > 0); // We don't support backward jumps, yet.
-                    try self.jmp(j.condition, @intCast(idx + j.dst.rel));
-                },
+                .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst.rel),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
                 .Ror => |r| try self.shift_instruction(.Ror, r.dst, r.amount),
@@ -1294,13 +1298,11 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn jmp(self: *@This(), condition: JIT.Condition, dst_instruction_index: u32) !void {
+    pub fn jmp(self: *@This(), condition: JIT.Condition, current_idx: u32, rel: i32) !void {
         // TODO: Support more destination than just immediate relative.
         //       Support different sizes of rel (rel8 in particular).
         //         We don't know the size of the jump yet, and we have to reserve enough space
         //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
-
-        var address = self.block_size;
 
         if (condition != .Always)
             try self.emit(u8, 0x0F);
@@ -1325,17 +1327,25 @@ pub const Emitter = struct {
             .Greater, .NotLessEqual => 0x8F,
         });
 
-        address = self.block_size;
-        try self.emit(u32, 0x00C0FFEE);
+        const address_to_patch = self.block_size;
+        std.debug.assert(rel != 0);
+        if (rel < 0) {
+            const next_instr_address = address_to_patch + 4;
+            const target_idx = @as(i32, @intCast(current_idx)) + rel;
+            std.debug.assert(target_idx >= 0);
+            try self.emit(u32, @bitCast(@as(i32, @intCast(self.instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(next_instr_address))));
+        } else {
+            try self.emit(u32, 0xA0C0FFEE);
 
-        const jumps = try self.jumps_to_patch.getOrPut(dst_instruction_index);
-        if (!jumps.found_existing)
-            jumps.value_ptr.* = std.ArrayList(PatchableJump).init(self._allocator);
+            const jumps = try self.jumps_to_patch.getOrPut(current_idx + @as(u32, @intCast(rel)));
+            if (!jumps.found_existing)
+                jumps.value_ptr.* = std.ArrayList(PatchableJump).init(self._allocator);
 
-        try jumps.value_ptr.*.append(.{
-            .source = self.block_size,
-            .address_to_patch = address,
-        });
+            try jumps.value_ptr.*.append(.{
+                .source = self.block_size,
+                .address_to_patch = address_to_patch,
+            });
+        }
     }
 
     pub fn native_call(self: *@This(), function: *const anyopaque) !void {
