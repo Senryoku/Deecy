@@ -698,6 +698,39 @@ fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
     end.patch();
 }
 
+pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    return cpu.read(u8, virtual_addr);
+}
+pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    return cpu.read(u16, virtual_addr);
+}
+pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    return cpu.read(u32, virtual_addr);
+}
+pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    return cpu.read(u64, virtual_addr);
+}
+pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    cpu.write(u8, virtual_addr, value);
+}
+pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    cpu.write(u16, virtual_addr, value);
+}
+pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    cpu.write(u32, virtual_addr, value);
+}
+pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
+    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    cpu.write(u64, virtual_addr, value);
+}
+
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, comptime size: u32) !void {
     const src_guest_reg_location = try load_register(block, ctx, guest_reg);
@@ -725,13 +758,13 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
     if (size == 8) {
-        try block.call(&sh4.SH4._out_of_line_read8);
+        try block.call(&_out_of_line_read8);
     } else if (size == 16) {
-        try block.call(&sh4.SH4._out_of_line_read16);
+        try block.call(&_out_of_line_read16);
     } else if (size == 32) {
-        try block.call(&sh4.SH4._out_of_line_read32);
+        try block.call(&_out_of_line_read32);
     } else if (size == 64) {
-        try block.call(&sh4.SH4._out_of_line_read64);
+        try block.call(&_out_of_line_read64);
     } else @compileError("load_mem: Unsupported size.");
 
     if (dest != ReturnRegister)
@@ -771,13 +804,13 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     if (value.tag() != .reg or value.reg != ArgRegisters[2])
         try block.mov(.{ .reg = ArgRegisters[2] }, value);
     if (size == 8) {
-        try block.call(&sh4.SH4._out_of_line_write8);
+        try block.call(&_out_of_line_write8);
     } else if (size == 16) {
-        try block.call(&sh4.SH4._out_of_line_write16);
+        try block.call(&_out_of_line_write16);
     } else if (size == 32) {
-        try block.call(&sh4.SH4._out_of_line_write32);
+        try block.call(&_out_of_line_write32);
     } else if (size == 64) {
-        try block.call(&sh4.SH4._out_of_line_write64);
+        try block.call(&_out_of_line_write64);
     } else @compileError("store_mem: Unsupported size.");
 
     to_end.patch();
