@@ -260,9 +260,9 @@ pub const JITContext = struct {
     pub fn compile_delay_slot(self: *@This(), b: *JITBlock) !void {
         const instr = self.instructions[self.index + 1];
         const op = instr_lookup(instr);
-        sh4_jit_log.debug("[{X:0>8}] \\  {s} {s}", .{
+        sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
             self.address,
-            if (op.jit_emit_fn == interpreter_fallback or op.jit_emit_fn == interpreter_fallback_branch or op.jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+            if (op.use_fallback()) "!" else " ",
             try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
         });
         self.address += 2; // Same thing as in the interpreter, this in probably useless as instructions refering to PC should be illegal here, but just in case...
@@ -485,7 +485,7 @@ pub const SH4JIT = struct {
             const op = instr_lookup(instr);
             sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
                 ctx.address,
-                if (op.jit_emit_fn == interpreter_fallback or op.jit_emit_fn == interpreter_fallback_branch or op.jit_emit_fn == interpreter_fallback_cached) "!" else " ",
+                if (op.use_fallback()) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
             const branch = try op.jit_emit_fn(&b, &ctx, @bitCast(instr));
@@ -1651,13 +1651,24 @@ pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+fn default_conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
+    const dest = sh4_interpreter.d8_disp(ctx.address, instr);
+    try load_t(block, ctx);
+    var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    var to_end = try block.jmp(.Always);
+
+    not_taken.patch();
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
+    to_end.patch();
+
+    if (delay_slot) try ctx.compile_delay_slot(block);
+
+    ctx.outdated_pc = false;
+    return true;
+}
+
 fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
-
-    // TODO: We could probably optimize very small forward jumps (like skipping a single instruction), but we need to be able to iterate
-    //       over the next instructions right here if we don't want to rewrite all of this (just add instructions array to the JITContext?)
-    //       and be careful about branches in the potentially skipped instructions (might have to check the next instructions before
-    //       applying the optimization).
-
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
 
     // Jump back at the start of this block
@@ -1679,6 +1690,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCycles } } });
         var break_loop = try block.jmp(.Greater);
 
+        // Count cycles spent into one traversal of the loop.
         try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = loop_cycles });
         try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .reg = ReturnRegister });
 
@@ -1692,20 +1704,70 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         not_taken.patch();
         try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
         to_end.patch();
+
+        ctx.outdated_pc = false;
     } else {
-        try load_t(block, ctx);
-        var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-        var to_end = try block.jmp(.Always);
+        // Optimize small forward jumps if possible
+        const max_instructions = 4;
+        const first_instr = if (delay_slot) 2 else 1;
+        if (dest > ctx.address and (dest - ctx.address) / 2 < max_instructions + first_instr) {
+            const instr_count = (dest - ctx.address) / 2 - first_instr;
+            // Make sure there's no jump in there
+            for (first_instr..first_instr + instr_count) |i| {
+                const op = instr_lookup(ctx.instructions[ctx.index + i]);
+                if (op.is_branch or op.use_fallback())
+                    return default_conditional_branch(block, ctx, instr, jump_if, delay_slot);
+            }
+            // All good, we can inline the branch.
 
-        not_taken.patch();
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
-        to_end.patch();
+            if (delay_slot) {
+                // Delay slot might change the T bit, push it.
+                try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+                try block.push(.{ .reg = ReturnRegister });
+                try ctx.compile_delay_slot(block);
+                ctx.index += 1;
+                ctx.address += 2;
+            }
+            // Since this is conditionally executed, cache isn't reliable anymore. Invalidating it is the easy way out.
+            // This might seem like a heavy cost, but the alternative is simply to end the block here.
+            // A first step into improving this would be to keep track of register usage in the conditional block and only invalidate the relevant registers.
+            try ctx.gpr_cache.commit_and_invalidate_all(block);
+            try ctx.fpr_cache.commit_and_invalidate_all(block);
 
-        if (delay_slot) try ctx.compile_delay_slot(block);
+            if (delay_slot) {
+                try block.pop(.{ .reg = ReturnRegister });
+            } else {
+                try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+            }
+            try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
+            var taken = try block.jmp(if (jump_if) .Carry else .NotCarry);
+
+            var optional_cycles: u32 = 0;
+            for (0..instr_count) |_| {
+                ctx.index += 1;
+                ctx.address += 2;
+                const i = ctx.instructions[ctx.index];
+                const op = instr_lookup(i);
+                sh4_jit_log.debug("[{X:0>8}] {s} > {s}", .{
+                    ctx.address,
+                    if (op.use_fallback()) "!" else " ",
+                    try sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
+                });
+                const branch = try op.jit_emit_fn(block, ctx, @bitCast(i));
+                std.debug.assert(!branch);
+                optional_cycles += op.issue_cycles;
+            }
+            try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .imm32 = optional_cycles });
+
+            try ctx.gpr_cache.commit_and_invalidate_all(block);
+            try ctx.fpr_cache.commit_and_invalidate_all(block);
+
+            taken.patch();
+
+            return false;
+        } else return default_conditional_branch(block, ctx, instr, jump_if, delay_slot);
     }
 
-    ctx.outdated_pc = false;
     return true;
 }
 

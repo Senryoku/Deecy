@@ -39,6 +39,7 @@ pub const OpcodeDescription = struct {
     mask: u16,
     fn_: *const fn (*sh4.SH4, sh4.Instr) void,
     name: []const u8,
+    is_branch: bool = false,
     privileged: bool = true,
     issue_cycles: u5 = 1,
     latency_cycles: u5 = 1,
@@ -46,6 +47,10 @@ pub const OpcodeDescription = struct {
     jit_emit_fn: *const fn (*JITBlock, *sh4_jit.JITContext, sh4.Instr) anyerror!bool = sh4_jit.interpreter_fallback_cached,
 
     access: struct { r: CacheAccess = .{}, w: CacheAccess = .{} } = .{}, // Used only by interpreter fallback, it's not defined for all instructions.
+
+    pub fn use_fallback(self: *const @This()) bool {
+        return self.jit_emit_fn == sh4_jit.interpreter_fallback or self.jit_emit_fn == sh4_jit.interpreter_fallback_branch or self.jit_emit_fn == sh4_jit.interpreter_fallback_cached;
+    }
 };
 
 pub const Opcodes: [217]OpcodeDescription = .{
@@ -165,17 +170,17 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000011001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr8, .name = "shlr8 Rn", .privileged = false, .jit_emit_fn = sh4_jit.shlr8, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000101001, .mask = 0b0000111100000000, .fn_ = interpreter.shlr16, .name = "shlr16 Rn", .privileged = false, .jit_emit_fn = sh4_jit.shlr16, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
 
-    .{ .code = 0b1000101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bf_label, .name = "bf label:8", .privileged = false, .jit_emit_fn = sh4_jit.bf_label },
-    .{ .code = 0b1000111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bfs_label, .name = "bf/s label:8", .privileged = false, .jit_emit_fn = sh4_jit.bfs_label },
-    .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bt_label, .name = "bt label:8", .privileged = false, .jit_emit_fn = sh4_jit.bt_label },
-    .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bts_label, .name = "bt/s label:8", .privileged = false, .jit_emit_fn = sh4_jit.bts_label },
-    .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bra_label, .name = "bra label:12", .privileged = false, .jit_emit_fn = sh4_jit.bra_label },
-    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = interpreter.braf_Rn, .name = "braf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.braf_Rn },
-    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bsr_label, .name = "bsr label:12", .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.bsr_label },
-    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = interpreter.bsrf_Rn, .name = "bsrf Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.bsrf_Rn },
-    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jmp_atRn },
-    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
-    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
+    .{ .code = 0b1000101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bf_label, .name = "bf label:8", .is_branch = true, .privileged = false, .jit_emit_fn = sh4_jit.bf_label },
+    .{ .code = 0b1000111100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bfs_label, .name = "bf/s label:8", .is_branch = true, .privileged = false, .jit_emit_fn = sh4_jit.bfs_label },
+    .{ .code = 0b1000100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bt_label, .name = "bt label:8", .is_branch = true, .privileged = false, .jit_emit_fn = sh4_jit.bt_label },
+    .{ .code = 0b1000110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.bts_label, .name = "bt/s label:8", .is_branch = true, .privileged = false, .jit_emit_fn = sh4_jit.bts_label },
+    .{ .code = 0b1010000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bra_label, .name = "bra label:12", .is_branch = true, .privileged = false, .jit_emit_fn = sh4_jit.bra_label },
+    .{ .code = 0b0000000000100011, .mask = 0b0000111100000000, .fn_ = interpreter.braf_Rn, .name = "braf Rn", .is_branch = true, .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.braf_Rn },
+    .{ .code = 0b1011000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.bsr_label, .name = "bsr label:12", .is_branch = true, .privileged = false, .issue_cycles = 1, .latency_cycles = 2, .jit_emit_fn = sh4_jit.bsr_label },
+    .{ .code = 0b0000000000000011, .mask = 0b0000111100000000, .fn_ = interpreter.bsrf_Rn, .name = "bsrf Rn", .is_branch = true, .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.bsrf_Rn },
+    .{ .code = 0b0100000000101011, .mask = 0b0000111100000000, .fn_ = interpreter.jmp_atRn, .name = "jmp @Rn", .is_branch = true, .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jmp_atRn },
+    .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .is_branch = true, .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
+    .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .is_branch = true, .privileged = false, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
 
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .privileged = false, .issue_cycles = 1, .latency_cycles = 3, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .privileged = false, .access = .{ .r = .{}, .w = .{} } },
