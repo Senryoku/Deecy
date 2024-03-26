@@ -1220,32 +1220,16 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub noinline fn _out_of_line_read8(self: *const @This(), virtual_addr: addr_t) u8 {
-        return read8(self, virtual_addr);
-    }
-
     pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
         return self.read(u8, virtual_addr);
-    }
-
-    pub noinline fn _out_of_line_read16(self: *const @This(), virtual_addr: addr_t) u16 {
-        return read16(self, virtual_addr);
     }
 
     pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
         return self.read(u16, virtual_addr);
     }
 
-    pub noinline fn _out_of_line_read32(self: *const @This(), virtual_addr: addr_t) u32 {
-        return read32(self, virtual_addr);
-    }
-
     pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
         return self.read(u32, virtual_addr);
-    }
-
-    pub noinline fn _out_of_line_read64(self: *const @This(), virtual_addr: addr_t) u64 {
-        return read64(self, virtual_addr);
     }
 
     pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
@@ -1364,32 +1348,16 @@ pub const SH4 = struct {
         ))).* = value;
     }
 
-    pub noinline fn _out_of_line_write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
-        write8(self, virtual_addr, value);
-    }
-
     pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
         self.write(u8, virtual_addr, value);
-    }
-
-    pub noinline fn _out_of_line_write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        write16(self, virtual_addr, value);
     }
 
     pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
         self.write(u16, virtual_addr, value);
     }
 
-    pub noinline fn _out_of_line_write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        write32(self, virtual_addr, value);
-    }
-
     pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
         self.write(u32, virtual_addr, value);
-    }
-
-    pub noinline fn _out_of_line_write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
-        write64(self, virtual_addr, value);
     }
 
     pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
