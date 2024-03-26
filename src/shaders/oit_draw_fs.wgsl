@@ -14,8 +14,9 @@ struct Heads {
 struct LinkedListElement {
   color: vec4<f32>,
   depth: f32,
-  blend_mode: u32,
-  next: u32
+  index_and_blend_mode: u32,
+  next: u32,
+  _padding: u32,
 };
 
 struct LinkedList {
@@ -35,6 +36,7 @@ fn main(
     @location(2) uv: vec2<f32>,
     @location(3) inv_w: f32,
     @location(4) @interpolate(flat) tex: vec2<u32>,
+    @location(5) @interpolate(flat) index: u32,
 ) {
     let frag_coords = vec2<i32>(position.xy);
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
@@ -69,6 +71,8 @@ fn main(
 
     var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w, false);
 
+    if(final_color.area0.a == 0) { discard; }
+
     // Add the fragment to the linked list
 
     // The index in the heads buffer corresponding to the head data for the fragment at the current location.
@@ -82,7 +86,7 @@ fn main(
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position.z;
         linked_list.data[frag_index].color = final_color.area0; // TODO: Handle Modifier volumes/Area 1
-        linked_list.data[frag_index].blend_mode = (tex[1] >> 10) & 0x3F;
+        linked_list.data[frag_index].index_and_blend_mode = ((tex[1] >> 10) & 0x3F) | (index << 6);
         linked_list.data[frag_index].next = last_head;
     }
 }

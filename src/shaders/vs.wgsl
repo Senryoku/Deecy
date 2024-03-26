@@ -7,6 +7,7 @@ struct VertexOut {
      @location(2) uv: vec2<f32>,
      @location(3) inv_w: f32,
      @location(4) @interpolate(flat) tex: vec2<u32>,
+     @location(5) @interpolate(flat) index: u32,
  }
 
 @vertex
@@ -16,6 +17,7 @@ fn main(
     @location(2) offset_color: vec4<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) tex: vec2<u32>, // Texture index and Texture control word
+    @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOut {
     var output: VertexOut;
 
@@ -37,6 +39,8 @@ fn main(
     output.uv = inv_w * uv;
     output.inv_w = inv_w;
     output.tex = tex;
+
+    output.index = vertex_index;
 
     return output;
 }

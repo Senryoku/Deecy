@@ -14,8 +14,9 @@ struct Heads {
 struct LinkedListElement {
   color: vec4<f32>,
   depth: f32,
-  blend_mode: u32,
+  index_and_blend_mode: u32,
   next: u32,
+  _padding: u32,
 };
 
 struct LinkedList {
@@ -86,9 +87,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let to_insert = layers[i];
         var j = i;
 
-        while j > 0u && to_insert.depth >= layers[j - 1u].depth {
-            layers[j] = layers[j - 1u];
-            j--;
+        while (j > 0u && 
+            (
+              to_insert.depth > layers[j - 1u].depth ||
+            // If the depths are equal, use the draw order (vertex index) as a tie breaker.
+             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))
+            )
+          ) {
+          layers[j] = layers[j - 1u];
+          j--;
         }
 
         layers[j] = to_insert;
@@ -101,7 +108,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     for (var i = 0u; i < layer_count; i++) {
         let src = layers[i].color;
         let dst = color;
-        color = src * get_src_factor(layers[i].blend_mode & 7, src, dst) + dst * get_dst_factor((layers[i].blend_mode >> 3) & 7, src, dst);
+        let blend_mode = layers[i].index_and_blend_mode & 0x3F;
+        color = src * get_src_factor(blend_mode & 7, src, dst) + dst * get_dst_factor((blend_mode >> 3) & 7, src, dst);
     }
 
     textureStore(output_texture, frag_coords, color);
