@@ -1567,6 +1567,14 @@ pub fn and_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn not_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try block.mov(.{ .reg = rn }, .{ .reg = rm });
+    try block.append(.{ .Not = .{ .dst = .{ .reg = rn } } });
+    return false;
+}
+
 pub fn or_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
