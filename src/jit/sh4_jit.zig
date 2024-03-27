@@ -1671,6 +1671,26 @@ pub fn shar_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+fn shld(n: u32, m: u32) u32 {
+    const sign = m & 0x80000000;
+    if (sign == 0) {
+        return n << @intCast(m & 0x1F);
+    } else if ((m & 0x1F) == 0) {
+        return 0;
+    } else {
+        return n >> @intCast(((~m) & 0x1F) + 1);
+    }
+}
+pub fn shld_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = rn });
+    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rm });
+    try block.call(shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
+    try block.mov(.{ .reg = rn }, .{ .reg = ReturnRegister });
+    return false;
+}
+
 pub fn shll(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.shl(.{ .reg = rn }, .{ .imm8 = 1 });
