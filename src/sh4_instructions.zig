@@ -150,7 +150,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = interpreter.tst_imm_r0, .name = "tst #imm,R0", .privileged = false, .jit_emit_fn = sh4_jit.tst_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "tst.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 3, .latency_cycles = 3, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0010000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.xorRmRn, .name = "xor Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.xor_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b1100101000000000, .mask = 0b0000000011111111, .fn_ = interpreter.xorImmR0, .name = "xor #imm,R0", .privileged = false, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
+    .{ .code = 0b1100101000000000, .mask = 0b0000000011111111, .fn_ = interpreter.xorImmR0, .name = "xor #imm,R0", .privileged = false, .jit_emit_fn = sh4_jit.xor_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
     .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
 
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = interpreter.rotcl_Rn, .name = "rotcl Rn", .privileged = false, .jit_emit_fn = sh4_jit.rotcl_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },

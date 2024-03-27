@@ -1612,6 +1612,12 @@ pub fn xor_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn xor_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = try load_register_for_writing(block, ctx, 0);
+    try block.append(.{ .Xor = .{ .dst = .{ .reg = r0 }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
+    return false;
+}
+
 pub fn rotcl_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try load_t(block, ctx);
