@@ -154,7 +154,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "xor.b #imm,@(R0,GBR)", .privileged = false, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
 
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = interpreter.rotcl_Rn, .name = "rotcl Rn", .privileged = false, .jit_emit_fn = sh4_jit.rotcl_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = interpreter.rotcr_Rn, .name = "rotcr Rn", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = interpreter.rotcr_Rn, .name = "rotcr Rn", .privileged = false, .jit_emit_fn = sh4_jit.rotcr_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = interpreter.rotl_Rn, .name = "rotl Rn", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000000101, .mask = 0b0000111100000000, .fn_ = interpreter.rotr_Rn, .name = "rotr Rn", .privileged = false, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.shad_Rm_Rn, .name = "shad Rm,Rn", .privileged = false, .jit_emit_fn = sh4_jit.shad_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
