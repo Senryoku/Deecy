@@ -904,7 +904,7 @@ pub fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn shal_Rn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
-    @panic("Unimplemented");
+    @panic("Unimplemented shal Rn");
 }
 // Arithmetically shifts the contents of general register Rn one bit to the right and stores the result in Rn. The bit shifted out of the operand is transferred to the T bit.
 pub fn shar_Rn(cpu: *SH4, opcode: Instr) void {
