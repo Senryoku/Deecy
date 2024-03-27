@@ -1906,7 +1906,7 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     return true;
 }
 
-pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     // We might change GPR banks.
     for (0..8) |i| {
         try ctx.gpr_cache.commit_and_invalidate(block, @intCast(i));
@@ -1914,8 +1914,12 @@ pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
 
     // call set_sr
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });
+    try block.mov(.{ .reg = ArgRegisters[1] }, sr_value);
     try block.call(sh4.SH4.set_sr);
+}
+
+pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    try set_sr(block, ctx, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });
     // pc = spc
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "spc"), .size = 32 } });
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
@@ -1925,10 +1929,42 @@ pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     return true;
 }
 
-pub fn ldsl_atRn_inc_PR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .reg = ReturnRegister });
+pub fn ldc_Rn_Reg(comptime reg: []const u8) fn (block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    std.debug.assert(!std.mem.eql(u8, reg, "sr"));
+    const T = struct {
+        fn ldc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            const rn = try load_register(block, ctx, instr.nmd.n);
+            try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } }, .{ .reg = rn });
+            return false;
+        }
+    };
+    return T.ldc;
+}
 
+pub fn ldc_Rn_SR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register(block, ctx, instr.nmd.n);
+    try set_sr(block, ctx, .{ .reg = rn });
+    return false;
+}
+
+pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    std.debug.assert(!std.mem.eql(u8, reg, "sr"));
+    const T = struct {
+        fn ldcl(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+            try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } }, .{ .reg = ReturnRegister });
+
+            const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+            try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+            return false;
+        }
+    };
+    return T.ldcl;
+}
+
+pub fn ldcl_atRnInc_SR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try set_sr(block, ctx, .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     return false;
