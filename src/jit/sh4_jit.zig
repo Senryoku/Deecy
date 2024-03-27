@@ -1204,6 +1204,17 @@ pub fn fldi0_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn flds_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const frn = try load_fp_register(block, ctx, instr.nmd.n);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, frn);
+    return false;
+}
+
+pub fn fsts_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try store_fp_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } });
+    return false;
+}
+
 pub fn fldi1_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => {

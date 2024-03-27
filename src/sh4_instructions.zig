@@ -272,8 +272,8 @@ pub const Opcodes: [217]OpcodeDescription = .{
 
     .{ .code = 0b1111000010001101, .mask = 0b0000111100000000, .fn_ = interpreter.fldi0_FRn, .name = "fldi0 FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fldi0_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000010011101, .mask = 0b0000111100000000, .fn_ = interpreter.fldi1_FRn, .name = "fldi1 FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fldi1_FRn, .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = interpreter.flds_FRn_FPUL, .name = "flds FRm,FPUL", .latency_cycles = 0, .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = interpreter.fsts_FPUL_FRn, .name = "fsts FPUL,FRn", .latency_cycles = 0, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b1111000000011101, .mask = 0b0000111100000000, .fn_ = interpreter.flds_FRn_FPUL, .name = "flds FRm,FPUL", .latency_cycles = 0, .jit_emit_fn = sh4_jit.flds_FRn_FPUL, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b1111000000001101, .mask = 0b0000111100000000, .fn_ = interpreter.fsts_FPUL_FRn, .name = "fsts FPUL,FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fsts_FPUL_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000001011101, .mask = 0b0000111100000000, .fn_ = interpreter.fabs_FRn, .name = "fabs FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fabs_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000001001101, .mask = 0b0000111100000000, .fn_ = interpreter.fneg_FRn, .name = "fneg FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fneg_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.fadd_FRm_FRn, .name = "fadd FRm,FRn", .latency_cycles = 3, .jit_emit_fn = sh4_jit.fadd_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
