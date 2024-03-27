@@ -1048,7 +1048,30 @@ pub const Emitter = struct {
         return opcode_81_83(self, 0x1C, 0x1D, 0x18, 0x19, 0x1A, 0x1B, .Sbb, dst, src);
     }
     pub fn and_(self: *@This(), dst: Operand, src: Operand) !void {
-        return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src);
+        switch (dst) {
+            // Yes, it's the same thing for both sizes, we're operating on the full size of the xmm registers here.
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x54 });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    else => return error.InvalidSubSource,
+                }
+            },
+            .freg64 => |dst_reg| {
+                switch (src) {
+                    .freg64 => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x54 });
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    else => return error.InvalidSubSource,
+                }
+            },
+            else => return opcode_81_83(self, 0x24, 0x25, 0x20, 0x21, 0x22, 0x23, .And, dst, src),
+        }
     }
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
@@ -1073,23 +1096,21 @@ pub const Emitter = struct {
             .freg32 => |dst_reg| {
                 switch (src) {
                     .freg32 => |src_reg| {
-                        try self.emit(u8, 0x66);
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0xEF });
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x57 });
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
                     },
-                    else => return error.InvalidSubSource,
+                    else => return error.InvalidXorSource,
                 }
             },
             .freg64 => |dst_reg| {
                 switch (src) {
                     .freg64 => |src_reg| {
-                        try self.emit(u8, 0x66);
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0xEF });
+                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x57 });
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
                     },
-                    else => return error.InvalidSubSource,
+                    else => return error.InvalidXorSource,
                 }
             },
             else => return opcode_81_83(self, 0x34, 0x35, 0x30, 0x31, 0x32, 0x33, .Xor, dst, src),

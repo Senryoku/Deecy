@@ -1208,6 +1208,26 @@ pub fn fldi1_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn fabs_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+    const tmp: JIT.Operand = .{ .reg = ReturnRegister };
+    const ftmp: JIT.Operand = .{ .freg32 = FPScratchRegisters[0] };
+    try block.mov(tmp, .{ .imm32 = 0x7FFFFFFF });
+    try block.mov(ftmp, tmp);
+    try block.append(.{ .And = .{ .dst = frn, .src = ftmp } });
+    return false;
+}
+
+pub fn fneg_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+    const tmp: JIT.Operand = .{ .reg = ReturnRegister };
+    const ftmp: JIT.Operand = .{ .freg32 = FPScratchRegisters[0] };
+    try block.mov(tmp, .{ .imm32 = 0x80000000 });
+    try block.mov(ftmp, tmp);
+    try block.append(.{ .Xor = .{ .dst = frn, .src = ftmp } });
+    return false;
+}
+
 pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => {
