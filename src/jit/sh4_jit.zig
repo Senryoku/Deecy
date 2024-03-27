@@ -650,7 +650,7 @@ fn load_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Registe
 fn load_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Register {
     return try ctx.guest_reg_cache(block, guest_reg, true, true);
 }
-// Return a host register representing the requested guest register, but don't load it's actual value.
+// Return a host register representing the requested guest register, but don't load its actual value.
 // Use this as a destination to another instruction that doesn't need the previous value of the destination.
 fn get_register_for_writing(block: *JITBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
     return .{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) };
@@ -996,6 +996,14 @@ pub fn movw_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
 pub fn movl_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .reg = rm }, 32);
+    return false;
+}
+
+pub fn movt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
+    const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+    try block.mov(rn, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.append(.{ .And = .{ .dst = rn, .src = .{ .imm32 = 0x00000001 } } });
     return false;
 }
 
