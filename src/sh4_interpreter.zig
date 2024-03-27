@@ -34,11 +34,11 @@ pub fn unimplemented(_: *SH4, opcode: Instr) void {
     @panic("Unimplemented");
 }
 
-pub fn mov_rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn mov_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).*;
 }
 
-pub fn mov_imm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn mov_imm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nd8.n).* = @bitCast(sign_extension_u8(opcode.nd8.d));
 }
 
@@ -47,20 +47,20 @@ test "mov #imm,Rn" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
     try std.testing.expect(cpu.R(0).* == 0);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } });
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } });
     try std.testing.expect(cpu.R(1).* == 1);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 2, .d = 2 } });
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 2, .d = 2 } });
     try std.testing.expect(cpu.R(2).* == 2);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 3 } });
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 3 } });
     try std.testing.expect(cpu.R(3).* == 3);
 
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 0 } }); // mov #0,R15
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 0 } }); // mov #0,R15
     try std.testing.expect(cpu.R(15).* == 0);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 1 } }); // mov #1,R15
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 1 } }); // mov #1,R15
     try std.testing.expect(cpu.R(15).* == 1);
 }
 
@@ -68,7 +68,7 @@ test "mov #imm,Rn" {
 // The 8-bit displacement is zero-extended and quadrupled. Consequently, the relative interval from the operand is PC + 1020 bytes.
 // The PC is the address four bytes after this instruction, but the lowest two bits of the PC are fixed at 00.
 // TODO: If this instruction is executed in a delay slot, a slot illegal instruction exception will be generated.
-pub fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
+pub fn mova_atDispPC_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = (cpu.pc & 0xFFFFFFFC) + 4 + (zero_extend(opcode.nd8.d) << 2);
 }
 
@@ -76,7 +76,7 @@ pub fn mova_atdispPC_R0(cpu: *SH4, opcode: Instr) void {
 // The data is stored from memory address (PC + 4 + displacement * 2).
 // The 8-bit displacement is multiplied by two after zero-extension, and so the relative distance from the table is in the range up to PC + 4 + 510 bytes.
 // The PC value is the address of this instruction.
-pub fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn movw_atDispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 1;
     cpu.R(n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.pc + 4 + d)));
@@ -84,13 +84,13 @@ pub fn movw_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
 
 // The 8-bit displacement is multiplied by four after zero-extension, and so the relative distance from the operand is in the range up to PC + 4 + 1020 bytes.
 // The PC value is the address of this instruction. A value with the lower 2 bits adjusted to 00 is used in address calculation.
-pub fn movl_atdispPC_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atDispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 2;
     cpu.R(n).* = cpu.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
 }
 
-pub fn movb_at_rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movb_atRm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
 }
 
@@ -99,35 +99,35 @@ test "mov Rm,Rn" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } }); // mov #0,R0
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } }); // mov #0,R0
     try std.testing.expect(cpu.R(0).* == 0);
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } }); // mov #1,R1
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 1, .d = 1 } }); // mov #1,R1
     try std.testing.expect(cpu.R(1).* == 1);
-    mov_rm_rn(&cpu, .{ .nmd = .{ .n = 0, .m = 1 } }); // mov R1,R0
+    mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 0, .m = 1 } }); // mov R1,R0
     try std.testing.expect(cpu.R(0).* == 1);
 }
 
-pub fn movw_at_rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movw_atRm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
 }
 
-pub fn movl_at_rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atRm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
 }
 
-pub fn movb_rm_at_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movb_Rm_atRn(cpu: *SH4, opcode: Instr) void {
     cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
-pub fn movw_rm_at_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movw_Rm_atRn(cpu: *SH4, opcode: Instr) void {
     cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
-pub fn movl_rm_at_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_Rm_atRn(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
-pub fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movb_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 1;
@@ -135,26 +135,26 @@ pub fn movb_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
 }
 
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
-pub fn movw_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movw_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 2;
     }
 }
 
-pub fn movl_at_rm_inc_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 4;
     }
 }
 
-pub fn movb_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn movb_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 1;
     cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
-pub fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn movw_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 2;
     cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
     // TODO: Possible Exceptions
@@ -165,18 +165,18 @@ pub fn movw_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
     // Initial page write exception
 }
 
-pub fn movl_rm_at_rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn movl_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
-pub fn movb_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
+pub fn movb_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
 }
 
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
-pub fn movw_at_disp_Rm_R0(cpu: *SH4, opcode: Instr) void {
+pub fn movw_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
 }
 
@@ -185,27 +185,27 @@ pub fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
-pub fn movl_at_disp_Rm_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atDispRm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // The 4-bit displacement is only zero-extended, so a range up to +15 bytes can be specified.
-pub fn movb_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
+pub fn movb_R0_atDispRm(cpu: *SH4, opcode: Instr) void {
     cpu.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
 }
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
-pub fn movw_R0_at_dispRm(cpu: *SH4, opcode: Instr) void {
+pub fn movw_R0_atDispRm(cpu: *SH4, opcode: Instr) void {
     cpu.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
 }
 
 // Transfers the source operand to the destination.
 // The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
-pub fn movl_Rm_atdispRn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_Rm_atDispRn(cpu: *SH4, opcode: Instr) void {
     const d = zero_extend(opcode.nmd.d) << 2;
     cpu.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
 }
 
-pub fn movb_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movb_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
@@ -213,7 +213,7 @@ pub fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
-pub fn movl_atR0Rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
 }
 
@@ -227,23 +227,23 @@ pub fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
-pub fn movb_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+pub fn movb_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + zero_extend(opcode.nd8.d))));
 }
-pub fn movw_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+pub fn movw_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
 }
-pub fn movl_atdisp_GBR_R0(cpu: *SH4, opcode: Instr) void {
+pub fn movl_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* = cpu.read32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2));
 }
 
-pub fn movb_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+pub fn movb_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
     cpu.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
-pub fn movw_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+pub fn movw_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
     cpu.write16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1), @truncate(cpu.R(0).*));
 }
-pub fn movl_R0_atdisp_GBR(cpu: *SH4, opcode: Instr) void {
+pub fn movl_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
     cpu.write32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2), cpu.R(0).*);
 }
 
@@ -285,11 +285,11 @@ pub fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = (cpu.R(opcode.nmd.m).* << 16) & 0xFFFF0000 | (cpu.R(opcode.nmd.m).* >> 16) & 0x0000FFFF;
 }
 
-pub fn add_rm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn add_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* +%= cpu.R(opcode.nmd.m).*;
 }
 
-pub fn add_imm_rn(cpu: *SH4, opcode: Instr) void {
+pub fn add_imm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nd8.n).* = @bitCast(@as(i32, @bitCast(cpu.R(opcode.nd8.n).*)) +% sign_extension_u8(opcode.nd8.d));
 }
 
@@ -298,31 +298,31 @@ test "add imm rn" {
     defer cpu.deinit();
 
     cpu.R(0).* = 0;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 1);
 
     cpu.R(0).* = 0;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFF);
 
     cpu.R(0).* = 0xFFFFFFFF;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0xFFFFFFFE);
 
     cpu.R(0).* = 0xFFFFFFFF;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 0);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0 } });
     try std.testing.expect(cpu.R(0).* == 0x12345678);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 1 } });
     try std.testing.expect(cpu.R(0).* == 0x12345679);
 
     cpu.R(0).* = 0x12345678;
-    add_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
+    add_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 0xFF } });
     try std.testing.expect(cpu.R(0).* == 0x12345677);
 }
 
@@ -344,7 +344,7 @@ pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 
 // Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.
 // If they are not equal the T bit is cleared. The contents of R0 are not changed.
-pub fn cmpeq_imm_r0(cpu: *SH4, opcode: Instr) void {
+pub fn cmpeq_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(0).* == @as(u32, @bitCast(sign_extension_u8(opcode.nd8.d))));
 }
 pub fn cmpeq_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -523,13 +523,13 @@ test "r2 (32 bits) / r0 (32 bits) = r2 (32 bits)  (signed)" {
         cpu.R(0).* = @bitCast(divisor);
 
         // mov     r2,r3
-        mov_rm_rn(&cpu, .{ .nmd = .{ .n = 3, .m = 2 } });
+        mov_Rm_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = 2 } });
         // rotcl   r3
         rotcl_Rn(&cpu, .{ .nmd = .{ .n = 3, .m = undefined } });
         // subc    r1,r1     ! Dividend sign-extended to 64 bits (r1:r2)
         subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 1, .m = 1 } });
         // mov     #0,r3
-        mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 0 } });
+        mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 3, .d = 0 } });
         // subc    r3,r2     ! If dividend is negative, subtract 1 to convert to one's complement notation
         subc_Rm_Rn(&cpu, .{ .nmd = .{ .n = 2, .m = 3 } });
         // div0s   r0,r1     ! Flag initialization
@@ -590,7 +590,7 @@ pub fn extuw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.R(opcode.nmd.m).* & 0xFFFF;
 }
 
-pub fn macl_at_Rm_inc_at_Rn_inc(cpu: *SH4, opcode: Instr) void {
+pub fn macl_atRmInc_atRnInc(cpu: *SH4, opcode: Instr) void {
     const rn: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     const rm: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
 
@@ -611,7 +611,7 @@ pub fn macl_at_Rm_inc_at_Rn_inc(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.m).* += 4;
 }
 
-pub fn macw_at_Rm_inc_at_Rn_inc(cpu: *SH4, opcode: Instr) void {
+pub fn macw_atRmInc_atRnInc(cpu: *SH4, opcode: Instr) void {
     const rn: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.n).*));
     const rm: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.m).*));
 
@@ -743,12 +743,12 @@ pub fn or_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn or_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
-pub fn orb_imm_at_R0_gbr(cpu: *SH4, opcode: Instr) void {
+pub fn orb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
     const val: u8 = cpu.read8(cpu.gbr + cpu.R(0).*) | opcode.nd8.d;
     cpu.write8(cpu.gbr + cpu.R(0).*, val);
 }
 
-pub fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn tasb_atRn(cpu: *SH4, opcode: Instr) void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
     // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
     const tmp = cpu.read8(cpu.R(opcode.nmd.n).*);
@@ -758,7 +758,7 @@ pub fn tasb_at_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
 }
-pub fn tst_imm_r0(cpu: *SH4, opcode: Instr) void {
+pub fn tst_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) == 0;
 }
 
@@ -1098,83 +1098,83 @@ test "ldc Rn,SR" {
     defer cpu.deinit();
     cpu.pc = 0x0C000000;
 
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 3 } }); // mov #3,R0
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 0, .d = 3 } }); // mov #3,R0
     try std.testing.expect(cpu.R(0).* == 0b000000011);
     ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 0 } }); // ldc R0,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 
     cpu.set_sr(.{});
 
-    mov_imm_rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
+    mov_imm_Rn(&cpu, .{ .nd8 = .{ .n = 15, .d = 3 } }); // mov #3,R15
     try std.testing.expect(cpu.R(15).* == 0b00000011);
     ldc_Rn_SR(&cpu, .{ .nmd = .{ .n = 15 } }); // ldc R15,SR
     try std.testing.expect(@as(u32, @bitCast(cpu.sr)) == 0b00000011 & 0x700083F3);
 }
 
-pub fn ldcl_at_Rn_inc_SR(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_SR(cpu: *SH4, opcode: Instr) void {
     cpu.set_sr(@bitCast(cpu.read32(cpu.R(opcode.nmd.n).*)));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_GBR(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) void {
     cpu.vbr = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_VBR(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_VBR(cpu: *SH4, opcode: Instr) void {
     cpu.vbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_SSR(cpu: *SH4, opcode: Instr) void {
     cpu.ssr = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_SSR(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_SSR(cpu: *SH4, opcode: Instr) void {
     cpu.ssr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_SPC(cpu: *SH4, opcode: Instr) void {
     cpu.spc = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_SPC(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_SPC(cpu: *SH4, opcode: Instr) void {
     cpu.spc = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_DBR(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
     cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldcl_at_Rn_inc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
+pub fn ldcl_atRnInc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
     cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldsl_at_Rn_inc_MACH(cpu: *SH4, opcode: Instr) void {
+pub fn ldsl_atRnInc_MACH(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_MACL(cpu: *SH4, opcode: Instr) void {
     cpu.macl = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldsl_at_Rn_inc_MACL(cpu: *SH4, opcode: Instr) void {
+pub fn ldsl_atRnInc_MACL(cpu: *SH4, opcode: Instr) void {
     cpu.macl = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.R(opcode.nmd.n).*;
 }
-pub fn ldsl_atRn_inc_PR(cpu: *SH4, opcode: Instr) void {
+pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
@@ -1201,11 +1201,11 @@ pub fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
 pub fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
-pub fn ldsl_at_Rn_inc_FPSCR(cpu: *SH4, opcode: Instr) void {
+pub fn ldsl_atRnInc_FPSCR(cpu: *SH4, opcode: Instr) void {
     cpu.set_fpscr(cpu.read32(cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
-pub fn stsl_FPSCR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stsl_FPSCR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
 }
@@ -1215,11 +1215,11 @@ pub fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
 pub fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
-pub fn ldsl_at_Rn_inc_FPUL(cpu: *SH4, opcode: Instr) void {
+pub fn ldsl_atRnInc_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
-pub fn stsl_FPUL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stsl_FPUL_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
 }
@@ -1345,7 +1345,7 @@ pub fn sleep(cpu: *SH4, _: Instr) void {
 pub fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @bitCast(cpu.sr);
 }
-pub fn stcl_SR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_SR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
 }
@@ -1355,70 +1355,70 @@ pub fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.gbr;
 }
-pub fn stcl_GBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_GBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
 }
 pub fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.vbr;
 }
-pub fn stcl_VBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_VBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
 }
 pub fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.sgr;
 }
-pub fn stcl_SGR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_SGR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
 }
 pub fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.ssr;
 }
-pub fn stcl_SSR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_SSR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
 }
 pub fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.spc;
 }
-pub fn stcl_SPC_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_SPC_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
 }
 pub fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.dbr;
 }
-pub fn stcl_DBR_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_DBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 pub fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.r_bank[opcode.nmd.m & 0b0111];
 }
-pub fn stcl_Rm_BANK_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stcl_Rm_BANK_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank[opcode.nmd.m & 0b0111]);
 }
 pub fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
 }
-pub fn stsl_MACH_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stsl_MACH_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 pub fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
-pub fn stsl_MACL_at_Rn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stsl_MACL_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 pub fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
-pub fn stsl_PR_atRn_dec(cpu: *SH4, opcode: Instr) void {
+pub fn stsl_PR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
     cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
 }
@@ -1476,7 +1476,7 @@ pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
         }
     }
 }
-pub fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
+pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
@@ -1492,7 +1492,7 @@ pub fn fmovs_at_Rm_inc_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.R(opcode.nmd.m).* += 8;
     }
 }
-pub fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.R(opcode.nmd.n).* -= 4;
@@ -1508,7 +1508,7 @@ pub fn fmovs_FRm_at_dec_Rn(cpu: *SH4, opcode: Instr) void {
         }
     }
 }
-pub fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
+pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
@@ -1521,7 +1521,7 @@ pub fn fmovs_at_R0_Rm_FRn(cpu: *SH4, opcode: Instr) void {
         }
     }
 }
-pub fn fmovs_FRm_at_R0_Rn(cpu: *SH4, opcode: Instr) void {
+pub fn fmovs_FRm_atR0Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
         cpu.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
