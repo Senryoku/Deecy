@@ -1061,22 +1061,79 @@ pub fn cmppz_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn stc_Reg_Rn(comptime reg: []const u8, block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } });
+    return false;
+}
+
+pub fn stc_SR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("sr", block, ctx, instr);
+}
+pub fn stc_GBR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("gbr", block, ctx, instr);
+}
+pub fn stc_VBR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("vbr", block, ctx, instr);
+}
+pub fn stc_SGR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("sgr", block, ctx, instr);
+}
+pub fn stc_SSR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("ssr", block, ctx, instr);
+}
+pub fn stc_SPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("spc", block, ctx, instr);
+}
+pub fn stc_DBR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("dbr", block, ctx, instr);
+}
 pub fn sts_MACH_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "mach"), .size = 32 } });
-    return false;
+    return stc_Reg_Rn("mach", block, ctx, instr);
 }
-
 pub fn sts_MACL_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } });
-    return false;
+    return stc_Reg_Rn("macl", block, ctx, instr);
+}
+pub fn sts_PR_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stc_Reg_Rn("pr", block, ctx, instr);
 }
 
-pub fn stsl_PR_atRn_dec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn stcl_Reg_atRnDec(comptime reg: []const u8, block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
+    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } });
     try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = ReturnRegister }, 32);
     return false;
+}
+
+pub fn stcl_SR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("sr", block, ctx, instr);
+}
+pub fn stcl_GBR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("gbr", block, ctx, instr);
+}
+pub fn stcl_VBR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("vbr", block, ctx, instr);
+}
+pub fn stcl_SGR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("sgr", block, ctx, instr);
+}
+pub fn stcl_SSR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("ssr", block, ctx, instr);
+}
+pub fn stcl_SPC_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("spc", block, ctx, instr);
+}
+pub fn stcl_DBR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("dbr", block, ctx, instr);
+}
+pub fn stsl_MACH_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("mach", block, ctx, instr);
+}
+pub fn stsl_MACL_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("macl", block, ctx, instr);
+}
+pub fn stsl_PR_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return stcl_Reg_atRnDec("pr", block, ctx, instr);
 }
 
 pub fn fmov_frm_frn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
