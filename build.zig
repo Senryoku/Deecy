@@ -30,20 +30,29 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // FIXME: No idea why the default exported packages are not populated correctly, the samples works fine.
-    const zglfw_pkg = @import("zglfw").package(b, target, optimize, .{});
-    const zpool_pkg = @import("zpool").package(b, target, optimize, .{});
-    const zgpu_pkg = @import("zgpu").package(b, target, optimize, .{
-        .options = .{},
-        .deps = .{ .zpool = zpool_pkg, .zglfw = zglfw_pkg },
-    });
-    const zgui_pkg = @import("zgui").package(b, target, optimize, .{
-        .options = .{ .backend = .glfw_wgpu },
-    });
+    { // zig-gamedev
+        const zgui = b.dependency("zgui", .{
+            .shared = false,
+            .with_implot = true,
+            .backend = .glfw_wgpu,
+        });
+        exe.root_module.addImport("zgui", zgui.module("root"));
+        exe.linkLibrary(zgui.artifact("imgui"));
 
-    zglfw_pkg.link(exe);
-    zgpu_pkg.link(exe);
-    zgui_pkg.link(exe);
+        @import("system_sdk").addLibraryPathsTo(exe);
+        @import("zgpu").addLibraryPathsTo(exe);
+
+        const zglfw = b.dependency("zglfw", .{});
+        exe.root_module.addImport("zglfw", zglfw.module("root"));
+        exe.linkLibrary(zglfw.artifact("glfw"));
+
+        const zpool = b.dependency("zpool", .{});
+        exe.root_module.addImport("zpool", zpool.module("root"));
+
+        const zgpu = b.dependency("zgpu", .{});
+        exe.root_module.addImport("zgpu", zgpu.module("root"));
+        exe.linkLibrary(zgpu.artifact("zdawn"));
+    }
 
     exe.root_module.addImport("arm7", arm7_module);
 

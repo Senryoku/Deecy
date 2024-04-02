@@ -66,7 +66,15 @@ pub const Deecy = struct {
         self.window.setUserPointer(self);
         _ = self.window.setKeyCallback(glfw_key_callback);
 
-        self.gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, self.window, .{
+        self.gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, .{
+            .window = self.window,
+            .fn_getTime = @ptrCast(&zglfw.getTime),
+            .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
+            .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
+            .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
+            .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+            .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
+        }, .{
             .present_mode = .mailbox,
             .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
         });
