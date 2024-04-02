@@ -22,10 +22,9 @@ const Renderer = RendererModule.Renderer;
 
 const Deecy = @import("deecy.zig").Deecy;
 
-pub const std_options = struct {
-    pub const log_level = .info;
-
-    pub const log_scope_levels = &[_]std.log.ScopeLevel{
+pub const std_options: std.Options = .{
+    .log_level = .info,
+    .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
@@ -36,7 +35,7 @@ pub const std_options = struct {
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
-    };
+    },
 };
 
 // FIXME.

@@ -6,8 +6,8 @@ const Dreamcast = @import("dreamcast").Dreamcast;
 
 // Very quick and dirty perf test to avoid doing random optimisation completely blindly.
 
-pub const std_options = struct {
-    pub const log_level = .err;
+pub const std_options: std.Options = .{
+    .log_level = .err,
 };
 
 pub fn main() !void {

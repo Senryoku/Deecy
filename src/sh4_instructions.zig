@@ -9,7 +9,7 @@ const JITBlock = @import("jit/jit_block.zig").JITBlock;
 pub const JumpTable: [0x10000]u8 = t: {
     @setEvalBranchQuota(0xFFFFFFFF);
 
-    comptime var table: [0x10000]u8 = .{1} ** 0x10000;
+    var table: [0x10000]u8 = .{1} ** 0x10000;
 
     table[0] = 0; // NOP
     for (1..0x10000) |i| {

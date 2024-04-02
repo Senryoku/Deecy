@@ -224,7 +224,6 @@ pub const GDI = struct {
                 const file_handle = try std.os.windows.OpenFile(file_path_w.span(), .{
                     .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
                     .creation = std.os.windows.FILE_OPEN,
-                    .io_mode = .blocking,
                 });
                 const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
                 const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
