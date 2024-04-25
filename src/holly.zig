@@ -89,7 +89,7 @@ const HollyRegister = enum(u32) {
     VO_BORDER_COL = 0x005F8040,
     FB_R_CTRL = 0x005F8044,
     FB_W_CTRL = 0x005F8048,
-    FB_LINESTRIDE = 0x005F804C,
+    FB_W_LINESTRIDE = 0x005F804C,
     FB_R_SOF1 = 0x005F8050,
     FB_R_SOF2 = 0x005F8054,
 
@@ -103,7 +103,7 @@ const HollyRegister = enum(u32) {
     FPU_CULL_VAL = 0x005F8078,
     FPU_PARAM_CFG = 0x005F807C,
     HALF_OFFSET = 0x005F8080,
-    FPU_PREP_VAL = 0x005F8084,
+    FPU_PERP_VAL = 0x005F8084,
     ISP_BACKGND_D = 0x005F8088,
     ISP_BACKGND_T = 0x005F808C,
 
@@ -205,7 +205,7 @@ pub const SPG_CONTROL = packed struct(u32) {
     spg_lock: u1 = 0,
     interlace: u1 = 0,
     force_field2: u1 = 0,
-    NTSC: u1 = 0,
+    NTSC: u1 = 1,
     PAL: u1 = 0,
     sync_direction: u1 = 0,
     csync_on_h: u1 = 0,
@@ -231,6 +231,14 @@ pub const SPG_VBLANK = packed struct(u32) {
     _r0: u6 = 0,
     vbend: u10 = 0x150,
     _r1: u6 = 0,
+};
+
+pub const SPG_WIDTH = packed struct(u32) {
+    hswidth: u7 = 0x3F,
+    _: u1 = 0,
+    vswidth: u4 = 0x3,
+    bpwidth: u10 = 0x319,
+    eqwidth: u10 = 0x01F,
 };
 
 pub const ISP_BACKGND_T = packed struct(u32) {
@@ -1155,26 +1163,62 @@ pub const Holly = struct {
         self._get_register(u32, .ID).* = 0x17FD11DB;
         self._get_register(u32, .REVISION).* = 0x0011;
         self._get_register(SPG_STATUS, .SPG_STATUS).* = .{};
+        self._get_register(u32, .PARAM_BASE).* = 0;
+        self._get_register(u32, .REGION_BASE).* = 0;
         self._get_register(u32, .SPAN_SOFT_CFG).* = 0x00000101;
+
+        self._get_register(u32, .FPU_SHAD_SCALE).* = 0;
+        self._get_register(u32, .FPU_CULL_VAL).* = 0;
         self._get_register(u32, .FPU_PARAM_CFG).* = 0x0007DF77;
+        self._get_register(u32, .FPU_PERP_VAL).* = 0;
+
         self._get_register(u32, .SDRAM_REFRESH).* = 0x00000020;
+        self._get_register(u32, .SDRAM_ARB_CFG).* = 0;
         self._get_register(u32, .SDRAM_CFG).* = 0x15D1C951;
-        self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
+
+        self._get_register(u32, .Y_COEFF).* = 0;
         self._get_register(u32, .PT_ALPHA_REF).* = 0xFF;
+
+        self._get_register(u32, .ISP_BACKGND_D).* = 0;
+        self._get_register(u32, .ISP_BACKGND_T).* = 0;
+        self._get_register(u32, .ISP_FEED_CFG).* = 0x01002000;
 
         self._get_register(SPG_LOAD, .SPG_LOAD).* = .{};
         self._get_register(SPG_HBLANK, .SPG_HBLANK).* = .{};
         self._get_register(SPG_VBLANK, .SPG_VBLANK).* = .{};
         self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).* = .{};
+        self._get_register(SPG_CONTROL, .SPG_CONTROL).* = .{};
+        self._get_register(u32, .SPG_STATUS).* = 0;
+
+        self._get_register(u32, .TEXT_CONTROL).* = 0;
+        self._get_register(u32, .VO_CONTROL).* = 0x000108;
+        self._get_register(u32, .VO_STARTX).* = 0x09D;
+        self._get_register(u32, .VO_STARTY).* = 0x015;
+        self._get_register(u32, .VO_BORDER_COL).* = 0;
+        self._get_register(u32, .SCALER_CTL).* = 0x0400;
+
+        self._get_register(u32, .PAL_RAM_CTRL).* = 0;
+
+        self._get_register(u32, .FOG_COL_RAM).* = 0;
+        self._get_register(u32, .FOG_COL_VERT).* = 0;
+        self._get_register(u32, .FOG_DENSITY).* = 0;
+        self._get_register(u32, .FOG_CLAMP_MAX).* = 0;
+        self._get_register(u32, .FOG_CLAMP_MIN).* = 0;
+
+        self._get_register(u32, .FB_R_CTRL).* = 0;
+        self._get_register(u32, .FB_W_CTRL).* = 0;
+        self._get_register(u32, .FB_W_LINESTRIDE).* = 0;
+        self._get_register(u32, .FB_R_SOF1).* = 0;
+        self._get_register(u32, .FB_R_SOF2).* = 0;
+        self._get_register(u32, .FB_R_SIZE).* = 0;
+        self._get_register(u32, .FB_W_SOF1).* = 0;
+        self._get_register(u32, .FB_W_SOF2).* = 0;
+        self._get_register(u32, .FB_X_CLIP).* = 0;
+        self._get_register(u32, .FB_Y_CLIP).* = 0;
+        self._get_register(u32, .FB_BURSTCTRL).* = 0x00093F39;
+        self._get_register(u32, .FB_C_SOF).* = 0;
 
         self._get_register(u32, .TA_LIST_CONT).* = 0;
-
-        // FIXME: Not sure.
-        self._get_register(u32, .FB_R_CTRL).* = 0;
-
-        // FIXME: Not sure about this. This is the default value specified in the DC documentation.
-        //        But I'm not even sure games access it.
-        self._get_register(u32, .FB_C_SOF).* = 0;
     }
 
     // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)

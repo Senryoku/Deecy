@@ -1352,6 +1352,7 @@ pub const Renderer = struct {
     pub fn update_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
         const SPG_CONTROL = gpu._get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
         const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
+        // const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
         const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
         const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
         const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
