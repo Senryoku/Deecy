@@ -293,10 +293,10 @@ pub const AICA = struct {
                     return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
                 },
                 0x00800104, 0x008001C4, 0x00800164, 0x00800224 => {
-                    return 0x00900000; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
+                    return 0x0090; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
                 },
                 0x00800284, 0x00800288 => {
-                    return 0x00900000; // Same thing when trying to start an arcade game.
+                    return 0x0090; // Same thing when trying to start an arcade game.
                 },
                 else => {},
             }
