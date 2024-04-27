@@ -169,7 +169,7 @@ pub const GDI = struct {
 
         const file = std.fs.cwd().openFile(filepath, .{}) catch {
             std.debug.print("File not found: {s}\n", .{filepath});
-            return error.FileNotFound;
+            return error.GDIFileNotFound;
         };
         defer file.close();
         const folder = std.fs.path.dirname(filepath) orelse ".";

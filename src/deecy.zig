@@ -32,9 +32,10 @@ fn glfw_key_callback(
     }
 }
 
-pub const Deecy = struct {
-    const assets_dir = "assets/";
+const assets_dir = "assets/";
+const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
+pub const Deecy = struct {
     window: *zglfw.Window,
     gctx: *zgpu.GraphicsContext = undefined,
     scale_factor: f32 = 1.0,
@@ -53,6 +54,11 @@ pub const Deecy = struct {
     _allocator: std.mem.Allocator,
 
     pub fn create(allocator: std.mem.Allocator) !*Deecy {
+        std.fs.cwd().makeDir("userdata") catch |err| switch (err) {
+            error.PathAlreadyExists => {},
+            else => return err,
+        };
+
         try zglfw.init();
 
         const self = try allocator.create(Deecy);
@@ -107,8 +113,8 @@ pub const Deecy = struct {
     fn ui_init(self: *Deecy) !void {
         zgui.init(common.GeneralAllocator);
 
-        _ = zgui.io.addFontFromFile(
-            assets_dir ++ "fonts/Hack-Regular.ttf",
+        _ = zgui.io.addFontFromMemory(
+            DefaultFont,
             std.math.floor(16.0 * self.scale_factor),
         );
 

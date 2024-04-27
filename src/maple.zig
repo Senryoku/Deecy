@@ -293,6 +293,7 @@ const VMU = struct {
                     return vmu;
                 },
                 else => {
+                    maple_log.err("Failed to create VMU file '{s}': {any}", .{ vmu.backing_file, e });
                     return e;
                 },
             }

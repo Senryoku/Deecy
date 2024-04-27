@@ -138,7 +138,11 @@ pub const Dreamcast = struct {
 
         // Load ROM
         dc.boot = try dc._allocator.alloc(u8, 0x200000);
-        var boot_file = try std.fs.cwd().openFile("./bin/dc_boot.bin", .{});
+        const boot_path = "./bin/dc_boot.bin";
+        var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
+            dc_log.err(termcolor.red("Failed to open boot ROM at '" ++ boot_path ++ "', error: {any}."), .{err});
+            return err;
+        };
         defer boot_file.close();
         const bytes_read = try boot_file.readAll(dc.boot);
         std.debug.assert(bytes_read == 0x200000);
@@ -150,11 +154,19 @@ pub const Dreamcast = struct {
         // dc.boot[0x077A] = 0x09;
 
         // Load Flash
-        var flash_file = std.fs.cwd().openFile("./userdata/flash.bin", .{}) catch |err| f: {
+        const user_flash_path = "./userdata/flash.bin";
+        var flash_file = std.fs.cwd().openFile(user_flash_path, .{}) catch |err| f: {
             if (err == error.FileNotFound) {
                 dc_log.info("Loading default flash ROM.", .{});
-                break :f try std.fs.cwd().openFile("./bin/dc_flash.bin", .{});
-            } else return err;
+                const default_flash_path = "./bin/dc_flash.bin";
+                break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
+                    dc_log.err(termcolor.red("Failed to open default flash file at '" ++ default_flash_path ++ "', error: {any}."), .{e});
+                    return e;
+                };
+            } else {
+                dc_log.err(termcolor.red("Failed to open user flash file at '" ++ user_flash_path ++ "', error: {any}."), .{err});
+                return err;
+            }
         };
 
         defer flash_file.close();
