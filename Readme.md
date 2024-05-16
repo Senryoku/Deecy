@@ -4,6 +4,22 @@ Deecy is a very experimental Dreamcast emulator written in Zig.
 
 ![image](https://github.com/Senryoku/Deecy/assets/1338143/5818d263-8f62-4f33-a799-5682f1fa94aa)
 
+## Build and Run
+
+Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions.
+```sh
+zigup 0.12.0-dev.3180+83e578a18
+```
+
+```sh
+git clone --recurse-submodules https://github.com/Senryoku/Deecy     # Clone the repo and its submodules
+cd Deecy
+zig build run                                                        # Build and run in debug mode without any argument
+zig build -Doptimize=ReleaseFast -- -g game/game.gdi                 # Build and run in release mode and loads a gdi 
+```
+
+You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `bin/` directory.
+
 ## Things I know I have to do
 
 -   Debug, debug, debug.
