@@ -289,9 +289,9 @@ pub const GDROM = struct {
                 //  7  6  5  4  | 3  2  1  0
                 //  Disc Format |   Status
                 const val = if (self.disk == null)
-                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(SenseKey.NotReady)
+                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(GDROMStatus.Empty)
                 else
-                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(if (self.status_register.drdy == 0) SenseKey.NotReady else SenseKey.NoSense);
+                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(if (self.status_register.drdy == 0) GDROMStatus.Busy else GDROMStatus.Standby);
                 gdrom_log.warn(termcolor.yellow("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}"), .{ addr, val });
                 return val;
             },
