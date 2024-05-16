@@ -15,7 +15,7 @@ zigup 0.12.0-dev.3180+83e578a18
 git clone --recurse-submodules https://github.com/Senryoku/Deecy     # Clone the repo and its submodules
 cd Deecy
 zig build run                                                        # Build and run in debug mode without any argument
-zig build -Doptimize=ReleaseFast -- -g game/game.gdi                 # Build and run in release mode and loads a gdi 
+zig build run -Doptimize=ReleaseFast -- -g game/game.gdi             # Build and run in release mode and loads a gdi 
 ```
 
 You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `bin/` directory.
