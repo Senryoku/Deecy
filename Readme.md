@@ -2,6 +2,8 @@
 
 Deecy is a very experimental Dreamcast emulator written in Zig.
 
+[Video of Soul Calibur running in Deecy](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024)
+
 ![image](https://github.com/Senryoku/Deecy/assets/1338143/5818d263-8f62-4f33-a799-5682f1fa94aa)
 
 ## Build and Run
