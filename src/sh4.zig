@@ -253,6 +253,7 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCFSR2).* = 0x0060;
         self.p4_register(u16, .SCFCR2).* = 0x0000;
         self.p4_register(u16, .SCFDR2).* = 0x0000;
+        self.p4_register(u16, .SCFTDR2).* = 0x0000;
         self.p4_register(u16, .SCSPTR2).* = 0x0000;
         self.p4_register(u16, .SCLSR2).* = 0x0000;
     }
@@ -1089,11 +1090,13 @@ pub const SH4 = struct {
                         },
                         @intFromEnum(P4Register.SCFTDR2) => {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
-                            sh4_log.warn(termcolor.yellow("Write to non-implemented P4 register SCFTDR2: 0x{X:0>2}={c}."), .{ value, value });
+
+                            std.fmt.format(std.io.getStdOut().writer(), "\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch unreachable;
+
                             // Immediately mark transfer as complete.
                             //   Or rather, attempts to, this is not enough.
-                            const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
-                            SCFSR2.*.tend = 1;
+                            // const SCFSR2 = self.p4_register(HardwareRegisters.SCFSR2, .SCFSR2);
+                            // SCFSR2.*.tend = 1;
                             // FIXME: The serial interface is not implemented at all.
                             return;
                         },
@@ -1122,7 +1125,7 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.SCFSR2) => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to SCFSR2\n", .{T});
                             // Writable bits can only be cleared.
-                            self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                             return;
                         },
                         @intFromEnum(P4Register.CCR) => {
