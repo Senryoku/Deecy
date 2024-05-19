@@ -32,6 +32,12 @@ pixels: []u8 = undefined,
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
 
+fn printable_ascii(c: u8) u8 {
+    if (c >= 0x20 and c <= 0x7E)
+        return c;
+    return '.';
+}
+
 fn display(self: anytype) void {
     const info = @typeInfo(@TypeOf(self));
     comptime var max_length = 0;
@@ -335,7 +341,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const end_addr = addr + 128;
             zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
             while (addr < end_addr) {
-                zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{
+                zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}  {c}{c}{c}{c}{c}{c}{c}{c}", .{
                     addr,
                     dc.cpu.read8(@intCast(addr)),
                     dc.cpu.read8(@intCast(addr + 1)),
@@ -345,6 +351,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     dc.cpu.read8(@intCast(addr + 5)),
                     dc.cpu.read8(@intCast(addr + 6)),
                     dc.cpu.read8(@intCast(addr + 7)),
+                    printable_ascii(dc.cpu.read8(@intCast(addr))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 1))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 2))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 3))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 4))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 5))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 6))),
+                    printable_ascii(dc.cpu.read8(@intCast(addr + 7))),
                 });
                 addr += 8;
             }
