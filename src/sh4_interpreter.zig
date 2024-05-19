@@ -282,7 +282,7 @@ test "swapw" {
 }
 
 pub fn xtrct_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = (cpu.R(opcode.nmd.m).* << 16) & 0xFFFF0000 | (cpu.R(opcode.nmd.m).* >> 16) & 0x0000FFFF;
+    cpu.R(opcode.nmd.n).* = ((cpu.R(opcode.nmd.m).* << 16) & 0xFFFF0000) | ((cpu.R(opcode.nmd.n).* >> 16) & 0x0000FFFF);
 }
 
 pub fn add_Rm_Rn(cpu: *SH4, opcode: Instr) void {
