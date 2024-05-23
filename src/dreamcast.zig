@@ -153,6 +153,9 @@ pub const Dreamcast = struct {
         // dc.boot[0x077B] = 0x00;
         // dc.boot[0x077A] = 0x09;
 
+        // Create 'userdata' folder if it doesn't exist
+        try std.fs.cwd().makePath("userdata");
+
         // Load Flash
         const user_flash_path = "./userdata/flash.bin";
         var flash_file = std.fs.cwd().openFile(user_flash_path, .{}) catch |err| f: {
