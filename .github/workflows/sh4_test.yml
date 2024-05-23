@@ -14,11 +14,11 @@ jobs:
               with:
                   repository: SingleStepTests/sh4
                   path: ~/dev/sh4_json/
-            - name: Transcode JSON test files
-              working-directory: ~/dev/sh4_json/
-              run: python ./transcode_json.py
             - name: Move JSON test files
-              run: find . -name "~/dev/sh4_json/*.json" -exec mv "{}" ../SingleStepTests_sh4/ \;
+              run: mv /home/runner/work/Deecy/Deecy/~/dev/sh4_json ../SingleStepTests_sh4/
+            - name: Transcode JSON test files
+              working-directory: ../SingleStepTests_sh4/
+              run: python ./transcode_json.py
             - uses: goto-bus-stop/setup-zig@v2
               with:
                 version: 0.12.0-dev.3180+83e578a18
