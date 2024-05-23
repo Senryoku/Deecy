@@ -1,0 +1,28 @@
+name: SH4 Test
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  repository: SingleStepTests/sh4
+                  path: ~/dev/sh4_json/
+            - name: Transcode JSON test files
+              working-directory: ~/dev/sh4_json/
+              run: python ./transcode_json.py
+            - name: Move JSON test files
+              run: find . -name "~/dev/sh4_json/*.json" -exec mv "{}" ../SingleStepTests_sh4/ \;
+            - uses: goto-bus-stop/setup-zig@v2
+              with:
+                version: 0.12.0-dev.3180+83e578a18
+            - uses: actions/checkout@v4
+              with:
+                submodules: 'true'
+            - run: zig build sh4_test --summary all
