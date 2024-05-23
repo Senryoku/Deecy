@@ -149,25 +149,22 @@ pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
-pub fn movb_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 1;
-    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+inline fn mov_Rm_atRmDec(comptime T: type, cpu: *SH4, opcode: Instr) void {
+    const val: T = @truncate(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* -%= @sizeOf(T);
+    cpu.write(T, cpu.R(opcode.nmd.n).*, val);
 }
 
-pub fn movw_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 2;
-    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
-    // TODO: Possible Exceptions
-    // Data TLB multiple-hit exception
-    // Data TLB miss exception
-    // Data TLB protection violation exception
-    // Data address error
-    // Initial page write exception
+pub fn movb_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atRmDec(u8, cpu, opcode);
 }
 
-pub fn movl_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+pub fn movw_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atRmDec(u16, cpu, opcode);
+}
+
+pub fn movl_Rm_atDecRc(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atRmDec(u32, cpu, opcode);
 }
 
 pub fn movb_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
