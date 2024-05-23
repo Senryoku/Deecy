@@ -112,6 +112,17 @@ const DMACChannels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Regist
     .{ .chcr = .CHCR2, .sar = .SAR2, .dar = .DAR2, .dmatcr = .DMATCR2, .dmte = .DMTE2 },
 };
 
+pub var DebugHooks: struct {
+    read8: ?*const fn (addr: addr_t) u8 = null,
+    read16: ?*const fn (addr: addr_t) u16 = null,
+    read32: ?*const fn (addr: addr_t) u32 = null,
+    read64: ?*const fn (addr: addr_t) u64 = null,
+    write8: ?*const fn (addr: addr_t, value: u8) void = null,
+    write16: ?*const fn (addr: addr_t, value: u16) void = null,
+    write32: ?*const fn (addr: addr_t, value: u32) void = null,
+    write64: ?*const fn (addr: addr_t, value: u64) void = null,
+} = .{};
+
 pub const SH4 = struct {
     on_trapa: ?*const fn () void = null, // Debugging callback
 
@@ -1167,6 +1178,16 @@ pub const SH4 = struct {
     }
 
     pub inline fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+        if (builtin.mode == .Debug and self._dc == null) {
+            switch (T) {
+                u8 => return DebugHooks.read8.?(virtual_addr),
+                u16 => return DebugHooks.read16.?(virtual_addr),
+                u32 => return DebugHooks.read32.?(virtual_addr),
+                u64 => return DebugHooks.read64.?(virtual_addr),
+                else => @compileError("Invalid read type"),
+            }
+        }
+
         const addr = virtual_addr & 0x1FFFFFFF;
 
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
@@ -1240,6 +1261,16 @@ pub const SH4 = struct {
     }
 
     pub inline fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+        if (builtin.mode == .Debug and self._dc == null) {
+            switch (T) {
+                u8 => return DebugHooks.write8.?(virtual_addr, value),
+                u16 => return DebugHooks.write16.?(virtual_addr, value),
+                u32 => return DebugHooks.write32.?(virtual_addr, value),
+                u64 => return DebugHooks.write64.?(virtual_addr, value),
+                else => @compileError("Invalid write type"),
+            }
+        }
+
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
             self.operand_cache(T, virtual_addr).* = value;
             return;

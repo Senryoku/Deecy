@@ -134,7 +134,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
 
     const sh4_tests = b.addTest(.{ .root_source_file = .{ .path = "test/sh4_SingleStepTests.zig" }, .target = target, .optimize = optimize });
-    sh4_tests.root_module.addImport("dreamcast", dc_module);
+    const sh4_module = b.createModule(.{ .root_source_file = .{ .path = "src/sh4.zig" } });
+    sh4_module.addImport("arm7", arm7_module);
+    sh4_tests.root_module.addImport("sh4", sh4_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
     const sh4_test_step = b.step("sh4_test", "Run sh4 tests");
     sh4_test_step.dependOn(&run_sh4_tests.step);

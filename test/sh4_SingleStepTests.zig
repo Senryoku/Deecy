@@ -1,7 +1,7 @@
 // https://github.com/SingleStepTests/sh4
 
 const std = @import("std");
-const DreamcastModule = @import("dreamcast");
+const SH4Module = @import("sh4");
 
 const CPUState = struct {
     R: []u32,
@@ -21,6 +21,25 @@ const CPUState = struct {
     PR: u32,
     FPSCR: u32,
     FPUL: u32,
+
+    fn log(self: *const @This()) void {
+        for (0..8) |i| {
+            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8}\n", .{ i, self.R[i], i + 8, self.R[i + 8], i, self.R_[i] });
+        }
+        std.debug.print("  PC:    {X:0>8}\n", .{self.PC});
+        std.debug.print("  GBR:   {X:0>8}\n", .{self.GBR});
+        std.debug.print("  SR:    {X:0>8}\n", .{@as(u32, @bitCast(self.SR))});
+        std.debug.print("  SSR:   {X:0>8}\n", .{@as(u32, @bitCast(self.SSR))});
+        std.debug.print("  SPC:   {X:0>8}\n", .{self.SPC});
+        std.debug.print("  VBR:   {X:0>8}\n", .{self.VBR});
+        std.debug.print("  SGR:   {X:0>8}\n", .{self.SGR});
+        std.debug.print("  DBR:   {X:0>8}\n", .{self.DBR});
+        std.debug.print("  MACH:  {X:0>8}\n", .{self.MACH});
+        std.debug.print("  MACL:  {X:0>8}\n", .{self.MACL});
+        std.debug.print("  PR:    {X:0>8}\n", .{self.PR});
+        std.debug.print("  FPSCR: {X:0>8}\n", .{@as(u32, @bitCast(self.FPSCR))});
+        std.debug.print("  FPUL:  {X:0>8}\n", .{self.FPUL});
+    }
 };
 
 const Test = struct {
@@ -29,13 +48,21 @@ const Test = struct {
     cycles: []struct {
         actions: u32,
         fetch_addr: u32,
-        fetch_val: u32,
+        fetch_val: u16,
         read_addr: ?u32 = null,
-        read_val: ?u32 = null,
+        read_val: ?u64 = null,
         write_addr: ?u32 = null,
-        write_val: ?u32 = null,
+        write_val: ?u64 = null,
     },
     opcodes: []u16,
+
+    fn log(self: *const @This()) void {
+        self.initial.log();
+
+        for (self.opcodes) |opcode| {
+            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator) catch unreachable});
+        }
+    }
 };
 
 pub const std_options: std.Options = .{
@@ -55,7 +82,69 @@ pub const std_options: std.Options = .{
     },
 };
 
-fn run_test(t: Test, cpu: *DreamcastModule.SH4Module.SH4, comptime log: bool) !void {
+var TestState: struct {
+    cpu: *SH4Module.SH4 = undefined,
+    cycle: u32 = 0,
+    test_data: Test = undefined,
+} = .{};
+
+fn read8(addr: u32) u8 {
+    std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].read_addr, addr) catch {
+        std.debug.print("  Read8 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
+        TestState.test_data.log();
+        @panic("read8 address error");
+    };
+    return @truncate(TestState.test_data.cycles[TestState.cycle].read_val.?);
+}
+
+fn read16(addr: u32) u16 {
+    if (TestState.test_data.cycles[TestState.cycle].fetch_addr == addr)
+        return @truncate(TestState.test_data.cycles[TestState.cycle].fetch_val);
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].read_addr == addr);
+    return @truncate(TestState.test_data.cycles[TestState.cycle].read_val.?);
+}
+
+fn read32(addr: u32) u32 {
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].read_addr == addr);
+    return @truncate(TestState.test_data.cycles[TestState.cycle].read_val.?);
+}
+
+fn read64(addr: u32) u64 {
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].read_addr == addr);
+    return @truncate(TestState.test_data.cycles[TestState.cycle].read_val.?);
+}
+
+fn write8(addr: u32, val: u8) void {
+    std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_addr, addr) catch {
+        std.debug.print("  Write8 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
+        TestState.test_data.log();
+        @panic("write8 address error");
+    };
+    std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_val, val) catch {
+        std.debug.print("  Write8 failed at cycle {d}. Expected value {?X:0>2}, got {?X:0>2}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
+        TestState.test_data.log();
+        @panic("write8 value error");
+    };
+}
+
+fn write16(addr: u32, val: u16) void {
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_addr == addr);
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_val == val);
+}
+
+fn write32(addr: u32, val: u32) void {
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_addr == addr);
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_val == val);
+}
+
+fn write64(addr: u32, val: u64) void {
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_addr == addr);
+    std.debug.assert(TestState.test_data.cycles[TestState.cycle].write_val == val);
+}
+
+fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
+    TestState = .{ .cpu = cpu, .cycle = 0, .test_data = t };
+
     for (0..16) |i| {
         cpu.r[i] = t.initial.R[i];
         cpu.fp_banks[0].fr[i] = t.initial.FP0[i];
@@ -79,35 +168,21 @@ fn run_test(t: Test, cpu: *DreamcastModule.SH4Module.SH4, comptime log: bool) !v
     cpu.fpul = t.initial.FPUL;
 
     if (log) {
-        for (0..8) |i| {
-            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8}\n", .{ i, cpu.r[i], i + 8, cpu.r[i + 8], i, cpu.r_bank[i] });
-        }
-        std.debug.print("  PC:    {X:0>8}\n", .{cpu.pc});
-        std.debug.print("  GBR:   {X:0>8}\n", .{cpu.gbr});
-        std.debug.print("  SR:    {X:0>8}\n", .{@as(u32, @bitCast(cpu.sr))});
-        std.debug.print("  SSR:   {X:0>8}\n", .{@as(u32, @bitCast(cpu.ssr))});
-        std.debug.print("  SPC:   {X:0>8}\n", .{cpu.spc});
-        std.debug.print("  VBR:   {X:0>8}\n", .{cpu.vbr});
-        std.debug.print("  SGR:   {X:0>8}\n", .{cpu.sgr});
-        std.debug.print("  DBR:   {X:0>8}\n", .{cpu.dbr});
-        std.debug.print("  MACH:  {X:0>8}\n", .{cpu.mach});
-        std.debug.print("  MACL:  {X:0>8}\n", .{cpu.macl});
-        std.debug.print("  PR:    {X:0>8}\n", .{cpu.pr});
-        std.debug.print("  FPSCR: {X:0>8}\n", .{@as(u32, @bitCast(cpu.fpscr))});
-        std.debug.print("  FPUL:  {X:0>8}\n", .{cpu.fpul});
+        t.initial.log();
     }
 
-    for (0..4) |cycle| {
-        try std.testing.expect(t.cycles[cycle].fetch_addr == cpu.pc);
+    for (0..4) |_| {
+        try std.testing.expect(t.cycles[TestState.cycle].fetch_addr == cpu.pc);
+        TestState.cycle += 1;
 
         const addr = cpu.pc;
         const offset: i64 = @divFloor(@as(i64, cpu.pc) - t.initial.PC, 2);
         const opcode = t.opcodes[@intCast(if (offset >= 0 and offset < 4) offset else 4)];
 
-        const instr = DreamcastModule.SH4Module.Instr{ .value = opcode };
-        const desc = DreamcastModule.SH4Module.sh4_instructions.Opcodes[DreamcastModule.SH4Module.sh4_instructions.JumpTable[opcode]];
+        const instr = SH4Module.Instr{ .value = opcode };
+        const desc = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[opcode]];
 
-        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, DreamcastModule.SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator) catch {
+        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator) catch {
             std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
             unreachable;
         }, instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
@@ -140,7 +215,16 @@ fn run_test(t: Test, cpu: *DreamcastModule.SH4Module.SH4, comptime log: bool) !v
 }
 
 test {
-    defer DreamcastModule.SH4Module.sh4_disassembly.free_disassembly_cache(std.testing.allocator);
+    defer SH4Module.sh4_disassembly.free_disassembly_cache(std.testing.allocator);
+
+    SH4Module.DebugHooks.read8 = read8;
+    SH4Module.DebugHooks.read16 = read16;
+    SH4Module.DebugHooks.read32 = read32;
+    SH4Module.DebugHooks.read64 = read64;
+    SH4Module.DebugHooks.write8 = write8;
+    SH4Module.DebugHooks.write16 = write16;
+    SH4Module.DebugHooks.write32 = write32;
+    SH4Module.DebugHooks.write64 = write64;
 
     const TestDir = "../SingleStepTests_sh4/";
     var test_dir = try std.fs.cwd().openDir(TestDir, .{ .iterate = true });
@@ -149,13 +233,8 @@ test {
     var walker = try test_dir.walk(std.testing.allocator);
     defer walker.deinit();
 
-    var dc = try DreamcastModule.Dreamcast.create(std.testing.allocator);
-    defer {
-        dc.deinit();
-        std.testing.allocator.destroy(dc);
-    }
-
-    var cpu = &dc.cpu;
+    var cpu = try SH4Module.SH4.init(std.testing.allocator, null);
+    defer cpu.deinit();
     cpu.debug_trace = true;
 
     tests_loop: while (try walker.next()) |entry| {
@@ -191,9 +270,9 @@ test {
 
             var test_num: u32 = 0;
             for (test_data.value) |t| {
-                run_test(t, cpu, false) catch |err| {
+                run_test(t, &cpu, false) catch |err| {
                     std.debug.print("Failed to run test {s}: {s}\n", .{ entry.basename, @errorName(err) });
-                    return run_test(t, cpu, true);
+                    return run_test(t, &cpu, true);
                 };
                 test_num += 1;
             }
