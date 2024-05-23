@@ -20,6 +20,7 @@ const CPUState = struct {
     MACH: u32,
     PR: u32,
     FPSCR: u32,
+    FPUL: u32,
 };
 
 const Test = struct {
@@ -31,6 +32,8 @@ const Test = struct {
         fetch_val: u32,
         read_addr: ?u32 = null,
         read_val: ?u32 = null,
+        write_addr: ?u32 = null,
+        write_val: ?u32 = null,
     },
     opcodes: []u16,
 };
@@ -73,6 +76,7 @@ fn run_test(t: Test, cpu: *DreamcastModule.SH4Module.SH4, comptime log: bool) !v
     cpu.macl = t.initial.MACL;
     cpu.pr = t.initial.PR;
     cpu.fpscr = @bitCast(t.initial.FPSCR);
+    cpu.fpul = t.initial.FPUL;
 
     if (log) {
         for (0..8) |i| {
@@ -132,6 +136,7 @@ fn run_test(t: Test, cpu: *DreamcastModule.SH4Module.SH4, comptime log: bool) !v
     try std.testing.expectEqual(t.final.MACL, cpu.macl);
     try std.testing.expectEqual(t.final.PR, cpu.pr);
     try std.testing.expectEqual(t.final.FPSCR, @as(u32, @bitCast(cpu.fpscr)));
+    try std.testing.expectEqual(t.final.FPUL, cpu.fpul);
 }
 
 test {
