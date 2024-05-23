@@ -149,22 +149,22 @@ pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
-inline fn mov_Rm_atRmDec(comptime T: type, cpu: *SH4, opcode: Instr) void {
+inline fn mov_Rm_atDecRn(comptime T: type, cpu: *SH4, opcode: Instr) void {
     const val: T = @truncate(cpu.R(opcode.nmd.m).*);
     cpu.R(opcode.nmd.n).* -%= @sizeOf(T);
     cpu.write(T, cpu.R(opcode.nmd.n).*, val);
 }
 
 pub fn movb_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
-    mov_Rm_atRmDec(u8, cpu, opcode);
+    mov_Rm_atDecRn(u8, cpu, opcode);
 }
 
 pub fn movw_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
-    mov_Rm_atRmDec(u16, cpu, opcode);
+    mov_Rm_atDecRn(u16, cpu, opcode);
 }
 
-pub fn movl_Rm_atDecRc(cpu: *SH4, opcode: Instr) void {
-    mov_Rm_atRmDec(u32, cpu, opcode);
+pub fn movl_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atDecRn(u32, cpu, opcode);
 }
 
 pub fn movb_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
