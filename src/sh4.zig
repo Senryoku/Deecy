@@ -359,6 +359,7 @@ pub const SH4 = struct {
             std.mem.swap([8]u32, self.r[0..8], &self.r_bank);
         }
         self.sr = @bitCast(@as(u32, @bitCast(value)) & 0x700083F3);
+        self.sr.rb = new_rb; // In case it was forced to 0 by md.
     }
 
     pub fn set_fpscr(self: *@This(), value: u32) void {

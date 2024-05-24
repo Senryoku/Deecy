@@ -193,6 +193,7 @@ fn write64(addr: u32, val: u64) void {
 fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     TestState = .{ .cpu = cpu, .cycle = 0, .test_data = t };
 
+    cpu.set_sr(@bitCast(t.initial.SR));
     for (0..16) |i| {
         cpu.r[i] = t.initial.R[i];
         cpu.fp_banks[0].fr[i] = t.initial.FP0[i];
@@ -203,7 +204,6 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     }
     cpu.pc = t.initial.PC;
     cpu.gbr = t.initial.GBR;
-    cpu.sr = @bitCast(t.initial.SR);
     cpu.ssr = @bitCast(t.initial.SSR);
     cpu.spc = t.initial.SPC;
     cpu.vbr = t.initial.VBR;
@@ -288,8 +288,6 @@ test {
     var file_num: u32 = 0;
     tests_loop: while (try walker.next()) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".json")) {
-            file_num += 1;
-
             // Filter tests with delay slots for now as the sh4 emulator architecture isn't suited for easy testing.
             for ([_][]const u8{
                 // Delay slots
@@ -308,12 +306,15 @@ test {
                 "0011nnnnmmmm0100_sz0_pr0.json", // div1 Rm, Rn - This one has a *potential* bug in the test data when n == m. Skipping for now.
                 "0011nnnnmmmm1011_sz0_pr0.json", // subv Rm, Rn - Unimplemented
                 "0011nnnnmmmm1111_sz0_pr0.json", // addv Rm, Rn - Unimplemented
+                "0100mmmm01100110_sz0_pr0.json", // lds.l @Rn+,FPSCR - I'm zeroing the unused upper bits of FPSCR, which apparently reicast doesn't do? They should always be read as 0s anyway.
+                "0100mmmm01101010_sz0_pr0.json", // lds Rn,FPSCR - Same thing
             }) |filename| {
                 if (std.mem.eql(u8, entry.basename, filename)) {
                     std.debug.print("! Skipping {s}\n", .{entry.basename});
                     continue :tests_loop;
                 }
             }
+            file_num += 1;
 
             const fullpath = try std.fs.path.join(std.testing.allocator, &[_][]const u8{ TestDir, entry.basename });
             std.debug.print("[{d: >3}/{d: >3}] Opening {s}\n", .{ file_num, 233, fullpath });

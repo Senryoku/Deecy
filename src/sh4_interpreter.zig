@@ -1109,8 +1109,9 @@ test "ldc Rn,SR" {
 }
 
 pub fn ldcl_atRnInc_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.set_sr(@bitCast(cpu.read32(cpu.R(opcode.nmd.n).*)));
+    const addr = cpu.R(opcode.nmd.n).*;
     cpu.R(opcode.nmd.n).* += 4;
+    cpu.set_sr(@bitCast(cpu.read32(addr)));
 }
 pub fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
