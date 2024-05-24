@@ -745,8 +745,8 @@ pub fn or_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
 pub fn orb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    const val: u8 = cpu.read8(cpu.gbr + cpu.R(0).*) | opcode.nd8.d;
-    cpu.write8(cpu.gbr + cpu.R(0).*, val);
+    const val: u8 = cpu.read8(cpu.gbr +% cpu.R(0).*) | opcode.nd8.d;
+    cpu.write8(cpu.gbr +% cpu.R(0).*, val);
 }
 
 pub fn tasb_atRn(cpu: *SH4, opcode: Instr) void {
