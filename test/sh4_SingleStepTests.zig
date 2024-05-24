@@ -24,19 +24,30 @@ const CPUState = struct {
 
     fn log(self: *const @This()) void {
         for (0..8) |i| {
-            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8}\n", .{ i, self.R[i], i + 8, self.R[i + 8], i, self.R_[i] });
+            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8} | FR{d}: {X:0>8}   FR{d: <2}: {X:0>8} | FR'{d}: {X:0>8}   FR'{d: <2}: {X:0>8}\n", .{
+                i,
+                self.R[i],
+                i + 8,
+                self.R[i + 8],
+                i,
+                self.R_[i],
+                i,
+                @as(u32, @bitCast(self.FP0[i])),
+                i + 8,
+                @as(u32, @bitCast(self.FP0[i])),
+                i,
+                @as(u32, @bitCast(self.FP1[i])),
+                i + 8,
+                @as(u32, @bitCast(self.FP1[i])),
+            });
         }
-        std.debug.print("  PC:    {X:0>8}\n", .{self.PC});
+        std.debug.print("  PC:    {X:0>8}   PR:   {X:0>8}   SPC: {X:0>8}\n", .{ self.PC, self.PR, self.SPC });
         std.debug.print("  GBR:   {X:0>8}\n", .{self.GBR});
-        std.debug.print("  SR:    {X:0>8}\n", .{@as(u32, @bitCast(self.SR))});
-        std.debug.print("  SSR:   {X:0>8}\n", .{@as(u32, @bitCast(self.SSR))});
-        std.debug.print("  SPC:   {X:0>8}\n", .{self.SPC});
+        std.debug.print("  SR:    {X:0>8}   SSR:  {X:0>8}\n", .{ @as(u32, @bitCast(self.SR)), @as(u32, @bitCast(self.SSR)) });
         std.debug.print("  VBR:   {X:0>8}\n", .{self.VBR});
         std.debug.print("  SGR:   {X:0>8}\n", .{self.SGR});
         std.debug.print("  DBR:   {X:0>8}\n", .{self.DBR});
-        std.debug.print("  MACH:  {X:0>8}\n", .{self.MACH});
-        std.debug.print("  MACL:  {X:0>8}\n", .{self.MACL});
-        std.debug.print("  PR:    {X:0>8}\n", .{self.PR});
+        std.debug.print("  MACH:  {X:0>8}   MACL: {X:0>8}\n", .{ self.MACH, self.MACL });
         std.debug.print("  FPSCR: {X:0>8}\n", .{@as(u32, @bitCast(self.FPSCR))});
         std.debug.print("  FPUL:  {X:0>8}\n", .{self.FPUL});
     }
