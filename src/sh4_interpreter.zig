@@ -730,6 +730,10 @@ pub fn and_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn and_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* &= zero_extend(opcode.nd8.d);
 }
+pub fn andb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    const temp = cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d;
+    cpu.write8(cpu.gbr +% cpu.R(0).*, temp);
+}
 
 pub fn not_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = ~cpu.R(opcode.nmd.m).*;
