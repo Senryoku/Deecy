@@ -772,6 +772,9 @@ pub fn xorRmRn(cpu: *SH4, opcode: Instr) void {
 pub fn xorImmR0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* ^= zero_extend(opcode.nd8.d);
 }
+pub fn xorb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.write8(cpu.gbr +% cpu.R(0).*, cpu.read8(cpu.gbr +% cpu.R(0).*) ^ opcode.nd8.d);
+}
 
 pub fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
     const tmp = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
