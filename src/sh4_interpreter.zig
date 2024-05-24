@@ -758,6 +758,9 @@ pub fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn tst_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) == 0;
 }
+pub fn tstb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.sr.t = (cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d) == 0;
+}
 
 pub fn xorRmRn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* ^= cpu.R(opcode.nmd.m).*;
