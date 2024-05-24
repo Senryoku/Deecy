@@ -670,8 +670,8 @@ pub const SH4 = struct {
     pub inline fn _execute(self: *@This(), addr: addr_t) void {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
-        const physical_addr = addr & 0x1FFFFFFF;
-        std.debug.assert(physical_addr >= 0x00000000 and physical_addr <= 0x00020000 or physical_addr >= 0x0C000000 and physical_addr <= 0x0D000000);
+        const physical_addr = if (comptime builtin.is_test) addr else (addr & 0x1FFFFFFF);
+        if (!comptime builtin.is_test) std.debug.assert(physical_addr >= 0x00000000 and physical_addr <= 0x00020000 or physical_addr >= 0x0C000000 and physical_addr <= 0x0D000000);
 
         const opcode = self.read16(physical_addr);
         const instr = Instr{ .value = opcode };
@@ -1178,7 +1178,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
-        if (builtin.mode == .Debug and self._dc == null) {
+        if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.read8.?(virtual_addr),
                 u16 => return DebugHooks.read16.?(virtual_addr),
@@ -1261,7 +1261,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
-        if (builtin.mode == .Debug and self._dc == null) {
+        if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.write8.?(virtual_addr, value),
                 u16 => return DebugHooks.write16.?(virtual_addr, value),
