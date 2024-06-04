@@ -6,8 +6,8 @@ const SH4Module = @import("sh4");
 const CPUState = struct {
     R: []u32,
     R_: []u32,
-    FP0: []f32,
-    FP1: []f32,
+    FP0: []u32,
+    FP1: []u32,
     PC: u32,
     GBR: u32,
     SR: u32,
@@ -34,11 +34,11 @@ const CPUState = struct {
                 i,
                 @as(u32, @bitCast(self.FP0[i])),
                 i + 8,
-                @as(u32, @bitCast(self.FP0[i])),
+                @as(u32, @bitCast(self.FP0[i + 8])),
                 i,
                 @as(u32, @bitCast(self.FP1[i])),
                 i + 8,
-                @as(u32, @bitCast(self.FP1[i])),
+                @as(u32, @bitCast(self.FP1[i + 8])),
             });
         }
         std.debug.print("  PC:    {X:0>8}   PR:   {X:0>8}   SPC: {X:0>8}\n", .{ self.PC, self.PR, self.SPC });
@@ -207,8 +207,8 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     cpu.set_sr(@bitCast(t.initial.SR));
     for (0..16) |i| {
         cpu.r[i] = t.initial.R[i];
-        cpu.fp_banks[0].fr[i] = t.initial.FP0[i];
-        cpu.fp_banks[1].fr[i] = t.initial.FP1[i];
+        cpu.fp_banks[0].fr[i] = @bitCast(t.initial.FP0[i]);
+        cpu.fp_banks[1].fr[i] = @bitCast(t.initial.FP1[i]);
     }
     for (0..8) |i| {
         cpu.r_bank[i] = t.initial.R_[i];
@@ -256,8 +256,8 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     try std.testing.expectEqualSlices(u32, t.final.R, &cpu.r);
     try std.testing.expectEqualSlices(u32, t.final.R_, &cpu.r_bank);
     for (0..16) |i| {
-        try std.testing.expectEqual(t.final.FP0[i], cpu.fp_banks[0].fr[i]);
-        try std.testing.expectEqual(t.final.FP1[i], cpu.fp_banks[1].fr[i]);
+        try std.testing.expectEqual(t.final.FP0[i], @as(u32, @bitCast(cpu.fp_banks[0].fr[i])));
+        try std.testing.expectEqual(t.final.FP1[i], @as(u32, @bitCast(cpu.fp_banks[1].fr[i])));
     }
     try std.testing.expectEqual(t.final.PC, cpu.pc);
     try std.testing.expectEqual(t.final.GBR, cpu.gbr);
@@ -319,7 +319,8 @@ test {
                 "0011nnnnmmmm1111_sz0_pr0.json", // addv Rm, Rn - Unimplemented
                 "0100mmmm01100110_sz0_pr0.json", // lds.l @Rn+,FPSCR - I'm zeroing the unused upper bits of FPSCR, which apparently reicast doesn't do? They should always be read as 0s anyway.
                 "0100mmmm01101010_sz0_pr0.json", // lds Rn,FPSCR - Same thing
-                "1111mmm000111101_sz0_pr1.json", // ftrc FRn,FPUL - These tests cause some FPU exceptions that I'm not emulating.
+                "1111mmm000111101_sz0_pr1.json", // ftrc DRn,FPUL - These tests cause some FPU exceptions that I'm not emulating.
+                "1111mmm010111101_sz0_pr0.json", // fcnvds	DRm,FPUL - Causes an exception when PR == 0.
             }) |filename| {
                 if (std.mem.eql(u8, entry.basename, filename)) {
                     std.debug.print("! Skipping {s}\n", .{entry.basename});

@@ -1711,10 +1711,10 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.pr == 0) {
         const f = cpu.FR(opcode.nmd.n).*;
         const u: u32 = @bitCast(f);
-        if (f >= 0) {
+        if ((u & 0x80000000) == 0) {
             if (u > 0x7F800000) {
-                cpu.fpul = 0x7FFFFFFF;
-            } else if (u < 0x4EFFFFFF) {
+                cpu.fpul = 0x80000000;
+            } else if (u > 0x4EFFFFFF) {
                 cpu.fpul = 0x7FFFFFFF;
             } else {
                 cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
@@ -1731,7 +1731,7 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
 
         const f = cpu.DR(opcode.nmd.n >> 1).*;
         const u: u64 = @bitCast(f);
-        if (f >= 0) {
+        if ((u & 0x80000000_00000000) == 0) {
             if (u > 0x7FF00000_00000000) {
                 cpu.fpul = 0x80000000;
             } else if (u >= 0x41E0000000000000) {
