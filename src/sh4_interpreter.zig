@@ -1697,6 +1697,7 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(as_i32(cpu.fpul));
     }
 }
+
 pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
     // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
@@ -1705,11 +1706,46 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // NOTE/FIXME: The overflow behavior is different between SH4 and x86. Might want to look into that. Thanks Raziel!
     //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
 
+    // NOTE/TODO: If FPU exceptions are enabled, any out of range result (0x80000000 or 0x7FFFFFFF) will cause an exception instead.
+
     if (cpu.fpscr.pr == 0) {
-        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));
+        const f = cpu.FR(opcode.nmd.n).*;
+        const u: u32 = @bitCast(f);
+        if (f >= 0) {
+            if (u > 0x7F800000) {
+                cpu.fpul = 0x7FFFFFFF;
+            } else if (u < 0x4EFFFFFF) {
+                cpu.fpul = 0x7FFFFFFF;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        } else {
+            if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
+                cpu.fpul = 0x80000000;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        }
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.DR(opcode.nmd.n >> 1).*));
+
+        const f = cpu.DR(opcode.nmd.n >> 1).*;
+        const u: u64 = @bitCast(f);
+        if (f >= 0) {
+            if (u > 0x7FF00000_00000000) {
+                cpu.fpul = 0x80000000;
+            } else if (u >= 0x41E0000000000000) {
+                cpu.fpul = 0x7FFFFFFF;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        } else {
+            if ((u & 0x7FFFFFFFFFFFFFFF) >= (0xC1E0000000200000 & 0x7FFFFFFFFFFFFFFF)) {
+                cpu.fpul = 0x80000000;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        }
     }
 }
 
