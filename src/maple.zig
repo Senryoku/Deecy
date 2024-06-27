@@ -364,7 +364,7 @@ const VMU = struct {
 
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
-                @as(*GetMediaInformationResponse, @alignCast(@ptrCast(dest))).* = .{
+                const value: GetMediaInformationResponse = .{
                     .total_size = BlockCount - 1,
                     .partition_number = 0x0000,
                     .system_area_block_number = SystemBlock,
@@ -376,6 +376,7 @@ const VMU = struct {
                     .save_area_block_number = 0x00C8,
                     .number_of_save_area_blocks = 0x00C8,
                 };
+                @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], @as([*]const u8, @ptrCast(&value))[0..@sizeOf(GetMediaInformationResponse)]);
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
             else => {
