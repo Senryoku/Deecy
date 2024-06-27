@@ -1,4 +1,4 @@
-name: SH4 Test
+name: SH4 Interpreter Test
 
 on:
     push:
