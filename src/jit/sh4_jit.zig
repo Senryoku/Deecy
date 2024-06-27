@@ -50,29 +50,52 @@ const BlockCache = struct {
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self.buffer);
 
-        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
+        self.deallocate_blocks();
     }
 
     fn allocate_blocks(self: *@This()) !void {
-        if (@import("builtin").os.tag != .windows) {
-            @compileError("Unsupported OS - Use mmap on Linux here.");
+        switch (@import("builtin").os.tag) {
+            .windows => {
+                const blocks = try std.os.windows.VirtualAlloc(
+                    null,
+                    @sizeOf(?BasicBlock) * BlockEntryCount,
+                    std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
+                    std.os.windows.PAGE_READWRITE,
+                );
+                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+            },
+            .linux => {
+                const blocks = try std.posix.mmap(
+                    null,
+                    @sizeOf(?BasicBlock) * BlockEntryCount,
+                    std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC,
+                    .{ .TYPE = .PRIVATE, .EXECUTABLE = true, .ANONYMOUS = true },
+                    -1,
+                    0,
+                );
+                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+            },
+            else => @compileError("Unsupported OS."),
         }
+    }
 
-        const blocks = try std.os.windows.VirtualAlloc(
-            null,
-            @sizeOf(?BasicBlock) * BlockEntryCount,
-            std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
-            std.os.windows.PAGE_READWRITE,
-        );
-        self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+    fn deallocate_blocks(self: *@This()) void {
+        switch (@import("builtin").os.tag) {
+            .windows => {
+                // FIXME: Can I merely decommit and re-commit it?
+                std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
+            },
+            .linux => {
+                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(?BasicBlock)]);
+            },
+            else => @compileError("Unsupported OS."),
+        }
     }
 
     pub fn reset(self: *@This()) !void {
         self.cursor = 0;
 
-        // FIXME: Can I merely decommit and re-commit it?
-        std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
-
+        self.deallocate_blocks();
         try self.allocate_blocks();
     }
 

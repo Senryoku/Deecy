@@ -17,7 +17,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"./bin/Sonic Adventure (PAL)/Sonic Adventure v1.003 (1999)(Sega)(PAL)(M5)[!].gdi",
+				"./bin/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi",
 				"--skip-bios"
 			],
 			"cwd": "${workspaceFolder}",

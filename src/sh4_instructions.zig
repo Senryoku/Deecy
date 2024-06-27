@@ -80,9 +80,9 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0110000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_atRmInc_Rn, .name = "mov.b @Rm+,Rn", .jit_emit_fn = sh4_jit.movb_atRmInc_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true, .rm = true } } }, // TODO: or 2
     .{ .code = 0b0110000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_atRmInc_Rn, .name = "mov.w @Rm+,Rn", .jit_emit_fn = sh4_jit.movw_atRmInc_Rn }, // TODO: or 2
     .{ .code = 0b0110000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_atRmInc_Rn, .name = "mov.l @Rm+,Rn", .jit_emit_fn = sh4_jit.movl_atRmInc_Rn }, // TODO: or 2
-    .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_Rm_atRnDec, .name = "mov.b Rm,@-Rn", .jit_emit_fn = sh4_jit.movb_Rm_atRnDec, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_Rm_atRnDec, .name = "mov.w Rm,@-Rn", .jit_emit_fn = sh4_jit.movw_Rm_atRnDec, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_Rm_atRnDec, .name = "mov.l Rm,@-Rn", .jit_emit_fn = sh4_jit.movl_Rm_atRnDec },
+    .{ .code = 0b0010000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.movb_Rm_atDecRn, .name = "mov.b Rm,@-Rn", .jit_emit_fn = sh4_jit.movb_Rm_atRnDec, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0010000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.movw_Rm_atDecRn, .name = "mov.w Rm,@-Rn", .jit_emit_fn = sh4_jit.movw_Rm_atRnDec, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0010000000000110, .mask = 0b0000111111110000, .fn_ = interpreter.movl_Rm_atDecRn, .name = "mov.l Rm,@-Rn", .jit_emit_fn = sh4_jit.movl_Rm_atRnDec },
     .{ .code = 0b1000010000000000, .mask = 0b0000000011111111, .fn_ = interpreter.movb_atDispRm_R0, .name = "mov.b @(disp,Rm),R0", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movb_atDispRm_R0, .access = .{ .r = .{ .rm = true }, .w = .{ .r0 = true } } },
     .{ .code = 0b1000010100000000, .mask = 0b0000000011111111, .fn_ = interpreter.movw_atDispRm_R0, .name = "mov.w @(disp,Rm),R0", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atDispRm_R0, .access = .{ .r = .{ .rm = true }, .w = .{ .r0 = true } } },
     .{ .code = 0b0101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_atDispRm_Rn, .name = "mov.l @(disp,Rm),Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atDispRm_Rn },
@@ -140,7 +140,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0011000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.unimplemented, .name = "subv Rm,Rn", .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0010000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.and_Rm_Rn, .name = "and Rm,Rn", .jit_emit_fn = sh4_jit.and_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1100100100000000, .mask = 0b0000000011111111, .fn_ = interpreter.and_imm_R0, .name = "and #imm,R0", .jit_emit_fn = sh4_jit.and_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
-    .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "and.b #imm,@(R0,GBR)", .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
+    .{ .code = 0b1100110100000000, .mask = 0b0000000011111111, .fn_ = interpreter.andb_imm_atR0GBR, .name = "and.b #imm,@(R0,GBR)", .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0110000000000111, .mask = 0b0000111111110000, .fn_ = interpreter.not_Rm_Rn, .name = "not Rm,Rn", .jit_emit_fn = sh4_jit.not_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0010000000001011, .mask = 0b0000111111110000, .fn_ = interpreter.or_Rm_Rn, .name = "or Rm,Rn", .jit_emit_fn = sh4_jit.or_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1100101100000000, .mask = 0b0000000011111111, .fn_ = interpreter.or_imm_R0, .name = "or #imm,R0", .jit_emit_fn = sh4_jit.or_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
@@ -148,10 +148,10 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000011011, .mask = 0b0000111100000000, .fn_ = interpreter.tasb_atRn, .name = "tas.b @Rn", .issue_cycles = 5, .latency_cycles = 5, .access = .{ .r = .{ .rn = true }, .w = .{} } },
     .{ .code = 0b0010000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.tst_Rm_Rn, .name = "tst Rm,Rn", .jit_emit_fn = sh4_jit.tst_Rm_Rn },
     .{ .code = 0b1100100000000000, .mask = 0b0000000011111111, .fn_ = interpreter.tst_imm_R0, .name = "tst #imm,R0", .jit_emit_fn = sh4_jit.tst_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
-    .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "tst.b #imm,@(R0,GBR)", .issue_cycles = 3, .latency_cycles = 3, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
+    .{ .code = 0b1100110000000000, .mask = 0b0000000011111111, .fn_ = interpreter.tstb_imm_atR0GBR, .name = "tst.b #imm,@(R0,GBR)", .issue_cycles = 3, .latency_cycles = 3, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0010000000001010, .mask = 0b0000111111110000, .fn_ = interpreter.xorRmRn, .name = "xor Rm,Rn", .jit_emit_fn = sh4_jit.xor_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1100101000000000, .mask = 0b0000000011111111, .fn_ = interpreter.xorImmR0, .name = "xor #imm,R0", .jit_emit_fn = sh4_jit.xor_imm_R0, .access = .{ .r = .{ .r0 = true }, .w = .{ .r0 = true } } },
-    .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = interpreter.unimplemented, .name = "xor.b #imm,@(R0,GBR)", .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
+    .{ .code = 0b1100111000000000, .mask = 0b0000000011111111, .fn_ = interpreter.xorb_imm_atR0GBR, .name = "xor.b #imm,@(R0,GBR)", .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{ .r0 = true }, .w = .{} } },
 
     .{ .code = 0b0100000000100100, .mask = 0b0000111100000000, .fn_ = interpreter.rotcl_Rn, .name = "rotcl Rn", .jit_emit_fn = sh4_jit.rotcl_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000100101, .mask = 0b0000111100000000, .fn_ = interpreter.rotcr_Rn, .name = "rotcr Rn", .jit_emit_fn = sh4_jit.rotcr_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },

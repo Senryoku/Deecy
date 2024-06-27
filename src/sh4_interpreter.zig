@@ -149,25 +149,22 @@ pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
     }
 }
 
-pub fn movb_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 1;
-    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+inline fn mov_Rm_atDecRn(comptime T: type, cpu: *SH4, opcode: Instr) void {
+    const val: T = @truncate(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* -%= @sizeOf(T);
+    cpu.write(T, cpu.R(opcode.nmd.n).*, val);
 }
 
-pub fn movw_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 2;
-    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
-    // TODO: Possible Exceptions
-    // Data TLB multiple-hit exception
-    // Data TLB miss exception
-    // Data TLB protection violation exception
-    // Data address error
-    // Initial page write exception
+pub fn movb_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atDecRn(u8, cpu, opcode);
 }
 
-pub fn movl_Rm_atRnDec(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+pub fn movw_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atDecRn(u16, cpu, opcode);
+}
+
+pub fn movl_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
+    mov_Rm_atDecRn(u32, cpu, opcode);
 }
 
 pub fn movb_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
@@ -733,6 +730,10 @@ pub fn and_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn and_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* &= zero_extend(opcode.nd8.d);
 }
+pub fn andb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    const temp = cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d;
+    cpu.write8(cpu.gbr +% cpu.R(0).*, temp);
+}
 
 pub fn not_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = ~cpu.R(opcode.nmd.m).*;
@@ -744,8 +745,8 @@ pub fn or_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
 pub fn orb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    const val: u8 = cpu.read8(cpu.gbr + cpu.R(0).*) | opcode.nd8.d;
-    cpu.write8(cpu.gbr + cpu.R(0).*, val);
+    const val: u8 = cpu.read8(cpu.gbr +% cpu.R(0).*) | opcode.nd8.d;
+    cpu.write8(cpu.gbr +% cpu.R(0).*, val);
 }
 
 pub fn tasb_atRn(cpu: *SH4, opcode: Instr) void {
@@ -761,12 +762,18 @@ pub fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn tst_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) == 0;
 }
+pub fn tstb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.sr.t = (cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d) == 0;
+}
 
 pub fn xorRmRn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* ^= cpu.R(opcode.nmd.m).*;
 }
 pub fn xorImmR0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* ^= zero_extend(opcode.nd8.d);
+}
+pub fn xorb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
+    cpu.write8(cpu.gbr +% cpu.R(0).*, cpu.read8(cpu.gbr +% cpu.R(0).*) ^ opcode.nd8.d);
 }
 
 pub fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
@@ -901,10 +908,10 @@ pub fn shad_Rm_Rn(cpu: *SH4, opcode: Instr) void {
         }
     }
 }
+// Arithmetically shifts the contents of general register Rn one bit to the left and stores the result in Rn. The bit shifted out of the operand is transferred to the T bit
 pub fn shal_Rn(cpu: *SH4, opcode: Instr) void {
-    _ = opcode;
-    _ = cpu;
-    @panic("Unimplemented shal Rn");
+    cpu.sr.t = ((cpu.R(opcode.nmd.n).* & 0x80000000) != 0);
+    cpu.R(opcode.nmd.n).* <<= 1;
 }
 // Arithmetically shifts the contents of general register Rn one bit to the right and stores the result in Rn. The bit shifted out of the operand is transferred to the T bit.
 pub fn shar_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1112,8 +1119,9 @@ test "ldc Rn,SR" {
 }
 
 pub fn ldcl_atRnInc_SR(cpu: *SH4, opcode: Instr) void {
-    cpu.set_sr(@bitCast(cpu.read32(cpu.R(opcode.nmd.n).*)));
+    const addr = cpu.R(opcode.nmd.n).*;
     cpu.R(opcode.nmd.n).* += 4;
+    cpu.set_sr(@bitCast(cpu.read32(addr)));
 }
 pub fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
@@ -1689,6 +1697,7 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(as_i32(cpu.fpul));
     }
 }
+
 pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
     // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
@@ -1697,11 +1706,46 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     // NOTE/FIXME: The overflow behavior is different between SH4 and x86. Might want to look into that. Thanks Raziel!
     //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
 
+    // NOTE/TODO: If FPU exceptions are enabled, any out of range result (0x80000000 or 0x7FFFFFFF) will cause an exception instead.
+
     if (cpu.fpscr.pr == 0) {
-        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.FR(opcode.nmd.n).*));
+        const f = cpu.FR(opcode.nmd.n).*;
+        const u: u32 = @bitCast(f);
+        if ((u & 0x80000000) == 0) {
+            if (u > 0x7F800000) {
+                cpu.fpul = 0x80000000;
+            } else if (u > 0x4EFFFFFF) {
+                cpu.fpul = 0x7FFFFFFF;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        } else {
+            if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
+                cpu.fpul = 0x80000000;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        }
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.fpul = @bitCast(std.math.lossyCast(i32, cpu.DR(opcode.nmd.n >> 1).*));
+
+        const f = cpu.DR(opcode.nmd.n >> 1).*;
+        const u: u64 = @bitCast(f);
+        if ((u & 0x80000000_00000000) == 0) {
+            if (u > 0x7FF00000_00000000) {
+                cpu.fpul = 0x80000000;
+            } else if (u >= 0x41E0000000000000) {
+                cpu.fpul = 0x7FFFFFFF;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        } else {
+            if ((u & 0x7FFFFFFFFFFFFFFF) >= (0xC1E0000000200000 & 0x7FFFFFFFFFFFFFFF)) {
+                cpu.fpul = 0x80000000;
+            } else {
+                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+            }
+        }
     }
 }
 

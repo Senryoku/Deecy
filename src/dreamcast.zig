@@ -10,13 +10,13 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 const Interrupts = @import("sh4_interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
-const sh4 = @import("sh4.zig");
-const SH4 = sh4.SH4;
+pub const SH4Module = @import("sh4.zig");
+const SH4 = SH4Module.SH4;
 const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
 const Flash = @import("flash.zig").Flash;
-const HollyModule = @import("holly.zig");
+pub const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
-const AICAModule = @import("aica.zig");
+pub const AICAModule = @import("aica.zig");
 const AICA = AICAModule.AICA;
 pub const Maple = @import("maple.zig");
 const MapleHost = Maple.MapleHost;
@@ -152,6 +152,9 @@ pub const Dreamcast = struct {
         //        Insert a nop instead of the branch.
         // dc.boot[0x077B] = 0x00;
         // dc.boot[0x077A] = 0x09;
+
+        // Create 'userdata' folder if it doesn't exist
+        try std.fs.cwd().makePath("userdata");
 
         // Load Flash
         const user_flash_path = "./userdata/flash.bin";
@@ -494,8 +497,8 @@ pub const Dreamcast = struct {
             const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
             // Simulate using ch0
-            self.cpu.p4_register(sh4.P4.CHCR, .CHCR0).*.sm = 0;
-            self.cpu.p4_register(sh4.P4.CHCR, .CHCR0).*.dm = 1;
+            self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0).*.sm = 0;
+            self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0).*.dm = 1;
             self.cpu.p4_register(u32, .DAR0).* = dst_addr;
             self.cpu.end_dmac(0);
 
