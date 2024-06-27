@@ -3,7 +3,7 @@
 zig-cache
 zig-out
 
-bin
+/bin/
 src/bin
 docs
 logs

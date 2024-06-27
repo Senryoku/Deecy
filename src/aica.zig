@@ -216,7 +216,7 @@ const FEGTransitionTime = [_]f64{
 // 00703000 - 00707FFF  00803000 - 00807FFF  DSP_DATA
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
-pub const DisableARMCore: bool = true; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
+pub const DisableARMCore: bool = false; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
