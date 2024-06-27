@@ -1,7 +1,10 @@
 .vs
 
+.zig-cache
+
 zig-cache
 zig-out
+
 
 /bin/
 src/bin

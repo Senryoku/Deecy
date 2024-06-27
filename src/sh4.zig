@@ -202,8 +202,10 @@ pub const SH4 = struct {
     }
 
     pub fn reset(self: *@This()) void {
-        self.r = undefined;
-        self.r_bank = undefined;
+        // NOTE: These should be undefined, but it prevents the bios to run in debug mode, at least since the update to zig 0.13.
+        self.r = .{0} ** 16;
+        self.r_bank = .{0} ** 8;
+
         self.R(0xF).* = 0x8C00F400;
         self.set_sr(.{});
         self.gbr = undefined;
