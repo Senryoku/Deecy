@@ -1114,7 +1114,7 @@ pub const Holly = struct {
     _allocator: std.mem.Allocator = undefined,
     _dc: *Dreamcast = undefined,
 
-    _ta_command_buffer: [16]u32 align(8) = .{0} ** 16,
+    _ta_command_buffer: [16]u32 align(16) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
 

@@ -42,7 +42,7 @@ const BlockCache = struct {
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
-        try std.os.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
+        try std.posix.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
 
         var r: @This() = .{
             .buffer = buffer,

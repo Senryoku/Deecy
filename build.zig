@@ -16,16 +16,16 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // FIXME: This should be exported by the arm7 build script, probably.
-    const arm7_module = b.createModule(.{ .root_source_file = .{ .path = "libs/arm7/src/arm7.zig" } });
+    const arm7_module = b.createModule(.{ .root_source_file = b.path("libs/arm7/src/arm7.zig") });
 
-    const dc_module = b.createModule(.{ .root_source_file = .{ .path = "src/dreamcast.zig" } });
+    const dc_module = b.createModule(.{ .root_source_file = b.path("src/dreamcast.zig") });
     dc_module.addImport("arm7", arm7_module);
 
     const exe = b.addExecutable(.{
         .name = "Deecy",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -86,7 +86,7 @@ pub fn build(b: *std.Build) void {
 
     const interpreter_perf = b.addExecutable(.{
         .name = "InterpreterPerf",
-        .root_source_file = .{ .path = "test/interpreter_perf.zig" },
+        .root_source_file = b.path("test/interpreter_perf.zig"),
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
@@ -97,7 +97,7 @@ pub fn build(b: *std.Build) void {
 
     const jit_perf = b.addExecutable(.{
         .name = "JITPerf",
-        .root_source_file = .{ .path = "test/jit_perf.zig" },
+        .root_source_file = b.path("test/jit_perf.zig"),
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
@@ -120,7 +120,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -133,8 +133,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const sh4_tests = b.addTest(.{ .root_source_file = .{ .path = "test/sh4_SingleStepTests.zig" }, .target = target, .optimize = optimize });
-    const sh4_module = b.createModule(.{ .root_source_file = .{ .path = "src/sh4.zig" } });
+    const sh4_tests = b.addTest(.{ .root_source_file = b.path("test/sh4_SingleStepTests.zig"), .target = target, .optimize = optimize });
+    const sh4_module = b.createModule(.{ .root_source_file = b.path("src/sh4.zig") });
     sh4_module.addImport("arm7", arm7_module);
     sh4_tests.root_module.addImport("sh4", sh4_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
