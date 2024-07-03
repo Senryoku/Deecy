@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const termcolor = @import("../termcolor.zig");
+const termcolor = @import("termcolor");
 
 const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");

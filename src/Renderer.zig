@@ -6,7 +6,7 @@ const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 
 const common = @import("common.zig");
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 const HollyModule = @import("holly.zig");
 

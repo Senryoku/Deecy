@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 const common = @import("common.zig");
 const addr_t = common.addr_t;
@@ -1190,8 +1190,13 @@ pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) void {
 pub fn ldtlb(cpu: *SH4, opcode: Instr) void {
     _ = cpu;
     _ = opcode;
-
-    sh4_log.warn(termcolor.yellow("Unimplemented instruction: ldtlb"), .{});
+    const static = struct {
+        var once = true;
+    };
+    if (static.once) {
+        static.once = false;
+        sh4_log.warn(termcolor.yellow("Unimplemented instruction: ldtlb"), .{});
+    }
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1433,7 +1438,7 @@ pub fn stsl_PR_atRnDec(cpu: *SH4, opcode: Instr) void {
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) void {
     // Hijack this instruction for debugging purposes.
-    std.debug.print("TRAPA #0x{X}\n", .{opcode.nd8.d});
+    sh4_log.debug("TRAPA #0x{X}\n", .{opcode.nd8.d});
 
     if (cpu.on_trapa) |callback|
         callback();

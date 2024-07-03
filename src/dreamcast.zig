@@ -2,7 +2,7 @@ const std = @import("std");
 
 const common = @import("common.zig");
 const addr_t = common.addr_t;
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;

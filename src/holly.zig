@@ -7,7 +7,7 @@ const holly_log = std.log.scoped(.holly);
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 pub const Color16 = packed union {
     value: u16,

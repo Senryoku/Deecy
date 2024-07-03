@@ -3,6 +3,8 @@
 const std = @import("std");
 const SH4Module = @import("sh4");
 
+const termcolor = @import("termcolor");
+
 const CPUState = struct {
     R: []u32,
     R_: []u32,
@@ -24,7 +26,7 @@ const CPUState = struct {
 
     fn log(self: *const @This()) void {
         for (0..8) |i| {
-            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8} | FR{d}: {X:0>8}   FR{d: <2}: {X:0>8} | FR'{d}: {X:0>8}   FR'{d: <2}: {X:0>8}\n", .{
+            std.debug.print("  R{d}: {X:0>8}   R{d: <2}: {X:0>8} | R'{d}: {X:0>8} | FR{d}: {e: >10.2}  {X:0>8}   FR{d: <2}: {e: >10.2}  {X:0>8} | FR'{d}: {e: >10.2}  {X:0>8}   FR'{d: <2}: {e: >10.2}  {X:0>8}\n", .{
                 i,
                 self.R[i],
                 i + 8,
@@ -32,12 +34,16 @@ const CPUState = struct {
                 i,
                 self.R_[i],
                 i,
+                @as(f32, @bitCast(self.FP0[i])),
                 @as(u32, @bitCast(self.FP0[i])),
                 i + 8,
+                @as(f32, @bitCast(self.FP0[i + 8])),
                 @as(u32, @bitCast(self.FP0[i + 8])),
                 i,
+                @as(f32, @bitCast(self.FP1[i])),
                 @as(u32, @bitCast(self.FP1[i])),
                 i + 8,
+                @as(f32, @bitCast(self.FP1[i + 8])),
                 @as(u32, @bitCast(self.FP1[i + 8])),
             });
         }
@@ -205,6 +211,7 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     TestState = .{ .cpu = cpu, .cycle = 0, .test_data = t };
 
     cpu.set_sr(@bitCast(t.initial.SR));
+    cpu.set_fpscr(@bitCast(t.initial.FPSCR));
     for (0..16) |i| {
         cpu.r[i] = t.initial.R[i];
         cpu.fp_banks[0].fr[i] = @bitCast(t.initial.FP0[i]);
@@ -223,9 +230,9 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     cpu.mach = t.initial.MACH;
     cpu.macl = t.initial.MACL;
     cpu.pr = t.initial.PR;
-    cpu.fpscr = @bitCast(t.initial.FPSCR);
     cpu.fpul = t.initial.FPUL;
 
+    cpu.debug_trace = log;
     if (log) {
         t.log();
     }
@@ -294,24 +301,25 @@ test {
 
     var cpu = try SH4Module.SH4.init(std.testing.allocator, null);
     defer cpu.deinit();
-    cpu.debug_trace = true;
 
+    var failed_tests: u32 = 0;
+    var skipped_tests: u32 = 0;
     var file_num: u32 = 0;
     tests_loop: while (try walker.next()) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".json")) {
             // Filter tests with delay slots for now as the sh4 emulator architecture isn't suited for easy testing.
             for ([_][]const u8{
                 // Delay slots
-                "0000000000001011_sz0_pr0.json", // rts
-                "0000000000101011_sz0_pr0.json", // rte
-                "0000mmmm00000011_sz0_pr0.json", // bsrf Rm
-                "0100mmmm00101011_sz0_pr0.json", // jmp @Rm
-                "0100mmmm00001011_sz0_pr0.json", // jsr @Rm
-                "1011dddddddddddd_sz0_pr0.json", // bsr
-                "0000mmmm00100011_sz0_pr0.json", // braf Rm
-                "1010dddddddddddd_sz0_pr0.json", // bra
-                "10001101dddddddd_sz0_pr0.json", // bt/s
-                "10001111dddddddd_sz0_pr0.json", // bf/s
+                // "0000000000001011_sz0_pr0.json", // rts
+                // "0000000000101011_sz0_pr0.json", // rte
+                // "0000mmmm00000011_sz0_pr0.json", // bsrf Rm
+                // "0100mmmm00101011_sz0_pr0.json", // jmp @Rm
+                // "0100mmmm00001011_sz0_pr0.json", // jsr @Rm
+                // "1011dddddddddddd_sz0_pr0.json", // bsr
+                // "0000mmmm00100011_sz0_pr0.json", // braf Rm
+                // "1010dddddddddddd_sz0_pr0.json", // bra
+                // "10001101dddddddd_sz0_pr0.json", // bt/s
+                // "10001111dddddddd_sz0_pr0.json", // bf/s
                 // Others
                 "0000000000011011_sz0_pr0.json", // sleep
                 "0011nnnnmmmm0100_sz0_pr0.json", // div1 Rm, Rn - This one has a *potential* bug in the test data when n == m. Skipping for now.
@@ -320,17 +328,19 @@ test {
                 "0100mmmm01100110_sz0_pr0.json", // lds.l @Rn+,FPSCR - I'm zeroing the unused upper bits of FPSCR, which apparently reicast doesn't do? They should always be read as 0s anyway.
                 "0100mmmm01101010_sz0_pr0.json", // lds Rn,FPSCR - Same thing
                 "1111mmm000111101_sz0_pr1.json", // ftrc DRn,FPUL - These tests cause some FPU exceptions that I'm not emulating.
-                "1111mmm010111101_sz0_pr0.json", // fcnvds	DRm,FPUL - Causes an exception when PR == 0.
+                "1111nnn010101101_sz0_pr0.json", // fcnvsd FPUL,DRn - Causes an exception when PR == 0.
+                "1111mmm010111101_sz0_pr0.json", // fcnvds DRm,FPUL - Causes an exception when PR == 0.
             }) |filename| {
                 if (std.mem.eql(u8, entry.basename, filename)) {
-                    std.debug.print("! Skipping {s}\n", .{entry.basename});
+                    std.debug.print(termcolor.yellow("! Skipping {s}\n"), .{entry.basename});
+                    skipped_tests += 1;
                     continue :tests_loop;
                 }
             }
             file_num += 1;
 
             const fullpath = try std.fs.path.join(std.testing.allocator, &[_][]const u8{ TestDir, entry.basename });
-            std.debug.print("[{d: >3}/{d: >3}] Opening {s}\n", .{ file_num, 233, fullpath });
+            std.debug.print(termcolor.green("[{d: >3}/{d: >3}]") ++ " Opening {s}\n", .{ file_num, 233, fullpath });
             defer std.testing.allocator.free(fullpath);
             const data = try std.fs.cwd().readFileAlloc(std.testing.allocator, fullpath, 512 * 1024 * 1024);
             defer std.testing.allocator.free(data);
@@ -339,13 +349,22 @@ test {
             defer test_data.deinit();
 
             var test_num: u32 = 0;
-            for (test_data.value) |t| {
+            test_loop: for (test_data.value) |t| {
                 run_test(t, &cpu, false) catch |err| {
-                    std.debug.print("Failed to run test {s}: {s}\n", .{ entry.basename, @errorName(err) });
-                    return run_test(t, &cpu, true);
+                    std.debug.print(termcolor.red("Failed to run test {s}: {s}\n"), .{ entry.basename, @errorName(err) });
+                    run_test(t, &cpu, true) catch {};
+                    failed_tests += 1;
+                    break :test_loop;
                 };
                 test_num += 1;
             }
         }
+    }
+    if (skipped_tests > 0) {
+        std.debug.print(termcolor.yellow("Skipped {d} tests.\n"), .{skipped_tests});
+    }
+    if (failed_tests > 0) {
+        std.debug.print(termcolor.red("{d}/{d} tests failed.\n"), .{ failed_tests, file_num });
+        return error.TestFailed;
     }
 }

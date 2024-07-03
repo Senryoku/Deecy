@@ -18,8 +18,11 @@ pub fn build(b: *std.Build) void {
     // FIXME: This should be exported by the arm7 build script, probably.
     const arm7_module = b.createModule(.{ .root_source_file = b.path("libs/arm7/src/arm7.zig") });
 
+    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+
     const dc_module = b.createModule(.{ .root_source_file = b.path("src/dreamcast.zig") });
     dc_module.addImport("arm7", arm7_module);
+    dc_module.addImport("termcolor", termcolor_module);
 
     const exe = b.addExecutable(.{
         .name = "Deecy",
@@ -55,6 +58,7 @@ pub fn build(b: *std.Build) void {
     }
 
     exe.root_module.addImport("arm7", arm7_module);
+    exe.root_module.addImport("termcolor", termcolor_module);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
@@ -90,6 +94,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
+    interpreter_perf.root_module.addImport("termcolor", termcolor_module);
     interpreter_perf.root_module.addImport("dreamcast", dc_module);
     const run_perf_tests = b.addRunArtifact(interpreter_perf);
     const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
@@ -101,6 +106,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
     });
+    jit_perf.root_module.addImport("termcolor", termcolor_module);
     jit_perf.root_module.addImport("dreamcast", dc_module);
     const run_jit_perf_tests = b.addRunArtifact(jit_perf);
     const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
@@ -125,6 +131,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     unit_tests.root_module.addImport("arm7", arm7_module);
+    unit_tests.root_module.addImport("termcolor", termcolor_module);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
@@ -136,7 +143,9 @@ pub fn build(b: *std.Build) void {
     const sh4_tests = b.addTest(.{ .root_source_file = b.path("test/sh4_SingleStepTests.zig"), .target = target, .optimize = optimize });
     const sh4_module = b.createModule(.{ .root_source_file = b.path("src/sh4.zig") });
     sh4_module.addImport("arm7", arm7_module);
+    sh4_module.addImport("termcolor", termcolor_module);
     sh4_tests.root_module.addImport("sh4", sh4_module);
+    sh4_tests.root_module.addImport("termcolor", termcolor_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
     const sh4_test_step = b.step("sh4_test", "Run sh4 tests");
     sh4_test_step.dependOn(&run_sh4_tests.step);

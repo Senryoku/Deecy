@@ -1,5 +1,5 @@
 const std = @import("std");
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 const flash_log = std.log.scoped(.flash_log);
 

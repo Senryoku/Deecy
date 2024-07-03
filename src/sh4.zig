@@ -4,7 +4,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const common = @import("./common.zig");
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 pub const sh4_log = std.log.scoped(.sh4);
 

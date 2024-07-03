@@ -1,5 +1,5 @@
 const std = @import("std");
-const termcolor = @import("termcolor.zig");
+const termcolor = @import("termcolor");
 
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
