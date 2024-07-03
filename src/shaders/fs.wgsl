@@ -9,9 +9,21 @@ fn main(
     @location(1) offset_color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) inv_w: f32,
-    @location(4) @interpolate(flat) tex: vec2<u32>,
+    @location(4) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
+    @location(5) @interpolate(flat) index: u32,
+    @location(6) @interpolate(flat) flat_base_color: vec4<f32>,
+    @location(7) @interpolate(flat) flat_offset_color: vec4<f32>,
 ) -> FragmentOutput {
-    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w, true);
+    let gouraud = ((tex_idx_shading_instr[1] >> 23) & 1) == 1;
+
+    var final_color = fragment_color(
+        select(flat_base_color, base_color / inv_w , gouraud), 
+        select(flat_offset_color, flat_base_color / inv_w, gouraud), 
+        uv / inv_w, 
+        tex_idx_shading_instr, 
+        inv_w, 
+        true
+    );
 
     var output: FragmentOutput;
     output.area0 = final_color.area0;

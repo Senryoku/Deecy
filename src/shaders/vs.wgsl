@@ -6,8 +6,10 @@ struct VertexOut {
      @location(1) offset_color: vec4<f32>,
      @location(2) uv: vec2<f32>,
      @location(3) inv_w: f32,
-     @location(4) @interpolate(flat) tex: vec2<u32>,
+     @location(4) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
      @location(5) @interpolate(flat) index: u32,
+     @location(6) @interpolate(flat) flat_base_color: vec4<f32>,
+     @location(7) @interpolate(flat) flat_offset_color: vec4<f32>,
  }
 
 @vertex
@@ -16,7 +18,7 @@ fn main(
     @location(1) base_color: vec4<f32>,
     @location(2) offset_color: vec4<f32>,
     @location(3) uv: vec2<f32>,
-    @location(4) tex: vec2<u32>, // Texture index and Texture control word
+    @location(4) tex_idx_shading_instr: vec2<u32>, // Texture index and Texture control word
     @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOut {
     var output: VertexOut;
@@ -38,9 +40,12 @@ fn main(
 
     output.uv = inv_w * uv;
     output.inv_w = inv_w;
-    output.tex = tex;
+    output.tex_idx_shading_instr = tex_idx_shading_instr;
 
     output.index = vertex_index;
+
+    output.flat_base_color = base_color;
+    output.flat_offset_color = offset_color;
 
     return output;
 }
