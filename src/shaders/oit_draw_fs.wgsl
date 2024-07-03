@@ -44,7 +44,10 @@ fn main(
     let shading_instructions = tex_idx_shading_instr[1];
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
-    let depth_compare = (shading_instructions >> 16) & 0x7;
+    // This setting is ignored for Translucent polygons in Auto-sort mode;
+    // the comparison must be made on a "Greater or Equal" basis.
+    // TODO: Handle pre-sorted mode.
+    let depth_compare = 6u; // (shading_instructions >> 16) & 0x7;
 
     // NOTE: Comparisons are inversed compared to Holly's 1/z depth.
     //       Also, the label denotes when the fragment is kept, not when it's discarded.
