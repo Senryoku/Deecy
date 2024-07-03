@@ -18,7 +18,7 @@ fn main(
 
     var final_color = fragment_color(
         select(flat_base_color, base_color / inv_w , gouraud), 
-        select(flat_offset_color, flat_base_color / inv_w, gouraud), 
+        select(flat_offset_color, offset_color / inv_w, gouraud), 
         uv / inv_w, 
         tex_idx_shading_instr, 
         inv_w, 
