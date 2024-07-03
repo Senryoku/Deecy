@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const common = @import("./common.zig");
 const arm7 = @import("arm7");
-const termcolor = @import("./termcolor.zig");
+const termcolor = @import("termcolor");
 const sh4 = @import("./sh4.zig");
 const P4Register = sh4.P4Register;
 const sh4_disassembly = @import("./sh4_disassembly.zig");
