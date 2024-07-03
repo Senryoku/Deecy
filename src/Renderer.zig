@@ -1990,7 +1990,8 @@ pub const Renderer = struct {
                 } else {
                     // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
                     if (isp_tsp_instruction.gouraud == 0) {
-                        // WebGPU uses the parameters of the first vertex, while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
+                        // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
+                        // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
                         for (start..self.vertices.items.len - 2) |i| {
                             self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
                             self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;

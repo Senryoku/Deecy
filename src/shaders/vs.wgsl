@@ -8,7 +8,7 @@ struct VertexOut {
      @location(3) inv_w: f32,
      @location(4) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
      @location(5) @interpolate(flat) index: u32,
-     @location(6) @interpolate(flat) flat_base_color: vec4<f32>,
+     @location(6) @interpolate(flat) flat_base_color: vec4<f32>, // Probably not the best use of bandwidth, but this beats using a separate pass/shader combination for now. 
      @location(7) @interpolate(flat) flat_offset_color: vec4<f32>,
  }
 
