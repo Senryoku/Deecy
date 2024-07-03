@@ -35,13 +35,16 @@ fn main(
     @location(1) offset_color: vec4<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) inv_w: f32,
-    @location(4) @interpolate(flat) tex: vec2<u32>,
+    @location(4) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
     @location(5) @interpolate(flat) index: u32,
+    @location(6) @interpolate(flat) flat_base_color: vec4<f32>,
+    @location(7) @interpolate(flat) flat_offset_color: vec4<f32>,
 ) {
     let frag_coords = vec2<i32>(position.xy);
+    let shading_instructions = tex_idx_shading_instr[1];
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
-    let depth_compare = (tex[1] >> 16) & 0x7;
+    let depth_compare = (shading_instructions >> 16) & 0x7;
 
     // NOTE: Comparisons are inversed compared to Holly's 1/z depth.
     //       Also, the label denotes when the fragment is kept, not when it's discarded.
@@ -69,7 +72,15 @@ fn main(
         default: {}
     }
 
-    var final_color = fragment_color(base_color / inv_w, offset_color / inv_w, uv / inv_w, tex, inv_w, false);
+    let gouraud = ((shading_instructions >> 23) & 1) == 1;
+    var final_color = fragment_color(
+        select(flat_base_color, base_color / inv_w , gouraud), 
+        select(flat_offset_color, offset_color / inv_w, gouraud), 
+        uv / inv_w, 
+        tex_idx_shading_instr, 
+        inv_w, 
+        false
+    );
 
     if(final_color.area0.a == 0) { discard; }
 
@@ -86,7 +97,7 @@ fn main(
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position.z;
         linked_list.data[frag_index].color = final_color.area0; // TODO: Handle Modifier volumes/Area 1
-        linked_list.data[frag_index].index_and_blend_mode = ((tex[1] >> 10) & 0x3F) | (index << 6);
+        linked_list.data[frag_index].index_and_blend_mode = ((shading_instructions >> 10) & 0x3F) | (index << 6);
         linked_list.data[frag_index].next = last_head;
     }
 }

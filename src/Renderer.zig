@@ -90,7 +90,8 @@ const ShadingInstructions = packed struct(u32) {
     fog_control: HollyModule.FogControl,
     offset_bit: u1,
     shadow_bit: u1,
-    _: u9 = 0,
+    gouraud_bit: u1,
+    _: u8 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1489,6 +1490,7 @@ pub const Renderer = struct {
                 .fog_control = tsp_instruction.fog_control,
                 .offset_bit = isp_tsp_instruction.offset,
                 .shadow_bit = 0,
+                .gouraud_bit = isp_tsp_instruction.gouraud,
             },
         };
 
@@ -1745,6 +1747,7 @@ pub const Renderer = struct {
                         .fog_control = tsp_instruction.fog_control,
                         .offset_bit = isp_tsp_instruction.offset,
                         .shadow_bit = parameter_control_word.obj_control.shadow,
+                        .gouraud_bit = isp_tsp_instruction.gouraud,
                     },
                 };
 
@@ -1985,6 +1988,17 @@ pub const Renderer = struct {
                 if (self.vertices.items.len - start < 3) {
                     renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
                 } else {
+                    // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
+                    if (isp_tsp_instruction.gouraud == 0) {
+                        // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
+                        // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
+                        for (start..self.vertices.items.len - 2) |i| {
+                            self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
+                            self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
+                            // TODO: Bump map parameters?
+                        }
+                    }
+
                     const pipeline_key = PipelineKey{
                         .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
                         .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
