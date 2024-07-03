@@ -1278,9 +1278,10 @@ pub fn fadd_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
             try block.add(frn, frm);
         },
         .Double => {
-            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
-            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            try block.add(frn, frm);
+            return interpreter_fallback_cached(block, ctx, instr);
+            // const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
+            // const frm = try load_dfp_register(block, ctx, instr.nmd.m);
+            // try block.add(frn, frm);
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
@@ -1293,10 +1294,11 @@ pub fn fsub_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
             try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             try load_fp_register(block, ctx, instr.nmd.m),
         ),
-        .Double => try block.sub(
-            try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
-            try load_dfp_register(block, ctx, instr.nmd.m),
-        ),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.sub(
+        //  try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+        //  try load_dfp_register(block, ctx, instr.nmd.m),
+        // ),
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
@@ -1308,10 +1310,11 @@ pub fn fmul_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             .src = try load_fp_register(block, ctx, instr.nmd.m),
         } }),
-        .Double => try block.append(.{ .Mul = .{
-            .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
-            .src = try load_dfp_register(block, ctx, instr.nmd.m),
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Mul = .{
+        //     .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+        //     .src = try load_dfp_register(block, ctx, instr.nmd.m),
+        // } }),
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
@@ -1330,14 +1333,15 @@ pub fn fmac_FR0_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
             try block.add(frn, tmp);
         },
         .Double => {
-            const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
-            const fr0 = try load_dfp_register(block, ctx, 0);
-            const frm = try load_dfp_register(block, ctx, instr.nmd.m);
-            // TODO: Actually use a FMA instruction (VFMADD132SD).
-            const tmp: JIT.Operand = .{ .freg64 = .xmm0 }; // Use a temporary register, we don't want to modify FR0 or FRm.
-            try block.mov(tmp, fr0);
-            try block.append(.{ .Mul = .{ .dst = tmp, .src = frm } });
-            try block.add(frn, tmp);
+            return interpreter_fallback_cached(block, ctx, instr);
+            // const frn = try load_dfp_register_for_writing(block, ctx, instr.nmd.n);
+            // const fr0 = try load_dfp_register(block, ctx, 0);
+            // const frm = try load_dfp_register(block, ctx, instr.nmd.m);
+            // // TODO: Actually use a FMA instruction (VFMADD132SD).
+            // const tmp: JIT.Operand = .{ .freg64 = .xmm0 }; // Use a temporary register, we don't want to modify FR0 or FRm.
+            // try block.mov(tmp, fr0);
+            // try block.append(.{ .Mul = .{ .dst = tmp, .src = frm } });
+            // try block.add(frn, tmp);
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
@@ -1350,10 +1354,11 @@ pub fn fdiv_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
             .src = try load_fp_register(block, ctx, instr.nmd.m),
         } }),
-        .Double => try block.append(.{ .Div = .{
-            .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
-            .src = try load_dfp_register(block, ctx, instr.nmd.m),
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Div = .{
+        //     .dst = try load_dfp_register_for_writing(block, ctx, instr.nmd.n),
+        //     .src = try load_dfp_register(block, ctx, instr.nmd.m),
+        // } }),
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
@@ -1365,10 +1370,11 @@ pub fn fcmp_eq_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
             .lhs = try load_fp_register(block, ctx, instr.nmd.n),
             .rhs = try load_fp_register(block, ctx, instr.nmd.m),
         } }),
-        .Double => try block.append(.{ .Cmp = .{
-            .lhs = try load_dfp_register(block, ctx, instr.nmd.n),
-            .rhs = try load_dfp_register(block, ctx, instr.nmd.m),
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Cmp = .{
+        //     .lhs = try load_dfp_register(block, ctx, instr.nmd.n),
+        //     .rhs = try load_dfp_register(block, ctx, instr.nmd.m),
+        // } }),
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     try set_t(block, ctx, .Equal);
@@ -1381,10 +1387,11 @@ pub fn fcmp_gt_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
             .lhs = try load_fp_register(block, ctx, instr.nmd.n),
             .rhs = try load_fp_register(block, ctx, instr.nmd.m),
         } }),
-        .Double => try block.append(.{ .Cmp = .{
-            .lhs = try load_dfp_register(block, ctx, instr.nmd.n),
-            .rhs = try load_dfp_register(block, ctx, instr.nmd.m),
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Cmp = .{
+        //     .lhs = try load_dfp_register(block, ctx, instr.nmd.n),
+        //     .rhs = try load_dfp_register(block, ctx, instr.nmd.m),
+        // } }),
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     try set_t(block, ctx, .Above);
@@ -1397,10 +1404,11 @@ pub fn float_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
             .dst = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) },
             .src = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } },
         } }),
-        .Double => try block.append(.{ .Convert = .{
-            .dst = .{ .freg64 = try ctx.guest_freg_cache(block, 64, instr.nmd.n, false, true) },
-            .src = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } },
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Convert = .{
+        //     .dst = .{ .freg64 = try ctx.guest_freg_cache(block, 64, instr.nmd.n, false, true) },
+        //     .src = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } },
+        // } }),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
@@ -1416,10 +1424,11 @@ pub fn ftrc_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
             .dst = tmp,
             .src = try load_fp_register(block, ctx, instr.nmd.n),
         } }),
-        .Double => try block.append(.{ .Convert = .{
-            .dst = tmp,
-            .src = try load_dfp_register(block, ctx, instr.nmd.n),
-        } }),
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        // try block.append(.{ .Convert = .{
+        //     .dst = tmp,
+        //     .src = try load_dfp_register(block, ctx, instr.nmd.n),
+        // } }),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
     try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, tmp);

@@ -1450,16 +1450,16 @@ pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         if (opcode.nmd.n & 0x1 == 0 and opcode.nmd.m & 0x1 == 0) {
             // fmov DRm,DRn
-            cpu.DR(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+            cpu.getDRPtr(opcode.nmd.n).* = cpu.getDRPtr(opcode.nmd.m).*;
         } else if (opcode.nmd.n & 0x1 == 1 and opcode.nmd.m & 0x1 == 0) {
             // fmov DRm,XDn
-            cpu.XD(opcode.nmd.n >> 1).* = cpu.DR(opcode.nmd.m >> 1).*;
+            cpu.getXDPtr(opcode.nmd.n).* = cpu.getDRPtr(opcode.nmd.m).*;
         } else if (opcode.nmd.n & 0x1 == 0 and opcode.nmd.m & 0x1 == 1) {
             // fmov XDm,DRn
-            cpu.DR(opcode.nmd.n >> 1).* = cpu.XD(opcode.nmd.m >> 1).*;
+            cpu.getDRPtr(opcode.nmd.n).* = cpu.getXDPtr(opcode.nmd.m).*;
         } else if (opcode.nmd.n & 0x1 == 1 and opcode.nmd.m & 0x1 == 1) {
             // fmov XDm,XDn
-            cpu.XD(opcode.nmd.n >> 1).* = cpu.XD(opcode.nmd.m >> 1).*;
+            cpu.getXDPtr(opcode.nmd.n).* = cpu.getXDPtr(opcode.nmd.m).*;
         }
     }
 }
@@ -1469,10 +1469,10 @@ pub fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d	@Rm,DRn
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d	@Rm,XDn
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
     }
 }
@@ -1482,10 +1482,10 @@ pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d	DRm,@Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d	XDm,@Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }
@@ -1497,10 +1497,10 @@ pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) void {
     } else { // Double-precision
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d	@Rm+,DRn
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d	@Rm+,XDn
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
         }
         cpu.R(opcode.nmd.m).* += 8;
     }
@@ -1514,10 +1514,10 @@ pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) void {
         cpu.R(opcode.nmd.n).* -= 8;
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d	DRm,@-Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d	XDm,@-Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }
@@ -1527,10 +1527,10 @@ pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d	@(R0,Rm),DRn
-            cpu.DR(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d	@(R0,Rm),XDn
-            cpu.XD(opcode.nmd.n >> 1).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
         }
     }
 }
@@ -1540,10 +1540,10 @@ pub fn fmovs_FRm_atR0Rn(cpu: *SH4, opcode: Instr) void {
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d	DRm,@(R0,Rn)
-            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.DR(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d	XDm,@(R0,Rn)
-            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.XD(opcode.nmd.m >> 1).*));
+            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }
@@ -1621,7 +1621,7 @@ pub fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* += cpu.DR(opcode.nmd.m >> 1).*;
+        cpu.setDR(opcode.nmd.n, cpu.getDR(opcode.nmd.n) + cpu.getDR(opcode.nmd.m));
     }
 }
 pub fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1630,7 +1630,7 @@ pub fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* -= cpu.DR(opcode.nmd.m >> 1).*;
+        cpu.setDR(opcode.nmd.n, cpu.getDR(opcode.nmd.n) - cpu.getDR(opcode.nmd.m));
     }
 }
 pub fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1640,7 +1640,7 @@ pub fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* *= cpu.DR(opcode.nmd.m >> 1).*;
+        cpu.setDR(opcode.nmd.n, cpu.getDR(opcode.nmd.n) * cpu.getDR(opcode.nmd.m));
     }
 }
 pub fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1654,7 +1654,7 @@ pub fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* /= cpu.DR(opcode.nmd.m >> 1).*;
+        cpu.setDR(opcode.nmd.n, cpu.getDR(opcode.nmd.n) / cpu.getDR(opcode.nmd.m));
     }
 }
 pub fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1666,10 +1666,10 @@ pub fn fsqrt_FRn(cpu: *SH4, opcode: Instr) void {
         }
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        if (cpu.DR(opcode.nmd.n >> 1).* < 0) {
-            cpu.DR(opcode.nmd.n >> 1).* = std.math.nan(f64);
+        if (cpu.getDR(opcode.nmd.n) < 0) {
+            cpu.setDR(opcode.nmd.n, std.math.nan(f64));
         } else {
-            cpu.DR(opcode.nmd.n >> 1).* = @sqrt(cpu.DR(opcode.nmd.n >> 1).*);
+            cpu.setDR(opcode.nmd.n, @sqrt(cpu.getDR(opcode.nmd.n)));
         }
     }
 }
@@ -1680,7 +1680,7 @@ pub fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.sr.t = (cpu.DR(opcode.nmd.n >> 1).* > cpu.DR(opcode.nmd.m >> 1).*);
+        cpu.sr.t = cpu.getDR(opcode.nmd.n) > cpu.getDR(opcode.nmd.m);
     }
 }
 pub fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1690,7 +1690,7 @@ pub fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
         std.debug.assert(opcode.nmd.m & 0x1 == 0);
-        cpu.sr.t = (cpu.DR(opcode.nmd.n >> 1).* == cpu.DR(opcode.nmd.m >> 1).*);
+        cpu.sr.t = cpu.getDR(opcode.nmd.n) == cpu.getDR(opcode.nmd.m);
     }
 }
 pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
@@ -1699,7 +1699,7 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) void {
         cpu.FR(opcode.nmd.n).* = @floatFromInt(as_i32(cpu.fpul));
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
-        cpu.DR(opcode.nmd.n >> 1).* = @floatFromInt(as_i32(cpu.fpul));
+        cpu.setDR(opcode.nmd.n, @floatFromInt(as_i32(cpu.fpul)));
     }
 }
 
@@ -1734,7 +1734,7 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
     } else {
         std.debug.assert(opcode.nmd.n & 0x1 == 0);
 
-        const f = cpu.DR(opcode.nmd.n >> 1).*;
+        const f = cpu.getDR(opcode.nmd.n);
         const u: u64 = @bitCast(f);
         if ((u & 0x80000000_00000000) == 0) {
             if (u > 0x7FF00000_00000000) {
@@ -1874,13 +1874,13 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
 pub fn fcnvds_DRn_FPUL(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 1);
     std.debug.assert(opcode.nmd.n & 1 == 0);
-    cpu.fpul = @bitCast(@as(f32, @floatCast(cpu.DR(opcode.nmd.n >> 1).*)));
+    cpu.fpul = @bitCast(@as(f32, @floatCast(cpu.getDR(opcode.nmd.n))));
 }
 
 pub fn fcnvsd_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 1);
     std.debug.assert(opcode.nmd.n & 1 == 0);
-    cpu.DR(opcode.nmd.n >> 1).* = @floatCast(@as(f32, @bitCast(cpu.fpul)));
+    cpu.setDR(opcode.nmd.n, @floatCast(@as(f32, @bitCast(cpu.fpul))));
 }
 
 pub fn syscall_sysinfo(cpu: *SH4, _: Instr) void {

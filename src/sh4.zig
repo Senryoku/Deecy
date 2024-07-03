@@ -441,22 +441,27 @@ pub const SH4 = struct {
         return &self.fp_banks[0].fr[r];
     }
 
-    pub inline fn DR(self: *@This(), r: u4) *f64 {
-        std.debug.assert(r < 8);
-        return &self.fp_banks[0].dr[r];
+    pub inline fn getDRPtr(self: *@This(), r: u4) *f64 {
+        return &self.fp_banks[0].dr[r >> 1];
     }
+
+    pub inline fn getDR(self: *@This(), r: u4) f64 {
+        std.debug.assert(r & 1 == 0);
+        return @bitCast((@as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[r + 0]))) << 32) | @as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[r + 1]))));
+    }
+    pub inline fn setDR(self: *@This(), r: u4, v: f64) void {
+        std.debug.assert(r & 1 == 0);
+        const fp: [2]f32 = @bitCast(v);
+        self.fp_banks[0].fr[r + 0] = fp[1];
+        self.fp_banks[0].fr[r + 1] = fp[0];
+    }
+
     pub inline fn XF(self: *@This(), r: u4) *f32 {
         return &self.fp_banks[1].fr[r];
     }
 
-    pub inline fn XD(self: *@This(), r: u4) *f64 {
-        std.debug.assert(r < 8);
-        return &self.fp_banks[1].dr[r];
-    }
-
-    pub inline fn QR(self: *@This(), r: u4) *f32 {
-        std.debug.assert(r < 4);
-        return &self.fp_banks[0].qr[r];
+    pub inline fn getXDPtr(self: *@This(), r: u4) *f64 {
+        return &self.fp_banks[1].dr[r >> 1];
     }
 
     fn jump_to_interrupt(self: *@This()) void {
