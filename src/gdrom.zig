@@ -139,6 +139,7 @@ const InterruptReasonRegister = packed struct(u8) {
 
 const ScheduledEvent = struct {
     cycles: u32,
+    state: ?GDROMStatus = GDROMStatus.Standby,
     status: StatusRegister,
     interrupt_reason: ?InterruptReasonRegister,
 };
@@ -222,6 +223,9 @@ pub const GDROM = struct {
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         if (self.scheduled_event) |*event| {
             if (event.cycles < cycles) {
+                if (event.state) |state| {
+                    self.state = state;
+                }
                 self.status_register = event.status;
                 if (self.control_register.nien == 0)
                     dc.raise_external_interrupt(.{ .GDRom = 1 });
@@ -291,7 +295,7 @@ pub const GDROM = struct {
                 const val = if (self.disk == null)
                     (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(GDROMStatus.Empty)
                 else
-                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(if (self.status_register.drdy == 0) GDROMStatus.Busy else GDROMStatus.Standby);
+                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(self.state);
                 gdrom_log.warn(termcolor.yellow("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}"), .{ addr, val });
                 return val;
             },
@@ -451,25 +455,37 @@ pub const GDROM = struct {
                         gdrom_log.debug("      {X:0>2} {X:0>2}", .{ self.packet_command[2 * i + 0], self.packet_command[2 * i + 1] });
                     }
 
-                    switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
+                    (switch (@as(SPIPacketCommandCode, @enumFromInt(self.packet_command[0]))) {
                         .TestUnit => self.test_unit(),
-                        .ReqStat => self.req_stat() catch unreachable,
-                        .ReqMode => self.req_mode() catch unreachable,
-                        .SetMode => self.set_mode() catch unreachable,
-                        .ReqError => self.req_error() catch unreachable,
-                        .GetToC => self.get_toc() catch unreachable,
-                        .ReqSes => self.req_ses() catch unreachable,
+                        .ReqStat => self.req_stat(),
+                        .ReqMode => self.req_mode(),
+                        .SetMode => self.set_mode(),
+                        .ReqError => self.req_error(),
+                        .GetToC => self.get_toc(),
+                        .ReqSes => self.req_ses(),
                         .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
-                        .CDPlay => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command}),
-                        .CDSeek => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command}),
-                        .CDScan => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command}),
-                        .CDRead => self.cd_read() catch unreachable,
+                        .CDPlay => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
+                            self.state = .Playing;
+                            self.state = .Paused; // FIXME: Do not resolve immediatly?
+                        },
+                        .CDSeek => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
+                            self.state = .Seeking;
+                            self.state = .Paused; // FIXME: Do not resolve immediatly?
+                        },
+                        .CDScan => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
+                            self.state = .Scanning;
+                            self.state = .Paused; // FIXME: Do not resolve immediatly?
+                        },
+                        .CDRead => self.cd_read(),
                         .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
-                        .GetSCD => self.get_subcode() catch unreachable,
-                        .SYS_CHK_SECU => self.chk_secu() catch unreachable,
-                        .SYS_REQ_SECU => self.req_secu() catch unreachable,
+                        .GetSCD => self.get_subcode(),
+                        .SYS_CHK_SECU => self.chk_secu(),
+                        .SYS_REQ_SECU => self.req_secu(),
                         else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
-                    }
+                    } catch unreachable);
                 }
             },
             else => {
@@ -726,6 +742,8 @@ pub const GDROM = struct {
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
 
+        self.state = .Playing;
+
         var start_addr: u32 = if (parameter_type == 0)
             (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
         else
@@ -788,7 +806,8 @@ pub const GDROM = struct {
         }
 
         self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
+            .cycles = 20000, // FIXME: Random value
+            .state = .Paused,
             .status = .{ .bsy = 0, .drq = 1 },
             .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
         });
