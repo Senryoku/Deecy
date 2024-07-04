@@ -5,6 +5,7 @@ const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const gdrom_hle = @import("gdrom_hle.zig");
 
 const syscall_log = std.log.scoped(.syscall_log);
 
@@ -165,7 +166,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
                 }
             }
 
-            dc.cpu.R(0).* = dc.gdrom.send_command(dc.cpu.R(4).*, params);
+            dc.cpu.R(0).* = gdrom_hle.send_command(&dc.gdrom, dc.cpu.R(4).*, params);
         },
         1 => {
             // GDROM_CHECK_COMMAND
@@ -177,7 +178,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             //          2 - request has completed (if queried again, you will get a 0)
             //          3 - request was aborted(?)
             //         -1 - request has failed (examine extended status information for cause of failure)
-            dc.cpu.R(0).* = dc.gdrom.check_command(dc.cpu.R(4).*);
+            dc.cpu.R(0).* = gdrom_hle.check_command(&dc.gdrom, dc.cpu.R(4).*);
             for (0..4) |i| {
                 dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.hle_result[i]);
             }
@@ -197,7 +198,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // It can be called from a periodic interrupt, or just keep calling it manually until GDROM_CHECK_COMMAND says that your command has stopped processing.
             // Args: none
             // Returns: no return value
-            dc.gdrom.mainloop(dc);
+            gdrom_hle.mainloop(&dc.gdrom, dc);
         },
         3 => {
             // GDROM_INIT
