@@ -806,7 +806,7 @@ pub const GDROM = struct {
         }
 
         self.schedule_event(.{
-            .cycles = 20000, // FIXME: Random value
+            .cycles = 0, // FIXME: Random value
             .state = .Paused,
             .status = .{ .bsy = 0, .drq = 1 },
             .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
