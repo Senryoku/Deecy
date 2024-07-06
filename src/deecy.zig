@@ -112,6 +112,7 @@ pub const Deecy = struct {
 
     fn ui_init(self: *Deecy) !void {
         zgui.init(common.GeneralAllocator);
+        zgui.io.setConfigFlags(.{ .dock_enable = true });
 
         _ = zgui.io.addFontFromMemory(
             DefaultFont,

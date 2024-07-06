@@ -112,6 +112,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (self.draw_debug_ui) {
         var dc = d.dc;
 
+        _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
+
         if (zgui.begin("Controls", .{})) {
             var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick.Id, name: [:0]const u8 }).init(self._allocator);
             defer available_controllers.deinit();

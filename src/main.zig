@@ -157,7 +157,7 @@ pub fn main() !void {
         );
 
         zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-        if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true } })) {
+        if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
             var sum: i128 = 0;
             for (0..last_n_frametimes.count) |i| {
                 sum += last_n_frametimes.peekItem(i);
