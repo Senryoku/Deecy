@@ -49,6 +49,21 @@ fn display(self: anytype) void {
     }
 }
 
+fn zguiSelectEnum(comptime name: [:0]const u8, target: anytype) bool {
+    var modified = false;
+    if (zgui.beginCombo(name, .{ .preview_value = @tagName(target.*) })) {
+        inline for (std.meta.fields(@TypeOf(target.*))) |mode| {
+            const value: @TypeOf(target.*) = @enumFromInt(mode.value);
+            if (zgui.selectable(mode.name, .{ .selected = target.* == value })) {
+                target.* = value;
+                modified = true;
+            }
+        }
+        zgui.endCombo();
+    }
+    return modified;
+}
+
 pub fn init(d: *Deecy) !@This() {
     var self = @This(){
         ._allocator = d._allocator,
@@ -472,6 +487,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("Renderer", .{})) {
+            if (zguiSelectEnum("Display Mode", &d.renderer.display_mode))
+                d.renderer.update_blit_to_screen_vertex_buffer();
+
             zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
             zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
             zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});
