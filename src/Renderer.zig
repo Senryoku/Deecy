@@ -389,6 +389,11 @@ const modifier_volume_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
+    pub const DisplayMode = enum { Center, Fit, Stretch };
+
+    pub const Resolution = struct { width: u32, height: u32 };
+    pub const NativeResolution: Resolution = .{ .width = 640, .height = 480 };
+
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
@@ -403,6 +408,7 @@ pub const Renderer = struct {
     blit_bind_group: zgpu.BindGroupHandle = undefined,
     blit_vertex_buffer: zgpu.BufferHandle,
     blit_index_buffer: zgpu.BufferHandle,
+    blit_to_window_vertex_buffer: zgpu.BufferHandle,
 
     opaque_pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
     modifier_volume_pipeline: zgpu.RenderPipelineHandle,
@@ -437,7 +443,8 @@ pub const Renderer = struct {
     texture_arrays: [8]zgpu.TextureHandle,
     texture_array_views: [8]zgpu.TextureViewHandle,
 
-    resolution: struct { width: u32, height: u32 } = .{ .width = 2 * native_resolution.width, .height = 2 * native_resolution.height },
+    display_mode: DisplayMode = .Center,
+    resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
 
     // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
@@ -562,8 +569,8 @@ pub const Renderer = struct {
         const framebuffer_texture = gctx.createTexture(.{
             .usage = .{ .texture_binding = true, .copy_dst = true },
             .size = .{
-                .width = native_resolution.width,
-                .height = native_resolution.height,
+                .width = NativeResolution.width,
+                .height = NativeResolution.height,
                 .depth_or_array_layers = 1,
             },
             .format = zgpu.GraphicsContext.swapchain_format,
@@ -644,11 +651,17 @@ pub const Renderer = struct {
             1.0,  -1.0, 1.0, 1.0,
             -1.0, -1.0, 0.0, 1.0,
         };
+
         const blit_vertex_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .vertex = true },
             .size = blit_vertex_data.len * 4 * @sizeOf(f32),
         });
         gctx.queue.writeBuffer(gctx.lookupResource(blit_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+
+        const blit_to_window_vertex_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .vertex = true },
+            .size = blit_vertex_data.len * 4 * @sizeOf(f32),
+        });
 
         // Create an index buffer.
         const blit_index_data = [_]u32{ 0, 3, 1, 2 };
@@ -917,6 +930,7 @@ pub const Renderer = struct {
             .blit_pipeline = blit_pipeline,
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
+            .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
 
             .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
 
@@ -2076,7 +2090,7 @@ pub const Renderer = struct {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const factor = @divTrunc(self.resolution.width, native_resolution.width);
+                const factor = @divTrunc(self.resolution.width, NativeResolution.width);
                 return .{
                     .usage = .InsideEnabled,
                     .x = @max(0, factor * uc.x),
@@ -2443,7 +2457,7 @@ pub const Renderer = struct {
 
             // Blit to screen
             {
-                const vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const vb_info = gctx.lookupResourceInfo(self.blit_to_window_vertex_buffer).?;
                 const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                 const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
 
@@ -2506,21 +2520,21 @@ pub const Renderer = struct {
         self.deinit_screen_textures();
 
         // Create a new depth texture to match the new render size.
-        const depth = create_depth_texture(self._gctx);
+        const depth = create_depth_texture(self._gctx, self.resolution);
         self.depth_texture = depth.texture;
         self.depth_texture_view = depth.view;
         self.depth_only_texture_view = depth.depth_only_view;
 
         // Same thing for our screen size framebuffer.
-        const resized_framebuffer = create_resized_framebuffer_texture(self._gctx, true, false);
+        const resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
         self.resized_framebuffer_texture = resized_framebuffer.texture;
         self.resized_framebuffer_texture_view = resized_framebuffer.view;
 
-        const resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, false, false);
+        const resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
         self.resized_framebuffer_area1_texture = resized_framebuffer_area1.texture;
         self.resized_framebuffer_area1_texture_view = resized_framebuffer_area1.view;
 
-        const resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, false, true);
+        const resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
         self.resized_framebuffer_copy_texture = resized_framebuffer_copy.texture;
         self.resized_framebuffer_copy_texture_view = resized_framebuffer_copy.view;
 
@@ -2544,9 +2558,53 @@ pub const Renderer = struct {
         self.create_oit_buffers();
         self.create_translucent_bind_group();
         self.create_blend_bind_group();
+
+        self.update_blit_to_screen_vertex_buffer();
     }
 
-    fn create_depth_texture(gctx: *zgpu.GraphicsContext) struct {
+    pub fn update_blit_to_screen_vertex_buffer(self: *@This()) void {
+        const iw: f32 = @floatFromInt(self.resolution.width);
+        const ih: f32 = @floatFromInt(self.resolution.height);
+        const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
+        const th: f32 = @floatFromInt(self._gctx.swapchain_descriptor.height);
+        const ias = iw / ih;
+        const tas = tw / th;
+        var displayMode = self.display_mode;
+        if (displayMode == .Center and (tw < iw or th < ih))
+            displayMode = .Fit;
+        const blit_vertex_data = switch (displayMode) {
+            .Center => [_]f32{
+                // x    y     u    v
+                -@min(1.0, iw / tw), @min(1.0, ih / th),  0.0, 0.0,
+                @min(1.0, iw / tw),  @min(1.0, ih / th),  1.0, 0.0,
+                @min(1.0, iw / tw),  -@min(1.0, ih / th), 1.0, 1.0,
+                -@min(1.0, iw / tw), -@min(1.0, ih / th), 0.0, 1.0,
+            },
+            .Fit => if (tas < ias) [_]f32{
+                // x    y     u    v
+                -1.0, tas / ias,  0.0, 0.0,
+                1.0,  tas / ias,  1.0, 0.0,
+                1.0,  -tas / ias, 1.0, 1.0,
+                -1.0, -tas / ias, 0.0, 1.0,
+            } else [_]f32{
+                // x    y     u    v
+                -ias / tas, 1.0,  0.0, 0.0,
+                ias / tas,  1.0,  1.0, 0.0,
+                ias / tas,  -1.0, 1.0, 1.0,
+                -ias / tas, -1.0, 0.0, 1.0,
+            },
+            .Stretch => [_]f32{
+                // x    y     u    v
+                -1.0, 1.0,  0.0, 0.0,
+                1.0,  1.0,  1.0, 0.0,
+                1.0,  -1.0, 1.0, 1.0,
+                -1.0, -1.0, 0.0, 1.0,
+            },
+        };
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.blit_to_window_vertex_buffer).?, 0, f32, blit_vertex_data[0..]);
+    }
+
+    fn create_depth_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution) struct {
         texture: zgpu.TextureHandle,
         view: zgpu.TextureViewHandle,
         depth_only_view: zgpu.TextureViewHandle,
@@ -2558,8 +2616,8 @@ pub const Renderer = struct {
             },
             .dimension = .tdim_2d,
             .size = .{
-                .width = gctx.swapchain_descriptor.width,
-                .height = gctx.swapchain_descriptor.height,
+                .width = resolution.width,
+                .height = resolution.height,
                 .depth_or_array_layers = 1,
             },
             .format = .depth32_float_stencil8,
@@ -2571,7 +2629,7 @@ pub const Renderer = struct {
         return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
     }
 
-    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, copy_src: bool, copy_dst: bool) struct {
+    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, copy_src: bool, copy_dst: bool) struct {
         texture: zgpu.TextureHandle,
         view: zgpu.TextureViewHandle,
     } {
@@ -2584,8 +2642,8 @@ pub const Renderer = struct {
                 .copy_dst = copy_dst,
             },
             .size = .{
-                .width = gctx.swapchain_descriptor.width,
-                .height = gctx.swapchain_descriptor.height,
+                .width = resolution.width,
+                .height = resolution.height,
                 .depth_or_array_layers = 1,
             },
             .format = zgpu.GraphicsContext.swapchain_format,
