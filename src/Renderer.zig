@@ -2567,7 +2567,11 @@ pub const Renderer = struct {
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
         const th: f32 = @floatFromInt(self._gctx.swapchain_descriptor.height);
-        const blit_vertex_data = switch (self.display_mode) {
+        const displayMode = self.display_mode;
+        if (displayMode == .Center and (iw < tw or ih < th)) {
+            displayMode = .Fit;
+        }
+        const blit_vertex_data = switch (displayMode) {
             .Center => [_]f32{
                 // x    y     u    v
                 -@min(1.0, iw / tw), @min(1.0, ih / th),  0.0, 0.0,
@@ -2577,16 +2581,16 @@ pub const Renderer = struct {
             },
             .Fit => if (tas < ias) [_]f32{
                 // x    y     u    v
-                -1.0, 1.0 * ias / tas,  0.0, 0.0,
-                1.0,  1.0 * ias / tas,  1.0, 0.0,
-                1.0,  -1.0 * ias / tas, 1.0, 1.0,
-                -1.0, -1.0 * ias / tas, 0.0, 1.0,
+                -1.0, 1.0 * tas / ias,  0.0, 0.0,
+                1.0,  1.0 * tas / ias,  1.0, 0.0,
+                1.0,  -1.0 * tas / ias, 1.0, 1.0,
+                -1.0, -1.0 * tas / ias, 0.0, 1.0,
             } else [_]f32{
                 // x    y     u    v
-                -1.0 * tas / ias, 1.0,  0.0, 0.0,
-                1.0 * tas / ias,  1.0,  1.0, 0.0,
-                1.0 * tas / ias,  -1.0, 1.0, 1.0,
-                -1.0 * tas / ias, -1.0, 0.0, 1.0,
+                -1.0 * ias / tas, 1.0,  0.0, 0.0,
+                1.0 * ias / tas,  1.0,  1.0, 0.0,
+                1.0 * ias / tas,  -1.0, 1.0, 1.0,
+                -1.0 * ias / tas, -1.0, 0.0, 1.0,
             },
             .Stretch => [_]f32{
                 // x    y     u    v
