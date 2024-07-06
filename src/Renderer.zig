@@ -2561,16 +2561,15 @@ pub const Renderer = struct {
     }
 
     pub fn update_blit_to_screen_vertex_buffer(self: *@This()) void {
-        const ias = @as(f32, @floatFromInt(NativeResolution.width)) / @as(f32, @floatFromInt(NativeResolution.height));
-        const tas = @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height));
         const iw: f32 = @floatFromInt(self.resolution.width);
         const ih: f32 = @floatFromInt(self.resolution.height);
         const tw: f32 = @floatFromInt(self._gctx.swapchain_descriptor.width);
         const th: f32 = @floatFromInt(self._gctx.swapchain_descriptor.height);
-        const displayMode = self.display_mode;
-        if (displayMode == .Center and (iw < tw or ih < th)) {
+        const ias = iw / ih;
+        const tas = tw / th;
+        var displayMode = self.display_mode;
+        if (displayMode == .Center and (tw < iw or th < ih))
             displayMode = .Fit;
-        }
         const blit_vertex_data = switch (displayMode) {
             .Center => [_]f32{
                 // x    y     u    v
@@ -2581,16 +2580,16 @@ pub const Renderer = struct {
             },
             .Fit => if (tas < ias) [_]f32{
                 // x    y     u    v
-                -1.0, 1.0 * tas / ias,  0.0, 0.0,
-                1.0,  1.0 * tas / ias,  1.0, 0.0,
-                1.0,  -1.0 * tas / ias, 1.0, 1.0,
-                -1.0, -1.0 * tas / ias, 0.0, 1.0,
+                -1.0, tas / ias,  0.0, 0.0,
+                1.0,  tas / ias,  1.0, 0.0,
+                1.0,  -tas / ias, 1.0, 1.0,
+                -1.0, -tas / ias, 0.0, 1.0,
             } else [_]f32{
                 // x    y     u    v
-                -1.0 * ias / tas, 1.0,  0.0, 0.0,
-                1.0 * ias / tas,  1.0,  1.0, 0.0,
-                1.0 * ias / tas,  -1.0, 1.0, 1.0,
-                -1.0 * ias / tas, -1.0, 0.0, 1.0,
+                -ias / tas, 1.0,  0.0, 0.0,
+                ias / tas,  1.0,  1.0, 0.0,
+                ias / tas,  -1.0, 1.0, 1.0,
+                -ias / tas, -1.0, 0.0, 1.0,
             },
             .Stretch => [_]f32{
                 // x    y     u    v
