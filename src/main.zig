@@ -39,16 +39,13 @@ pub const std_options: std.Options = .{
     },
 };
 
-// FIXME.
-var global_application: *Deecy = undefined;
-fn trapa_handler() void {
-    global_application.running = false;
+fn trapa_handler(app: *anyopaque) void {
+    @as(*Deecy, @alignCast(@ptrCast(app))).running = false;
 }
 
 pub fn main() !void {
     var d = try Deecy.create(common.GeneralAllocator);
     defer d.destroy();
-    global_application = d;
     var dc = d.dc;
 
     var binary_path: ?[]const u8 = null;
@@ -144,7 +141,7 @@ pub fn main() !void {
         }
     }
 
-    dc.cpu.on_trapa = trapa_handler;
+    dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 
     var last_frame_timestamp = std.time.microTimestamp();
     var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);

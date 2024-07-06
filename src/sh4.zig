@@ -124,8 +124,10 @@ pub var DebugHooks: struct {
 } = .{};
 
 pub const SH4 = struct {
-    on_trapa: ?*const fn () void = null, // Debugging callback
-
+    on_trapa: ?struct {
+        callback: *const fn (userdata: *anyopaque) void, // Debugging callback
+        userdata: *anyopaque,
+    } = null,
     debug_trace: bool = false,
 
     execution_state: ExecutionState = .Running,
