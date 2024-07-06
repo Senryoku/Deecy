@@ -1440,8 +1440,8 @@ pub fn trapa_imm(cpu: *SH4, opcode: Instr) void {
     // Hijack this instruction for debugging purposes.
     sh4_log.debug("TRAPA #0x{X}\n", .{opcode.nd8.d});
 
-    if (cpu.on_trapa) |callback|
-        callback();
+    if (cpu.on_trapa) |c|
+        c.callback(c.userdata);
 }
 
 pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
