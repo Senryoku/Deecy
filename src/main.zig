@@ -249,7 +249,12 @@ pub fn main() !void {
         d.gctx.submit(&.{commands});
 
         if (d.gctx.present() == .swap_chain_resized) {
-            d.renderer.on_resize();
+            // TODO: Allow configurable resolution change (as long a it's a multiple of the number of horitontal slices for simplicity):
+            //  - Fixed inner resolution, centered on window
+            //  - Fixed inner resolution, stretch to window
+            //  - Fixed inner resolution, stretch to window, aspect ratio preserved
+            //  - Dynamic inner resolution to window, aspect ratio preserved
+            // d.renderer.on_inner_resolution_change();
         }
     }
 }

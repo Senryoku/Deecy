@@ -392,6 +392,8 @@ pub const Renderer = struct {
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
+    const native_resolution: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 };
+
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][256]TextureMetadata = [_][256]TextureMetadata{[_]TextureMetadata{.{}} ** 256} ** 8,
 
@@ -434,6 +436,8 @@ pub const Renderer = struct {
 
     texture_arrays: [8]zgpu.TextureHandle,
     texture_array_views: [8]zgpu.TextureViewHandle,
+
+    resolution: struct { width: u32, height: u32 } = .{ .width = 2 * native_resolution.width, .height = 2 * native_resolution.height },
 
     // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
@@ -558,8 +562,8 @@ pub const Renderer = struct {
         const framebuffer_texture = gctx.createTexture(.{
             .usage = .{ .texture_binding = true, .copy_dst = true },
             .size = .{
-                .width = 640,
-                .height = 480,
+                .width = native_resolution.width,
+                .height = native_resolution.height,
                 .depth_or_array_layers = 1,
             },
             .format = zgpu.GraphicsContext.swapchain_format,
@@ -962,7 +966,7 @@ pub const Renderer = struct {
             renderer.passes[i] = PassMetadata.init(allocator, @enumFromInt(i));
         }
 
-        renderer.on_resize();
+        renderer.on_inner_resolution_change();
 
         return renderer;
     }
@@ -2072,17 +2076,17 @@ pub const Renderer = struct {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const factor = @divTrunc(self._gctx.swapchain_descriptor.width, 640);
+                const factor = @divTrunc(self.resolution.width, native_resolution.width);
                 return .{
                     .usage = .InsideEnabled,
                     .x = @max(0, factor * uc.x),
                     .y = @max(0, factor * uc.y),
-                    .width = @min(factor * uc.width, self._gctx.swapchain_descriptor.width),
-                    .height = @min(factor * uc.height, self._gctx.swapchain_descriptor.height),
+                    .width = @min(factor * uc.width, self.resolution.width),
+                    .height = @min(factor * uc.height, self.resolution.height),
                 };
             }
         }
-        return .{ .usage = .InsideEnabled, .x = 0, .y = 0, .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height };
+        return .{ .usage = .InsideEnabled, .x = 0, .y = 0, .width = self.resolution.width, .height = self.resolution.height };
     }
 
     // Convert Framebuffer from native 640*480 to window resolution
@@ -2234,7 +2238,7 @@ pub const Renderer = struct {
             encoder.copyTextureToTexture(
                 .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
                 .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
-                .{ .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height },
+                .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
             if (self.opaque_modifier_volumes.items.len > 0) {
@@ -2328,7 +2332,7 @@ pub const Renderer = struct {
                 encoder.copyTextureToTexture(
                     .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
                     .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
-                    .{ .width = self._gctx.swapchain_descriptor.width, .height = self._gctx.swapchain_descriptor.height },
+                    .{ .width = self.resolution.width, .height = self.resolution.height },
                 );
             }
 
@@ -2351,14 +2355,14 @@ pub const Renderer = struct {
             };
 
             const horizontal_slices: u32 = 4;
-            const slice_size = self._gctx.swapchain_descriptor.height / horizontal_slices;
+            const slice_size = self.resolution.height / horizontal_slices;
             for (0..horizontal_slices) |i| {
                 const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
                 const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
                 const LinkedListNodeSize = 4 * 4 + 4 + 4 + 4;
                 oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / LinkedListNodeSize);
-                oit_uniform_mem.slice[0].target_width = self._gctx.swapchain_descriptor.width;
+                oit_uniform_mem.slice[0].target_width = self.resolution.width;
                 oit_uniform_mem.slice[0].start_y = start_y;
 
                 {
@@ -2409,7 +2413,7 @@ pub const Renderer = struct {
                         pass.end();
                         pass.release();
                     }
-                    const num_groups = [2]u32{ @divExact(self._gctx.swapchain_descriptor.width, 8), @divExact(self._gctx.swapchain_descriptor.height, horizontal_slices * 8) };
+                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, horizontal_slices * 8) };
                     pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
 
                     pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
@@ -2497,11 +2501,11 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blend_bind_group);
     }
 
-    // Creates all resources that depends on the window size
-    pub fn on_resize(self: *@This()) void {
+    // Creates all resources that depends on the render size
+    pub fn on_inner_resolution_change(self: *@This()) void {
         self.deinit_screen_textures();
 
-        // Create a new depth texture to match the new window size.
+        // Create a new depth texture to match the new render size.
         const depth = create_depth_texture(self._gctx);
         self.depth_texture = depth.texture;
         self.depth_texture_view = depth.view;
@@ -2593,7 +2597,7 @@ pub const Renderer = struct {
     }
 
     fn create_oit_buffers(self: *@This()) void {
-        const head_size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32);
+        const head_size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32);
         const list_size = self.get_max_storage_buffer_binding_size();
 
         self.list_heads_buffer = self._gctx.createBuffer(.{
@@ -2620,7 +2624,7 @@ pub const Renderer = struct {
     fn create_translucent_bind_group(self: *@This()) void {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.depth_only_texture_view },
         });
@@ -2629,7 +2633,7 @@ pub const Renderer = struct {
     fn create_blend_bind_group(self: *@This()) void {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self._gctx.swapchain_descriptor.width * self._gctx.swapchain_descriptor.height) * @sizeOf(u32) },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture_view },
