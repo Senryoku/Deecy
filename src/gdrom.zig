@@ -296,7 +296,7 @@ pub const GDROM = struct {
                     (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(GDROMStatus.Empty)
                 else
                     (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(self.state);
-                gdrom_log.warn(termcolor.yellow("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}"), .{ addr, val });
+                gdrom_log.info("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
                 return val;
             },
             .GD_ByteCountLow => {

@@ -33,7 +33,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .syscall_log, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .info },
+        .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
     },
@@ -156,16 +156,18 @@ pub fn main() !void {
             d.gctx.swapchain_descriptor.height,
         );
 
-        zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-        if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-            var sum: i128 = 0;
-            for (0..last_n_frametimes.count) |i| {
-                sum += last_n_frametimes.peekItem(i);
+        if (!d.debug_ui.draw_debug_ui) {
+            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
+            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
+                var sum: i128 = 0;
+                for (0..last_n_frametimes.count) |i| {
+                    sum += last_n_frametimes.peekItem(i);
+                }
+                const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
+                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
             }
-            const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
-            zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            zgui.end();
         }
-        zgui.end();
 
         try d.debug_ui.draw(d);
 

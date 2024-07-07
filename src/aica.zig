@@ -224,7 +224,7 @@ const FEGTransitionTime = [_]f64{
     std.math.inf(f64), std.math.inf(f64), 118200.0, 101300.0, 88600.0, 70900.0, 59100.0, 50700.0, 44300.0, 35500.0, 29600.0, 25300.0, 22200.0, 17700.0, 14800.0, 12700.0, 11100.0, 8900.0, 7400.0, 6300.0, 5500.0, 4400.0, 3700.0, 3200.0, 2800.0, 2200.0, 1800.0, 1600.0, 1400.0, 1100.0, 920.0, 790.0, 690.0, 550.0, 460.0, 390.0, 340.0, 270.0, 230.0, 200.0, 170.0, 140.0, 110.0, 98.0, 85.0, 68.0, 57.0, 49.0, 43.0, 34.0, 28.0, 25.0, 22.0, 18.0, 14.0, 12.0, 11.0, 8.5, 7.1, 6.1, 5.4, 4.3, 3.6, 3.1,
 };
 
-const AEGAttackShift = [_][4]u4{
+const EnvelopeAttackShift = [_][4]u4{
     .{ 4, 4, 4, 4 },
     .{ 3, 4, 4, 4 },
     .{ 3, 4, 3, 4 },
@@ -239,7 +239,7 @@ const AEGAttackShift = [_][4]u4{
     .{ 1, 1, 1, 2 },
     .{ 1, 1, 1, 1 },
 };
-const AEGDecayValue = [_][4]u4{
+const EnvelopeDecayValue = [_][4]u4{
     .{ 1, 1, 1, 1 },
     .{ 2, 1, 1, 1 },
     .{ 2, 1, 2, 1 },
@@ -693,52 +693,38 @@ pub const AICA = struct {
 
         for (0..samples) |_| {
             if (state.status.EnvelopeLevel > 0x3BF) {
-                state.playing = false;
                 state.status.EnvelopeLevel = 0x1FFF;
+                state.status.EnvelopeState = .Release;
+                state.status.LoopEndFlag = 1;
                 break;
             }
 
-            switch (state.status.EnvelopeState) {
-                .Attack => {
-                    const effective_rate = compute_effective_rate(registers, registers.amp_env_1.attack_rate);
-                    if (channel_should_step(effective_rate, state.play_position)) {
-                        const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                        const diff = ((state.status.EnvelopeLevel >> AEGAttackShift[idx][state.play_position % 4]) + 1);
+            const effective_rate = compute_effective_rate(registers, switch (state.status.EnvelopeState) {
+                .Attack => registers.amp_env_1.attack_rate,
+                .Decay => registers.amp_env_1.decay_rate,
+                .Sustain => registers.amp_env_1.sustain_rate,
+                .Release => registers.amp_env_2.release_rate,
+            });
+            if (channel_should_step(effective_rate, state.play_position)) {
+                const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
+                switch (state.status.EnvelopeState) {
+                    .Attack => {
+                        const diff = ((state.status.EnvelopeLevel >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
                         if (state.status.EnvelopeLevel < diff) {
                             state.status.EnvelopeLevel = 0;
                             state.status.EnvelopeState = .Decay;
                         } else {
                             state.status.EnvelopeLevel -= diff;
                         }
-                    }
-                },
-                .Decay => {
-                    const effective_rate = compute_effective_rate(registers, registers.amp_env_1.decay_rate);
-                    if (channel_should_step(effective_rate, state.play_position)) {
-                        const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                        state.status.EnvelopeLevel += AEGDecayValue[idx][state.play_position % 4];
+                    },
+                    .Decay => {
+                        state.status.EnvelopeLevel += EnvelopeDecayValue[idx][state.play_position % 4];
                         if ((state.status.EnvelopeLevel >> 5) >= registers.amp_env_2.decay_level) {
                             state.status.EnvelopeState = .Sustain;
                         }
-                    }
-                },
-                .Sustain => {
-                    const effective_rate = compute_effective_rate(registers, registers.amp_env_1.sustain_rate);
-                    if (channel_should_step(effective_rate, state.play_position)) {
-                        const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                        state.status.EnvelopeLevel += AEGDecayValue[idx][state.play_position % 4];
-                        if (state.status.EnvelopeLevel >= 0x3BF) {
-                            state.status.EnvelopeState = .Release;
-                        }
-                    }
-                },
-                .Release => {
-                    const effective_rate = compute_effective_rate(registers, registers.amp_env_2.release_rate);
-                    if (channel_should_step(effective_rate, state.play_position)) {
-                        const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                        state.status.EnvelopeLevel += AEGDecayValue[idx][state.play_position % 4];
-                    }
-                },
+                    },
+                    .Sustain, .Release => state.status.EnvelopeLevel += EnvelopeDecayValue[idx][state.play_position % 4],
+                }
             }
 
             state.play_position +%= 1;
@@ -754,6 +740,7 @@ pub const AICA = struct {
                 } else {
                     state.playing = false;
                     state.play_position = 0;
+                    state.status.EnvelopeState = .Release;
                     break;
                 }
             }
