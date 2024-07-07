@@ -29,6 +29,10 @@ renderer_texture_views: [8]zgpu.TextureViewHandle = undefined,
 
 pixels: []u8 = undefined,
 
+audio_channels: [64]struct {
+    amplitude_envelope: struct { start_time: u32 = 0, xv: std.ArrayList(u32) = undefined, yv: std.ArrayList(u32) = undefined } = .{},
+} = .{.{}} ** 64,
+
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
 
@@ -95,10 +99,20 @@ pub fn init(d: *Deecy) !@This() {
             .array_layer_count = 1,
         });
 
+    for (0..self.audio_channels.len) |i| {
+        self.audio_channels[i].amplitude_envelope.xv = std.ArrayList(u32).init(self._allocator);
+        self.audio_channels[i].amplitude_envelope.yv = std.ArrayList(u32).init(self._allocator);
+    }
+
     return self;
 }
 
 pub fn deinit(self: *@This()) void {
+    for (0..self.audio_channels.len) |i| {
+        self.audio_channels[i].amplitude_envelope.xv.deinit();
+        self.audio_channels[i].amplitude_envelope.yv.deinit();
+    }
+
     for (self.renderer_texture_views) |view|
         self._gctx.releaseResource(view);
 
@@ -321,7 +335,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
-                if (self.show_disabled_channels or channel.play_control.key_on_bit) {
+                const state = dc.aica.channel_states[@intCast(i)];
+                const time: u32 = @truncate(@as(u64, @intCast(std.time.milliTimestamp())));
+                if (self.show_disabled_channels or state.playing) {
                     if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
                         const start_addr = (@as(u16, channel.play_control.start_address) << 7) + channel.sample_address;
                         zgui.text("KeyOn: {any} - Format: {s} - Loop: {any} - Start Address: {X:0>4}", .{
@@ -330,17 +346,42 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             channel.play_control.sample_loop,
                             start_addr,
                         });
+                        zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
+                        zgui.text("PlayPos: {d: >10} - EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ state.play_position, @tagName(state.status.EnvelopeState), state.status.EnvelopeLevel, if (state.status.LoopEndFlag == 1) "Yes" else "No" });
                         if (channel.play_control.sample_format == .i16) {
                             if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
                                 // zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                                 // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
-                                // zgui.plot.setupFinish();
+                                zgui.plot.setupFinish();
                                 zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..44100] });
                                 zgui.plot.endPlot();
                             }
                         }
+                        if (self.audio_channels[i].amplitude_envelope.xv.items.len > 10_000) {
+                            self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
+                            self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
+                        }
+                        if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0) {
+                            try self.audio_channels[i].amplitude_envelope.xv.append(time - self.audio_channels[i].amplitude_envelope.start_time);
+                        } else {
+                            self.audio_channels[i].amplitude_envelope.start_time = time;
+                            try self.audio_channels[i].amplitude_envelope.xv.append(0);
+                        }
+                        try self.audio_channels[i].amplitude_envelope.yv.append(state.status.EnvelopeLevel);
+                        if (zgui.plot.beginPlot("Envelope", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                            zgui.plot.setupAxis(.x1, .{ .label = "time" });
+                            zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                            zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
+                            // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
+                            zgui.plot.setupFinish();
+                            zgui.plot.plotLine("attenuation", u32, .{ .xv = self.audio_channels[i].amplitude_envelope.xv.items, .yv = self.audio_channels[i].amplitude_envelope.yv.items });
+                            zgui.plot.endPlot();
+                        }
                     }
+                } else {
+                    self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
+                    self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
                 }
             }
         }

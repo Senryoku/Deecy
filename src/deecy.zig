@@ -63,7 +63,7 @@ pub const Deecy = struct {
 
         const self = try allocator.create(Deecy);
         self.* = Deecy{
-            .window = try zglfw.Window.create(640 * 2, 480 * 2, "Deecy", null),
+            .window = try zglfw.Window.create(640 * 2 + 2 * 320, 480 * 2 + 320, "Deecy", null),
             .dc = try Dreamcast.create(common.GeneralAllocator),
             .breakpoints = std.ArrayList(u32).init(allocator),
             ._allocator = allocator,
