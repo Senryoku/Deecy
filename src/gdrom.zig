@@ -142,6 +142,10 @@ const ScheduledEvent = struct {
     state: ?GDROMStatus = GDROMStatus.Standby,
     status: StatusRegister,
     interrupt_reason: ?InterruptReasonRegister,
+
+    fn compare(_: void, a: @This(), b: @This()) std.math.Order {
+        return std.math.order(a.cycles, b.cycles);
+    }
 };
 
 const SPIPacketCommandCode = enum(u8) {
@@ -188,7 +192,7 @@ pub const GDROM = struct {
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = undefined,
 
-    scheduled_event: ?ScheduledEvent = null,
+    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare) = undefined,
 
     // HLE
     hle_command: GDROMCommand = undefined,
@@ -203,6 +207,7 @@ pub const GDROM = struct {
     pub fn init(allocator: std.mem.Allocator) GDROM {
         var gdrom = GDROM{
             .data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
+            .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
             ._allocator = allocator,
         };
         gdrom.reinit();
@@ -221,7 +226,7 @@ pub const GDROM = struct {
     }
 
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
-        if (self.scheduled_event) |*event| {
+        if (self.scheduled_events.peek()) |*event| {
             if (event.cycles < cycles) {
                 if (event.state) |state| {
                     self.state = state;
@@ -233,18 +238,16 @@ pub const GDROM = struct {
                     self.interrupt_reason_register = reason;
                     dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 }
-                self.scheduled_event = null;
-            } else {
-                event.cycles -= cycles;
+                _ = self.scheduled_events.remove();
             }
+        }
+        for (self.scheduled_events.items) |*event| {
+            event.cycles = @max(0, @as(i32, @intCast(event.cycles)) - @as(i32, @intCast(cycles)));
         }
     }
 
     fn schedule_event(self: *@This(), event: ScheduledEvent) void {
-        if (self.scheduled_event) |*e| {
-            gdrom_log.warn(termcolor.yellow("Scheduled event already in progress: {any}"), .{e});
-        }
-        self.scheduled_event = event;
+        self.scheduled_events.add(event) catch unreachable;
     }
 
     pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
