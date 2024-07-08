@@ -1129,8 +1129,6 @@ pub const Renderer = struct {
         const u_size: u16 = if (scan_order == 1 and stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
         const v_size: u16 = if (scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
 
-        @memset(self._scratch_pad, 0);
-
         var addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
         var vq_index_addr = addr;
 
