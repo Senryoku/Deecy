@@ -390,9 +390,12 @@ const VMU = struct {
         std.debug.assert(partition == 0);
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+                if (block_num >= BlockCount) {
+                    maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
+                }
                 const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
                 const len = BlockSize / ReadAccessPerBlock;
-                @memcpy(dest[start .. start + len], self.blocks[block_num][start .. start + len]);
+                @memcpy(dest[start .. start + len], self.blocks[block_num % BlockCount][start .. start + len]);
                 return len / 4;
             },
             else => {
