@@ -397,8 +397,6 @@ pub const Renderer = struct {
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
-    const native_resolution: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 };
-
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][256]TextureMetadata = [_][256]TextureMetadata{[_]TextureMetadata{.{}} ** 256} ** 8,
 

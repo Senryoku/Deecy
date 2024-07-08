@@ -70,8 +70,7 @@ const ScheduledInterrupt = struct {
     },
     callback: ?Callback,
 
-    fn compare(context: void, a: ScheduledInterrupt, b: ScheduledInterrupt) std.math.Order {
-        _ = context;
+    fn compare(_: void, a: ScheduledInterrupt, b: ScheduledInterrupt) std.math.Order {
         return std.math.order(a.trigger_cycle, b.trigger_cycle);
     }
 };
@@ -95,6 +94,8 @@ const ScheduledInterrupt = struct {
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
 pub const Dreamcast = struct {
+    const threaded_aica: bool = true;
+
     cpu: SH4,
     gpu: Holly,
     aica: AICA,
@@ -118,6 +119,12 @@ pub const Dreamcast = struct {
 
     _dummy: [4]u8 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 
+    _stopping: bool = false,
+    _aica_thread: std.Thread = undefined,
+    _aica_condition: std.Thread.Condition = undefined,
+    _aica_mutex: std.Thread.Mutex = undefined,
+    _aica_pending_cycles: std.atomic.Value(u32) = .{ .raw = 0 },
+
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
@@ -135,6 +142,11 @@ pub const Dreamcast = struct {
         };
 
         dc.*.aica.setup_arm();
+        if (threaded_aica) {
+            dc._aica_condition = .{};
+            dc._aica_mutex = .{};
+            dc._aica_thread = try std.Thread.spawn(.{}, aica_thread, .{dc});
+        }
 
         // Load ROM
         dc.boot = try dc._allocator.alloc(u8, 0x200000);
@@ -182,6 +194,12 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        if (threaded_aica) {
+            self._stopping = true;
+            self._aica_condition.signal();
+            self._aica_thread.join();
+        }
+
         // Write flash to disk
         if (!@import("builtin").is_test) {
             if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
@@ -366,22 +384,49 @@ pub const Dreamcast = struct {
 
     pub fn tick(self: *@This(), max_instructions: u8) !u32 {
         const cycles = self.cpu.execute(max_instructions);
-        self.advance_scheduled_interrupts(cycles);
-        self.gdrom.update(self, cycles);
-        self.gpu.update(self, cycles);
-        try self.aica.update(self, cycles);
-        return cycles;
+        return self.tick_peripherals(cycles);
     }
 
     pub fn tick_jit(self: *@This()) !u32 {
         var cycles: u32 = 0;
         while (cycles < 64)
             cycles += try self.sh4_jit.execute(&self.cpu);
+        return self.tick_peripherals(cycles);
+    }
+
+    fn tick_peripherals(self: *@This(), cycles: u32) !u32 {
         self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
-        try self.aica.update(self, cycles);
+        try self.tick_aica(cycles);
         return cycles;
+    }
+
+    fn tick_aica(self: *@This(), cycles: u32) !void {
+        if (threaded_aica) {
+            _ = self._aica_pending_cycles.fetchAdd(cycles, std.builtin.AtomicOrder.seq_cst);
+            self._aica_condition.signal();
+        } else {
+            try self.aica.update(self, cycles);
+        }
+    }
+
+    fn aica_thread(self: *@This()) void {
+        dc_log.info(termcolor.green("AICA thread started"), .{});
+        while (!self._stopping) {
+            const cycles = self._aica_pending_cycles.load(std.builtin.AtomicOrder.seq_cst);
+            if (cycles > 0) {
+                self.aica.update(self, cycles) catch |err| {
+                    dc_log.err("Failed to update AICA: {}", .{err});
+                    return;
+                };
+                _ = self._aica_pending_cycles.fetchSub(cycles, std.builtin.AtomicOrder.seq_cst);
+            } else {
+                self._aica_mutex.lock();
+                defer self._aica_mutex.unlock();
+                self._aica_condition.wait(&self._aica_mutex);
+            }
+        }
     }
 
     // TODO: Add helpers for external interrupts and errors.

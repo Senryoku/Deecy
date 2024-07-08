@@ -25,7 +25,7 @@ const Deecy = @import("deecy.zig").Deecy;
 pub const std_options: std.Options = .{
     .log_level = .info,
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .dc, .level = .err },
+        .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .info },
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },

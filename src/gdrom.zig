@@ -471,11 +471,13 @@ pub const GDROM = struct {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
                             self.state = .Playing;
                             self.state = .Paused; // FIXME: Do not resolve immediatly?
+                            self.status_register.dsc = 1;
                         },
                         .CDSeek => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
                             self.state = .Seeking;
                             self.state = .Paused; // FIXME: Do not resolve immediatly?
+                            self.status_register.dsc = 1;
                         },
                         .CDScan => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
