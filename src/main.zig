@@ -36,6 +36,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
+        .{ .scope = .flashrom, .level = .info },
     },
 };
 

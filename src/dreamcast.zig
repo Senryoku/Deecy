@@ -93,6 +93,9 @@ const ScheduledInterrupt = struct {
 // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
+const user_data_directory = "./userdata/";
+const user_flash_path = user_data_directory ++ "flash.bin";
+
 pub const Dreamcast = struct {
     const threaded_aica: bool = false; // FIXME: Ecco crashes when enabled.
 
@@ -166,10 +169,9 @@ pub const Dreamcast = struct {
         // dc.boot[0x077A] = 0x09;
 
         // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath("userdata");
+        try std.fs.cwd().makePath(user_data_directory);
 
         // Load Flash
-        const user_flash_path = "./userdata/flash.bin";
         var flash_file = std.fs.cwd().openFile(user_flash_path, .{}) catch |err| f: {
             if (err == error.FileNotFound) {
                 dc_log.info("Loading default flash ROM.", .{});
@@ -202,13 +204,13 @@ pub const Dreamcast = struct {
 
         // Write flash to disk
         if (!@import("builtin").is_test) {
-            if (std.fs.cwd().createFile("./userdata/flash.bin", .{})) |file| {
+            if (std.fs.cwd().createFile(user_flash_path, .{})) |file| {
                 defer file.close();
                 _ = file.writeAll(self.flash.data) catch |err| {
                     dc_log.err("Failed to save user flash: {any}", .{err});
                 };
             } else |err| {
-                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ "./userdata/flash.bin", err });
+                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ user_flash_path, err });
             }
         }
 

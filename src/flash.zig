@@ -1,13 +1,37 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
-const flash_log = std.log.scoped(.flash_log);
+const flash_log = std.log.scoped(.flashrom);
 
 // MBM29LV002TC (29LV002TC-90PTN)
 // NOTE: Special addresses in the documentation are 0x555 and 0x2AA, however the boot ROM uses 0x5555 and 0x2AAA.
 //       Maybe I'm missing a mask somewhere?
 const CommandAddr0 = 0x5555;
 const CommandAddr1 = 0x2AAA;
+
+fn sector_addresses(addr: u32) !struct { start: u32, end: u32 } {
+    const tag = (addr >> 13) & 0b11111;
+
+    // MBM29LV002TC
+    if ((tag & 0b11000) == 0b00000) return .{ .start = 0x00000, .end = 0x10000 }; // SA0
+    if ((tag & 0b11000) == 0b01000) return .{ .start = 0x10000, .end = 0x20000 }; // SA1
+    if ((tag & 0b11000) == 0b10000) return .{ .start = 0x20000, .end = 0x30000 }; // SA2
+    if ((tag & 0b11100) == 0b11000) return .{ .start = 0x30000, .end = 0x38000 }; // SA3
+    if ((tag & 0b11111) == 0b11100) return .{ .start = 0x38000, .end = 0x3A000 }; // SA4
+    if ((tag & 0b11111) == 0b11101) return .{ .start = 0x3A000, .end = 0x3C000 }; // SA5
+    if ((tag & 0b11110) == 0b11110) return .{ .start = 0x3C000, .end = 0x40000 }; // SA6
+
+    // MBM29LV002BC
+    // if ((tag & 0b11110) == 0b00000) return .{ .start = 0x00000, .end = 0x04000 }; // SA0
+    // if ((tag & 0b11111) == 0b00010) return .{ .start = 0x04000, .end = 0x06000 }; // SA1
+    // if ((tag & 0b11111) == 0b00011) return .{ .start = 0x06000, .end = 0x08000 }; // SA2
+    // if ((tag & 0b11100) == 0b00100) return .{ .start = 0x08000, .end = 0x10000 }; // SA3
+    // if ((tag & 0b11000) == 0b01000) return .{ .start = 0x10000, .end = 0x20000 }; // SA4
+    // if ((tag & 0b11000) == 0b10000) return .{ .start = 0x20000, .end = 0x30000 }; // SA5
+    // if ((tag & 0b11000) == 0b11000) return .{ .start = 0x30000, .end = 0x40000 }; // SA6
+
+    return error.InvalidSectorAddress;
+}
 
 pub const Flash = struct {
     mode: enum { Normal, Program, Fast, FastProgram, FastReset } = .Normal,
@@ -30,6 +54,7 @@ pub const Flash = struct {
     }
 
     pub fn write(self: *@This(), addr: u32, data: u8) void {
+        flash_log.debug("Write: @{X:0>8}, 0x{X:0>2}", .{ addr, data });
         std.debug.assert(addr <= 0x1FFFF);
 
         switch (self.write_cycle) {
@@ -107,9 +132,10 @@ pub const Flash = struct {
                         } else self.unexpected_write(addr, data);
                     },
                     .Program => {
+                        flash_log.debug("  Program: @{X:0>8} = 0x{X:0>2} (was 0x{X:0>2})", .{ addr, data, self.data[addr] });
                         self.mode = .Normal;
                         self.write_cycle = 0;
-                        self.data[addr] = data;
+                        self.data[addr] &= data;
                     },
                     else => self.unexpected_write(addr, data),
                 }
@@ -123,13 +149,17 @@ pub const Flash = struct {
                 if (addr == CommandAddr0 and data == 0x10) {
                     // Chip Erase
                     // TODO
-                    flash_log.warn(termcolor.yellow("Chip Erase"), .{});
+                    flash_log.warn(termcolor.yellow("Chip Erase {X:0>8}: Unimplemented!"), .{addr});
                     self.write_cycle = 0;
                 } else if (data == 0x30) {
                     // Sector Erase
-                    // TODO
-                    flash_log.warn(termcolor.yellow("Sector Erase"), .{});
                     self.write_cycle = 0;
+                    flash_log.info("Sector Erase {X:0>8}", .{addr});
+                    const range = sector_addresses(addr) catch |err| {
+                        flash_log.warn("Sector Erase: Invalid sector address {X:0>8} ({})", .{ addr, err });
+                        return;
+                    };
+                    @memset(self.data[range.start..range.end], 0xFF);
                 } else self.unexpected_write(addr, data);
             },
             else => self.unexpected_write(addr, data),
