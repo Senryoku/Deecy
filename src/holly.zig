@@ -1705,6 +1705,10 @@ pub const Holly = struct {
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
     }
 
+    pub inline fn get_palette_data(self: *const @This()) []u8 {
+        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart]))[0 .. 4 * 1024];
+    }
+
     pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {
         return self._get_register_from_addr(T, @intFromEnum(r));
     }

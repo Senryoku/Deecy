@@ -51,7 +51,7 @@ fn uv16(val: u16) f32 {
 }
 
 // FIXME: This is way too slow.
-fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u64 {
+fn texture_hash(gpu: *const HollyModule.Holly, start: u32, end: u32) u64 {
     return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
 }
 
@@ -994,24 +994,37 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.pipeline_layout);
     }
 
-    fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
-        for (0..Renderer.MaxTextures[size_index]) |i| {
-            if (self.texture_metadata[size_index][i].status != .Invalid and self.texture_metadata[size_index][i].status != .Outdated and
+    fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
+        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+            if (entry.status != .Invalid and
                 // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
                 //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
                 //       This is pretty wasteful, but I hope this will be okay.
-                @as(u32, @bitCast(self.texture_metadata[size_index][i].control_word)) == @as(u32, @bitCast(control_word)))
+                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
             {
-                return @intCast(i);
+                if (entry.usage == 0) {
+                    const is_palette_texture = entry.control_word.pixel_format == .Palette4BPP or entry.control_word.pixel_format == .Palette8BPP;
+                    // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
+                    if ((is_palette_texture and palette_hash(gpu, entry.control_word) != entry.palette_hash) or
+                        texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash)
+                    {
+                        entry.status = .Outdated;
+                        entry.usage = 0xFFFFFFFF; // Do not check it again.
+                        continue; // Not valid anymore, ignore it.
+                    } else if (entry.status == .Outdated) { // It became valid again!
+                        entry.status = .Used;
+                    }
+                } else if (entry.status == .Outdated) continue;
+                return @intCast(idx);
             }
         }
         return null;
     }
 
-    fn palette_hash(gpu: *HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
+    fn palette_hash(gpu: *const HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
         switch (texture_control_word.pixel_format) {
             .Palette4BPP, .Palette8BPP => |format| {
-                const palette_ram = @as([*]const u8, @ptrCast(gpu._get_register(u8, .PALETTE_RAM_START)))[0 .. 4 * 1024];
+                const palette_ram = gpu.get_palette_data();
                 const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
                 const size: u16 = if (format == .Palette4BPP) 16 else 256;
                 return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
@@ -1347,19 +1360,10 @@ pub const Renderer = struct {
         return texture_index;
     }
 
-    fn reset_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
+    fn reset_texture_usage(self: *Renderer, _: *HollyModule.Holly) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
-                if (self.texture_metadata[j][i].status != .Invalid) {
-                    self.texture_metadata[j][i].usage = 0;
-                    const is_palette_texture = self.texture_metadata[j][i].control_word.pixel_format == .Palette4BPP or self.texture_metadata[j][i].control_word.pixel_format == .Palette8BPP;
-                    // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
-                    if ((is_palette_texture and palette_hash(gpu, self.texture_metadata[j][i].control_word) != self.texture_metadata[j][i].palette_hash) or texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash) {
-                        self.texture_metadata[j][i].status = .Outdated;
-                    } else if (self.texture_metadata[j][i].status == .Outdated) { // It became valid again, assume it will be used this frame.
-                        self.texture_metadata[j][i].status = .Used;
-                    }
-                }
+                self.texture_metadata[j][i].usage = 0;
             }
         }
     }
@@ -1497,7 +1501,7 @@ pub const Renderer = struct {
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
-            tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+            tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
             self.texture_metadata[texture_size_index][tex_idx].usage += 1;
 
             if (isp_tsp_instruction.uv_16bit == 1) {
@@ -1742,7 +1746,7 @@ pub const Renderer = struct {
                 const textured = parameter_control_word.obj_control.texture == 1;
                 const texture_size_index = tsp_instruction.texture_u_size;
                 if (textured) {
-                    const tmp_tex_idx = self.get_texture_index(texture_size_index, texture_control);
+                    const tmp_tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control);
                     if (tmp_tex_idx == null) {
                         tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
                     } else {
