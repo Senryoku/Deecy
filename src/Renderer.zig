@@ -154,12 +154,14 @@ const blit_fs = @embedFile("./shaders/blit_fs.wgsl");
 
 const TextureStatus = enum {
     Invalid, // Has never been written to.
-    Unused, // Wasn't used in the last frame. Will reclaim it if necessary. NOTE: We could go further and track when it was last used (LRU strategy).
+    Outdated, // Has been modified in VRAM, but a version of it is still in use. Kept around longer for potential re-use. Will reclaim it if necessary.
+    Unused, // Wasn't used in the last frame. Will reclaim it if necessary.
     Used, // Was used in the last frame.
 };
 
 const TextureMetadata = struct {
     status: TextureStatus = .Invalid,
+    age: u32 = 0, // Unused for this many frames.
     control_word: HollyModule.TextureControlWord = .{},
     tsp_instruction: HollyModule.TSPInstructionWord = @bitCast(@as(u32, 0)), // For debugging
     index: TextureIndex = InvalidTextureIndex,
@@ -168,6 +170,7 @@ const TextureMetadata = struct {
     start_address: u32 = 0,
     end_address: u32 = 0,
     hash: u32 = 0,
+    palette_hash: u32 = 0,
 };
 
 const DrawCall = struct {
@@ -475,8 +478,6 @@ pub const Renderer = struct {
     fog_col_vert: fRGBA = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
-
-    palette_ram_hash: u32 = 0,
 
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
@@ -1002,7 +1003,7 @@ pub const Renderer = struct {
 
     fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (0..Renderer.MaxTextures[size_index]) |i| {
-            if (self.texture_metadata[size_index][i].status != .Invalid and
+            if (self.texture_metadata[size_index][i].status != .Invalid and self.texture_metadata[size_index][i].status != .Outdated and
                 // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
                 //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
                 //       This is pretty wasteful, but I hope this will be okay.
@@ -1012,6 +1013,18 @@ pub const Renderer = struct {
             }
         }
         return null;
+    }
+
+    fn palette_hash(gpu: *HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
+        switch (texture_control_word.pixel_format) {
+            .Palette4BPP, .Palette8BPP => |format| {
+                const palette_ram = @as([*]u8, @ptrCast(gpu._get_register(u8, .PALETTE_RAM_START)))[0 .. 4 * 1024];
+                const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
+                const size: u16 = if (format == .Palette4BPP) 128 else 256;
+                return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
+            },
+            else => return 0,
+        }
     }
 
     inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16, twiddled: bool) [4]u8 {
@@ -1202,27 +1215,27 @@ pub const Renderer = struct {
             }
         } else {
             switch (texture_control_word.pixel_format) {
-                .ARGB1555, .RGB565, .ARGB4444 => {
+                .ARGB1555, .RGB565, .ARGB4444 => |format| {
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(texture_control_word.pixel_format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
+                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
                         }
                     }
                 },
-                .Palette4BPP, .Palette8BPP => {
+                .Palette4BPP, .Palette8BPP => |format| {
                     const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     const palette_ctrl_ram: u2 = @truncate(gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11);
-                    const palette_selector: u10 = @truncate(if (texture_control_word.pixel_format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
+                    const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            const ram_addr = if (texture_control_word.pixel_format == .Palette4BPP) texel_idx >> 1 else texel_idx;
+                            const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                            const offset: u10 = if (texture_control_word.pixel_format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
+                            const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
                                     self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]), twiddled);
@@ -1279,9 +1292,15 @@ pub const Renderer = struct {
                 texture_index = @as(TextureIndex, @intCast(i));
                 break;
             }
-            // This texture wasn't used in the last frame, we'll use it there are no invalid (never used) slots.
-            if (self.texture_metadata[size_index][i].status == .Unused and texture_index == InvalidTextureIndex) {
-                texture_index = @as(TextureIndex, @intCast(i));
+        }
+        if (texture_index == InvalidTextureIndex) {
+            // Search for the last recently used texture, preferring an outdated one.
+            for (0..Renderer.MaxTextures[size_index]) |i| {
+                if (self.texture_metadata[size_index][i].status == .Outdated and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].status == .Unused or (self.texture_metadata[size_index][texture_index].status == .Outdated and self.texture_metadata[size_index][texture_index].age < self.texture_metadata[size_index][i].age))) {
+                    texture_index = @as(TextureIndex, @intCast(i));
+                } else if (self.texture_metadata[size_index][i].status == .Unused and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].age < self.texture_metadata[size_index][i].age)) {
+                    texture_index = @as(TextureIndex, @intCast(i));
+                }
             }
         }
 
@@ -1308,6 +1327,7 @@ pub const Renderer = struct {
             .start_address = addr,
             .end_address = end_address,
             .hash = texture_hash(gpu, addr, end_address),
+            .palette_hash = palette_hash(gpu, texture_control_word),
         };
 
         // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
@@ -1337,19 +1357,16 @@ pub const Renderer = struct {
     }
 
     fn reset_texture_usage(self: *Renderer, gpu: *HollyModule.Holly) void {
-        const palette_ram = @as([*]u8, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0 .. 4 * 1024];
-        const palette_hash = std.hash.Murmur3_32.hash(palette_ram);
-        const invalidate_palette_textures = palette_hash != self.palette_ram_hash;
-        self.palette_ram_hash = palette_hash;
-
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].status != .Invalid) {
                     self.texture_metadata[j][i].usage = 0;
                     const is_palette_texture = self.texture_metadata[j][i].control_word.pixel_format == .Palette4BPP or self.texture_metadata[j][i].control_word.pixel_format == .Palette8BPP;
-                    if ((invalidate_palette_textures and is_palette_texture) or (texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash)) {
-                        // Texture appears to have changed in memory, or palette has changed. Force re-upload.
-                        self.texture_metadata[j][i].status = .Invalid;
+                    // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
+                    if ((is_palette_texture and palette_hash(gpu, self.texture_metadata[j][i].control_word) != self.texture_metadata[j][i].palette_hash) or texture_hash(gpu, self.texture_metadata[j][i].start_address, self.texture_metadata[j][i].end_address) != self.texture_metadata[j][i].hash) {
+                        self.texture_metadata[j][i].status = .Outdated;
+                    } else if (self.texture_metadata[j][i].status == .Outdated) { // It became valid again, assume it will be used this frame.
+                        self.texture_metadata[j][i].status = .Used;
                     }
                 }
             }
@@ -1360,7 +1377,17 @@ pub const Renderer = struct {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
                 if (self.texture_metadata[j][i].status != .Invalid) {
-                    self.texture_metadata[j][i].status = if (self.texture_metadata[j][i].usage == 0) .Unused else .Used;
+                    if (self.texture_metadata[j][i].status == .Outdated) {
+                        self.texture_metadata[j][i].age += 1;
+                    } else {
+                        if (self.texture_metadata[j][i].usage == 0) {
+                            self.texture_metadata[j][i].status = .Unused;
+                            self.texture_metadata[j][i].age += 1;
+                        } else {
+                            self.texture_metadata[j][i].status = .Used;
+                            self.texture_metadata[j][i].age = 0;
+                        }
+                    }
                 }
             }
         }
