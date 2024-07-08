@@ -395,17 +395,17 @@ pub const Dreamcast = struct {
     }
 
     fn tick_peripherals(self: *@This(), cycles: u32) !u32 {
+        try self.tick_aica(cycles);
         self.advance_scheduled_interrupts(cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
-        try self.tick_aica(cycles);
         return cycles;
     }
 
     fn tick_aica(self: *@This(), cycles: u32) !void {
         if (threaded_aica) {
-            _ = self._aica_pending_cycles.fetchAdd(cycles, std.builtin.AtomicOrder.seq_cst);
-            self._aica_condition.signal();
+            if (self._aica_pending_cycles.fetchAdd(cycles, std.builtin.AtomicOrder.seq_cst) == 0)
+                self._aica_condition.signal(); // If there was no pending cycles, make sure to wake up the thread.
         } else {
             try self.aica.update(self, cycles);
         }
