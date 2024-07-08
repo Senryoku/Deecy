@@ -94,7 +94,7 @@ const ScheduledInterrupt = struct {
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
 pub const Dreamcast = struct {
-    const threaded_aica: bool = true;
+    const threaded_aica: bool = false; // FIXME: Ecco crashes when enabled.
 
     cpu: SH4,
     gpu: Holly,

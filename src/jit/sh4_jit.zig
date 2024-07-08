@@ -2053,6 +2053,8 @@ fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
 }
 
 pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    // NOTE: This differs from the interpreter behavior, but I'm nut sure which one is actually correct, and
+    //       the other one is harder to implement in JIT.
     try set_sr(block, ctx, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });
     // pc = spc
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "spc"), .size = 32 } });

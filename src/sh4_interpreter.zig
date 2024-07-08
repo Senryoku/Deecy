@@ -1326,10 +1326,27 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 // Returns from an exception or interrupt handling routine by restoring the PC and SR values. Delayed jump.
 pub fn rte(cpu: *SH4, _: Instr) void {
     const delay_slot = cpu.pc + 2;
-    cpu.set_sr(@bitCast(cpu.ssr));
-    cpu.pc = cpu.spc;
-    cpu.pc -= 2; // Execute will add 2
+    const spc = cpu.spc;
+
+    // NOTE:
+    // In an RTE delay slot, status register (SR) bits are referenced as follows. In instruction access, the
+    // MD bit is used before modification, and in data access, the MD bit is accessed after
+    // modification. The other bits - S, T, M, Q, FD, BL, and RB - after modification are used for
+    // delay slot instruction execution. The STC and STC.L SR instructions access all SR bits after
+    // modification.
+
+    // NOTE: This is how reicast handles it, and thus helps us passing some sh4 unit tests.
+    // However I'm not sure this is the **correct** way to do it!
+    const old_sr = cpu.sr;
+    cpu.sr = @bitCast(cpu.ssr); // Intended! Update SR without triggering side effects like bank swithing.
+
     execute_delay_slot(cpu, delay_slot);
+
+    cpu.sr = @bitCast(old_sr); // Intended!
+    cpu.set_sr(@bitCast(cpu.ssr)); // Actually bank change.
+
+    cpu.pc = spc;
+    cpu.pc -= 2; // Execute will add 2
 }
 
 pub fn sets(cpu: *SH4, _: Instr) void {
