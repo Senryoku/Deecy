@@ -50,16 +50,9 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
-// FIXME: Is it bad? Yes.
-// TODO: Vectorize
-fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u32 {
-    var r: u32 = 0;
-    var addr = (start + 4) & 0xFFFFFFC;
-    while (addr < @min(gpu.vram.len & 0xFFFFFFC, end & 0xFFFFFFC)) {
-        r ^= @as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
-        addr += 4;
-    }
-    return r;
+// FIXME: This is way too slow.
+fn texture_hash(gpu: *HollyModule.Holly, start: u32, end: u32) u64 {
+    return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
 }
 
 const fRGBA = packed struct {
@@ -169,7 +162,7 @@ const TextureMetadata = struct {
     size: [2]u16 = .{ 0, 0 },
     start_address: u32 = 0,
     end_address: u32 = 0,
-    hash: u32 = 0,
+    hash: u64 = 0,
     palette_hash: u32 = 0,
 };
 
@@ -1018,9 +1011,9 @@ pub const Renderer = struct {
     fn palette_hash(gpu: *HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
         switch (texture_control_word.pixel_format) {
             .Palette4BPP, .Palette8BPP => |format| {
-                const palette_ram = @as([*]u8, @ptrCast(gpu._get_register(u8, .PALETTE_RAM_START)))[0 .. 4 * 1024];
+                const palette_ram = @as([*]const u8, @ptrCast(gpu._get_register(u8, .PALETTE_RAM_START)))[0 .. 4 * 1024];
                 const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-                const size: u16 = if (format == .Palette4BPP) 128 else 256;
+                const size: u16 = if (format == .Palette4BPP) 16 else 256;
                 return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
             },
             else => return 0,
@@ -1223,7 +1216,7 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => |format| {
-                    const palette_ram = @as([*]u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+                    const palette_ram = @as([*]const u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
                     const palette_ctrl_ram: u2 = @truncate(gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11);
                     const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
