@@ -1294,13 +1294,13 @@ pub const SH4 = struct {
             0x005F6800...0x005F7FFF => {
                 const reg: HardwareRegister = @enumFromInt(addr);
                 if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                    check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                    check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
                     return self._dc.?.gdrom.write_register(T, addr, value);
                 }
                 // Hardware registers
                 switch (reg) {
                     .SB_SFRES => { // Software Reset
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
                         if (value == 0x00007611)
                             self.software_reset();
                     },
@@ -1320,7 +1320,7 @@ pub const SH4 = struct {
                         }
                     },
                     .SB_MDAPRO => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
                         // This register specifies the address range for Maple-DMA involving the system (work) memory.
                         // Check "Security code"
                         if (value & 0xFFFF0000 != 0x61550000) return;
@@ -1331,17 +1331,17 @@ pub const SH4 = struct {
                             self._dc.?.start_maple_dma();
                     },
                     .SB_ISTNRM => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
                     },
                     .SB_ISTERR => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
                         // Interrupt can be cleared by writing "1" to the corresponding bit.
                         self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
                     },
                     .SB_C2DSTAT => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
                         self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
                     },
                     .SB_C2DST => {
@@ -1359,21 +1359,21 @@ pub const SH4 = struct {
                 return;
             },
             0x00200000...0x0021FFFF => {
-                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash)\n", .{ T, addr });
                 self._dc.?.flash.write(addr & 0x1FFFF, value);
                 return;
             },
             0x005F8000...0x005F9FFF => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers)\n", .{ T, addr });
                 return self._dc.?.gpu.write_register(addr, value);
             },
             // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
             0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers)\n", .{ T, addr });
                 return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
             },
             0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers)\n", .{ T, addr });
                 return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
             },
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
@@ -1381,7 +1381,7 @@ pub const SH4 = struct {
             },
 
             0x10000000...0x13FFFFFF => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8}\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers)\n", .{ T, addr });
                 return self._dc.?.gpu.write_ta(addr, value);
             },
             else => {},
