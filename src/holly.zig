@@ -1186,6 +1186,7 @@ pub const Holly = struct {
         self._get_register(SPG_LOAD, .SPG_LOAD).* = .{};
         self._get_register(SPG_HBLANK, .SPG_HBLANK).* = .{};
         self._get_register(SPG_VBLANK, .SPG_VBLANK).* = .{};
+        self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).* = .{};
         self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).* = .{};
         self._get_register(SPG_CONTROL, .SPG_CONTROL).* = .{};
         self._get_register(u32, .SPG_STATUS).* = 0;

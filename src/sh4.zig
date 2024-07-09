@@ -25,14 +25,14 @@ const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 pub const SR = packed struct(u32) {
-    t: bool = undefined, // True/False condition or carry/borrow bit.
-    s: bool = undefined, // Specifies a saturation operation for a MAC instruction
+    t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
+    s: bool = false, // Specifies a saturation operation for a MAC instruction. NOTE: Undefined at startup, set for repeatability.
 
     _r0: u2 = 0,
 
     imask: u4 = 0xF, // Interrupt mask level
-    q: bool = undefined, // State for divide step.
-    m: bool = undefined,
+    q: bool = false, // State for divide step. NOTE: Undefined at startup, set for repeatability.
+    m: bool = false, // NOTE: Undefined at startup, set for repeatability.
 
     _r1: u5 = 0,
 
