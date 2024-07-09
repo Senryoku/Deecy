@@ -1359,21 +1359,21 @@ pub const SH4 = struct {
                 return;
             },
             0x00200000...0x0021FFFF => {
-                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash)\n", .{ T, addr });
+                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
                 self._dc.?.flash.write(addr & 0x1FFFF, value);
                 return;
             },
             0x005F8000...0x005F9FFF => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers)\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.gpu.write_register(addr, value);
             },
             // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
             0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers)\n", .{ T, addr });
+                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
             },
             0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers)\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
             },
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
@@ -1381,7 +1381,7 @@ pub const SH4 = struct {
             },
 
             0x10000000...0x13FFFFFF => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers)\n", .{ T, addr });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = \n", .{ T, addr, value });
                 return self._dc.?.gpu.write_ta(addr, value);
             },
             else => {},

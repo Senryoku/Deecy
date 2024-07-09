@@ -33,7 +33,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .syscall_log, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .warn },
+        .{ .scope = .gdrom, .level = .info },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },

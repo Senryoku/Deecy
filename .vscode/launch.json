@@ -45,8 +45,8 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"./bin/Soul Calibur (US)[4S T-1401N]/Soul Calibur v1.000 (1999)(Namco)(NTSC)(US)[!][4S T-1401N].gdi",
-				"--skip-bios"
+				"D:\\DC Games\\[GDI] Metropolis Street Racer (US)\\Metropolis Street Racer v1.010 (2000)(Sega)(NTSC)(US)[!].gdi",
+				"--stop"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

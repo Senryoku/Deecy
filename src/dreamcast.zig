@@ -549,7 +549,7 @@ pub const Dreamcast = struct {
             self.cpu.p4_register(u32, .DAR0).* = dst_addr;
             self.cpu.end_dmac(0);
 
-            dc_log.info("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
+            dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
 
             std.debug.assert(copied == len);
 

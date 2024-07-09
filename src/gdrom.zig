@@ -185,6 +185,7 @@ pub const GDROM = struct {
     control_register: ControlRegister = .{},
     error_register: ErrorRegister = .{},
     interrupt_reason_register: InterruptReasonRegister = .{},
+    features: packed struct(u8) { DMA: u1 = 1, _: u7 = 0 } = .{},
     byte_count: u16 = 0,
 
     data_queue: std.fifo.LinearFifo(u8, .Dynamic),
@@ -350,7 +351,7 @@ pub const GDROM = struct {
                         self.error_register = .{};
                     },
                     .PacketCommand => {
-                        gdrom_log.warn(termcolor.yellow("  Command: PacketCommand"), .{});
+                        gdrom_log.info("  Command: PacketCommand", .{});
                         self.status_register.bsy = 1;
 
                         self.packet_command_idx = 0;
@@ -418,7 +419,12 @@ pub const GDROM = struct {
                 }
             },
             .GD_Error_Features => {
-                gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to Features @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
+                gdrom_log.info("  GDROM Write to Features @{X:0>8} = 0x{X:0>8}", .{ addr, value });
+                if (T == u8) {
+                    self.features = @bitCast(value);
+                } else {
+                    gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write({s}) to Features @{X:0>8} = 0x{X:0>8}"), .{ @typeName(T), addr, value });
+                }
             },
             .GD_InterruptReason_SectorCount => {
                 gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorCount @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
@@ -743,6 +749,10 @@ pub const GDROM = struct {
     }
 
     fn cd_read(self: *@This()) !void {
+        if (self.features.DMA != 1) {
+            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM CDRead PIO mode (features == 1)"), .{});
+        }
+
         const parameter_type = self.packet_command[1] & 0x1;
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
@@ -752,7 +762,7 @@ pub const GDROM = struct {
         var start_addr: u32 = if (parameter_type == 0)
             (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
         else
-            msf_to_lba(self.packet_command[2], self.packet_command[1], self.packet_command[0]);
+            msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]);
 
         const transfer_length: u32 = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
 
