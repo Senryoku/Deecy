@@ -1136,7 +1136,7 @@ pub const Renderer = struct {
         const v_size: u16 = if (scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
 
         var addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
-        var vq_index_addr = addr;
+        var vq_index_addr = addr + 8 * 256;
 
         if (texture_control_word.mip_mapped == 1) {
             renderer_log.debug(termcolor.yellow(" TODO: Actually support mip mapping."), .{});
@@ -1196,7 +1196,7 @@ pub const Renderer = struct {
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
             const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
-            const indices = @as([*]u8, @ptrCast(&gpu.vram[vq_index_addr + 8 * 256]))[0..];
+            const indices = gpu.vram[vq_index_addr..];
             // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
             for (0..v_size / 2) |v| {
                 for (0..u_size / 2) |u| {
@@ -1313,11 +1313,14 @@ pub const Renderer = struct {
             @panic("Out of textures slot");
         }
 
-        const end_address = addr + switch (texture_control_word.pixel_format) {
-            .Palette4BPP => @as(u32, u_size) * v_size / 2,
-            .Palette8BPP => @as(u32, u_size) * v_size,
-            else => 2 * @as(u32, u_size) * v_size,
-        };
+        const end_address = if (texture_control_word.vq_compressed == 1)
+            vq_index_addr + @as(u32, u_size) * v_size / 4
+        else
+            addr + switch (texture_control_word.pixel_format) {
+                .Palette4BPP => @as(u32, u_size) * v_size / 2,
+                .Palette8BPP => @as(u32, u_size) * v_size,
+                else => 2 * @as(u32, u_size) * v_size,
+            };
 
         self.texture_metadata[size_index][texture_index] = .{
             .status = .Used,
