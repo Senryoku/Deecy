@@ -176,14 +176,14 @@ pub const GDI = struct {
         const data = try file.readToEndAlloc(self._allocator, 1024 * 1024 * 1024);
         defer self._allocator.free(data);
         const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
-        var lines = std.mem.split(u8, data, end_line);
+        var lines = std.mem.splitSequence(u8, data, end_line);
 
         const first_line = lines.next().?;
         const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);
         try self.tracks.resize(track_count);
 
         for (0..track_count) |_| {
-            var vals = std.mem.split(u8, lines.next().?, " ");
+            var vals = std.mem.splitSequence(u8, lines.next().?, " ");
 
             const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
             const offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10) + GDI_SECTOR_OFFSET;
@@ -217,7 +217,7 @@ pub const GDI = struct {
             } else {
                 const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
                 defer self._allocator.free(track_file_path);
-                var track_file_abs_path_buffer: [std.fs.MAX_PATH_BYTES + 1]u8 = .{0} ** (std.fs.MAX_PATH_BYTES + 1);
+                var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = .{0} ** (std.fs.max_path_bytes + 1);
                 const track_file_abs_path = try std.fs.cwd().realpathZ(track_file_path, &track_file_abs_path_buffer);
                 const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, @as([*:0]u8, @ptrCast(track_file_abs_path.ptr)));
 

@@ -1381,7 +1381,7 @@ pub const SH4 = struct {
             },
 
             0x10000000...0x13FFFFFF => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = \n", .{ T, addr, value });
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.gpu.write_ta(addr, value);
             },
             else => {},
