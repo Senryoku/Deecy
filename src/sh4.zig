@@ -681,7 +681,8 @@ pub const SH4 = struct {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
         const physical_addr = if (comptime builtin.is_test) addr else (addr & 0x1FFFFFFF);
-        if (!comptime builtin.is_test) std.debug.assert(physical_addr >= 0x00000000 and physical_addr <= 0x00020000 or physical_addr >= 0x0C000000 and physical_addr <= 0x0D000000);
+        if (!comptime builtin.is_test)
+            std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
 
         const opcode = self.read16(physical_addr);
         const instr = Instr{ .value = opcode };
