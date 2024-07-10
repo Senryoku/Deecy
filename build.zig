@@ -55,6 +55,10 @@ pub fn build(b: *std.Build) void {
         const zgpu = b.dependency("zgpu", .{});
         exe.root_module.addImport("zgpu", zgpu.module("root"));
         exe.linkLibrary(zgpu.artifact("zdawn"));
+
+        const zaudio = b.dependency("zaudio", .{});
+        exe.root_module.addImport("zaudio", zaudio.module("root"));
+        exe.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
     exe.root_module.addImport("arm7", arm7_module);

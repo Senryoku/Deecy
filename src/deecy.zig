@@ -3,6 +3,7 @@ const std = @import("std");
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
+const zaudio = @import("zaudio");
 
 const common = @import("./common.zig");
 
@@ -42,6 +43,7 @@ pub const Deecy = struct {
 
     dc: *Dreamcast,
     renderer: Renderer = undefined,
+    audio_engine: *zaudio.Engine = undefined,
 
     running: bool = true,
     enable_jit: bool = true,
@@ -60,6 +62,8 @@ pub const Deecy = struct {
         };
 
         try zglfw.init();
+
+        zaudio.init(allocator);
 
         const self = try allocator.create(Deecy);
         self.* = Deecy{
@@ -91,6 +95,7 @@ pub const Deecy = struct {
         };
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
+        self.audio_engine = try zaudio.Engine.create(null);
 
         try self.ui_init();
 
@@ -223,6 +228,9 @@ pub const Deecy = struct {
         self._allocator.destroy(self.dc);
 
         self.ui_deinit();
+
+        self.audio_engine.destroy();
+        zaudio.deinit();
 
         self.gctx.destroy(self._allocator);
 
