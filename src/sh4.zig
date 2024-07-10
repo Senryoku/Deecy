@@ -628,7 +628,10 @@ pub const SH4 = struct {
             1 => return 16,
             2 => return 64,
             3 => return 256,
-            5 => return 1024,
+            4 => return 1024,
+            // 5 - Reserved (Do not set)
+            // 6 - Counts on on-chip RTC output clock
+            // 7 - Counts on external clock
             else => @panic("Invalid prescaler"),
         }
     }
