@@ -1584,19 +1584,20 @@ pub const Holly = struct {
     }
 
     fn check_end_of_modifier_volume(self: *@This()) void {
-        if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
-            if (self._ta_current_volume) |*volume| {
-                // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volume can also be clipped.
+        if (self._ta_list_type) |list_type| {
+            if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
+                if (self._ta_current_volume) |*volume| {
+                    // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volume can also be clipped.
 
-                volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
-                if (volume.triangle_count > 0) {
-                    if (self._ta_list_type.? == .OpaqueModifierVolume) {
-                        self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
-                    } else {
-                        self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+                    volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
+                    if (volume.triangle_count > 0) {
+                        (if (list_type == .OpaqueModifierVolume)
+                            self._ta_opaque_modifier_volumes
+                        else
+                            self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
                     }
+                    self._ta_current_volume = null;
                 }
-                self._ta_current_volume = null;
             }
         }
     }
