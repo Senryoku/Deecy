@@ -27,6 +27,8 @@ const PlayControl = packed struct(u32) {
     key_on_bit: bool,
     key_on_execute: bool,
     _1: u16 = 0,
+
+    const Mask: u32 = 0x47FF; // NOTE: key_on_execute is not saved and will always be read as 0.
 };
 
 const ChannelInfoReq = packed struct(u32) {
@@ -41,13 +43,6 @@ const EnvelopeState = enum(u2) {
     Decay = 1,
     Sustain = 2,
     Release = 3,
-};
-
-const PlayStatus = packed struct(u32) {
-    EnvelopeLevel: u13 = 0,
-    EnvelopeState: EnvelopeState = .Attack,
-    LoopEndFlag: u1 = 0,
-    _: u16 = 0,
 };
 
 pub const AmpEnv1 = packed struct(u32) {
@@ -85,7 +80,7 @@ pub const LFOControl = packed struct(u32) {
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
     play_control: PlayControl,
-    sample_address: u32,
+    sample_address_low: u32, // lowest 16 bits of sample start address (SA) (in bytes)
     loop_start: u32,
     loop_end: u32,
     amp_env_1: AmpEnv1,
@@ -102,6 +97,10 @@ pub const AICAChannel = packed struct(u576) {
     lpf6_volume: u32,
     lpf7_volume: u32,
     lpf8_volume: u32,
+
+    pub fn sample_address(self: *const AICAChannel) u32 {
+        return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
+    }
 };
 
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
@@ -204,10 +203,68 @@ const AICAMemoryRegister = enum(u32) {
     REG_ARM_FIQ_ACK = 0x00802d04,
 };
 
+const PlayStatus = packed struct(u32) {
+    EnvelopeLevel: u13 = 0x1FFF,
+    EnvelopeState: EnvelopeState = .Release,
+    LoopEndFlag: u1 = 0,
+    _: u16 = 0,
+};
+
 pub const AICAChannelState = struct {
     playing: bool = false,
     status: PlayStatus = .{},
-    play_position: u32 = 0,
+    play_position: u16 = 0,
+
+    prev_sample: i32 = 0,
+    curr_sample: i32 = 0,
+
+    frc_phase: i32 = 0, // ??
+
+    adpcm_state: struct {
+        step: i32 = 0,
+        step_loopstart: i32 = 0,
+        prev: i32 = 0,
+        prev_prev: i32 = 0,
+        min_loop: u8 = 0,
+    } = .{},
+
+    sample_buffer: [1024]i32 = [_]i32{0} ** 1024,
+    sample_read_offset: usize = 0,
+    sample_write_offset: usize = 0,
+
+    pub fn key_on(self: *AICAChannelState) void {
+        if (self.status.EnvelopeState != .Release) return;
+        self.playing = true;
+        self.play_position = 0;
+        self.status.EnvelopeLevel = 0x280;
+        self.status.EnvelopeState = .Attack;
+        self.status.LoopEndFlag = 0;
+
+        self.adpcm_state = .{};
+        self.sample_read_offset = 0;
+        self.sample_write_offset = 0;
+    }
+
+    pub fn key_off(self: *AICAChannelState) void {
+        self.playing = false;
+        self.status.EnvelopeState = .Release;
+    }
+
+    pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
+        var val = @divTrunc(self.adpcm_state.step * ADPCMDiff[adpcm_sample & 7], 8);
+        if (val >= 0x7FFF) val = 0x7FFF;
+        val *= @as(i32, 1) - ((adpcm_sample >> 2) & 2);
+        val += self.adpcm_state.prev;
+        val = std.math.clamp(val, -0x8000, 0x7FFF);
+        self.adpcm_state.step = (self.adpcm_state.step + ADPCMScale[adpcm_sample & 7]) >> 8;
+        self.adpcm_state.step = std.math.clamp(self.adpcm_state.step, 0x007F, 0x6000);
+        self.adpcm_state.prev = val;
+        return val;
+    }
+
+    const ADPCMScale: [8]i32 = .{ 0xE6, 0xE6, 0xE6, 0xE6, 0x133, 0x199, 0x200, 0x266 };
+
+    const ADPCMDiff: [8]i32 = .{ 1, 3, 5, 7, 9, 11, 13, 15 };
 };
 
 // AICA User Manual p. 23
@@ -270,7 +327,7 @@ pub const AICA = struct {
     const SH4CyclesPerSample = 4535; // FIXME
 
     arm7: arm7.ARM7 = undefined,
-    enable_arm_jit: bool = true,
+    enable_arm_jit: bool = false,
     arm_jit: ARM7JIT = undefined,
 
     regs: []u32 = undefined, // All registers are 32-bit afaik
@@ -396,7 +453,8 @@ pub const AICA = struct {
             },
             .PlayPosition => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                return @truncate(self.channel_states[req.MonitorSelect].play_position);
+                const pos = self.channel_states[req.MonitorSelect].play_position;
+                return if (T == u8) @truncate(pos) else pos;
             },
             else => {},
         }
@@ -418,86 +476,82 @@ pub const AICA = struct {
             _ = channel;
             switch (local_addr & 0x7F) {
                 0x00 => { // Play control
-                    // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
-                    if (value & 0x1 == 1) {
-                        for (0..64) |i| {
-                            if (self.get_channel_registers(@intCast(i)).play_control.key_on_bit) {
-                                self.channel_states[i].playing = true;
-                                self.channel_states[i].play_position = 0;
-                                self.channel_states[i].status.EnvelopeLevel = 0x280;
-                                self.channel_states[i].status.EnvelopeState = .Attack;
-                                self.channel_states[i].status.LoopEndFlag = 0;
-                            } else {
-                                self.channel_states[i].playing = false;
-                                self.channel_states[i].status.EnvelopeState = .Release;
-                            }
-                        }
+                    switch (T) {
+                        u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
+                        u32 => {
+                            self.regs[local_addr / 4] = value & PlayControl.Mask;
 
-                        switch (T) {
-                            u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value & 0xFE,
-                            u32 => self.regs[local_addr / 4] = value & 0xFFFFFFFE,
-                            else => @compileError("Invalid value type"),
-                        }
-                        return;
+                            const val: PlayControl = @bitCast(value);
+                            aica_log.info("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
+                            // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
+                            if (val.key_on_execute) {
+                                for (0..64) |i| {
+                                    if (self.get_channel_registers(@intCast(i)).play_control.key_on_bit) {
+                                        self.channel_states[i].key_on();
+                                    } else {
+                                        self.channel_states[i].key_off();
+                                    }
+                                }
+                            }
+                        },
+                        else => @compileError("Invalid value type"),
                     }
+                    return;
+                },
+                else => {},
+            }
+        } else {
+            switch (@as(AICARegister, @enumFromInt(local_addr))) {
+                .MasterVolume => {
+                    aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
+                },
+                .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
+                    if (T == u8)
+                        @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
+                    if (T == u32)
+                        self.regs[local_addr / 4] = value & 0xFFFFFFFC;
+                    if (value & 1 == 1) {
+                        aica_log.info(termcolor.green("DMA Start"), .{});
+                        @panic("TODO AICA DMA");
+                    }
+                    return;
+                },
+                .SCIPD => {
+                    aica_log.info("Write to AICA Register SCIPD = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                },
+                .SCIRE => { // Clear interrupt(s)
+                    self.get_reg(u32, .SCIPD).* &= ~value;
+                },
+                .MCIPD => {
+                    if (T == u32) {
+                        aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
+                        if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).*.SCPU == 1) {
+                            aica_log.warn(termcolor.green("SCPU interrupt"), .{});
+                            // TODO!
+                        }
+                    } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
+                },
+                .MCIRE => { // Clear interrupt(s)
+                    self.get_reg(u32, .MCIPD).* &= ~value;
+                },
+                .ARMRST => {
+                    aica_log.info("ARM reset : {d}", .{value & 1});
+                    self.arm7.reset(value & 1 == 0);
+                    if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
+                        aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
+                        self.arm7.running = false;
+                    }
+                },
+                .INTClear => {
+                    aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
                 },
                 else => {},
             }
         }
 
-        switch (@as(AICARegister, @enumFromInt(local_addr))) {
-            .MasterVolume => {
-                aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
-            },
-            .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
-                if (T == u8)
-                    @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
-                if (T == u32)
-                    self.regs[local_addr / 4] = value & 0xFFFFFFFC;
-                if (value & 1 == 1) {
-                    aica_log.info(termcolor.green("DMA Start"), .{});
-                    @panic("TODO AICA DMA");
-                }
-                return;
-            },
-            .SCIPD => {
-                if (T == u32) {
-                    aica_log.info("Write to AICA Register SCIPD = {any}", .{@as(InterruptBits, @bitCast(value))});
-                } else {
-                    aica_log.info("Write to AICA Register SCIPD = {any}", .{value});
-                }
-            },
-            .SCIRE => { // Clear interrupt(s)
-                self.get_reg(u32, .SCIPD).* &= ~value;
-            },
-            .MCIPD => {
-                if (T == u32) {
-                    aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
-                    if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).*.SCPU == 1) {
-                        aica_log.warn(termcolor.green("SCPU interrupt"), .{});
-                        // TODO!
-                    }
-                } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
-            },
-            .MCIRE => { // Clear interrupt(s)
-                self.get_reg(u32, .MCIPD).* &= ~value;
-            },
-            .ARMRST => {
-                aica_log.info("ARM reset : {d}", .{value & 1});
-                self.arm7.reset(value & 1 == 0);
-                if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
-                    aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
-                    self.arm7.running = false;
-                }
-            },
-            .INTClear => {
-                aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
-            },
-            else => {},
-        }
         switch (T) {
             u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
-            u32 => self.regs[local_addr / 4] = value,
+            u32 => self.regs[local_addr / 4] = value & 0xFFFF, // Only half of each u32 register is actually used.
             else => @compileError("Invalid value type"),
         }
     }
@@ -694,12 +748,20 @@ pub const AICA = struct {
 
         const registers = self.get_channel_registers(channel_number);
 
+        var base_phase_inc = @as(i32, registers.sample_pitch_rate.fns) << registers.sample_pitch_rate.oct;
+        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0xA)
+            base_phase_inc <<= 1;
+
         for (0..samples) |_| {
             if (state.status.EnvelopeLevel > 0x3BF) {
                 state.status.EnvelopeLevel = 0x1FFF;
-                state.status.EnvelopeState = .Release;
                 state.status.LoopEndFlag = 1;
                 break;
+            }
+
+            if (state.play_position == registers.loop_start) {
+                if (registers.amp_env_2.link == 1 and state.status.EnvelopeState == .Attack)
+                    state.status.EnvelopeState = .Decay;
             }
 
             const effective_rate = compute_effective_rate(registers, switch (state.status.EnvelopeState) {
@@ -730,23 +792,50 @@ pub const AICA = struct {
                 }
             }
 
+            // Interpolate samples
+            // const prev_sample = state.prev_sample;
+            const curr_sample = state.curr_sample;
+
+            // const f: i32 = (state.frc_phase >> 4) & 0x3FFF;
+            // const sample = ((prev_sample * f) + (curr_sample * (0x4000 - f))) >> 14;
+            // state.sample_buffer[state.sample_write_offset] = sample;
+            // state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
+
+            state.sample_buffer[state.sample_write_offset] = curr_sample;
+            state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
+
+            // state.frc_phase += base_phase_inc;
+            //while (state.frc_phase >= 0x40000) {
+            //    state.frc_phase -= 0x40000;
+
             state.play_position +%= 1;
+
+            state.prev_sample = state.curr_sample;
+            const loop_ram_start = &self.wave_memory[registers.sample_address()];
+            state.curr_sample = switch (registers.play_control.sample_format) {
+                .i16 => @as([*]const i16, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position],
+                .i8 => @as(i16, @intCast(@as([*]const i8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position])) << 8,
+                .ADPCM => adpcm: {
+                    // 4 bits per sample
+                    var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position >> 1]);
+                    if (state.play_position & 1 == 1)
+                        s >>= 4;
+                    break :adpcm state.compute_adpcm(@truncate(s));
+                },
+                else => 0,
+            };
 
             if (state.play_position == registers.loop_end) {
                 state.status.LoopEndFlag = 1;
                 if (registers.play_control.sample_loop) {
-                    state.play_position = registers.loop_start;
-                    state.status.EnvelopeState = if (registers.amp_env_2.link == 1)
-                        .Decay
-                    else
-                        .Attack;
+                    state.play_position = @truncate(registers.loop_start);
                 } else {
-                    state.playing = false;
                     state.play_position = 0;
-                    state.status.EnvelopeState = .Release;
-                    break;
+                    state.playing = false;
+                    return;
                 }
             }
+            // }
         }
     }
 

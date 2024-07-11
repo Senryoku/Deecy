@@ -43,7 +43,7 @@ pub const Deecy = struct {
 
     dc: *Dreamcast,
     renderer: Renderer = undefined,
-    audio_engine: *zaudio.Engine = undefined,
+    audio_device: *zaudio.Device = undefined,
 
     running: bool = true,
     enable_jit: bool = true,
@@ -95,7 +95,16 @@ pub const Deecy = struct {
         };
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
-        self.audio_engine = try zaudio.Engine.create(null);
+
+        var audio_device_config = zaudio.Device.Config.init(.playback);
+        audio_device_config.data_callback = audio_callback;
+        audio_device_config.user_data = self;
+        audio_device_config.playback.format = .signed32;
+        std.debug.print("Audio device config: {}\n", .{audio_device_config});
+        self.audio_device = try zaudio.Device.create(null, audio_device_config);
+
+        try self.audio_device.setMasterVolume(0.25);
+        try self.audio_device.start();
 
         try self.ui_init();
 
@@ -222,6 +231,8 @@ pub const Deecy = struct {
     pub fn destroy(self: *Deecy) void {
         self.breakpoints.deinit();
 
+        self.audio_device.destroy();
+
         self.renderer.deinit();
 
         self.dc.deinit();
@@ -229,7 +240,6 @@ pub const Deecy = struct {
 
         self.ui_deinit();
 
-        self.audio_engine.destroy();
         zaudio.deinit();
 
         self.gctx.destroy(self._allocator);
@@ -238,5 +248,35 @@ pub const Deecy = struct {
         zglfw.terminate();
 
         self._allocator.destroy(self);
+    }
+
+    fn audio_callback(
+        device: *zaudio.Device,
+        output: ?*anyopaque,
+        input: ?*const anyopaque,
+        frame_count: u32,
+    ) callconv(.C) void {
+        const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
+
+        _ = input;
+        var out: [*]i32 = @ptrCast(@alignCast(output));
+
+        for (&self.dc.aica.channel_states) |*channel| {
+            if (channel.playing) {
+                var available: i64 = @as(i64, @intCast(channel.sample_write_offset)) - @as(i64, @intCast(channel.sample_read_offset));
+                if (available < 0) available += channel.sample_buffer.len;
+                std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
+
+                for (0..frame_count) |i| {
+                    if (channel.sample_read_offset == channel.sample_write_offset) {
+                        // Not more samples available!
+                        break;
+                    }
+                    out[i] = 64000 * channel.sample_buffer[channel.sample_read_offset];
+                    channel.sample_read_offset = (channel.sample_read_offset + 1) % channel.sample_buffer.len;
+                }
+                break;
+            }
+        }
     }
 };

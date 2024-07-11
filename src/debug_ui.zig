@@ -337,28 +337,37 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
                 const state = dc.aica.channel_states[@intCast(i)];
                 const time: u32 = @truncate(@as(u64, @intCast(std.time.milliTimestamp())));
-                if (self.show_disabled_channels or state.playing) {
-                    if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
-                        const start_addr = (@as(u16, channel.play_control.start_address) << 7) + channel.sample_address;
-                        zgui.text("KeyOn: {any} - Format: {s} - Loop: {any} - Start Address: {X:0>4}", .{
+                if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
+                    const number = std.fmt.comptimePrint("{d}", .{i});
+                    if (zgui.collapsingHeader("Channel " ++ number, .{ .default_open = true })) {
+                        const start_addr = channel.sample_address();
+                        zgui.text("KeyOn: {any} - Format: {s} - Loop: {any}", .{
                             channel.play_control.key_on_bit,
                             @tagName(channel.play_control.sample_format),
                             channel.play_control.sample_loop,
+                        });
+                        zgui.text("Start Address: {X:0>4} - Loop: {X:0>4} - {X:0>4}", .{
                             start_addr,
+                            channel.loop_start,
+                            channel.loop_end,
                         });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
-                        zgui.text("PlayPos: {d: >10} - EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ state.play_position, @tagName(state.status.EnvelopeState), state.status.EnvelopeLevel, if (state.status.LoopEndFlag == 1) "Yes" else "No" });
+                        zgui.sameLine(.{});
+                        zgui.text("PlayPos: {d: >10}", .{state.play_position});
+                        zgui.text("EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ @tagName(state.status.EnvelopeState), state.status.EnvelopeLevel, if (state.status.LoopEndFlag == 1) "Yes" else "No" });
                         if (channel.play_control.sample_format == .i16) {
-                            if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                            if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                                const loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
                                 // zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                                 // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                                 zgui.plot.setupFinish();
-                                zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..44100] });
+                                zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
                                 zgui.plot.endPlot();
                             }
                         }
-                        if (self.audio_channels[i].amplitude_envelope.xv.items.len > 10_000) {
+                        if (time - self.audio_channels[i].amplitude_envelope.start_time > 10_000) {
                             self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
                             self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
                         }
@@ -369,13 +378,23 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             try self.audio_channels[i].amplitude_envelope.xv.append(0);
                         }
                         try self.audio_channels[i].amplitude_envelope.yv.append(state.status.EnvelopeLevel);
-                        if (zgui.plot.beginPlot("Envelope", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxis(.x1, .{ .label = "time" });
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
                             // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                             zgui.plot.setupFinish();
                             zgui.plot.plotLine("attenuation", u32, .{ .xv = self.audio_channels[i].amplitude_envelope.xv.items, .yv = self.audio_channels[i].amplitude_envelope.yv.items });
+                            zgui.plot.endPlot();
+                        }
+                        if (zgui.plot.beginPlot("Sample Buffer##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                            //zgui.plot.setupAxis(.x1, .{ .label = "time" });
+                            zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
+                            // zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                            // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
+                            // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
+                            zgui.plot.setupFinish();
+                            zgui.plot.plotLineValues("samples", i32, .{ .v = &state.sample_buffer });
                             zgui.plot.endPlot();
                         }
                     }
