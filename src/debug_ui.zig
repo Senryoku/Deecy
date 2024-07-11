@@ -354,7 +354,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
                         zgui.sameLine(.{});
                         zgui.text("PlayPos: {d: >10}", .{state.play_position});
-                        zgui.text("EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ @tagName(state.status.EnvelopeState), state.status.EnvelopeLevel, if (state.status.LoopEndFlag == 1) "Yes" else "No" });
+                        zgui.text("EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ @tagName(state.status.env_state), state.status.env_level, if (state.status.loop_end_flag == 1) "Yes" else "No" });
                         if (channel.play_control.sample_format == .i16) {
                             if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                                 const loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
@@ -377,7 +377,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             self.audio_channels[i].amplitude_envelope.start_time = time;
                             try self.audio_channels[i].amplitude_envelope.xv.append(0);
                         }
-                        try self.audio_channels[i].amplitude_envelope.yv.append(state.status.EnvelopeLevel);
+                        try self.audio_channels[i].amplitude_envelope.yv.append(state.status.env_level);
                         if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxis(.x1, .{ .label = "time" });
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });

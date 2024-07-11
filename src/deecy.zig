@@ -89,10 +89,8 @@ pub const Deecy = struct {
             .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
         });
 
-        self.scale_factor = scale_factor: {
-            const scale = self.window.getContentScale();
-            break :scale_factor @max(scale[0], scale[1]);
-        };
+        const scale = self.window.getContentScale();
+        self.scale_factor = @max(scale[0], scale[1]);
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
 
@@ -103,7 +101,7 @@ pub const Deecy = struct {
         std.debug.print("Audio device config: {}\n", .{audio_device_config});
         self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
-        try self.audio_device.setMasterVolume(0.25);
+        try self.audio_device.setMasterVolume(0.2);
         try self.audio_device.start();
 
         try self.ui_init();
@@ -272,7 +270,7 @@ pub const Deecy = struct {
                         // Not more samples available!
                         break;
                     }
-                    out[i] = 64000 * channel.sample_buffer[channel.sample_read_offset];
+                    out[i] = 32000 * channel.sample_buffer[channel.sample_read_offset];
                     channel.sample_read_offset = (channel.sample_read_offset + 1) % channel.sample_buffer.len;
                 }
                 break;

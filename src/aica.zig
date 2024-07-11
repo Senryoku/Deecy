@@ -32,9 +32,9 @@ const PlayControl = packed struct(u32) {
 };
 
 const ChannelInfoReq = packed struct(u32) {
-    MIDIOutputBuffer: u8,
-    MonitorSelect: u6,
-    AmplitudeOrFilterSelect: u1,
+    MIDI_output_buffer: u8,
+    monitor_select: u6,
+    amplitude_or_filter_select: u1,
     _: u17 = 0,
 };
 
@@ -145,16 +145,16 @@ pub const AICARegister = enum(u32) {
 };
 
 pub const InterruptBits = packed struct(u32) {
-    Ext: u1 = 0,
+    ext: u1 = 0,
     _0: u2 = 0,
     MIDI_input: u1 = 0,
-    DMA: u1 = 0,
-    SCPU: u1 = 0,
-    TimerA: u1 = 0,
-    TimerB: u1 = 0,
-    TimerC: u1 = 0,
+    dma: u1 = 0,
+    scpu: u1 = 0,
+    timer_a: u1 = 0,
+    timer_b: u1 = 0,
+    timer_c: u1 = 0,
     MIDI_output: u1 = 0,
-    One_sample_interval: u1 = 0,
+    one_sample_interval: u1 = 0,
     _1: u21 = 0,
 };
 
@@ -162,19 +162,19 @@ pub const SB_ADSUSP = packed struct(u32) {
     // DMA Suspend Request (Write Only
     // 0: Continues DMA transfer without going to the suspended state. Or, bit 2 of the SB_ADTSEL register is "0"
     // 1: Suspends and terminates DMA transfer
-    DMASuspendRequest: u1 = 0,
+    smd_suspend_request: u1 = 0,
 
     _reserved1: u3 = 0,
 
     // DMA Suspend or DMA Stop (Read Only)
     // 0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
     // 1: DMA transfer has ended, or is stopped due to a suspend
-    DMASuspend: u1 = 1,
+    dma_suspend: u1 = 1,
 
     // DMA Request Input State (Read Only)
     // 0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
     // 1: The DMA transfer request is low (transfer possible)
-    DMARequestInputState: u1 = 1,
+    dma_request_input_state: u1 = 1,
 
     _: u26 = 0,
 };
@@ -204,9 +204,9 @@ const AICAMemoryRegister = enum(u32) {
 };
 
 const PlayStatus = packed struct(u32) {
-    EnvelopeLevel: u13 = 0x1FFF,
-    EnvelopeState: EnvelopeState = .Release,
-    LoopEndFlag: u1 = 0,
+    env_level: u13 = 0x1FFF,
+    env_state: EnvelopeState = .Release,
+    loop_end_flag: u1 = 0,
     _: u16 = 0,
 };
 
@@ -233,12 +233,12 @@ pub const AICAChannelState = struct {
     sample_write_offset: usize = 0,
 
     pub fn key_on(self: *AICAChannelState) void {
-        if (self.status.EnvelopeState != .Release) return;
+        if (self.status.env_state != .Release) return;
         self.playing = true;
         self.play_position = 0;
-        self.status.EnvelopeLevel = 0x280;
-        self.status.EnvelopeState = .Attack;
-        self.status.LoopEndFlag = 0;
+        self.status.env_level = 0x280;
+        self.status.env_state = .Attack;
+        self.status.loop_end_flag = 0;
 
         self.adpcm_state = .{};
         self.sample_read_offset = 0;
@@ -247,7 +247,7 @@ pub const AICAChannelState = struct {
 
     pub fn key_off(self: *AICAChannelState) void {
         self.playing = false;
-        self.status.EnvelopeState = .Release;
+        self.status.env_state = .Release;
     }
 
     pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
@@ -445,15 +445,15 @@ pub const AICA = struct {
             .PlayStatus => {
                 // TODO:
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                const channel = self.get_channel_registers(req.MonitorSelect);
+                const channel = self.get_channel_registers(req.monitor_select);
                 _ = channel;
-                const status = self.channel_states[req.MonitorSelect].status;
-                self.channel_states[req.MonitorSelect].status.LoopEndFlag = 0;
+                const status = self.channel_states[req.monitor_select].status;
+                self.channel_states[req.monitor_select].status.loop_end_flag = 0;
                 return @truncate(@as(u32, @bitCast(status)));
             },
             .PlayPosition => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                const pos = self.channel_states[req.MonitorSelect].play_position;
+                const pos = self.channel_states[req.monitor_select].play_position;
                 return if (T == u8) @truncate(pos) else pos;
             },
             else => {},
@@ -525,7 +525,7 @@ pub const AICA = struct {
                 .MCIPD => {
                     if (T == u32) {
                         aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
-                        if (@as(InterruptBits, @bitCast(value)).SCPU == 1 and self.get_reg(InterruptBits, .MCIEB).*.SCPU == 1) {
+                        if (@as(InterruptBits, @bitCast(value)).scpu == 1 and self.get_reg(InterruptBits, .MCIEB).*.scpu == 1) {
                             aica_log.warn(termcolor.green("SCPU interrupt"), .{});
                             // TODO!
                         }
@@ -652,10 +652,10 @@ pub const AICA = struct {
         const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
 
         if (sample_count > 0) {
-            if (self.get_reg(InterruptBits, .SCIEB).*.One_sample_interval == 1) {
-                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.One_sample_interval) << 0) |
-                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.One_sample_interval) << 1) |
-                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.One_sample_interval) << 2);
+            if (self.get_reg(InterruptBits, .SCIEB).*.one_sample_interval == 1) {
+                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.one_sample_interval) << 0) |
+                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.one_sample_interval) << 1) |
+                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.one_sample_interval) << 2);
                 self.arm7.fast_interrupt_request();
             }
 
@@ -682,14 +682,14 @@ pub const AICA = struct {
                         if ((self.get_reg(u32, .SCIEB).* & mask) != 0) {
                             aica_log.debug("Timer {d} interrupt.", .{i});
                             if (i == 0) {
-                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.TimerA) << 0) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.TimerA) << 1) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.TimerA) << 2);
+                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.timer_a) << 0) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.timer_a) << 1) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.timer_a) << 2);
                             } else {
                                 // Timer B and C share the same INTReq number.
-                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.TimerB) << 0) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.TimerB) << 1) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.TimerB) << 2);
+                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.timer_b) << 0) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.timer_b) << 1) |
+                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.timer_b) << 2);
                             }
                             self.arm7.fast_interrupt_request();
                         }
@@ -753,18 +753,18 @@ pub const AICA = struct {
             base_phase_inc <<= 1;
 
         for (0..samples) |_| {
-            if (state.status.EnvelopeLevel > 0x3BF) {
-                state.status.EnvelopeLevel = 0x1FFF;
-                state.status.LoopEndFlag = 1;
+            if (state.status.env_level > 0x3BF) {
+                state.status.env_level = 0x1FFF;
+                state.status.loop_end_flag = 1;
                 break;
             }
 
             if (state.play_position == registers.loop_start) {
-                if (registers.amp_env_2.link == 1 and state.status.EnvelopeState == .Attack)
-                    state.status.EnvelopeState = .Decay;
+                if (registers.amp_env_2.link == 1 and state.status.env_state == .Attack)
+                    state.status.env_state = .Decay;
             }
 
-            const effective_rate = compute_effective_rate(registers, switch (state.status.EnvelopeState) {
+            const effective_rate = compute_effective_rate(registers, switch (state.status.env_state) {
                 .Attack => registers.amp_env_1.attack_rate,
                 .Decay => registers.amp_env_1.decay_rate,
                 .Sustain => registers.amp_env_1.sustain_rate,
@@ -772,23 +772,23 @@ pub const AICA = struct {
             });
             if (channel_should_step(effective_rate, state.play_position)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                switch (state.status.EnvelopeState) {
+                switch (state.status.env_state) {
                     .Attack => {
-                        const diff = ((state.status.EnvelopeLevel >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
-                        if (state.status.EnvelopeLevel < diff) {
-                            state.status.EnvelopeLevel = 0;
-                            state.status.EnvelopeState = .Decay;
+                        const diff = ((state.status.env_level >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
+                        if (state.status.env_level < diff) {
+                            state.status.env_level = 0;
+                            state.status.env_state = .Decay;
                         } else {
-                            state.status.EnvelopeLevel -= diff;
+                            state.status.env_level -= diff;
                         }
                     },
                     .Decay => {
-                        state.status.EnvelopeLevel += EnvelopeDecayValue[idx][state.play_position % 4];
-                        if ((state.status.EnvelopeLevel >> 5) >= registers.amp_env_2.decay_level) {
-                            state.status.EnvelopeState = .Sustain;
+                        state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4];
+                        if ((state.status.env_level >> 5) >= registers.amp_env_2.decay_level) {
+                            state.status.env_state = .Sustain;
                         }
                     },
-                    .Sustain, .Release => state.status.EnvelopeLevel += EnvelopeDecayValue[idx][state.play_position % 4],
+                    .Sustain, .Release => state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4],
                 }
             }
 
@@ -826,7 +826,7 @@ pub const AICA = struct {
             };
 
             if (state.play_position == registers.loop_end) {
-                state.status.LoopEndFlag = 1;
+                state.status.loop_end_flag = 1;
                 if (registers.play_control.sample_loop) {
                     state.play_position = @truncate(registers.loop_start);
                 } else {
