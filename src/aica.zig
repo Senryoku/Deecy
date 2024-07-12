@@ -699,7 +699,7 @@ pub const AICA = struct {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
                     self._arm_cycles_counter -= ARM7CycleRatio;
-                    // aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
+                    aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
                     arm7.interpreter.tick(&self.arm7);
                     if (self.arm7.pc() >= 0x00200000) {
                         aica_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{self.arm7.pc()});
