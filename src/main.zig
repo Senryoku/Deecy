@@ -31,7 +31,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall_log, .level = .info },
-        .{ .scope = .aica, .level = .info },
+        .{ .scope = .aica, .level = .debug },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },
@@ -92,7 +92,7 @@ pub fn main() !void {
         dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
 
     if (binary_path) |path| {
-        dc.skip_bios();
+        dc.skip_bios(false);
 
         var bin_file = try std.fs.cwd().openFile(path, .{});
         defer bin_file.close();
@@ -108,7 +108,7 @@ pub fn main() !void {
         }
     } else if (gdi_path) |path| {
         if (skip_bios) {
-            dc.skip_bios();
+            dc.skip_bios(true);
 
             // Load 1STREAD.BIN (Actual name might change)
             const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
@@ -136,7 +136,7 @@ pub fn main() !void {
     } else {
         if (skip_bios) {
             // Boot to menu
-            dc.skip_bios();
+            dc.skip_bios(true);
             // Skip IP.bin (Maybe we should bundle one to load here).
             dc.cpu.pc = 0xAC010000;
         }

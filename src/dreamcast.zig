@@ -251,7 +251,7 @@ pub const Dreamcast = struct {
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
-    pub fn skip_bios(self: *@This()) void {
+    pub fn skip_bios(self: *@This(), hle_syscalls: bool) void {
         self.cpu.state_after_boot_rom();
 
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
@@ -293,9 +293,8 @@ pub const Dreamcast = struct {
         }) |p| {
             self.cpu.write32(p[0], p[1]);
         }
-        const HLE_syscalls = true;
         // Replace them by HLE counterparts (see syscall.zig) by inserting fake opcodes.
-        if (HLE_syscalls) {
+        if (hle_syscalls) {
             // System
             self.cpu.write16(0x8C003C00, 0b0000000000010000);
             // Font

@@ -134,8 +134,8 @@ pub const AICARegister = enum(u32) {
     MCIRE = 0x000028BC, // Main CPU Interrupt Reset
 
     ARMRST = 0x00002C00,
-    INTRequest = 0x00002D00,
-    INTClear = 0x00002D004,
+    INTRequest = 0x00002D00, // Named "L" in the manual. Only 3 bits are actually used.
+    INTClear = 0x00002D04, // Named "M" in the manual. Write 1 to clear INTRequest.
 
     RTC_High = 0x00010000,
     RTC_Low = 0x00010004,
@@ -179,29 +179,13 @@ pub const SB_ADSUSP = packed struct(u32) {
     _: u26 = 0,
 };
 
-const TimerControl = packed struct(u32) {
+pub const TimerControl = packed struct(u32) {
     value: u8 = 0,
     prescale: u3 = 0,
     _: u21 = 0,
 };
 
 const AICARegisterStart = 0x00700000;
-
-// Some potential memory-mapped registers, I'm really not sure what to do with this yet.
-const AICAMemoryRegister = enum(u32) {
-    REG_BUS_REQUEST = 0x00802808,
-    REG_ARM_INT_ENABLE = 0x0080289c,
-    REG_ARM_INT_SEND = 0x008028a0,
-    REG_ARM_INT_RESET = 0x008028a4,
-    REG_ARM_FIQ_BIT_0 = 0x008028a8,
-    REG_ARM_FIQ_BIT_1 = 0x008028ac,
-    REG_ARM_FIQ_BIT_2 = 0x008028b0,
-    REG_SH4_INT_ENABLE = 0x008028b4,
-    REG_SH4_INT_SEND = 0x008028b8,
-    REG_SH4_INT_RESET = 0x008028bc,
-    REG_ARM_FIQ_CODE = 0x00802d00,
-    REG_ARM_FIQ_ACK = 0x00802d04,
-};
 
 const PlayStatus = packed struct(u32) {
     env_level: u13 = 0x1FFF,
@@ -246,8 +230,7 @@ pub const AICAChannelState = struct {
     }
 
     pub fn key_off(self: *AICAChannelState) void {
-        self.playing = false;
-        self.status.env_state = .Release;
+        self.* = .{};
     }
 
     pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
@@ -320,8 +303,6 @@ const EnvelopeDecayValue = [_][4]u4{
 // 00703000 - 00707FFF  00803000 - 00807FFF  DSP_DATA
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
-pub const DisableARMCore: bool = false; // FIXME: Temp debug. NOTE: The hacks are still needed for some stuff. For example the Soulcalibur intro goes a little further when the AICA is disabled...
-
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
     const SH4CyclesPerSample = 4535; // FIXME
@@ -357,6 +338,7 @@ pub const AICA = struct {
 
         r.get_reg(u32, .MasterVolume).* = 0x10;
 
+        r.get_reg(u32, .SCIEB).* = 0x40;
         r.get_reg(u32, .SCILV0).* = 0x18;
         r.get_reg(u32, .SCILV1).* = 0x50;
         r.get_reg(u32, .SCILV2).* = 0x08;
@@ -393,21 +375,6 @@ pub const AICA = struct {
 
     pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
         std.debug.assert(addr >= 0x00800000 and addr < 0x01000000);
-        // FIXME: Hopefully remove this when we have a working AICA (I mean, one can dream.)
-        if (DisableARMCore) {
-            switch (addr) {
-                0x0080005C => {
-                    return 0x1; // Hack for an infinite loop in Power Stone, no idea what this value is supposed to be.
-                },
-                0x00800104, 0x008001C4, 0x00800164, 0x00800224 => {
-                    return 0x0090; // Crazy Taxi will hang indefinitely here during the demo if this is zero.
-                },
-                0x00800284, 0x00800288 => {
-                    return 0x0090; // Same thing when trying to start an arcade game.
-                },
-                else => {},
-            }
-        }
         return @as(*T, @alignCast(@ptrCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).*;
     }
 
@@ -443,10 +410,10 @@ pub const AICA = struct {
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
             .MasterVolume => return 0x10,
             .PlayStatus => {
-                // TODO:
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 const channel = self.get_channel_registers(req.monitor_select);
                 _ = channel;
+                // FIXME/TODO: Depending on the AFSEL bit, this will return amplitude or filter envelope!
                 const status = self.channel_states[req.monitor_select].status;
                 self.channel_states[req.monitor_select].status.loop_end_flag = 0;
                 return @truncate(@as(u32, @bitCast(status)));
@@ -485,6 +452,7 @@ pub const AICA = struct {
                             aica_log.info("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
                             // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
                             if (val.key_on_execute) {
+                                aica_log.info(termcolor.green("Key On Execute"), .{});
                                 for (0..64) |i| {
                                     if (self.get_channel_registers(@intCast(i)).play_control.key_on_bit) {
                                         self.channel_states[i].key_on();
@@ -516,11 +484,21 @@ pub const AICA = struct {
                     }
                     return;
                 },
+                .SCIEB => {
+                    aica_log.info("Write to AICA Register SCIEB = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7FF));
+                    self.check_interrupts();
+                    return;
+                },
                 .SCIPD => {
                     aica_log.info("Write to AICA Register SCIPD = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    self.get_reg(u32, .SCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
+                    self.check_interrupts();
+                    return;
                 },
                 .SCIRE => { // Clear interrupt(s)
                     self.get_reg(u32, .SCIPD).* &= ~value;
+                    self.check_interrupts();
                 },
                 .MCIPD => {
                     if (T == u32) {
@@ -536,6 +514,14 @@ pub const AICA = struct {
                 },
                 .ARMRST => {
                     aica_log.info("ARM reset : {d}", .{value & 1});
+                    @memset(&self.arm7.r, 0);
+                    @memset(&self.arm7.r_fiq_8_12, 0);
+                    @memset(&self.arm7.r_usr, 0);
+                    @memset(&self.arm7.r_fiq, 0);
+                    @memset(&self.arm7.r_svc, 0);
+                    @memset(&self.arm7.r_irq, 0);
+                    @memset(&self.arm7.r_abt, 0);
+                    @memset(&self.arm7.r_und, 0);
                     self.arm7.reset(value & 1 == 0);
                     if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
                         aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
@@ -544,6 +530,11 @@ pub const AICA = struct {
                 },
                 .INTClear => {
                     aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
+                    if (value & 1 == 1) {
+                        self.get_reg(u32, .INTRequest).* = 0;
+                        self.check_interrupts();
+                    }
+                    return;
                 },
                 else => {},
             }
@@ -647,17 +638,30 @@ pub const AICA = struct {
         }
     }
 
-    pub fn update(self: *AICA, dc: *Dreamcast, cycles: u32) !void {
-        self._timer_cycles_counter += @intCast(cycles);
+    fn check_interrupts(self: *AICA) void {
+        const enabled = self.get_reg(u32, .SCIEB).*;
+        const pending = self.get_reg(u32, .SCIPD).* & enabled;
+        if (pending != 0) {
+            for (0..11) |i| {
+                if (pending & (@as(u32, 1) << @intCast(i)) != 0) {
+                    const bit = @min(7, i); // Interrupts higher than 7 share the same INTReq number.
+                    self.get_reg(u32, .INTRequest).* =
+                        (((@as(u32, self.get_reg(u32, .SCILV0).*) >> bit) & 1) << 0) |
+                        (((@as(u32, self.get_reg(u32, .SCILV1).*) >> bit) & 1) << 1) |
+                        (((@as(u32, self.get_reg(u32, .SCILV2).*) >> bit) & 1) << 2);
+                    break;
+                }
+            }
+            self.arm7.fast_interrupt_request();
+        }
+    }
+
+    pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
+        self._timer_cycles_counter += @intCast(sh4_cycles);
         const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
 
         if (sample_count > 0) {
-            if (self.get_reg(InterruptBits, .SCIEB).*.one_sample_interval == 1) {
-                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.one_sample_interval) << 0) |
-                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.one_sample_interval) << 1) |
-                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.one_sample_interval) << 2);
-                self.arm7.fast_interrupt_request();
-            }
+            self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @bitOffsetOf(InterruptBits, "one_sample_interval");
 
             for (0..64) |i| {
                 self.update_channel(@intCast(i), sample_count);
@@ -677,30 +681,17 @@ pub const AICA = struct {
                         self.get_reg(u32, .SCIPD).* |= mask;
                         self.get_reg(u32, .MCIPD).* |= mask;
 
-                        check_sh4_interrupt(self, dc);
-
-                        if ((self.get_reg(u32, .SCIEB).* & mask) != 0) {
-                            aica_log.debug("Timer {d} interrupt.", .{i});
-                            if (i == 0) {
-                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.timer_a) << 0) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.timer_a) << 1) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.timer_a) << 2);
-                            } else {
-                                // Timer B and C share the same INTReq number.
-                                self.get_reg(u32, .INTRequest).* = (@as(u32, self.get_reg(InterruptBits, .SCILV0).*.timer_b) << 0) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV1).*.timer_b) << 1) |
-                                    (@as(u32, self.get_reg(InterruptBits, .SCILV2).*.timer_b) << 2);
-                            }
-                            self.arm7.fast_interrupt_request();
-                        }
                         timer.value = 0;
                     } else timer.value += 1;
                 }
             }
+
+            self.check_sh4_interrupt(dc);
+            self.check_interrupts();
         }
 
-        if (self.arm7.running and !DisableARMCore) {
-            self._arm_cycles_counter += @intCast(cycles);
+        if (self.arm7.running) {
+            self._arm_cycles_counter += @intCast(sh4_cycles);
             if (self.enable_arm_jit) {
                 if (self._arm_cycles_counter >= ARM7CycleRatio)
                     self._arm_cycles_counter -= ARM7CycleRatio * try self.arm_jit.run_for(&self.arm7, @divFloor(self._arm_cycles_counter, ARM7CycleRatio));
@@ -708,8 +699,13 @@ pub const AICA = struct {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
                     self._arm_cycles_counter -= ARM7CycleRatio;
-                    // aica_log.info("arm7: ({any}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ self.arm7.cpsr.m, self.arm7.pc() - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
+                    // aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
                     arm7.interpreter.tick(&self.arm7);
+                    if (self.arm7.pc() >= 0x00200000) {
+                        aica_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{self.arm7.pc()});
+                        self.arm7.running = false;
+                        break;
+                    }
                 }
             }
         }
@@ -788,7 +784,13 @@ pub const AICA = struct {
                             state.status.env_state = .Sustain;
                         }
                     },
-                    .Sustain, .Release => state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4],
+                    .Sustain, .Release => {
+                        state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4];
+                        // FIXME: Not sure about this at all
+                        if (state.status.env_level >= 0x3FF) {
+                            state.key_off();
+                        }
+                    },
                 }
             }
 
@@ -808,8 +810,6 @@ pub const AICA = struct {
             //while (state.frc_phase >= 0x40000) {
             //    state.frc_phase -= 0x40000;
 
-            state.play_position +%= 1;
-
             state.prev_sample = state.curr_sample;
             const loop_ram_start = &self.wave_memory[registers.sample_address()];
             state.curr_sample = switch (registers.play_control.sample_format) {
@@ -825,7 +825,9 @@ pub const AICA = struct {
                 else => 0,
             };
 
-            if (state.play_position == registers.loop_end) {
+            state.play_position +%= 1;
+
+            if (state.play_position == registers.loop_end & 0xFFFF) {
                 state.status.loop_end_flag = 1;
                 if (registers.play_control.sample_loop) {
                     state.play_position = @truncate(registers.loop_start);

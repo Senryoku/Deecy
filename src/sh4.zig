@@ -723,8 +723,6 @@ pub const SH4 = struct {
         const c = DMACChannels[channel];
         const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
-        sh4_log.debug("DMAC ({d}) CHCR: {any}", .{ channel, chcr });
-
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
@@ -741,6 +739,8 @@ pub const SH4 = struct {
         };
         const len = self.read_p4_register(u32, c.dmatcr);
         const byte_len = transfer_size * len;
+
+        sh4_log.info("DMAC ({d}) CHCR: {any}\n  src_addr: 0x{X:0>8} => dst_addr: 0x{X:0>8} (transfer_size: 0x{X:0>8}, len: 0x{X:0>8}, byte_len: 0x{X:0>8})\n", .{ channel, chcr, src_addr, dst_addr, transfer_size, len, byte_len });
 
         const dst_stride: i32 = switch (chcr.dm) {
             0 => 0,

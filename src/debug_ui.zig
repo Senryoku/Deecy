@@ -11,6 +11,7 @@ const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
 const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
+const AICAModule = @import("./aica.zig");
 
 const RendererModule = @import("renderer.zig");
 
@@ -319,7 +320,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.endGroup();
 
             const range = 32; // In bytes.
-            const pc = 0x00800000 + dc.aica.arm7.pc() - 4;
+            const pc = 0x00800000 + @max(4, dc.aica.arm7.pc() & dc.aica.arm7.memory_address_mask) - 4;
             var addr = std.math.clamp(pc - range / 2, 0x00800000, 0x00A00000 - range);
             const end_addr = addr + range;
             while (addr < end_addr) {
@@ -332,6 +333,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         if (zgui.begin("AICA", .{})) {
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
+            zgui.text("SCIEB: {any}", .{dc.aica.debug_read_reg(AICAModule.InterruptBits, .SCIEB)});
+            if (zgui.collapsingHeader("Timers", .{ .default_open = true })) {
+                const timer_registers = [_]AICAModule.AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+                inline for (0..3) |i| {
+                    const number = std.fmt.comptimePrint("{d}", .{i});
+                    const timer = dc.aica.debug_read_reg(AICAModule.TimerControl, timer_registers[i]);
+                    zgui.text("Timer " ++ number ++ ": Prescale: {X:0>1} - Value: {X:0>2}", .{ timer.prescale, timer.value });
+                    const mask: u32 = @as(u32, 1) << @intCast(6 + i);
+                    zgui.text("Interrupt Enabled: {s}", .{if ((dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0) "Yes" else "No"});
+                }
+            }
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
