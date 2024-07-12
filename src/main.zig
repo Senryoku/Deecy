@@ -31,7 +31,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall_log, .level = .info },
-        .{ .scope = .aica, .level = .debug },
+        .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },

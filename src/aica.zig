@@ -77,6 +77,35 @@ pub const LFOControl = packed struct(u32) {
     _: u16,
 };
 
+pub const LPF1Volume = packed struct(u32) {
+    q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
+    lpoff: bool, // 1 = turn off lowpass filter.
+    voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
+    _: u1, // unknown [SAVED]
+    constant_attenuation: u8, // this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    _r: u16,
+};
+
+pub const LPF7 = packed struct(u32) {
+    lpf_decay_rate: u5,
+    _0: u3,
+    lpf_attack_rate: u5,
+    _1: u3,
+    _2: u16,
+
+    pub const Mask: u32 = 0x1F1F;
+};
+
+pub const LPF8 = packed struct(u32) {
+    lpf_release_rate: u5,
+    _0: u3,
+    lpf_sustain_rate: u5,
+    _1: u3,
+    _2: u16,
+
+    pub const Mask: u32 = 0x1F1F;
+};
+
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
     play_control: PlayControl,
@@ -89,14 +118,14 @@ pub const AICAChannel = packed struct(u576) {
     lfo_control: LFOControl,
     dps_channel_send: u32,
     direct_pan_vol_send: u32,
-    lpf1_volume: u32,
-    lpf2_volume: u32,
-    lpf3_volume: u32,
-    lpf4_volume: u32,
-    lpf5_volume: u32,
-    lpf6_volume: u32,
-    lpf7_volume: u32,
-    lpf8_volume: u32,
+    lpf1_volume: LPF1Volume,
+    lpf2: u32, // Bits 0-12: Filter value
+    lpf3: u32, // Bits 0-12: Filter value
+    lpf4: u32, // Bits 0-12: Filter value
+    lpf5: u32, // Bits 0-12: Filter value
+    lpf6: u32, // Bits 0-12: Filter value
+    lpf7: LPF7,
+    lpf8: LPF8,
 
     pub fn sample_address(self: *const AICAChannel) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
@@ -185,19 +214,26 @@ pub const TimerControl = packed struct(u32) {
     _: u21 = 0,
 };
 
-const AICARegisterStart = 0x00700000;
-
 const PlayStatus = packed struct(u32) {
     env_level: u13 = 0x1FFF,
     env_state: EnvelopeState = .Release,
-    loop_end_flag: u1 = 0,
+    loop_end_flag: bool = false,
     _: u16 = 0,
 };
 
+const AICARegisterStart = 0x00700000;
+
 pub const AICAChannelState = struct {
     playing: bool = false,
-    status: PlayStatus = .{},
+
+    loop_end_flag: bool = false,
     play_position: u16 = 0,
+
+    amp_env_level: u13 = 0x1FFF,
+    amp_env_state: EnvelopeState = .Release,
+
+    filter_env_level: u13 = 0x1FFF,
+    filter_env_state: EnvelopeState = .Release,
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
@@ -205,7 +241,7 @@ pub const AICAChannelState = struct {
     frc_phase: i32 = 0, // ??
 
     adpcm_state: struct {
-        step: i32 = 0,
+        step: i32 = 0x7F,
         step_loopstart: i32 = 0,
         prev: i32 = 0,
         prev_prev: i32 = 0,
@@ -216,13 +252,15 @@ pub const AICAChannelState = struct {
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
 
-    pub fn key_on(self: *AICAChannelState) void {
-        if (self.status.env_state != .Release) return;
+    pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
+        if (self.amp_env_state != .Release) return;
         self.playing = true;
-        self.play_position = 0;
-        self.status.env_level = 0x280;
-        self.status.env_state = .Attack;
-        self.status.loop_end_flag = 0;
+        self.loop_end_flag = false;
+        self.play_position = @truncate(registers.loop_start);
+        self.amp_env_level = 0x280;
+        self.amp_env_state = .Attack;
+        self.filter_env_level = @truncate(registers.lpf2);
+        self.filter_env_state = .Attack;
 
         self.adpcm_state = .{};
         self.sample_read_offset = 0;
@@ -406,16 +444,19 @@ pub const AICA = struct {
         const local_addr = addr & 0x0000FFFF;
 
         //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
+        if (local_addr < 0x2000) {}
 
         switch (@as(AICARegister, @enumFromInt(local_addr))) {
             .MasterVolume => return 0x10,
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                const channel = self.get_channel_registers(req.monitor_select);
-                _ = channel;
-                // FIXME/TODO: Depending on the AFSEL bit, this will return amplitude or filter envelope!
-                const status = self.channel_states[req.monitor_select].status;
-                self.channel_states[req.monitor_select].status.loop_end_flag = 0;
+                var chan = &self.channel_states[req.monitor_select];
+                const status: PlayStatus = .{
+                    .env_level = if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level,
+                    .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
+                    .loop_end_flag = chan.loop_end_flag,
+                };
+                chan.loop_end_flag = false; // Cleared on read.
                 return @truncate(@as(u32, @bitCast(status)));
             },
             .PlayPosition => {
@@ -454,8 +495,9 @@ pub const AICA = struct {
                             if (val.key_on_execute) {
                                 aica_log.info(termcolor.green("Key On Execute"), .{});
                                 for (0..64) |i| {
-                                    if (self.get_channel_registers(@intCast(i)).play_control.key_on_bit) {
-                                        self.channel_states[i].key_on();
+                                    const regs = self.get_channel_registers(@intCast(i));
+                                    if (regs.play_control.key_on_bit) {
+                                        self.channel_states[i].key_on(regs);
                                     } else {
                                         self.channel_states[i].key_off();
                                     }
@@ -486,7 +528,7 @@ pub const AICA = struct {
                 },
                 .SCIEB => {
                     aica_log.info("Write to AICA Register SCIEB = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7FF));
+                    self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7F9));
                     self.check_interrupts();
                     return;
                 },
@@ -497,8 +539,8 @@ pub const AICA = struct {
                     return;
                 },
                 .SCIRE => { // Clear interrupt(s)
+                    aica_log.info("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
                     self.get_reg(u32, .SCIPD).* &= ~value;
-                    self.check_interrupts();
                 },
                 .MCIPD => {
                     if (T == u32) {
@@ -514,6 +556,11 @@ pub const AICA = struct {
                 },
                 .ARMRST => {
                     aica_log.info("ARM reset : {d}", .{value & 1});
+
+                    // Not sure if actually necessary, but some homebrew could let this set when interrupted
+                    // during a FIQ (I guess at least) and then fail to reset it.
+                    self.get_reg(u32, .INTRequest).* = 0;
+
                     @memset(&self.arm7.r, 0);
                     @memset(&self.arm7.r_fiq_8_12, 0);
                     @memset(&self.arm7.r_usr, 0);
@@ -527,6 +574,9 @@ pub const AICA = struct {
                         aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
                         self.arm7.running = false;
                     }
+                },
+                .INTRequest => {
+                    aica_log.warn(termcolor.yellow("Write to AICA Register INTRequest = {X:0>8}"), .{value});
                 },
                 .INTClear => {
                     aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
@@ -639,8 +689,11 @@ pub const AICA = struct {
     }
 
     fn check_interrupts(self: *AICA) void {
+        if (self.get_reg(u32, .INTRequest).* != 0) return;
+
         const enabled = self.get_reg(u32, .SCIEB).*;
-        const pending = self.get_reg(u32, .SCIPD).* & enabled;
+        const pending = self.get_reg(u32, .SCIPD).* & enabled & 0x7F9;
+
         if (pending != 0) {
             for (0..11) |i| {
                 if (pending & (@as(u32, 1) << @intCast(i)) != 0) {
@@ -699,7 +752,7 @@ pub const AICA = struct {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
                     self._arm_cycles_counter -= ARM7CycleRatio;
-                    aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
+                    // aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
                     arm7.interpreter.tick(&self.arm7);
                     if (self.arm7.pc() >= 0x00200000) {
                         aica_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{self.arm7.pc()});
@@ -749,18 +802,18 @@ pub const AICA = struct {
             base_phase_inc <<= 1;
 
         for (0..samples) |_| {
-            if (state.status.env_level > 0x3BF) {
-                state.status.env_level = 0x1FFF;
-                state.status.loop_end_flag = 1;
+            if (state.amp_env_level > 0x3BF) {
+                state.amp_env_level = 0x1FFF;
+                state.loop_end_flag = true;
                 break;
             }
 
             if (state.play_position == registers.loop_start) {
-                if (registers.amp_env_2.link == 1 and state.status.env_state == .Attack)
-                    state.status.env_state = .Decay;
+                if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
+                    state.amp_env_state = .Decay;
             }
 
-            const effective_rate = compute_effective_rate(registers, switch (state.status.env_state) {
+            const effective_rate = compute_effective_rate(registers, switch (state.amp_env_state) {
                 .Attack => registers.amp_env_1.attack_rate,
                 .Decay => registers.amp_env_1.decay_rate,
                 .Sustain => registers.amp_env_1.sustain_rate,
@@ -768,26 +821,26 @@ pub const AICA = struct {
             });
             if (channel_should_step(effective_rate, state.play_position)) {
                 const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                switch (state.status.env_state) {
+                switch (state.amp_env_state) {
                     .Attack => {
-                        const diff = ((state.status.env_level >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
-                        if (state.status.env_level < diff) {
-                            state.status.env_level = 0;
-                            state.status.env_state = .Decay;
+                        const diff = ((state.amp_env_level >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
+                        if (state.amp_env_level < diff) {
+                            state.amp_env_level = 0;
+                            state.amp_env_state = .Decay;
                         } else {
-                            state.status.env_level -= diff;
+                            state.amp_env_level -= diff;
                         }
                     },
                     .Decay => {
-                        state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4];
-                        if ((state.status.env_level >> 5) >= registers.amp_env_2.decay_level) {
-                            state.status.env_state = .Sustain;
+                        state.amp_env_level += EnvelopeDecayValue[idx][state.play_position % 4];
+                        if ((state.amp_env_level >> 5) >= registers.amp_env_2.decay_level) {
+                            state.amp_env_state = .Sustain;
                         }
                     },
                     .Sustain, .Release => {
-                        state.status.env_level += EnvelopeDecayValue[idx][state.play_position % 4];
+                        state.amp_env_level += EnvelopeDecayValue[idx][state.play_position % 4];
                         // FIXME: Not sure about this at all
-                        if (state.status.env_level >= 0x3FF) {
+                        if (state.amp_env_level >= 0x3FF) {
                             state.key_off();
                         }
                     },
@@ -828,7 +881,7 @@ pub const AICA = struct {
             state.play_position +%= 1;
 
             if (state.play_position == registers.loop_end & 0xFFFF) {
-                state.status.loop_end_flag = 1;
+                state.loop_end_flag = true;
                 if (registers.play_control.sample_loop) {
                     state.play_position = @truncate(registers.loop_start);
                 } else {

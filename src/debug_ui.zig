@@ -334,6 +334,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.begin("AICA", .{})) {
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
             zgui.text("SCIEB: {any}", .{dc.aica.debug_read_reg(AICAModule.InterruptBits, .SCIEB)});
+            zgui.text("INTRequest: {any}", .{dc.aica.debug_read_reg(u32, .INTRequest)});
             if (zgui.collapsingHeader("Timers", .{ .default_open = true })) {
                 const timer_registers = [_]AICAModule.AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
                 inline for (0..3) |i| {
@@ -365,8 +366,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
                         zgui.sameLine(.{});
-                        zgui.text("PlayPos: {d: >10}", .{state.play_position});
-                        zgui.text("EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ @tagName(state.status.env_state), state.status.env_level, if (state.status.loop_end_flag == 1) "Yes" else "No" });
+                        zgui.text("PlayPos: {d: >10} - LoopEnd: {s: >3}", .{ state.play_position, if (state.loop_end_flag) "Yes" else "No" });
+                        zgui.text("AmpEnv      state: {s: >10} - level: {X: >5}", .{ @tagName(state.amp_env_state), state.amp_env_level });
+                        zgui.text("AmFilterEnv state: {s: >10} - level: {X: >5}", .{ @tagName(state.filter_env_state), state.filter_env_level });
                         if (channel.play_control.sample_format == .i16) {
                             if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                                 const loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
@@ -389,7 +391,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             self.audio_channels[i].amplitude_envelope.start_time = time;
                             try self.audio_channels[i].amplitude_envelope.xv.append(0);
                         }
-                        try self.audio_channels[i].amplitude_envelope.yv.append(state.status.env_level);
+                        try self.audio_channels[i].amplitude_envelope.yv.append(state.amp_env_level);
                         if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxis(.x1, .{ .label = "time" });
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
