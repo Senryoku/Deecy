@@ -919,13 +919,13 @@ pub const AICA = struct {
                 state.fractional_play_position -= 0x40000;
 
                 state.prev_sample = state.curr_sample;
-                const loop_ram_start = &self.wave_memory[registers.sample_address()];
+                const sample_ram = self.wave_memory[registers.sample_address()..];
                 state.curr_sample = switch (registers.play_control.sample_format) {
-                    .i16 => @as([*]const i16, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position],
-                    .i8 => @as(i32, @intCast(@as([*]const i8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position])) << 8,
+                    .i16 => @as([*]const i16, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position],
+                    .i8 => @as(i32, @intCast(@as([*]const i8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position])) << 8,
                     .ADPCM => adpcm: {
                         // 4 bits per sample
-                        var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position >> 1]);
+                        var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position >> 1]);
                         if (state.play_position & 1 == 1)
                             s >>= 4;
                         break :adpcm state.compute_adpcm(@truncate(s));
