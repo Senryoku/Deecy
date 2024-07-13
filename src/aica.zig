@@ -867,8 +867,9 @@ pub const AICA = struct {
 
         const registers = self.get_channel_registers(channel_number);
 
-        // FIXME: Too slow now?
-        var base_play_position_inc: u32 = registers.sample_pitch_rate.fns ^ 0x400;
+        const sample_length = 0x40000;
+
+        var base_play_position_inc: u32 = sample_length | (@as(u32, registers.sample_pitch_rate.fns) << 8);
         if ((registers.sample_pitch_rate.oct & 8) == 0) {
             base_play_position_inc <<= registers.sample_pitch_rate.oct;
         } else {
@@ -975,8 +976,8 @@ pub const AICA = struct {
                 self.sample_buffer[i % self.sample_buffer.len] += sample;
 
             state.fractional_play_position += base_play_position_inc;
-            while (state.fractional_play_position >= 0x40000) {
-                state.fractional_play_position -= 0x40000;
+            while (state.fractional_play_position >= sample_length) {
+                state.fractional_play_position -= sample_length;
 
                 state.prev_sample = state.curr_sample;
                 const sample_ram = self.wave_memory[registers.sample_address()..];
