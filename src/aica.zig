@@ -15,7 +15,7 @@ const SampleFormat = enum(u2) {
     i16 = 0, // 16-bit signed little-endian
     i8 = 1, // 8-bit signed
     ADPCM = 2, // 4-bit Yamaha ADPCM
-    Invalid = 3,
+    ADPCMStream = 3,
 };
 
 const EnvelopeState = enum(u2) {
@@ -977,14 +977,15 @@ pub const AICA = struct {
                 state.curr_sample = switch (registers.play_control.sample_format) {
                     .i16 => @as([*]const i16, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position],
                     .i8 => @as(i32, @intCast(@as([*]const i8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position])) << 8,
-                    .ADPCM => adpcm: {
+                    // FIXME: ADPCMStream, how does it work?
+                    .ADPCM, .ADPCMStream => adpcm: {
                         // 4 bits per sample
                         var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position >> 1]);
                         if (state.play_position & 1 == 1)
                             s >>= 4;
                         break :adpcm state.compute_adpcm(@truncate(s));
                     },
-                    else => 0,
+                    // else => 0,
                 };
 
                 state.play_position +%= 1;
