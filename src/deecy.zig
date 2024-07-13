@@ -257,9 +257,10 @@ pub const Deecy = struct {
         frame_count: u32,
     ) callconv(.C) void {
         const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
-        var aica = self.dc.aica;
-        self.dc.aica.sample_mutex.lock();
-        defer self.dc.aica.sample_mutex.unlock();
+        const aica = &self.dc.aica;
+
+        aica.sample_mutex.lock();
+        defer aica.sample_mutex.unlock();
 
         var out: [*]i32 = @ptrCast(@alignCast(output));
 
