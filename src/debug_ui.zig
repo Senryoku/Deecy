@@ -345,6 +345,16 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     zgui.text("Interrupt Enabled: {s}", .{if ((dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0) "Yes" else "No"});
                 }
             }
+            if (zgui.plot.beginPlot("Sample Buffer", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                //zgui.plot.setupAxis(.x1, .{ .label = "time" });
+                zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
+                // zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
+                // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
+                zgui.plot.setupFinish();
+                zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
+                zgui.plot.endPlot();
+            }
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
@@ -413,16 +423,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                             zgui.plot.setupFinish();
                             zgui.plot.plotLine("attenuation", u32, .{ .xv = self.audio_channels[i].amplitude_envelope.xv.items, .yv = self.audio_channels[i].amplitude_envelope.yv.items });
-                            zgui.plot.endPlot();
-                        }
-                        if (zgui.plot.beginPlot("Sample Buffer##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
-                            //zgui.plot.setupAxis(.x1, .{ .label = "time" });
-                            zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
-                            // zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
-                            // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
-                            // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
-                            zgui.plot.setupFinish();
-                            zgui.plot.plotLineValues("samples", i32, .{ .v = &state.sample_buffer });
                             zgui.plot.endPlot();
                         }
                     }

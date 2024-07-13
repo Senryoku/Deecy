@@ -160,7 +160,7 @@ pub const ARM7JIT = struct {
 
         var spent_cycles: i32 = 0;
         while (spent_cycles < cycles) {
-            const pc = (cpu.pc() - 4) & cpu.memory_address_mask; // Pipelining...
+            const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
             var block = self.block_cache.get(pc);
             if (block == null) {
                 arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
@@ -180,7 +180,7 @@ pub const ARM7JIT = struct {
             // Not necessary, just here to allow compatibility with the interpreter if we need it.
             // (Right now we're always calling to the interpreter so this should stay in sync, but once
             //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() - 4) & cpu.memory_address_mask]))).*;
+            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
 
             if (cpu.pc() > cpu.memory_address_mask) {
                 arm_jit_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{cpu.pc()});

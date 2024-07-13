@@ -248,10 +248,6 @@ pub const AICAChannelState = struct {
         loop_init: bool = false,
     } = .{},
 
-    sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
-    sample_read_offset: usize = 0,
-    sample_write_offset: usize = 0,
-
     pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
         if (self.amp_env_state != .Release) return;
         self.playing = true;
@@ -263,8 +259,6 @@ pub const AICAChannelState = struct {
         self.filter_env_state = .Attack;
 
         self.adpcm_state = .{};
-        self.sample_read_offset = 0;
-        self.sample_write_offset = 0;
     }
 
     pub fn key_off(self: *AICAChannelState) void {
@@ -380,6 +374,11 @@ pub const AICA = struct {
     wave_memory: []u8 align(4) = undefined,
 
     channel_states: [64]AICAChannelState = .{.{}} ** 64,
+
+    sample_mutex: std.Thread.Mutex = .{},
+    sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
+    sample_read_offset: usize = 0,
+    sample_write_offset: usize = 0,
 
     rtc_write_enabled: bool = false,
 
@@ -586,7 +585,7 @@ pub const AICA = struct {
                     return;
                 },
                 .SCIRE => { // Clear interrupt(s)
-                    aica_log.info("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    aica_log.debug("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
                     if (!high_byte) {
                         self.get_reg(u32, .SCIPD).* &= ~value;
                     } else {
@@ -638,7 +637,7 @@ pub const AICA = struct {
                     aica_log.warn(termcolor.yellow("Write to AICA Register INTRequest = {X:0>8}"), .{value});
                 },
                 .INTClear => {
-                    aica_log.info("Write to AICA Register INTClear = {X:0>8}", .{value});
+                    aica_log.debug("Write to AICA Register INTClear = {X:0>8}", .{value});
                     if (!high_byte and value & 1 == 1) {
                         self.get_reg(u32, .INTRequest).* = 0;
                         self.check_interrupts();
@@ -788,15 +787,22 @@ pub const AICA = struct {
         if (sample_count > 0) {
             self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @bitOffsetOf(InterruptBits, "one_sample_interval");
 
-            // Avoid overflow in channel update. FIXME in another way?
-            if (self._samples_counter +% sample_count < self._samples_counter) {
-                self._samples_counter &= 0xFFFF;
-            }
+            {
+                self.sample_mutex.lock();
+                defer self.sample_mutex.unlock();
 
-            for (0..64) |i| {
-                self.update_channel(@intCast(i), sample_count);
+                // Avoid overflow in channel update. FIXME in another way?
+                if (self._samples_counter +% sample_count < self._samples_counter) {
+                    self._samples_counter &= 0xFFFF;
+                }
+
+                @memset(self.sample_buffer[self.sample_write_offset .. self.sample_write_offset + sample_count], 0);
+                for (0..64) |i| {
+                    self.update_channel(@intCast(i), sample_count);
+                }
+                self.sample_write_offset = (self.sample_write_offset + sample_count) % self.sample_buffer.len;
+                self._samples_counter +%= sample_count;
             }
-            self._samples_counter +%= sample_count;
 
             self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
             const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
@@ -952,8 +958,7 @@ pub const AICA = struct {
             // Interpolate samples
             const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
             const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
-            state.sample_buffer[state.sample_write_offset] = sample;
-            state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
+            self.sample_buffer[i % self.sample_buffer.len] += sample;
 
             state.fractional_play_position += base_play_position_inc;
             while (state.fractional_play_position >= 0x40000) {

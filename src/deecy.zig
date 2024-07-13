@@ -252,31 +252,24 @@ pub const Deecy = struct {
     fn audio_callback(
         device: *zaudio.Device,
         output: ?*anyopaque,
-        input: ?*const anyopaque,
+        _: ?*const anyopaque, // Input
         frame_count: u32,
     ) callconv(.C) void {
         const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
+        var aica = self.dc.aica;
+        self.dc.aica.sample_mutex.lock();
+        defer self.dc.aica.sample_mutex.unlock();
 
-        _ = input;
         var out: [*]i32 = @ptrCast(@alignCast(output));
 
-        for (&self.dc.aica.channel_states) |*channel| {
-            if (channel.playing) {
-                var available: i64 = @as(i64, @intCast(channel.sample_write_offset)) - @as(i64, @intCast(channel.sample_read_offset));
-                if (available < 0) available += channel.sample_buffer.len;
-                if (available <= 0) continue;
-                std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
+        var available: i64 = @as(i64, @intCast(aica.sample_write_offset)) - @as(i64, @intCast(aica.sample_read_offset));
+        if (available < 0) available += aica.sample_buffer.len;
+        if (available <= 0) return;
+        std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
 
-                for (0..frame_count) |i| {
-                    if (channel.sample_read_offset == channel.sample_write_offset) {
-                        // Not more samples available!
-                        break;
-                    }
-                    out[i] = 32000 * channel.sample_buffer[channel.sample_read_offset];
-                    channel.sample_read_offset = (channel.sample_read_offset + 1) % channel.sample_buffer.len;
-                }
-                break;
-            }
+        for (0..@min(@as(usize, @intCast(available)), frame_count)) |i| {
+            out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
+            aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
         }
     }
 };
