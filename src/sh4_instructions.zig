@@ -6,27 +6,42 @@ const interpreter = @import("sh4_interpreter.zig");
 const sh4_jit = @import("jit/sh4_jit.zig");
 const JITBlock = @import("jit/jit_block.zig").JITBlock;
 
-pub const JumpTable: [0x10000]u8 = t: {
-    @setEvalBranchQuota(0xFFFFFFFF);
+// FIXME: This slows down compile time a lot. From 46sec to 1.2min in ReleaseSafe and 15sec to 41sec in Debug.
+// pub const JumpTable: [0x10000]u8 = t: {
+//     @setEvalBranchQuota(0xFFFFFFFF);
+//
+//     var table: [0x10000]u8 = .{1} ** 0x10000;
+//
+//     table[0] = 0; // NOP
+//     for (1..0x10000) |i| {
+//         for (2..Opcodes.len) |idx| {
+//             if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
+//                 //if (table[i] != 1) {
+//                 //    std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
+//                 //    @panic("Duplicate matching instruction.");
+//                 //}
+//                 table[i] = @intCast(idx);
+//                 break;
+//             }
+//         }
+//     }
+//
+//     break :t table;
+// };
 
-    var table: [0x10000]u8 = .{1} ** 0x10000;
+pub var JumpTable: [0x10000]u8 = .{1} ** 0x10000;
 
-    table[0] = 0; // NOP
+pub fn init_table() void {
+    JumpTable[0] = 0; // NOP
     for (1..0x10000) |i| {
         for (2..Opcodes.len) |idx| {
             if ((i & ~Opcodes[idx].mask) == Opcodes[idx].code) {
-                //if (table[i] != 1) {
-                //    std.debug.print("{b:0>16}: Matches {s} but already set to {s}\n", .{ i, Opcodes[idx].name, Opcodes[JumpTable[i]].name });
-                //    @panic("Duplicate matching instruction.");
-                //}
-                table[i] = @intCast(idx);
+                JumpTable[i] = @intCast(idx);
                 break;
             }
         }
     }
-
-    break :t table;
-};
+}
 
 const CacheAccess = struct {
     r0: bool = false,

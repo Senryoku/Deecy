@@ -173,6 +173,8 @@ pub const SH4 = struct {
 
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
+        sh4_instructions.init_table();
+
         var sh4: SH4 = .{ ._dc = dc };
 
         sh4._allocator = allocator;
