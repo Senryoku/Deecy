@@ -910,7 +910,7 @@ pub const AICA = struct {
 
             // Interpolate samples
             const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
-            const sample = ((state.prev_sample * f) + (state.curr_sample * (0x4000 - f))) >> 14;
+            const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
             state.sample_buffer[state.sample_write_offset] = sample;
             state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
 
