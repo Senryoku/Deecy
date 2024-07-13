@@ -98,6 +98,7 @@ pub const Deecy = struct {
         audio_device_config.data_callback = audio_callback;
         audio_device_config.user_data = self;
         audio_device_config.playback.format = .signed32;
+        audio_device_config.playback.channels = 1;
         std.debug.print("Audio device config: {}\n", .{audio_device_config});
         self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
@@ -263,6 +264,7 @@ pub const Deecy = struct {
             if (channel.playing) {
                 var available: i64 = @as(i64, @intCast(channel.sample_write_offset)) - @as(i64, @intCast(channel.sample_read_offset));
                 if (available < 0) available += channel.sample_buffer.len;
+                if (available <= 0) continue;
                 std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
 
                 for (0..frame_count) |i| {

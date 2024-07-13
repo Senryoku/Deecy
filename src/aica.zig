@@ -18,6 +18,13 @@ const SampleFormat = enum(u2) {
     Invalid = 3,
 };
 
+const EnvelopeState = enum(u2) {
+    Attack = 0,
+    Decay = 1,
+    Sustain = 2,
+    Release = 3,
+};
+
 const PlayControl = packed struct(u32) {
     start_address: u7, // Highest bits of the address
     sample_format: SampleFormat,
@@ -29,20 +36,6 @@ const PlayControl = packed struct(u32) {
     _1: u16 = 0,
 
     const Mask: u32 = 0x47FF; // NOTE: key_on_execute is not saved and will always be read as 0.
-};
-
-const ChannelInfoReq = packed struct(u32) {
-    MIDI_output_buffer: u8,
-    monitor_select: u6,
-    amplitude_or_filter_select: u1,
-    _: u17 = 0,
-};
-
-const EnvelopeState = enum(u2) {
-    Attack = 0,
-    Decay = 1,
-    Sustain = 2,
-    Release = 3,
 };
 
 pub const AmpEnv1 = packed struct(u32) {
@@ -208,17 +201,24 @@ pub const SB_ADSUSP = packed struct(u32) {
     _: u26 = 0,
 };
 
-pub const TimerControl = packed struct(u32) {
-    value: u8 = 0,
-    prescale: u3 = 0,
-    _: u21 = 0,
-};
-
 const PlayStatus = packed struct(u32) {
     env_level: u13 = 0x1FFF,
     env_state: EnvelopeState = .Release,
     loop_end_flag: bool = false,
     _: u16 = 0,
+};
+
+const ChannelInfoReq = packed struct(u32) {
+    MIDI_output_buffer: u8,
+    monitor_select: u6,
+    amplitude_or_filter_select: u1,
+    _: u17 = 0,
+};
+
+pub const TimerControl = packed struct(u32) {
+    value: u8 = 0,
+    prescale: u3 = 0,
+    _: u21 = 0,
 };
 
 const AICARegisterStart = 0x00700000;
@@ -229,26 +229,26 @@ pub const AICAChannelState = struct {
     loop_end_flag: bool = false,
     play_position: u16 = 0,
 
-    amp_env_level: u13 = 0x1FFF,
+    amp_env_level: u16 = 0x1FFF,
     amp_env_state: EnvelopeState = .Release,
 
-    filter_env_level: u13 = 0x1FFF,
+    filter_env_level: u16 = 0x1FFF,
     filter_env_state: EnvelopeState = .Release,
 
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
 
-    frc_phase: i32 = 0, // ??
+    fractional_play_position: u32 = 0,
 
     adpcm_state: struct {
         step: i32 = 0x7F,
         step_loopstart: i32 = 0,
         prev: i32 = 0,
-        prev_prev: i32 = 0,
-        min_loop: u8 = 0,
+        prev_loopstart: i32 = 0,
+        loop_init: bool = false,
     } = .{},
 
-    sample_buffer: [1024]i32 = [_]i32{0} ** 1024,
+    sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
 
@@ -256,7 +256,7 @@ pub const AICAChannelState = struct {
         if (self.amp_env_state != .Release) return;
         self.playing = true;
         self.loop_end_flag = false;
-        self.play_position = @truncate(registers.loop_start);
+        self.play_position = 0; // @truncate(registers.loop_start);
         self.amp_env_level = 0x280;
         self.amp_env_state = .Attack;
         self.filter_env_level = @truncate(registers.lpf2);
@@ -269,6 +269,33 @@ pub const AICAChannelState = struct {
 
     pub fn key_off(self: *AICAChannelState) void {
         self.* = .{};
+    }
+
+    pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
+        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
+        if (registers.amp_env_2.key_rate_scaling < 0xF) {
+            effective_rate += 2 * registers.amp_env_2.key_rate_scaling;
+
+            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
+            const oct: i32 = @intCast(@as(i4, @bitCast(registers.sample_pitch_rate.oct)));
+            effective_rate += 2 * oct;
+
+            effective_rate += ((registers.sample_pitch_rate.fns >> 9) & 1);
+        }
+        return @max(0, @min(0x3C, effective_rate));
+    }
+
+    // Returns true if the channel should advance in the enveloppe calculation for the current sample.
+    // This is briefly described in Neill Corlett's notes, but the pattern between effective rate 0x2 and 0x30
+    // is still kinda obscure to me, so this implementation is directly adapted from Highly_Theoretical sources (GPLv3).
+    pub fn env_should_advance(effective_rate: u32, sample: u32) bool {
+        if (effective_rate <= 0x01) return false;
+        if (effective_rate >= 0x30) return (sample & 1) == 0;
+        const shift: u5 = @truncate(12 - ((effective_rate - 1) >> 2));
+        const pattern: u32 = (effective_rate - 1) & 3;
+        if ((sample & ((@as(u32, 1) << shift) - 1)) != 0) return false;
+        const bitplace = (sample >> shift) & 0x7;
+        return (@as(u32, 0xFFFDDDD5) >> @intCast(pattern * 8 + bitplace)) & 1 != 0;
     }
 
     pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
@@ -343,7 +370,7 @@ const EnvelopeDecayValue = [_][4]u4{
 
 pub const AICA = struct {
     const ARM7CycleRatio = 8;
-    const SH4CyclesPerSample = 4535; // FIXME
+    const SH4CyclesPerSample = @divTrunc(200_000_000, 44100); // FIXME
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = false,
@@ -359,6 +386,8 @@ pub const AICA = struct {
     _arm_cycles_counter: i32 = 0,
     _timer_cycles_counter: u32 = 0,
     _timer_counters: [3]u32 = .{0} ** 3,
+
+    _samples_counter: u32 = 0,
 
     _allocator: std.mem.Allocator = undefined,
 
@@ -451,8 +480,9 @@ pub const AICA = struct {
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
+                // FIXME: Should the envelope level return the high bits?
                 const status: PlayStatus = .{
-                    .env_level = if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level,
+                    .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
                     .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
                     .loop_end_flag = chan.loop_end_flag,
                 };
@@ -569,6 +599,7 @@ pub const AICA = struct {
                     @memset(&self.arm7.r_irq, 0);
                     @memset(&self.arm7.r_abt, 0);
                     @memset(&self.arm7.r_und, 0);
+                    self._arm_cycles_counter = 0;
                     self.arm7.reset(value & 1 == 0);
                     if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
                         aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
@@ -716,9 +747,15 @@ pub const AICA = struct {
         if (sample_count > 0) {
             self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @bitOffsetOf(InterruptBits, "one_sample_interval");
 
+            // Avoid overflow in channel update. FIXME in another way?
+            if (self._samples_counter +% sample_count < self._samples_counter) {
+                self._samples_counter &= 0xFFFF;
+            }
+
             for (0..64) |i| {
                 self.update_channel(@intCast(i), sample_count);
             }
+            self._samples_counter +%= sample_count;
 
             self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
             const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
@@ -764,44 +801,23 @@ pub const AICA = struct {
         }
     }
 
-    fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
-        var effective_rate: i32 = 2 * @as(i32, @intCast(rate));
-        if (registers.amp_env_2.key_rate_scaling < 0xF) {
-            effective_rate += 2 * registers.amp_env_2.key_rate_scaling;
-
-            // NOTE: In Neill Corlett's notes, this is also multiplied by 2, but not in Highly_Theoretical sources.
-            const oct: i32 = @as(i32, -8) + (registers.sample_pitch_rate.oct ^ 0x8);
-            effective_rate += oct;
-
-            effective_rate += ((registers.sample_pitch_rate.fns >> 9) & 1);
-        }
-        return @max(0, @min(0x3C, effective_rate));
-    }
-
-    // Returns true if the channel should advance in the enveloppe calculation for the current sample.
-    // This is briefly described in Neill Corlett's notes, but the pattern between effective rate 0x2 and 0x30
-    // is still kinda obscure to me, so this implementation is directly adapted from Highly_Theoretical sources (GPLv3).
-    fn channel_should_step(effective_rate: u32, sample: u32) bool {
-        if (effective_rate <= 0) return false;
-        if (effective_rate >= 0x30) return (sample & 1) == 0;
-        const shift: u5 = @truncate(12 - ((effective_rate - 1) >> 2));
-        const pattern = (effective_rate - 1) & 3;
-        if ((sample & ((@as(u32, 1) << shift) - 1)) != 0) return false;
-        const bitplace = (sample >> shift) & 0x7;
-        return (@as(u32, 0xFFFDDDD5) >> @intCast(pattern * 8 + bitplace)) & 1 != 0;
-    }
-
     pub fn update_channel(self: *@This(), channel_number: u8, samples: u32) void {
         var state = &self.channel_states[channel_number];
         if (!state.playing) return;
 
         const registers = self.get_channel_registers(channel_number);
 
-        var base_phase_inc = @as(i32, registers.sample_pitch_rate.fns) << registers.sample_pitch_rate.oct;
+        // FIXME: Too slow now?
+        var base_play_position_inc: u32 = registers.sample_pitch_rate.fns ^ 0x400;
+        if ((registers.sample_pitch_rate.oct & 8) == 0) {
+            base_play_position_inc <<= registers.sample_pitch_rate.oct;
+        } else {
+            base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
+        }
         if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0xA)
-            base_phase_inc <<= 1;
+            base_play_position_inc <<= 1;
 
-        for (0..samples) |_| {
+        for (self._samples_counter..self._samples_counter + samples) |i| {
             if (state.amp_env_level > 0x3BF) {
                 state.amp_env_level = 0x1FFF;
                 state.loop_end_flag = true;
@@ -811,86 +827,127 @@ pub const AICA = struct {
             if (state.play_position == registers.loop_start) {
                 if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
                     state.amp_env_state = .Decay;
+                if (!state.adpcm_state.loop_init) {
+                    state.adpcm_state.step_loopstart = state.adpcm_state.step;
+                    state.adpcm_state.prev_loopstart = state.adpcm_state.prev;
+                    state.adpcm_state.loop_init = true;
+                }
             }
 
-            const effective_rate = compute_effective_rate(registers, switch (state.amp_env_state) {
-                .Attack => registers.amp_env_1.attack_rate,
-                .Decay => registers.amp_env_1.decay_rate,
-                .Sustain => registers.amp_env_1.sustain_rate,
-                .Release => registers.amp_env_2.release_rate,
-            });
-            if (channel_should_step(effective_rate, state.play_position)) {
-                const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
-                switch (state.amp_env_state) {
-                    .Attack => {
-                        const diff = ((state.amp_env_level >> EnvelopeAttackShift[idx][state.play_position % 4]) + 1);
-                        if (state.amp_env_level < diff) {
-                            state.amp_env_level = 0;
-                            state.amp_env_state = .Decay;
+            // Advance amplitude envelope
+            {
+                const effective_rate = AICAChannelState.compute_effective_rate(registers, switch (state.amp_env_state) {
+                    .Attack => registers.amp_env_1.attack_rate,
+                    .Decay => registers.amp_env_1.decay_rate,
+                    .Sustain => registers.amp_env_1.sustain_rate,
+                    .Release => registers.amp_env_2.release_rate,
+                });
+                if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+                    const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
+                    switch (state.amp_env_state) {
+                        .Attack => {
+                            const diff = ((state.amp_env_level >> EnvelopeAttackShift[idx][i % 4]) + 1);
+                            if (state.amp_env_level < diff) {
+                                state.amp_env_level = 0;
+                                state.amp_env_state = .Decay;
+                            } else {
+                                state.amp_env_level -= diff;
+                            }
+                        },
+                        .Decay => {
+                            state.amp_env_level += EnvelopeDecayValue[idx][i % 4];
+                            if ((state.amp_env_level >> 5) >= registers.amp_env_2.decay_level) {
+                                state.amp_env_state = .Sustain;
+                            }
+                        },
+                        .Sustain, .Release => {
+                            state.amp_env_level += EnvelopeDecayValue[idx][i % 4];
+                            // FIXME: Not sure about this at all
+                            if (state.amp_env_level >= 0x3FF) {
+                                state.key_off();
+                            }
+                        },
+                    }
+                }
+            }
+            // Advance low pass filter envelope
+            {
+                const effective_rate = AICAChannelState.compute_effective_rate(registers, switch (state.filter_env_state) {
+                    .Attack => registers.lpf2 & 0x1FFF,
+                    .Decay => registers.lpf3 & 0x1FFF,
+                    .Sustain => registers.lpf4 & 0x1FFF,
+                    .Release => registers.lpf5 & 0x1FFF,
+                });
+                if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
+                    const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
+                    const decay = EnvelopeDecayValue[idx][i % 4];
+                    const target: u16 = @truncate(switch (state.filter_env_state) {
+                        .Attack => registers.lpf3 & 0x1FFF,
+                        .Decay => registers.lpf4 & 0x1FFF,
+                        .Sustain => registers.lpf5 & 0x1FFF,
+                        else => 0,
+                    });
+                    if (state.filter_env_level < target) {
+                        state.filter_env_level += decay;
+                        state.filter_env_level = @min(state.filter_env_level, target);
+                    } else if (state.filter_env_level > target) {
+                        if (state.filter_env_level > decay) {
+                            state.filter_env_level -= decay;
                         } else {
-                            state.amp_env_level -= diff;
+                            state.filter_env_level = 0;
                         }
-                    },
-                    .Decay => {
-                        state.amp_env_level += EnvelopeDecayValue[idx][state.play_position % 4];
-                        if ((state.amp_env_level >> 5) >= registers.amp_env_2.decay_level) {
-                            state.amp_env_state = .Sustain;
+                        state.filter_env_level = @max(state.filter_env_level, target);
+                    } else {
+                        switch (state.filter_env_state) {
+                            .Attack => state.filter_env_state = .Decay,
+                            .Decay => state.filter_env_state = .Sustain,
+                            .Sustain => state.filter_env_state = .Release,
+                            .Release => {},
                         }
-                    },
-                    .Sustain, .Release => {
-                        state.amp_env_level += EnvelopeDecayValue[idx][state.play_position % 4];
-                        // FIXME: Not sure about this at all
-                        if (state.amp_env_level >= 0x3FF) {
-                            state.key_off();
-                        }
-                    },
+                    }
                 }
             }
 
             // Interpolate samples
-            // const prev_sample = state.prev_sample;
-            const curr_sample = state.curr_sample;
-
-            // const f: i32 = (state.frc_phase >> 4) & 0x3FFF;
-            // const sample = ((prev_sample * f) + (curr_sample * (0x4000 - f))) >> 14;
-            // state.sample_buffer[state.sample_write_offset] = sample;
-            // state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
-
-            state.sample_buffer[state.sample_write_offset] = curr_sample;
+            const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
+            const sample = ((state.prev_sample * f) + (state.curr_sample * (0x4000 - f))) >> 14;
+            state.sample_buffer[state.sample_write_offset] = sample;
             state.sample_write_offset = (state.sample_write_offset + 1) % state.sample_buffer.len;
 
-            // state.frc_phase += base_phase_inc;
-            //while (state.frc_phase >= 0x40000) {
-            //    state.frc_phase -= 0x40000;
+            state.fractional_play_position += base_play_position_inc;
+            while (state.fractional_play_position >= 0x40000) {
+                state.fractional_play_position -= 0x40000;
 
-            state.prev_sample = state.curr_sample;
-            const loop_ram_start = &self.wave_memory[registers.sample_address()];
-            state.curr_sample = switch (registers.play_control.sample_format) {
-                .i16 => @as([*]const i16, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position],
-                .i8 => @as(i16, @intCast(@as([*]const i8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position])) << 8,
-                .ADPCM => adpcm: {
-                    // 4 bits per sample
-                    var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position >> 1]);
-                    if (state.play_position & 1 == 1)
-                        s >>= 4;
-                    break :adpcm state.compute_adpcm(@truncate(s));
-                },
-                else => 0,
-            };
+                state.prev_sample = state.curr_sample;
+                const loop_ram_start = &self.wave_memory[registers.sample_address()];
+                state.curr_sample = switch (registers.play_control.sample_format) {
+                    .i16 => @as([*]const i16, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position],
+                    .i8 => @as(i32, @intCast(@as([*]const i8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position])) << 8,
+                    .ADPCM => adpcm: {
+                        // 4 bits per sample
+                        var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(&loop_ram_start)))[state.play_position >> 1]);
+                        if (state.play_position & 1 == 1)
+                            s >>= 4;
+                        break :adpcm state.compute_adpcm(@truncate(s));
+                    },
+                    else => 0,
+                };
 
-            state.play_position +%= 1;
+                state.play_position +%= 1;
 
-            if (state.play_position == registers.loop_end & 0xFFFF) {
-                state.loop_end_flag = true;
-                if (registers.play_control.sample_loop) {
-                    state.play_position = @truncate(registers.loop_start);
-                } else {
-                    state.play_position = 0;
-                    state.playing = false;
-                    return;
+                if (state.play_position == registers.loop_end & 0xFFFF) {
+                    state.loop_end_flag = true;
+                    if (registers.play_control.sample_loop) {
+                        state.play_position = @truncate(registers.loop_start);
+                        state.adpcm_state.step = state.adpcm_state.step_loopstart;
+                        state.adpcm_state.prev = state.adpcm_state.prev_loopstart;
+                    } else {
+                        state.play_position = 0;
+                        state.playing = false;
+                        return;
+                    }
                 }
             }
-            // }
         }
     }
 

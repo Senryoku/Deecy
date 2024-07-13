@@ -359,25 +359,39 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             @tagName(channel.play_control.sample_format),
                             channel.play_control.sample_loop,
                         });
-                        zgui.text("Start Address: {X:0>4} - Loop: {X:0>4} - {X:0>4}", .{
+                        zgui.text("Start Address: {X: >8} - Loop: {X:0>4} - {X:0>4}", .{
                             start_addr,
                             channel.loop_start,
                             channel.loop_end,
                         });
+                        zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
                         zgui.sameLine(.{});
                         zgui.text("PlayPos: {d: >10} - LoopEnd: {s: >3}", .{ state.play_position, if (state.loop_end_flag) "Yes" else "No" });
-                        zgui.text("AmpEnv      state: {s: >10} - level: {X: >5}", .{ @tagName(state.amp_env_state), state.amp_env_level });
-                        zgui.text("AmFilterEnv state: {s: >10} - level: {X: >5}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        const effective_rate = AICAModule.AICAChannelState.compute_effective_rate(channel, switch (state.amp_env_state) {
+                            .Attack => channel.amp_env_1.attack_rate,
+                            .Decay => channel.amp_env_1.decay_rate,
+                            .Sustain => channel.amp_env_1.sustain_rate,
+                            .Release => channel.amp_env_2.release_rate,
+                        });
+                        zgui.text("AmpEnv    {s: >7} - level: {X: >5} - rate: {X: >5}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
+                        zgui.text("FilterEnv {s: >7} - level: {X: >5}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        var loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
+                        if (loop_size == 0) loop_size = 2048;
                         if (channel.play_control.sample_format == .i16) {
                             if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
-                                const loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
-                                // zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
                                 zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
-                                // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                                 zgui.plot.setupFinish();
                                 zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                                zgui.plot.endPlot();
+                            }
+                        } else if (channel.play_control.sample_format == .i8) {
+                            if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
+                                zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
+                                zgui.plot.setupFinish();
+                                zgui.plot.plotLineValues("samples", i8, .{ .v = @as([*]const i8, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
                                 zgui.plot.endPlot();
                             }
                         }
