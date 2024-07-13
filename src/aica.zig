@@ -518,6 +518,11 @@ pub const AICA = struct {
         const local_addr = addr & 0x0000FFFF;
         aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
 
+        if (local_addr % 4 > 1) {
+            aica_log.warn(termcolor.yellow("Out of bounds Write({any}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}"), .{ T, addr, value });
+            return;
+        }
+
         // Channel registers
         if (local_addr < 0x2000) {
             switch (local_addr & 0x7F) {
