@@ -475,10 +475,13 @@ pub const AICA = struct {
         //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
         if (local_addr < 0x2000) {}
 
-        switch (local_addr) {
-            @intFromEnum(AICARegister.MasterVolume) => return 0x10,
-            @intFromEnum(AICARegister.MasterVolume) + 1 => return 0x00,
-            @intFromEnum(AICARegister.PlayStatus)...@intFromEnum(AICARegister.PlayStatus) + 1 => {
+        std.debug.assert(local_addr % 4 == 0 or T == u8);
+        const reg_addr = local_addr - (local_addr % 4);
+        const high_byte = T == u8 and local_addr % 4 == 1;
+
+        switch (@as(AICARegister, @enumFromInt(reg_addr))) {
+            .MasterVolume => return if (!high_byte) 0x10 else 0,
+            .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
                 const status: PlayStatus = .{
@@ -486,20 +489,20 @@ pub const AICA = struct {
                     .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
                     .loop_end_flag = chan.loop_end_flag,
                 };
-                chan.loop_end_flag = false; // Cleared on read.
-                if (T == u8 and local_addr & 1 == 1) {
-                    return @truncate(@as(u32, @bitCast(status)) >> 8);
-                } else {
+                if (!high_byte) {
+                    chan.loop_end_flag = false; // Cleared on read.
                     return @truncate(@as(u32, @bitCast(status)));
+                } else {
+                    return @truncate(@as(u32, @bitCast(status)) >> 8);
                 }
             },
-            @intFromEnum(AICARegister.PlayPosition)...@intFromEnum(AICARegister.PlayPosition) + 1 => {
+            .PlayPosition => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                const pos = self.channel_states[req.monitor_select].play_position;
-                if (T == u8 and local_addr & 1 == 1) {
-                    return @truncate(pos >> 8);
+                const pos: u32 = self.channel_states[req.monitor_select].play_position;
+                if (!high_byte) {
+                    return @truncate(pos);
                 } else {
-                    return if (T == u8) @truncate(pos) else pos;
+                    return @truncate(pos >> 8);
                 }
             },
             else => {},
@@ -548,7 +551,7 @@ pub const AICA = struct {
         } else {
             std.debug.assert(local_addr % 4 == 0 or T == u8);
             const reg_addr = local_addr - (local_addr % 4);
-            const low_byte = T == u32 or (T == u8 and local_addr % 4 == 0);
+            const high_byte = T == u8 and local_addr % 4 == 1;
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
                     aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
@@ -558,7 +561,7 @@ pub const AICA = struct {
                         @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
                     if (T == u32)
                         self.regs[local_addr / 4] = value & 0xFFFFFFFC;
-                    if (low_byte and value & 1 == 1) {
+                    if (!high_byte and value & 1 == 1) {
                         aica_log.info(termcolor.green("DMA Start"), .{});
                         @panic("TODO AICA DMA");
                     }
@@ -566,7 +569,7 @@ pub const AICA = struct {
                 },
                 .SCIEB => {
                     aica_log.info("Write to AICA Register SCIEB = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    if (low_byte) {
+                    if (!high_byte) {
                         self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7F9));
                     } else {
                         self.get_reg(u32, .SCIEB).* = ((@as(u32, value) << 8) & 0x7FF) | (self.get_reg(u32, .SCIEB).* & 0xFF);
@@ -576,7 +579,7 @@ pub const AICA = struct {
                 },
                 .SCIPD => {
                     aica_log.info("Write to AICA Register SCIPD = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    if (low_byte) {
+                    if (!high_byte) {
                         self.get_reg(u32, .SCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
                         self.check_interrupts();
                     }
@@ -584,7 +587,7 @@ pub const AICA = struct {
                 },
                 .SCIRE => { // Clear interrupt(s)
                     aica_log.info("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    if (low_byte) {
+                    if (!high_byte) {
                         self.get_reg(u32, .SCIPD).* &= ~value;
                     } else {
                         self.get_reg(u32, .SCIPD).* &= ~(@as(u32, value) << 8);
@@ -601,14 +604,14 @@ pub const AICA = struct {
                     } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
                 },
                 .MCIRE => { // Clear interrupt(s)
-                    if (low_byte) {
+                    if (!high_byte) {
                         self.get_reg(u32, .MCIPD).* &= ~value;
                     } else {
                         self.get_reg(u32, .MCIPD).* &= ~(@as(u32, value) << 8);
                     }
                 },
                 .ARMRST => {
-                    if (low_byte) {
+                    if (!high_byte) {
                         aica_log.info("ARM reset : {d}", .{value & 1});
 
                         // Not sure if actually necessary, but some homebrew could let this set when interrupted
@@ -636,7 +639,7 @@ pub const AICA = struct {
                 },
                 .INTClear => {
                     aica_log.info("Write to AICA Register INTClear = {X:0>8}", .{value});
-                    if (low_byte and value & 1 == 1) {
+                    if (!high_byte and value & 1 == 1) {
                         self.get_reg(u32, .INTRequest).* = 0;
                         self.check_interrupts();
                     }
