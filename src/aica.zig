@@ -868,14 +868,15 @@ pub const AICA = struct {
         const registers = self.get_channel_registers(channel_number);
 
         const sample_length = 0x40000;
-
+        // "For FNS = 0 (and OCT = 0), the tone matches the sampling source."
         var base_play_position_inc: u32 = sample_length | (@as(u32, registers.sample_pitch_rate.fns) << 8);
         if ((registers.sample_pitch_rate.oct & 8) == 0) {
             base_play_position_inc <<= registers.sample_pitch_rate.oct;
         } else {
             base_play_position_inc >>= @as(u5, 16) - registers.sample_pitch_rate.oct;
         }
-        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0xA)
+        // "Values in parentheses are +1 octave for ADPCM" (p.25)
+        if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
             base_play_position_inc <<= 1;
 
         for (self._samples_counter..self._samples_counter + samples) |i| {
