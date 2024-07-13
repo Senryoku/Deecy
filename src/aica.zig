@@ -363,8 +363,11 @@ const EnvelopeDecayValue = [_][4]u4{
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
 pub const AICA = struct {
-    const ARM7CycleRatio = 8;
-    const SH4CyclesPerSample = @divTrunc(200_000_000, 44100); // FIXME
+    pub const SampleRate = 44100;
+
+    const ARM7CycleRatio = 9;
+    const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate); // FIXME?
+    const SH4CyclesPerSubSample = 448;
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = false,

@@ -95,6 +95,7 @@ pub const Deecy = struct {
         self.renderer = try Renderer.init(self._allocator, self.gctx);
 
         var audio_device_config = zaudio.Device.Config.init(.playback);
+        audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
         audio_device_config.data_callback = audio_callback;
         audio_device_config.user_data = self;
         audio_device_config.playback.format = .signed32;

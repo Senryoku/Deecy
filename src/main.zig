@@ -149,6 +149,8 @@ pub fn main() !void {
 
     var blit_framebuffer_from_vram = true;
 
+    var last_wait = try std.time.Instant.now();
+
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -176,12 +178,13 @@ pub fn main() !void {
 
         if (d.running) {
             const start = try std.time.Instant.now();
+            var cycles: u64 = 0;
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
                 if (!d.enable_jit) {
                     const max_instructions: u8 = if (d.breakpoints.items.len == 0) 16 else 1;
 
-                    _ = try dc.tick(max_instructions);
+                    cycles += try dc.tick(max_instructions);
 
                     // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
                     if (max_instructions == 1) {
@@ -194,11 +197,15 @@ pub fn main() !void {
                     }
                 } else {
                     for (0..32) |_| {
-                        _ = try dc.tick_jit();
+                        cycles += try dc.tick_jit();
                         if (dc.gpu.render_start) break;
                     }
                 }
             }
+
+            // Busy wait to limit SH4 clock speed. FIXME: This is gross.
+            while ((try std.time.Instant.now()).since(last_wait) < @divTrunc(std.time.ns_per_s * cycles, 200_000_000)) {}
+            last_wait = try std.time.Instant.now();
         }
 
         const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
