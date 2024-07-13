@@ -299,11 +299,11 @@ pub const AICAChannelState = struct {
 
     pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
         var val = @divTrunc(self.adpcm_state.step * ADPCMDiff[adpcm_sample & 7], 8);
-        if (val >= 0x7FFF) val = 0x7FFF;
+        val = @min(val, 0x7FFF);
         val *= @as(i32, 1) - ((adpcm_sample >> 2) & 2);
         val += self.adpcm_state.prev;
         val = std.math.clamp(val, -0x8000, 0x7FFF);
-        self.adpcm_state.step = (self.adpcm_state.step + ADPCMScale[adpcm_sample & 7]) >> 8;
+        self.adpcm_state.step = (self.adpcm_state.step * ADPCMScale[adpcm_sample & 7]) >> 8;
         self.adpcm_state.step = std.math.clamp(self.adpcm_state.step, 0x007F, 0x6000);
         self.adpcm_state.prev = val;
         return val;
