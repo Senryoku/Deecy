@@ -352,17 +352,22 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
                 // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                 zgui.plot.setupFinish();
+                zgui.plot.plotLine("sample_read_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_read_offset), @intCast(dc.aica.sample_read_offset) }, .yv = &[_]i32{ 0, std.math.maxInt(i16) } });
+                zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
                 zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
                 zgui.plot.endPlot();
             }
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
-                const state = dc.aica.channel_states[@intCast(i)];
+                zgui.pushPtrId(channel);
+                defer zgui.popId();
+                const state = dc.aica.channel_states[i];
                 const time: u32 = @truncate(@as(u64, @intCast(std.time.milliTimestamp())));
                 if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
                     const number = std.fmt.comptimePrint("{d}", .{i});
                     if (zgui.collapsingHeader("Channel " ++ number, .{ .default_open = true })) {
+                        _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                         const start_addr = channel.sample_address();
                         zgui.text("KeyOn: {any} - Format: {s} - Loop: {any}", .{
                             channel.play_control.key_on_bit,

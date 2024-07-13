@@ -248,6 +248,11 @@ pub const AICAChannelState = struct {
         loop_init: bool = false,
     } = .{},
 
+    // Unnecessary, but useful for debugging
+    debug: struct {
+        mute: bool = false, // Don't output sample (but run normally otherwise)
+    } = .{},
+
     pub fn key_on(self: *AICAChannelState, registers: *const AICAChannel) void {
         if (self.amp_env_state != .Release) return;
         self.playing = true;
@@ -966,7 +971,8 @@ pub const AICA = struct {
             // Interpolate samples
             const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
             const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
-            self.sample_buffer[i % self.sample_buffer.len] += sample;
+            if (!state.debug.mute)
+                self.sample_buffer[i % self.sample_buffer.len] += sample;
 
             state.fractional_play_position += base_play_position_inc;
             while (state.fractional_play_position >= 0x40000) {
