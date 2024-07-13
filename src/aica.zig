@@ -475,24 +475,32 @@ pub const AICA = struct {
         //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
         if (local_addr < 0x2000) {}
 
-        switch (@as(AICARegister, @enumFromInt(local_addr))) {
-            .MasterVolume => return 0x10,
-            .PlayStatus => {
+        switch (local_addr) {
+            @intFromEnum(AICARegister.MasterVolume) => return 0x10,
+            @intFromEnum(AICARegister.MasterVolume) + 1 => return 0x00,
+            @intFromEnum(AICARegister.PlayStatus)...@intFromEnum(AICARegister.PlayStatus) + 1 => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
-                // FIXME: Should the envelope level return the high bits?
                 const status: PlayStatus = .{
                     .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
                     .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
                     .loop_end_flag = chan.loop_end_flag,
                 };
                 chan.loop_end_flag = false; // Cleared on read.
-                return @truncate(@as(u32, @bitCast(status)));
+                if (T == u8 and local_addr & 1 == 1) {
+                    return @truncate(@as(u32, @bitCast(status)) >> 8);
+                } else {
+                    return @truncate(@as(u32, @bitCast(status)));
+                }
             },
-            .PlayPosition => {
+            @intFromEnum(AICARegister.PlayPosition)...@intFromEnum(AICARegister.PlayPosition) + 1 => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 const pos = self.channel_states[req.monitor_select].play_position;
-                return if (T == u8) @truncate(pos) else pos;
+                if (T == u8 and local_addr & 1 == 1) {
+                    return @truncate(pos >> 8);
+                } else {
+                    return if (T == u8) @truncate(pos) else pos;
+                }
             },
             else => {},
         }
@@ -510,8 +518,6 @@ pub const AICA = struct {
 
         // Channel registers
         if (local_addr < 0x2000) {
-            const channel = local_addr / 0x80;
-            _ = channel;
             switch (local_addr & 0x7F) {
                 0x00 => { // Play control
                     switch (T) {
@@ -521,27 +527,29 @@ pub const AICA = struct {
 
                             const val: PlayControl = @bitCast(value);
                             aica_log.info("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
-                            // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
-                            if (val.key_on_execute) {
-                                aica_log.info(termcolor.green("Key On Execute"), .{});
-                                for (0..64) |i| {
-                                    const regs = self.get_channel_registers(@intCast(i));
-                                    if (regs.play_control.key_on_bit) {
-                                        self.channel_states[i].key_on(regs);
-                                    } else {
-                                        self.channel_states[i].key_off();
-                                    }
-                                }
-                            }
+                            if (val.key_on_execute) self.key_on_execute();
                         },
                         else => @compileError("Invalid value type"),
                     }
                     return;
                 },
+                0x01 => { // Play control - High byte
+                    switch (T) {
+                        u8 => {
+                            @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value;
+                            const val: PlayControl = @bitCast(@as(u32, value) << 8);
+                            if (val.key_on_execute) self.key_on_execute();
+                        },
+                        else => unreachable,
+                    }
+                },
                 else => {},
             }
         } else {
-            switch (@as(AICARegister, @enumFromInt(local_addr))) {
+            std.debug.assert(local_addr % 4 == 0 or T == u8);
+            const reg_addr = local_addr - (local_addr % 4);
+            const low_byte = T == u32 or (T == u8 and local_addr % 4 == 0);
+            switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
                     aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
                 },
@@ -550,7 +558,7 @@ pub const AICA = struct {
                         @as([*]u8, @ptrCast(&self.regs))[local_addr] = value & 0xFC;
                     if (T == u32)
                         self.regs[local_addr / 4] = value & 0xFFFFFFFC;
-                    if (value & 1 == 1) {
+                    if (low_byte and value & 1 == 1) {
                         aica_log.info(termcolor.green("DMA Start"), .{});
                         @panic("TODO AICA DMA");
                     }
@@ -558,19 +566,30 @@ pub const AICA = struct {
                 },
                 .SCIEB => {
                     aica_log.info("Write to AICA Register SCIEB = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7F9));
+                    if (low_byte) {
+                        self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7F9));
+                    } else {
+                        self.get_reg(u32, .SCIEB).* = ((@as(u32, value) << 8) & 0x7FF) | (self.get_reg(u32, .SCIEB).* & 0xFF);
+                    }
                     self.check_interrupts();
                     return;
                 },
                 .SCIPD => {
                     aica_log.info("Write to AICA Register SCIPD = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    self.get_reg(u32, .SCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
-                    self.check_interrupts();
+                    if (low_byte) {
+                        self.get_reg(u32, .SCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
+                        self.check_interrupts();
+                    }
                     return;
                 },
                 .SCIRE => { // Clear interrupt(s)
                     aica_log.info("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
-                    self.get_reg(u32, .SCIPD).* &= ~value;
+                    if (low_byte) {
+                        self.get_reg(u32, .SCIPD).* &= ~value;
+                    } else {
+                        self.get_reg(u32, .SCIPD).* &= ~(@as(u32, value) << 8);
+                    }
+                    return;
                 },
                 .MCIPD => {
                     if (T == u32) {
@@ -582,36 +601,42 @@ pub const AICA = struct {
                     } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
                 },
                 .MCIRE => { // Clear interrupt(s)
-                    self.get_reg(u32, .MCIPD).* &= ~value;
+                    if (low_byte) {
+                        self.get_reg(u32, .MCIPD).* &= ~value;
+                    } else {
+                        self.get_reg(u32, .MCIPD).* &= ~(@as(u32, value) << 8);
+                    }
                 },
                 .ARMRST => {
-                    aica_log.info("ARM reset : {d}", .{value & 1});
+                    if (low_byte) {
+                        aica_log.info("ARM reset : {d}", .{value & 1});
 
-                    // Not sure if actually necessary, but some homebrew could let this set when interrupted
-                    // during a FIQ (I guess at least) and then fail to reset it.
-                    self.get_reg(u32, .INTRequest).* = 0;
+                        // Not sure if actually necessary, but some homebrew could let this set when interrupted
+                        // during a FIQ (I guess at least) and then fail to reset it.
+                        self.get_reg(u32, .INTRequest).* = 0;
 
-                    @memset(&self.arm7.r, 0);
-                    @memset(&self.arm7.r_fiq_8_12, 0);
-                    @memset(&self.arm7.r_usr, 0);
-                    @memset(&self.arm7.r_fiq, 0);
-                    @memset(&self.arm7.r_svc, 0);
-                    @memset(&self.arm7.r_irq, 0);
-                    @memset(&self.arm7.r_abt, 0);
-                    @memset(&self.arm7.r_und, 0);
-                    self._arm_cycles_counter = 0;
-                    self.arm7.reset(value & 1 == 0);
-                    if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
-                        aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
-                        self.arm7.running = false;
+                        @memset(&self.arm7.r, 0);
+                        @memset(&self.arm7.r_fiq_8_12, 0);
+                        @memset(&self.arm7.r_usr, 0);
+                        @memset(&self.arm7.r_fiq, 0);
+                        @memset(&self.arm7.r_svc, 0);
+                        @memset(&self.arm7.r_irq, 0);
+                        @memset(&self.arm7.r_abt, 0);
+                        @memset(&self.arm7.r_und, 0);
+                        self._arm_cycles_counter = 0;
+                        self.arm7.reset(value & 1 == 0);
+                        if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
+                            aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
+                            self.arm7.running = false;
+                        }
                     }
                 },
                 .INTRequest => {
                     aica_log.warn(termcolor.yellow("Write to AICA Register INTRequest = {X:0>8}"), .{value});
                 },
                 .INTClear => {
-                    aica_log.warn(termcolor.yellow("Write to AICA Register INTClear = {X:0>8}"), .{value});
-                    if (value & 1 == 1) {
+                    aica_log.info("Write to AICA Register INTClear = {X:0>8}", .{value});
+                    if (low_byte and value & 1 == 1) {
                         self.get_reg(u32, .INTRequest).* = 0;
                         self.check_interrupts();
                     }
@@ -737,6 +762,19 @@ pub const AICA = struct {
                 }
             }
             self.arm7.fast_interrupt_request();
+        }
+    }
+
+    // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
+    fn key_on_execute(self: *AICA) void {
+        aica_log.info(termcolor.green("Key On Execute"), .{});
+        for (0..64) |i| {
+            const regs = self.get_channel_registers(@intCast(i));
+            if (regs.play_control.key_on_bit) {
+                self.channel_states[i].key_on(regs);
+            } else {
+                self.channel_states[i].key_off();
+            }
         }
     }
 
