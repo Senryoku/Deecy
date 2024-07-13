@@ -1126,7 +1126,7 @@ pub const Renderer = struct {
         const stride_select = if (is_paletted) 0 else texture_control_word.stride_select;
 
         const twiddled = scan_order == 0;
-        const size_index = tsp_instruction.texture_u_size;
+        const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // NOTE: This is used by stride textures. Stride textures actual size can be smaller than their allocated size, but UV calculation are still done with it.
         const alloc_u_size = (@as(u16, 8) << tsp_instruction.texture_u_size);
@@ -1299,11 +1299,11 @@ pub const Renderer = struct {
         }
         if (texture_index == InvalidTextureIndex) {
             // Search for the last recently used texture, preferring an outdated one.
-            for (0..Renderer.MaxTextures[size_index]) |i| {
-                if (self.texture_metadata[size_index][i].status == .Outdated and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].status == .Unused or (self.texture_metadata[size_index][texture_index].status == .Outdated and self.texture_metadata[size_index][texture_index].age < self.texture_metadata[size_index][i].age))) {
-                    texture_index = @as(TextureIndex, @intCast(i));
-                } else if (self.texture_metadata[size_index][i].status == .Unused and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].age < self.texture_metadata[size_index][i].age)) {
-                    texture_index = @as(TextureIndex, @intCast(i));
+            for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+                if (entry.status == .Outdated and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].status == .Unused or (self.texture_metadata[size_index][texture_index].status == .Outdated and self.texture_metadata[size_index][texture_index].age < entry.age))) {
+                    texture_index = @as(TextureIndex, @intCast(idx));
+                } else if (entry.status == .Unused and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].age < entry.age)) {
+                    texture_index = @as(TextureIndex, @intCast(idx));
                 }
             }
         }
@@ -1337,13 +1337,18 @@ pub const Renderer = struct {
             .palette_hash = palette_hash(gpu, texture_control_word),
         };
 
-        // Fill with repeating texture data when v_size < u_size to avoid vertical wrapping artifacts.
-        // FIXME: We should do the same the stride textures when u_size < alloc_u_size.
-        for (0..u_size / v_size) |part| {
+        // Fill with repeating texture data when v_size != u_size to avoid  wrapping artifacts.
+        const repeat_vertically = v_size <= u_size;
+        const copies = if (repeat_vertically) u_size / v_size else v_size / u_size;
+        for (0..copies) |part| {
             self._gctx.queue.writeTexture(
                 .{
                     .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
-                    .origin = .{ .y = @intCast(v_size * part), .z = @intCast(texture_index) },
+                    .origin = .{
+                        .x = if (repeat_vertically) 0 else @intCast(u_size * part),
+                        .y = if (repeat_vertically) @intCast(v_size * part) else 0,
+                        .z = @intCast(texture_index),
+                    },
                 },
                 .{
                     .bytes_per_row = u_size * 4,
@@ -1484,7 +1489,7 @@ pub const Renderer = struct {
         const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
         const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
         const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
-        const texture_size_index = tsp_instruction.texture_u_size;
+        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
         //        which doesn't make sense. The vertices z position looks more inline with what
@@ -1525,7 +1530,7 @@ pub const Renderer = struct {
                 .textured = isp_tsp_instruction.texture,
                 .mode = tsp_instruction.texture_shading_instruction,
                 .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                .tex_u_size = texture_size_index,
+                .tex_u_size = tsp_instruction.texture_u_size,
                 .tex_v_size = tsp_instruction.texture_v_size,
                 .depth_compare = isp_tsp_instruction.depth_compare_mode,
                 .fog_control = tsp_instruction.fog_control,
@@ -1747,7 +1752,7 @@ pub const Renderer = struct {
 
                 var tex_idx: TextureIndex = 0;
                 const textured = parameter_control_word.obj_control.texture == 1;
-                const texture_size_index = tsp_instruction.texture_u_size;
+                const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
                 if (textured) {
                     const tmp_tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control);
                     if (tmp_tex_idx == null) {

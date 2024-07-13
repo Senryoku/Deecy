@@ -15,7 +15,7 @@ fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
     // This kinda feel like a hack, but works.
     let ddx = dpdx(uv);
     let ddy = dpdy(uv);
-    switch((control >> 4) & 7)  {
+    switch(max((control >> 4) & 7, (control >> 7) & 7))  {
         case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, ddx, ddy); }
         case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, index, ddx, ddy); }
         case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, index, ddx, ddy); }
@@ -100,7 +100,8 @@ fn fragment_color(
 ) -> FragmentColor {
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);
-    let tex_color = tex_sample( vec2<f32>(1.0, v_size / u_size) * uv, tex[1], tex[0]);
+    let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
+    let tex_color = tex_sample(uv_factor * uv, tex[1], tex[0]);
 
     var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
 
