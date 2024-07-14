@@ -1062,6 +1062,10 @@ pub const SH4 = struct {
                         // Too spammy, even for debugging.
                         P4Register.TCNT0 => return @constCast(self).p4_register_addr(T, virtual_addr).*,
                         else => {
+                            if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
+                                sh4_log.warn(termcolor.yellow("  Invalid Read({any}) to P4 register @{X:0>8}"), .{ T, virtual_addr });
+                                return 0;
+                            }
                             sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
