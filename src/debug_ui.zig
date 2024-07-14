@@ -332,6 +332,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("AICA", .{})) {
+            zgui.text("Master Volume: {X}", .{dc.aica.debug_read_reg(u32, .MasterVolume) & 0xF});
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
             zgui.text("SCIEB: {any}", .{dc.aica.debug_read_reg(AICAModule.InterruptBits, .SCIEB)});
             zgui.text("INTRequest: {any}", .{dc.aica.debug_read_reg(u32, .INTRequest)});

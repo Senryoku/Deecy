@@ -566,7 +566,7 @@ pub const AICA = struct {
             const high_byte = T == u8 and local_addr % 4 == 1;
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
-                    aica_log.warn(termcolor.yellow("Write to Master Volume = 0x{X:0>8}"), .{value});
+                    aica_log.warn(termcolor.yellow("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}"), .{ T, addr, value });
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
@@ -803,6 +803,18 @@ pub const AICA = struct {
         if (sample_count > 0) {
             self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @bitOffsetOf(InterruptBits, "one_sample_interval");
 
+            // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
+            // FIXME: Really not sure I'm handling this correctly!
+            //   Register Value | Volume
+            // -----------------|----------
+            //        0         | -MAXdB
+            //        1         |  -42dB
+            //        2         |  -39dB
+            //        ...       |
+            //        0xD       |   -6dB
+            //        0xE       |   -3dB
+            //        0xF       |    0dB
+            const attenuation = std.math.pow(i32, 2, 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F));
             {
                 self.sample_mutex.lock();
                 defer self.sample_mutex.unlock();
@@ -816,6 +828,18 @@ pub const AICA = struct {
                 for (0..64) |i| {
                     self.update_channel(@intCast(i), sample_count);
                 }
+
+                if (attenuation == 0) {
+                    for (0..sample_count) |i| {
+                        self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] = 0;
+                    }
+                } else if (attenuation > 1) {
+                    for (0..sample_count) |i| {
+                        // zig doesn't have a arithmetic shift right :(
+                        self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len], attenuation);
+                    }
+                }
+
                 self.sample_write_offset = (self.sample_write_offset + sample_count) % self.sample_buffer.len;
                 self._samples_counter +%= sample_count;
             }
