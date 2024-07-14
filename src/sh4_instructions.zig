@@ -32,6 +32,8 @@ const JITBlock = @import("jit/jit_block.zig").JITBlock;
 pub var JumpTable: [0x10000]u8 = .{1} ** 0x10000;
 
 pub fn init_table() void {
+    if (JumpTable[0] == 0) return;
+
     JumpTable[0] = 0; // NOP
     for (1..0x10000) |i| {
         for (2..Opcodes.len) |idx| {
