@@ -175,6 +175,8 @@ pub const ARM7JIT = struct {
             }
             // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(cpu);
+            cpu.check_fiq(); // FIXME: Non-tested.
+
             spent_cycles += @intCast(block.?.cycles);
 
             // Not necessary, just here to allow compatibility with the interpreter if we need it.

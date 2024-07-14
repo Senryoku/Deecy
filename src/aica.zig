@@ -604,6 +604,7 @@ pub const AICA = struct {
                     } else {
                         self.get_reg(u32, .SCIPD).* &= ~(@as(u32, value) << 8);
                     }
+                    self.check_interrupts();
                     return;
                 },
                 .MCIPD => {
@@ -760,24 +761,24 @@ pub const AICA = struct {
     }
 
     fn check_interrupts(self: *AICA) void {
-        if (self.get_reg(u32, .INTRequest).* != 0) return;
+        if (self.get_reg(u32, .INTRequest).* == 0) {
+            const enabled = self.get_reg(u32, .SCIEB).*;
+            const pending = self.get_reg(u32, .SCIPD).* & enabled & 0x7F9;
 
-        const enabled = self.get_reg(u32, .SCIEB).*;
-        const pending = self.get_reg(u32, .SCIPD).* & enabled & 0x7F9;
-
-        if (pending != 0) {
-            for (0..11) |i| {
-                if (pending & (@as(u32, 1) << @intCast(i)) != 0) {
-                    const bit = @min(7, i); // Interrupts higher than 7 share the same INTReq number.
-                    self.get_reg(u32, .INTRequest).* =
-                        (((@as(u32, self.get_reg(u32, .SCILV0).*) >> bit) & 1) << 0) |
-                        (((@as(u32, self.get_reg(u32, .SCILV1).*) >> bit) & 1) << 1) |
-                        (((@as(u32, self.get_reg(u32, .SCILV2).*) >> bit) & 1) << 2);
-                    break;
+            if (pending != 0) {
+                for (0..11) |i| {
+                    if (pending & (@as(u32, 1) << @intCast(i)) != 0) {
+                        const bit = @min(7, i); // Interrupts higher than 7 share the same INTReq number.
+                        self.get_reg(u32, .INTRequest).* =
+                            (((@as(u32, self.get_reg(u32, .SCILV0).*) >> bit) & 1) << 0) |
+                            (((@as(u32, self.get_reg(u32, .SCILV1).*) >> bit) & 1) << 1) |
+                            (((@as(u32, self.get_reg(u32, .SCILV2).*) >> bit) & 1) << 2);
+                        break;
+                    }
                 }
             }
-            self.arm7.fast_interrupt_request();
         }
+        self.arm7.fiq_signaled = self.get_reg(u32, .INTRequest).* != 0;
     }
 
     // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
