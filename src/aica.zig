@@ -630,6 +630,7 @@ pub const AICA = struct {
                         // Not sure if actually necessary, but some homebrew could let this set when interrupted
                         // during a FIQ (I guess at least) and then fail to reset it.
                         self.get_reg(u32, .INTRequest).* = 0;
+                        self.check_interrupts();
 
                         @memset(&self.arm7.r, 0);
                         @memset(&self.arm7.r_fiq_8_12, 0);
@@ -649,6 +650,7 @@ pub const AICA = struct {
                 },
                 .INTRequest => {
                     aica_log.warn(termcolor.yellow("Write to AICA Register INTRequest = {X:0>8}"), .{value});
+                    return;
                 },
                 .INTClear => {
                     aica_log.debug("Write to AICA Register INTClear = {X:0>8}", .{value});
