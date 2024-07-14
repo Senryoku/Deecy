@@ -30,7 +30,9 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
 -   VMU/Storage
--   The whole AICA Chip. Please have mercy.
+-   AICA:
+    - Stereo
+    - DSP
 -   Renderer:
     - Modifier Volumes.
         - Implemented: Inclusion volumes and shadow bit over opaque geometry.
@@ -71,6 +73,8 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 ## Thanks
 
 -   Huge thanks to drk||Raziel and MetalliC for their respective contributions to the scene, and for answering my questions!
+-   Thanks to originaldave_ for the sh4 tests (https://github.com/SingleStepTests/sh4)
+-   And overall thanks to everyone participating in the EmuDev Discord :)
 
 ## Licence
 

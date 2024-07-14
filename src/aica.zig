@@ -70,12 +70,25 @@ pub const LFOControl = packed struct(u32) {
     _: u16,
 };
 
+pub const DirectPanVolSend = packed struct(u32) {
+    pan: u5, // Direct send pan (DIPAN)
+    // 0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
+    // 0x00-0x0F: each step beyond 0x00 attenuates the left side by 3db
+    //            (right side remains at same volume)
+    // 0x10-0x1F: each step beyond 0x10 attenuates the right side by 3db
+    //            (left side remains at same volume)
+    _0: u3,
+    volume: u4, // Direct send volume (DISDL) - "Affects how much of this channel is being sent directly to the dry output.  0xF is full volume (no attenuation), every level beneath that adds 3dB, and 0x0 means no output.""
+    _1: u4,
+    _2: u16,
+};
+
 pub const LPF1Volume = packed struct(u32) {
     q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
     lpoff: bool, // 1 = turn off lowpass filter.
     voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
     _: u1, // unknown [SAVED]
-    constant_attenuation: u8, // this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
+    constant_attenuation: u8, // (TL) this value *4 seems to be added to the envelope attenuation (as in, 0x00-0xFF here corresponds to 0x000-0x3FF when referring to the envelope attenuation)
     _r: u16,
 };
 
@@ -101,24 +114,24 @@ pub const LPF8 = packed struct(u32) {
 
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
-    play_control: PlayControl,
-    sample_address_low: u32, // lowest 16 bits of sample start address (SA) (in bytes)
-    loop_start: u32,
-    loop_end: u32,
-    amp_env_1: AmpEnv1,
-    amp_env_2: AmpEnv2,
-    sample_pitch_rate: SamplePitchRate,
-    lfo_control: LFOControl,
-    dps_channel_send: u32,
-    direct_pan_vol_send: u32,
-    lpf1_volume: LPF1Volume,
-    lpf2: u32, // Bits 0-12: Filter value
-    lpf3: u32, // Bits 0-12: Filter value
-    lpf4: u32, // Bits 0-12: Filter value
-    lpf5: u32, // Bits 0-12: Filter value
-    lpf6: u32, // Bits 0-12: Filter value
-    lpf7: LPF7,
-    lpf8: LPF8,
+    play_control: PlayControl, //          0x00
+    sample_address_low: u32, //            0x04 Lowest 16 bits of sample start address (SA) (in bytes)
+    loop_start: u32, //                    0x08
+    loop_end: u32, //                      0x0C
+    amp_env_1: AmpEnv1, //                 0x10
+    amp_env_2: AmpEnv2, //                 0x14
+    sample_pitch_rate: SamplePitchRate, // 0x18
+    lfo_control: LFOControl, //            0x1C
+    dps_channel_send: DirectPanVolSend, // 0x20
+    direct_pan_vol_send: u32, //           0x24
+    lpf1_volume: LPF1Volume, //            0x28
+    lpf2: u32, //                          0x2C Bits 0-12: Filter value (FLV0)
+    lpf3: u32, //                          0x30 Bits 0-12: Filter value (FLV1)
+    lpf4: u32, //                          0x34 Bits 0-12: Filter value (FLV2)
+    lpf5: u32, //                          0x38 Bits 0-12: Filter value (FLV3)
+    lpf6: u32, //                          0x3C Bits 0-12: Filter value (FLV4)
+    lpf7: LPF7, //                         0x40
+    lpf8: LPF8, //                         0x44
 
     pub fn sample_address(self: *const AICAChannel) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
@@ -370,7 +383,7 @@ const EnvelopeDecayValue = [_][4]u4{
 pub const AICA = struct {
     pub const SampleRate = 44100;
 
-    const ARM7CycleRatio = 9;
+    const ARM7CycleRatio = 80;
     const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate); // FIXME?
     const SH4CyclesPerSubSample = 448;
 
@@ -632,14 +645,6 @@ pub const AICA = struct {
                         self.get_reg(u32, .INTRequest).* = 0;
                         self.check_interrupts();
 
-                        @memset(&self.arm7.r, 0);
-                        @memset(&self.arm7.r_fiq_8_12, 0);
-                        @memset(&self.arm7.r_usr, 0);
-                        @memset(&self.arm7.r_fiq, 0);
-                        @memset(&self.arm7.r_svc, 0);
-                        @memset(&self.arm7.r_irq, 0);
-                        @memset(&self.arm7.r_abt, 0);
-                        @memset(&self.arm7.r_und, 0);
                         self._arm_cycles_counter = 0;
                         self.arm7.reset(value & 1 == 0);
                         if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
@@ -876,8 +881,8 @@ pub const AICA = struct {
                 // FIXME: We're not actually counting ARM7 cycles here (unless all instructions are 1 cycle :^)).
                 while (self._arm_cycles_counter >= ARM7CycleRatio) {
                     self._arm_cycles_counter -= ARM7CycleRatio;
-                    // aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <22} - SP:{X:0>8} - LR:{X:0>8}", .{ @tagName(self.arm7.cpsr.m), @max(4, self.arm7.pc() & self.arm7.memory_address_mask) - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
                     arm7.interpreter.tick(&self.arm7);
+
                     if (self.arm7.pc() >= 0x00200000) {
                         aica_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{self.arm7.pc()});
                         self.arm7.running = false;
@@ -1022,6 +1027,27 @@ pub const AICA = struct {
                     },
                     // else => 0,
                 };
+
+                if (!registers.lpf1_volume.lpoff) {
+                    // TODO!
+                }
+
+                // Apply amplitude envelope
+                if (!registers.lpf1_volume.voff) {
+                    var attenuation: i32 = registers.lpf1_volume.constant_attenuation;
+                    attenuation <<= 2;
+                    attenuation += state.amp_env_level;
+                    if (registers.lfo_control.amplitude_modulation_depth != 0) {
+                        // TODO
+                    }
+                    if (attenuation >= 0x3C0) {
+                        state.curr_sample = 0;
+                    } else {
+                        const linearvol = ((attenuation & 0x3F) ^ 0x7F) + 1;
+                        state.curr_sample *|= linearvol;
+                        state.curr_sample >>= @intCast(7 + (attenuation >> 6));
+                    }
+                }
 
                 state.play_position +%= 1;
 
