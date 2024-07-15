@@ -838,14 +838,14 @@ pub const Renderer = struct {
                 .depth_compare = .less,
                 .stencil_front = .{
                     .compare = .always,
-                    .fail_op = .increment_wrap, // Stencil test failed (we don't care about the stencil test here)
-                    .pass_op = .increment_wrap, // Stencil test passed
-                    .depth_fail_op = .keep, // Stencil test passed, but depth test failed (this is what we care about, with the front face/back face distinction)
+                    .fail_op = .keep, // Action performed on samples that fail the stencil test
+                    .pass_op = .increment_wrap, // Action performed on samples that pass both the depth and stencil tests.
+                    .depth_fail_op = .keep, // Action performed on samples that pass the stencil test and fail the depth test.
                 },
-                .stencil_back = .{
+                .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardward and games are not required to properly distinguish between front facing and back facing triangles.
                     .compare = .always,
-                    .fail_op = .decrement_wrap,
-                    .pass_op = .decrement_wrap,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap,
                     .depth_fail_op = .keep,
                 },
             },
@@ -895,6 +895,7 @@ pub const Renderer = struct {
                     .format = .depth32_float_stencil8,
                     .depth_write_enabled = false,
                     .depth_compare = .always,
+                    .stencil_read_mask = 0x1, // Is it odd?
                     .stencil_front = .{
                         .compare = .not_equal,
                         .fail_op = .keep,
