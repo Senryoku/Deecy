@@ -185,6 +185,7 @@ pub const SH4 = struct {
 
         // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
         sh4._operand_cache = try sh4._allocator.alloc(u8, 0x2000);
+        @memset(sh4._operand_cache, 0);
 
         // P4 registers are remapped on this smaller range. See p4_register_addr.
         //   Addresses starts with FF/1F, this can be ignored.
@@ -198,6 +199,7 @@ pub const SH4 = struct {
         // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
         //   I ignore them in read16/write16.
         sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
+        @memset(sh4.p4_registers, 0);
 
         sh4.reset();
 

@@ -118,7 +118,7 @@ pub const Dreamcast = struct {
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
     _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
 
-    _allocator: std.mem.Allocator = undefined,
+    _allocator: std.mem.Allocator,
 
     _dummy: [4]u8 align(32) = undefined, // FIXME: Dummy space for non-implemented features
 

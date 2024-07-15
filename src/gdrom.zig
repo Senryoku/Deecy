@@ -191,14 +191,14 @@ pub const GDROM = struct {
     data_queue: std.fifo.LinearFifo(u8, .Dynamic),
 
     packet_command_idx: u8 = 0,
-    packet_command: [12]u8 = undefined,
+    packet_command: [12]u8 = [_]u8{0} ** 12,
 
-    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare) = undefined,
+    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
 
     // HLE
-    hle_command: GDROMCommand = undefined,
-    hle_params: [4]u32 = undefined,
-    hle_result: [4]u32 = undefined,
+    hle_command: GDROMCommand = @enumFromInt(0),
+    hle_params: [4]u32 = .{0} ** 4,
+    hle_result: [4]u32 = .{0} ** 4,
 
     _next_command_id: u32 = 1,
     _current_command_id: u32 = 0,
@@ -217,7 +217,7 @@ pub const GDROM = struct {
 
     pub fn reinit(self: *@This()) void {
         self.state = GDROMStatus.Standby;
-        self.hle_command = undefined;
+        self.hle_command = @enumFromInt(0);
         @memset(&self.hle_params, 0);
         @memset(&self.hle_result, 0);
     }
