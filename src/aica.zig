@@ -138,6 +138,16 @@ pub const AICAChannel = packed struct(u576) {
     }
 };
 
+pub const MasterVolume = packed struct(u32) {
+    volume: u4 = 0x0,
+    version: u4 = 0x1, // version information for the AICA chip
+    dac_18b: bool, // DAC18B: 0: Makes the digital output a 16-bit DAC interface. 1: Makes the digital output an 18-bit DAC interface
+    mem_8mb: bool, // MEM8MB: This register specifies the size of the memory that is used for wave memory. 0:16Mbit_SDRAM, 1:64Mbit_SDRAM
+    _: u5,
+    mono: bool, // 0: Enables the panpot information, 1: Disables the panpot information.
+    // (Note) If the panpot information has been disabled, a sound that is on only one channel doubles in volume, so it is necessary to lower MVOL
+};
+
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
 pub const AICARegister = enum(u32) {
     MasterVolume = 0x00002800,
