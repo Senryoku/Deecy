@@ -1124,6 +1124,7 @@ pub const Holly = struct {
     _ta_opaque_modifier_volumes: std.ArrayList(ModifierVolume),
     _ta_translucent_modifier_volumes: std.ArrayList(ModifierVolume),
     _ta_volume_triangles: std.ArrayList(ModifierVolumeParameter),
+    _ta_volume_next_polygon_is_last: bool = false,
 
     ta_display_lists: [5]DisplayList = undefined,
 
@@ -1461,16 +1462,19 @@ pub const Holly = struct {
 
                 if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
                     const modifier_volume = @as(*ModifierVolumeGlobalParameter, @ptrCast(&self._ta_command_buffer));
-                    // New modifier volume starts
-                    self.check_end_of_modifier_volume();
-                    if (self._ta_current_volume == null) {
+                    if (self._ta_current_volume == null and modifier_volume.instructions.volume_instruction == .Normal) {
                         self._ta_current_volume = .{
                             .parameter_control_word = modifier_volume.*.parameter_control_word,
                             .instructions = modifier_volume.*.instructions,
                             .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
                         };
+                    } else if (modifier_volume.instructions.volume_instruction == .InsideLastPolygon or modifier_volume.instructions.volume_instruction == .OutsideLastPolygon) {
                         if (modifier_volume.*.instructions.volume_instruction == .OutsideLastPolygon) {
                             holly_log.warn("Unsupported Exclusion Modifier Volume.", .{});
+                        }
+                        if (self._ta_current_volume) |*cv| {
+                            self._ta_volume_next_polygon_is_last = true;
+                            cv.instructions = modifier_volume.*.instructions;
                         }
                     }
                 } else {
@@ -1510,69 +1514,70 @@ pub const Holly = struct {
             },
             // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
-                var display_list = &self.ta_display_lists[@intFromEnum(self._ta_list_type.?)];
+                const list_type = self._ta_list_type.?;
+                var display_list = &self.ta_display_lists[@intFromEnum(list_type)];
 
-                if (self._ta_list_type.? == .OpaqueModifierVolume or self._ta_list_type.? == .TranslucentModifierVolume) {
+                if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                     if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
                     self._ta_volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
-                    // NOTE: I feel like the documentation contradicts itself here, volume == 1 is said to indicate the last triangle of a modifier volume,
-                    //       but the example use an extra global parameter to end the modifier volume. The later seem correct in practice.
-                    //           if (parameter_control_word.obj_control.volume == 1) end_volume()?
+                    if (self._ta_volume_next_polygon_is_last) {
+                        self.check_end_of_modifier_volume();
+                    }
                 } else {
-                    if (self._ta_current_polygon == null) {
-                        holly_log.debug(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(self._ta_list_type.?)});
-                        @panic("No current polygon");
-                    }
+                    if (self._ta_current_polygon) |*polygon| {
+                        const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
+                        switch (polygon.*) {
+                            .Sprite => {
+                                std.debug.assert(parameter_control_word.end_of_strip == 1); // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                                if (polygon_obj_control.texture == 0) {
+                                    if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
+                                    display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                } else {
+                                    if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
+                                    display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                }
+                            },
+                            else => {
+                                const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                                if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
 
-                    const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(&self._ta_current_polygon.?)).*.parameter_control_word.obj_control;
-                    switch (self._ta_current_polygon.?) {
-                        .Sprite => {
-                            std.debug.assert(parameter_control_word.end_of_strip == 1); // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
-                            if (polygon_obj_control.texture == 0) {
-                                if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
-                                display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                            } else {
-                                if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
-                                display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                            }
-                        },
-                        else => {
-                            const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                            if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+                                display_list.vertex_parameters.append(switch (format) {
+                                    .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
+                                    .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
+                                    else => {
+                                        holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
+                                        @panic("Unexpected vertex parameter type");
+                                    },
+                                }) catch unreachable;
+                            },
+                        }
 
-                            display_list.vertex_parameters.append(switch (format) {
-                                .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
-                                .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
-                                else => {
-                                    holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
-                                    @panic("Unexpected vertex parameter type");
-                                },
+                        if (parameter_control_word.end_of_strip == 1) {
+                            display_list.vertex_strips.append(.{
+                                .polygon = polygon.*,
+                                .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
+                                .verter_parameter_index = display_list.next_first_vertex_parameters_index,
+                                .verter_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
                             }) catch unreachable;
-                        },
-                    }
 
-                    if (parameter_control_word.end_of_strip == 1) {
-                        display_list.vertex_strips.append(.{
-                            .polygon = self._ta_current_polygon.?,
-                            .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
-                            .verter_parameter_index = display_list.next_first_vertex_parameters_index,
-                            .verter_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
-                        }) catch unreachable;
-
-                        display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
+                            display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
+                        }
+                    } else {
+                        holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(list_type)});
+                        @panic("No current polygon");
                     }
                 }
             },
@@ -1599,6 +1604,7 @@ pub const Holly = struct {
                             self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
                     }
                     self._ta_current_volume = null;
+                    self._ta_volume_next_polygon_is_last = false;
                 }
             }
         }

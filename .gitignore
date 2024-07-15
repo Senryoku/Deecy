@@ -13,6 +13,7 @@ logs
 
 imgui.ini
 RenderDoc.cap
+*.cap
 captures
 
 userdata
