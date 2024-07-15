@@ -2108,6 +2108,12 @@ pub const Renderer = struct {
             try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
+            self.min_depth = @min(self.min_depth, 1 / triangle.az);
+            self.max_depth = @max(self.max_depth, 1 / triangle.az);
+            self.min_depth = @min(self.min_depth, 1 / triangle.bz);
+            self.max_depth = @max(self.max_depth, 1 / triangle.bz);
+            self.min_depth = @min(self.min_depth, 1 / triangle.cz);
+            self.max_depth = @max(self.max_depth, 1 / triangle.cz);
         }
 
         gpu._ta_volume_triangles.clearRetainingCapacity();
