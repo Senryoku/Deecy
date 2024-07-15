@@ -508,6 +508,45 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
             zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
 
+            var buffer: [256]u8 = .{0} ** 256;
+
+            if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
+                zgui.indent(.{});
+                inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
+                    const list = &dc.gpu.ta_display_lists[@intFromEnum(list_type)];
+                    const name = @tagName(@as(Holly.ListType, list_type));
+                    const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
+
+                    if (zgui.collapsingHeader(header, .{})) {
+                        zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
+                        for (list.vertex_strips.items) |strip| {
+                            zgui.text("  {any}", .{strip.polygon});
+                        }
+                    }
+                }
+                zgui.unindent(.{});
+            }
+            if (zgui.collapsingHeader("Modifier Volumes", .{ .frame_padding = true })) {
+                zgui.indent(.{});
+                {
+                    const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.opaque_modifier_volumes.items.len});
+                    if (zgui.collapsingHeader(header, .{})) {
+                        for (d.renderer.opaque_modifier_volumes.items) |vol| {
+                            zgui.text("  {any}", .{vol});
+                        }
+                    }
+                }
+                //{
+                //    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.translucent_modifier_volumes.items.len});
+                //    if (zgui.collapsingHeader(header, .{})) {
+                //        for (d.renderer.translucent_modifier_volumes.items) |vol| {
+                //            zgui.text("  {any}", .{vol});
+                //        }
+                //    }
+                //}
+                zgui.unindent(.{});
+            }
+
             if (zgui.collapsingHeader("VRAM", .{})) {
                 const static = struct {
                     var start_addr: i32 = 0x04200000;
