@@ -406,6 +406,7 @@ pub const Renderer = struct {
 
     opaque_pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
     closed_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
+    shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
     open_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
     modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle,
     translucent_pipeline: zgpu.RenderPipelineHandle,
@@ -822,7 +823,7 @@ pub const Renderer = struct {
         });
         const modifier_volume_pipeline_layout = gctx.createPipelineLayout(&.{modifier_volume_group_layout});
 
-        const closed_modifier_volume_first_pass_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+        const closed_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
@@ -860,9 +861,49 @@ pub const Renderer = struct {
                 .targets = null,
             },
         };
-        const closed_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, closed_modifier_volume_first_pass_pipeline_descriptor);
+        const closed_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor);
 
-        const open_modifier_volume_first_pass_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+        const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = modifier_volume_vertex_shader_module,
+                .entry_point = "main",
+                .buffer_count = modifier_volume_vertex_buffers.len,
+                .buffers = &modifier_volume_vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_list,
+            },
+            .depth_stencil = &wgpu.DepthStencilState{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = false,
+                .depth_compare = .always,
+                .stencil_read_mask = 0x03,
+                .stencil_write_mask = 0x03,
+                .stencil_front = .{
+                    .compare = .equal,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap, // 0x01 -> 0x02
+                    .depth_fail_op = .keep,
+                },
+                .stencil_back = .{
+                    .compare = .equal,
+                    .fail_op = .keep,
+                    .pass_op = .increment_wrap,
+                    .depth_fail_op = .keep,
+                },
+            },
+            .fragment = &wgpu.FragmentState{
+                .module = modifier_volume_fragment_shader_module,
+                .entry_point = "main",
+                .target_count = 0,
+                .targets = null,
+            },
+        };
+        const shift_stencil_buffer_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor);
+
+        const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
@@ -878,18 +919,18 @@ pub const Renderer = struct {
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
                 .depth_compare = .less,
-                .stencil_read_mask = 0x01,
-                .stencil_write_mask = 0x01,
+                .stencil_read_mask = 0x02,
+                .stencil_write_mask = 0x03,
                 .stencil_front = .{
-                    .compare = .equal, // Only run if not already marked as area 1.
+                    .compare = .not_equal, // Only run if not already marked as area 1.
                     .fail_op = .keep, // Action performed on samples that fail the stencil test
-                    .pass_op = .increment_wrap, // Action performed on samples that pass both the depth and stencil tests.
+                    .pass_op = .replace, // Action performed on samples that pass both the depth and stencil tests.
                     .depth_fail_op = .keep, // Action performed on samples that pass the stencil test and fail the depth test.
                 },
                 .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardward and games are not required to properly distinguish between front facing and back facing triangles.
-                    .compare = .equal,
+                    .compare = .not_equal,
                     .fail_op = .keep,
-                    .pass_op = .increment_wrap,
+                    .pass_op = .replace,
                     .depth_fail_op = .keep,
                 },
             },
@@ -900,7 +941,7 @@ pub const Renderer = struct {
                 .targets = null,
             },
         };
-        const open_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, open_modifier_volume_first_pass_pipeline_descriptor);
+        const open_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor);
 
         const modifier_volume_bind_group = gctx.createBindGroup(modifier_volume_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
@@ -939,15 +980,15 @@ pub const Renderer = struct {
                     .format = .depth32_float_stencil8,
                     .depth_write_enabled = false,
                     .depth_compare = .always,
-                    .stencil_read_mask = 0x1, // Is it odd?
+                    .stencil_read_mask = 0x2,
                     .stencil_front = .{
-                        .compare = .not_equal,
+                        .compare = .equal,
                         .fail_op = .keep,
                         .depth_fail_op = .keep,
                         .pass_op = .keep,
                     },
                     .stencil_back = .{
-                        .compare = .not_equal,
+                        .compare = .equal,
                         .fail_op = .keep,
                         .depth_fail_op = .keep,
                         .pass_op = .keep,
@@ -977,6 +1018,7 @@ pub const Renderer = struct {
             .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
 
             .closed_modifier_volume_pipeline = closed_modifier_volume_pipeline,
+            .shift_stencil_buffer_modifier_volume_pipeline = shift_stencil_buffer_modifier_volume_pipeline,
             .open_modifier_volume_pipeline = open_modifier_volume_pipeline,
             .modifier_volume_apply_pipeline = mv_apply_pipeline,
 
@@ -2372,19 +2414,24 @@ pub const Renderer = struct {
                     pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
                     pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
 
-                    pass.setStencilReference(0);
-
                     // Close volume pass.
                     // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                    pass.setPipeline(gctx.lookupResource(self.closed_modifier_volume_pipeline).?);
                     for (self.opaque_modifier_volumes.items) |volume| {
-                        if (volume.closed)
+                        if (volume.closed) {
+                            pass.setStencilReference(0x00);
+                            pass.setPipeline(gctx.lookupResource(self.closed_modifier_volume_pipeline).?);
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                        // TODO: "Commit" the stencil buffer after each volume. Subsequent "include" volumes should not override previous inclusions.
+
+                            pass.setStencilReference(0x01);
+                            pass.setPipeline(gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline).?);
+                            // NOTE: We could draw a single fullscreen quad here.
+                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                        }
                     }
 
                     // Open "volume" pass.
                     // Triangle passing the depth test immediately set the stencil buffer.
+                    pass.setStencilReference(0x02);
                     pass.setPipeline(gctx.lookupResource(self.open_modifier_volume_pipeline).?);
                     for (self.opaque_modifier_volumes.items) |volume| {
                         if (!volume.closed)
@@ -2432,7 +2479,7 @@ pub const Renderer = struct {
                     pass.setPipeline(gctx.lookupResource(self.modifier_volume_apply_pipeline).?);
                     pass.setBindGroup(0, mva_bind_group, &.{});
 
-                    pass.setStencilReference(0);
+                    pass.setStencilReference(0x02);
                     pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
