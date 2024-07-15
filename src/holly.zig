@@ -1077,8 +1077,8 @@ const VertexStrip = struct {
 };
 
 pub const DisplayList = struct {
-    vertex_strips: std.ArrayList(VertexStrip) = undefined,
-    vertex_parameters: std.ArrayList(VertexParameter) = undefined,
+    vertex_strips: std.ArrayList(VertexStrip),
+    vertex_parameters: std.ArrayList(VertexParameter),
     next_first_vertex_parameters_index: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) DisplayList {
@@ -1106,13 +1106,13 @@ const ScheduledInterrupt = struct {
 };
 
 pub const Holly = struct {
-    vram: []u8 = undefined,
-    registers: []u8 = undefined,
+    vram: []u8,
+    registers: []u8,
 
     render_start: bool = false, // Signals to start rendering. TODO: Find a better way to start rendering (and run the CPU on another thread I guess).
 
-    _allocator: std.mem.Allocator = undefined,
-    _dc: *Dreamcast = undefined,
+    _allocator: std.mem.Allocator,
+    _dc: *Dreamcast,
 
     _ta_command_buffer: [16]u32 align(16) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
@@ -1132,10 +1132,10 @@ pub const Holly = struct {
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         var holly = @This(){
-            ._allocator = allocator,
-            ._dc = dc,
             .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
             .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
+            ._allocator = allocator,
+            ._dc = dc,
             ._ta_opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
             ._ta_translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
             ._ta_volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
@@ -1143,7 +1143,6 @@ pub const Holly = struct {
         for (0..holly.ta_display_lists.len) |i| {
             holly.ta_display_lists[i] = DisplayList.init(allocator);
         }
-
         return holly;
     }
 
@@ -1160,6 +1159,9 @@ pub const Holly = struct {
     }
 
     pub fn reset(self: *@This()) void {
+        @memset(self.vram, 0);
+        @memset(self.registers, 0);
+
         self._get_register(u32, .ID).* = 0x17FD11DB;
         self._get_register(u32, .REVISION).* = 0x0011;
         self._get_register(SPG_STATUS, .SPG_STATUS).* = .{};

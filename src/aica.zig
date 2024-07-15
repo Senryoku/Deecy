@@ -394,15 +394,14 @@ pub const AICA = struct {
     pub const SampleRate = 44100;
 
     const ARM7CycleRatio = 80;
-    const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate); // FIXME?
-    const SH4CyclesPerSubSample = 448;
+    const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = false,
     arm_jit: ARM7JIT = undefined,
 
-    regs: []u32 = undefined, // All registers are 32-bit afaik
-    wave_memory: []u8 align(4) = undefined,
+    regs: []u32, // All registers are 32-bit afaik
+    wave_memory: []u8 align(4),
 
     channel_states: [64]AICAChannelState = .{.{}} ** 64,
 
@@ -419,7 +418,7 @@ pub const AICA = struct {
 
     _samples_counter: u32 = 0,
 
-    _allocator: std.mem.Allocator = undefined,
+    _allocator: std.mem.Allocator,
 
     // NOTE: Call setup_arm after!
     pub fn init(allocator: std.mem.Allocator) !AICA {

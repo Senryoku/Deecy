@@ -70,7 +70,7 @@ pub const FPSCR = packed struct(u32) {
     sz: u1 = 0, // Transfer size mode
     fr: u1 = 0, // Floating-point register bank
 
-    _: u10 = undefined, // Reserved
+    _: u10 = 0, // Reserved
 };
 
 const TimerRegisters = [3]struct { counter: P4Register, control: P4Register, constant: P4Register, interrupt: Interrupt }{
@@ -173,7 +173,7 @@ pub const SH4 = struct {
 
     timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
 
-    _allocator: std.mem.Allocator = undefined,
+    _allocator: std.mem.Allocator,
     _dc: ?*Dreamcast = null,
     _pending_cycles: u32 = 0,
 
@@ -181,9 +181,7 @@ pub const SH4 = struct {
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         sh4_instructions.init_table();
 
-        var sh4: SH4 = .{ ._dc = dc };
-
-        sh4._allocator = allocator;
+        var sh4: SH4 = .{ ._dc = dc, ._allocator = allocator };
 
         // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
         sh4._operand_cache = try sh4._allocator.alloc(u8, 0x2000);

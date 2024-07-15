@@ -110,10 +110,10 @@ pub const Dreamcast = struct {
     // Pluged in video cable reported to the CPU:e.
     cable_type: CableType = .VGA,
 
-    boot: []u8 align(4) = undefined,
+    boot: []u8 align(4),
     flash: Flash,
-    ram: []u8 align(4) = undefined,
-    hardware_registers: []u8 align(4) = undefined, // FIXME
+    ram: []u8 align(4),
+    hardware_registers: []u8 align(4),
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
     _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
@@ -137,6 +137,7 @@ pub const Dreamcast = struct {
             .maple = try MapleHost.init(allocator),
             .gdrom = GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
+            .boot = try allocator.alloc(u8, 0x200000),
             .flash = try Flash.init(allocator),
             .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
@@ -152,7 +153,6 @@ pub const Dreamcast = struct {
         }
 
         // Load ROM
-        dc.boot = try dc._allocator.alloc(u8, 0x200000);
         const boot_path = "./bin/dc_boot.bin";
         var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
             dc_log.err(termcolor.red("Failed to open boot ROM at '" ++ boot_path ++ "', error: {any}."), .{err});

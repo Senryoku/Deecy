@@ -89,8 +89,8 @@ const Track = struct {
     format: u32, // Sector size
     pregap: u32,
     data: []u8,
-    _mapping_handle: ?*anyopaque = undefined,
-    _file_handle: ?*anyopaque = undefined,
+    _mapping_handle: ?*anyopaque = null,
+    _file_handle: ?*anyopaque = null,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (@import("builtin").os.tag != .windows) {
@@ -156,16 +156,15 @@ pub const SectorHeader = extern struct {
 const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
 
 pub const GDI = struct {
-    tracks: std.ArrayList(Track) = undefined,
+    tracks: std.ArrayList(Track),
 
-    _allocator: std.mem.Allocator = undefined,
+    _allocator: std.mem.Allocator,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !GDI {
-        var self: GDI = .{};
-
-        self._allocator = allocator;
-
-        self.tracks = std.ArrayList(Track).init(self._allocator);
+        var self: GDI = .{
+            .tracks = std.ArrayList(Track).init(allocator),
+            ._allocator = allocator,
+        };
 
         const file = std.fs.cwd().openFile(filepath, .{}) catch {
             std.debug.print("File not found: {s}\n", .{filepath});
