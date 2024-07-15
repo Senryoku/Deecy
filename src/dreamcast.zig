@@ -246,6 +246,23 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_SBREV).* = 0x0B;
         self.hw_register(u32, .SB_G2ID).* = 0x12; // Only possible value, apparently.
 
+        self.hw_register(u32, .SB_MSYS).* = 0x3A980000;
+        self.hw_register(u32, .SB_MST).* = 0x000000FF;
+        self.hw_register(u32, .SB_MMSEL).* = 0x00000001;
+
+        // NOTE: SB_G1SYSM:
+        // G1MRA [18:15]                   G1MRA[14:11]
+        //   0 0 0 0  Mass production unit   0 0 0 1  Japan, South Korea, Asia NTSC
+        //   1 1 0 0  SET4-8M                0 1 0 0  North America, Brazil, Argentina
+        //   1 0 0 0  SET4-32M               1 1 0 0  Europe
+        //   1 0 0 1  Dev.Box-16M
+        //   1 0 1 0  Dev.Box-32M
+        //   1 1 0 1  Graphics box
+        //   Other codes Reserved
+        self.hw_register(u32, .SB_G1SYSM).* = 0b0000_1100;
+
+        self.hw_register(u32, .SB_G2DSTO).* = 0x000003FF;
+        self.hw_register(u32, .SB_G2TRTO).* = 0x000003FF;
     }
 
     pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
