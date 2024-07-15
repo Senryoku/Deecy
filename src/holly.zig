@@ -1594,16 +1594,29 @@ pub const Holly = struct {
         if (self._ta_list_type) |list_type| {
             if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                 if (self._ta_current_volume) |*volume| {
-                    // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volume can also be clipped.
+                    // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volumes can also be clipped.
+
+                    std.debug.assert(volume.first_triangle_index <= self._ta_volume_triangles.items.len); // This could happen if TA_LIST_INIT isn't correctly called...
 
                     volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
+
+                    // NOTE: Soul Calibur will push volumes with a single triangle by starting each frame with this sequence:
+                    //   Global Parameter: Modifier Volume with holly.VolumeInstruction.Normal
+                    //   Global Parameter: Modifier Volume with holly.VolumeInstruction.InsideLastPolygon
+                    //     Vertex Parameter: Modifier Volume Triangle
+                    // I don't know if I'm the one misinterpreting the doc, but how the triangles are grouped doesn't really matter anyway.
+
                     if (volume.triangle_count > 0) {
                         (if (list_type == .OpaqueModifierVolume)
                             self._ta_opaque_modifier_volumes
                         else
                             self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
                     }
-                    self._ta_current_volume = null;
+
+                    // Soul Calibur will continue sending triangles without submitting a new Global Parameter, prepare for that.
+                    volume.first_triangle_index = @intCast(self._ta_volume_triangles.items.len);
+                    volume.triangle_count = 0;
+
                     self._ta_volume_next_polygon_is_last = false;
                 }
             }
