@@ -3,6 +3,7 @@ const std = @import("std");
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
 const zgui = @import("zgui");
+const zaudio = @import("zaudio");
 
 const common = @import("./common.zig");
 
@@ -42,6 +43,7 @@ pub const Deecy = struct {
 
     dc: *Dreamcast,
     renderer: Renderer = undefined,
+    audio_device: *zaudio.Device = undefined,
 
     running: bool = true,
     enable_jit: bool = true,
@@ -60,6 +62,8 @@ pub const Deecy = struct {
         };
 
         try zglfw.init();
+
+        zaudio.init(allocator);
 
         const self = try allocator.create(Deecy);
         self.* = Deecy{
@@ -85,12 +89,22 @@ pub const Deecy = struct {
             .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
         });
 
-        self.scale_factor = scale_factor: {
-            const scale = self.window.getContentScale();
-            break :scale_factor @max(scale[0], scale[1]);
-        };
+        const scale = self.window.getContentScale();
+        self.scale_factor = @max(scale[0], scale[1]);
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
+
+        var audio_device_config = zaudio.Device.Config.init(.playback);
+        audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
+        audio_device_config.data_callback = audio_callback;
+        audio_device_config.user_data = self;
+        audio_device_config.playback.format = .signed32;
+        audio_device_config.playback.channels = 1;
+        std.debug.print("Audio device config: {}\n", .{audio_device_config});
+        self.audio_device = try zaudio.Device.create(null, audio_device_config);
+
+        try self.audio_device.setMasterVolume(0.2);
+        try self.audio_device.start();
 
         try self.ui_init();
 
@@ -217,6 +231,8 @@ pub const Deecy = struct {
     pub fn destroy(self: *Deecy) void {
         self.breakpoints.deinit();
 
+        self.audio_device.destroy();
+
         self.renderer.deinit();
 
         self.dc.deinit();
@@ -224,11 +240,38 @@ pub const Deecy = struct {
 
         self.ui_deinit();
 
+        zaudio.deinit();
+
         self.gctx.destroy(self._allocator);
 
         self.window.destroy();
         zglfw.terminate();
 
         self._allocator.destroy(self);
+    }
+
+    fn audio_callback(
+        device: *zaudio.Device,
+        output: ?*anyopaque,
+        _: ?*const anyopaque, // Input
+        frame_count: u32,
+    ) callconv(.C) void {
+        const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
+        const aica = &self.dc.aica;
+
+        aica.sample_mutex.lock();
+        defer aica.sample_mutex.unlock();
+
+        var out: [*]i32 = @ptrCast(@alignCast(output));
+
+        var available: i64 = @as(i64, @intCast(aica.sample_write_offset)) - @as(i64, @intCast(aica.sample_read_offset));
+        if (available < 0) available += aica.sample_buffer.len;
+        if (available <= 0) return;
+        std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
+
+        for (0..@min(@as(usize, @intCast(available)), frame_count)) |i| {
+            out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
+            aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
+        }
     }
 };

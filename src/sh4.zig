@@ -73,6 +73,12 @@ pub const FPSCR = packed struct(u32) {
     _: u10 = undefined, // Reserved
 };
 
+const TimerRegisters = [3]struct { counter: P4Register, control: P4Register, constant: P4Register, interrupt: Interrupt }{
+    .{ .counter = P4Register.TCNT0, .control = P4Register.TCR0, .constant = P4Register.TCOR0, .interrupt = Interrupt.TUNI0 },
+    .{ .counter = P4Register.TCNT1, .control = P4Register.TCR1, .constant = P4Register.TCOR1, .interrupt = Interrupt.TUNI1 },
+    .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2, .interrupt = Interrupt.TUNI2 },
+};
+
 pub const VirtualAddr = packed struct {
     region: u3,
     addr: u29,
@@ -173,6 +179,8 @@ pub const SH4 = struct {
 
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
+        sh4_instructions.init_table();
+
         var sh4: SH4 = .{ ._dc = dc };
 
         sh4._allocator = allocator;
@@ -262,6 +270,14 @@ pub const SH4 = struct {
         self.p4_register(u16, .IPRB).* = 0x0000;
         self.p4_register(u16, .IPRC).* = 0x0000;
         self.compute_interrupt_priorities();
+
+        self.p4_register(u8, .TOCR).* = 0x00;
+        self.p4_register(u8, .TSTR).* = 0x00;
+        for (TimerRegisters) |timer| {
+            self.p4_register(u32, timer.constant).* = 0xFFFFFFFF;
+            self.p4_register(u32, timer.counter).* = 0xFFFFFFFF;
+            self.p4_register(u16, timer.control).* = 0x0000;
+        }
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
@@ -644,16 +660,11 @@ pub const SH4 = struct {
         // set in the corresponding timer control register (TCR). If the UNIE bit in TCR is set to 1 at this
         // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
         // into TCNT, and the count-down continues (auto-reload function).
-        const timers = .{
-            .{ .counter = P4Register.TCNT0, .control = P4Register.TCR0, .constant = P4Register.TCOR0, .interrupt = Interrupt.TUNI0 },
-            .{ .counter = P4Register.TCNT1, .control = P4Register.TCR1, .constant = P4Register.TCOR1, .interrupt = Interrupt.TUNI1 },
-            .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2, .interrupt = Interrupt.TUNI2 },
-        };
 
         inline for (0..3) |i| {
             if ((TSTR >> @intCast(i)) & 0x1 == 1) {
-                const tcnt = self.p4_register(u32, timers[i].counter);
-                const tcr = self.p4_register(P4.TCR, timers[i].control);
+                const tcnt = self.p4_register(u32, TimerRegisters[i].counter);
+                const tcr = self.p4_register(P4.TCR, TimerRegisters[i].control);
 
                 self.timer_cycle_counter[i] += cycles;
 
@@ -664,9 +675,9 @@ pub const SH4 = struct {
 
                     if (tcnt.* == 0) {
                         tcr.*.unf = 1; // Signals underflow
-                        tcnt.* = self.p4_register(u32, timers[i].constant).*; // Reset counter
+                        tcnt.* = self.p4_register(u32, TimerRegisters[i].constant).*; // Reset counter
                         if (tcr.*.unie == 1)
-                            self.request_interrupt(timers[i].interrupt);
+                            self.request_interrupt(TimerRegisters[i].interrupt);
                     } else {
                         tcnt.* -= 1;
                     }
@@ -723,8 +734,6 @@ pub const SH4 = struct {
         const c = DMACChannels[channel];
         const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
-        sh4_log.debug("DMAC ({d}) CHCR: {any}", .{ channel, chcr });
-
         // NOTE: I think the DC only uses 32 bytes transfers, but I'm not 100% sure.
         std.debug.assert(chcr.ts == 0b100);
         std.debug.assert(chcr.rs == 2); // "External request, single address mode"
@@ -741,6 +750,8 @@ pub const SH4 = struct {
         };
         const len = self.read_p4_register(u32, c.dmatcr);
         const byte_len = transfer_size * len;
+
+        sh4_log.info("DMAC ({d}) CHCR: {any}\n  src_addr: 0x{X:0>8} => dst_addr: 0x{X:0>8} (transfer_size: 0x{X:0>8}, len: 0x{X:0>8}, byte_len: 0x{X:0>8})", .{ channel, chcr, src_addr, dst_addr, transfer_size, len, byte_len });
 
         const dst_stride: i32 = switch (chcr.dm) {
             0 => 0,
@@ -1051,6 +1062,10 @@ pub const SH4 = struct {
                         // Too spammy, even for debugging.
                         P4Register.TCNT0 => return @constCast(self).p4_register_addr(T, virtual_addr).*,
                         else => {
+                            if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
+                                sh4_log.warn(termcolor.yellow("  Invalid Read({any}) to P4 register @{X:0>8}"), .{ T, virtual_addr });
+                                return 0;
+                            }
                             sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },

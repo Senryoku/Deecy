@@ -11,6 +11,7 @@ const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
 const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
+const AICAModule = @import("./aica.zig");
 
 const RendererModule = @import("renderer.zig");
 
@@ -319,7 +320,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.endGroup();
 
             const range = 32; // In bytes.
-            const pc = 0x00800000 + dc.aica.arm7.pc() - 4;
+            const pc = 0x00800000 + @max(4, dc.aica.arm7.pc() & dc.aica.arm7.memory_address_mask) - 4;
             var addr = std.math.clamp(pc - range / 2, 0x00800000, 0x00A00000 - range);
             const end_addr = addr + range;
             while (addr < end_addr) {
@@ -331,34 +332,86 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("AICA", .{})) {
+            zgui.text("Master Volume: {X}", .{dc.aica.debug_read_reg(u32, .MasterVolume) & 0xF});
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
+            zgui.text("SCIEB: {any}", .{dc.aica.debug_read_reg(AICAModule.InterruptBits, .SCIEB)});
+            zgui.text("INTRequest: {any}", .{dc.aica.debug_read_reg(u32, .INTRequest)});
+            if (zgui.collapsingHeader("Timers", .{ .default_open = true })) {
+                const timer_registers = [_]AICAModule.AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+                inline for (0..3) |i| {
+                    const number = std.fmt.comptimePrint("{d}", .{i});
+                    const timer = dc.aica.debug_read_reg(AICAModule.TimerControl, timer_registers[i]);
+                    zgui.text("Timer " ++ number ++ ": Prescale: {X:0>1} - Value: {X:0>2}", .{ timer.prescale, timer.value });
+                    const mask: u32 = @as(u32, 1) << @intCast(6 + i);
+                    zgui.text("Interrupt Enabled: {s}", .{if ((dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0) "Yes" else "No"});
+                }
+            }
+            if (zgui.plot.beginPlot("Sample Buffer", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                //zgui.plot.setupAxis(.x1, .{ .label = "time" });
+                zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
+                // zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
+                // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
+                // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
+                zgui.plot.setupFinish();
+                zgui.plot.plotLine("sample_read_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_read_offset), @intCast(dc.aica.sample_read_offset) }, .yv = &[_]i32{ 0, std.math.maxInt(i16) } });
+                zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
+                zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
+                zgui.plot.endPlot();
+            }
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
             inline for (0..64) |i| {
                 const channel = dc.aica.get_channel_registers(@intCast(i));
-                const state = dc.aica.channel_states[@intCast(i)];
+                zgui.pushPtrId(channel);
+                defer zgui.popId();
+                const state = dc.aica.channel_states[i];
                 const time: u32 = @truncate(@as(u64, @intCast(std.time.milliTimestamp())));
-                if (self.show_disabled_channels or state.playing) {
-                    if (zgui.collapsingHeader("Channel " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .default_open = true })) {
-                        const start_addr = (@as(u16, channel.play_control.start_address) << 7) + channel.sample_address;
-                        zgui.text("KeyOn: {any} - Format: {s} - Loop: {any} - Start Address: {X:0>4}", .{
+                if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
+                    const number = std.fmt.comptimePrint("{d}", .{i});
+                    if (zgui.collapsingHeader("Channel " ++ number, .{ .default_open = true })) {
+                        _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
+                        const start_addr = channel.sample_address();
+                        zgui.text("KeyOn: {any} - Format: {s} - Loop: {any}", .{
                             channel.play_control.key_on_bit,
                             @tagName(channel.play_control.sample_format),
                             channel.play_control.sample_loop,
-                            start_addr,
                         });
+                        zgui.text("Start Address: {X: >8} - Loop: {X:0>4} - {X:0>4}", .{
+                            start_addr,
+                            channel.loop_start,
+                            channel.loop_end,
+                        });
+                        zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
-                        zgui.text("PlayPos: {d: >10} - EnvState: {s: >10} - EnvLevel: {X: >5} - LoopEnd: {s: >3}", .{ state.play_position, @tagName(state.status.EnvelopeState), state.status.EnvelopeLevel, if (state.status.LoopEndFlag == 1) "Yes" else "No" });
+                        zgui.sameLine(.{});
+                        zgui.text("PlayPos: {d: >10} - LoopEnd: {s: >3}", .{ state.play_position, if (state.loop_end_flag) "Yes" else "No" });
+                        const effective_rate = AICAModule.AICAChannelState.compute_effective_rate(channel, switch (state.amp_env_state) {
+                            .Attack => channel.amp_env_1.attack_rate,
+                            .Decay => channel.amp_env_1.decay_rate,
+                            .Sustain => channel.amp_env_1.sustain_rate,
+                            .Release => channel.amp_env_2.release_rate,
+                        });
+                        zgui.text("AmpEnv    {s: >7} - level: {X: >5} - rate: {X: >5}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
+                        zgui.text("FilterEnv {s: >7} - level: {X: >5}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        var loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
+                        if (loop_size == 0) loop_size = 2048;
                         if (channel.play_control.sample_format == .i16) {
-                            if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
-                                // zgui.plot.setupAxis(.x1, .{ .label = "xaxis" });
+                            if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
-                                // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                                 zgui.plot.setupFinish();
-                                zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..44100] });
+                                zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                                zgui.plot.endPlot();
+                            }
+                        } else if (channel.play_control.sample_format == .i8) {
+                            if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
+                                zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
+                                zgui.plot.setupFinish();
+                                zgui.plot.plotLineValues("samples", i8, .{ .v = @as([*]const i8, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
                                 zgui.plot.endPlot();
                             }
                         }
-                        if (self.audio_channels[i].amplitude_envelope.xv.items.len > 10_000) {
+                        if (time - self.audio_channels[i].amplitude_envelope.start_time > 10_000) {
                             self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
                             self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
                         }
@@ -368,8 +421,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             self.audio_channels[i].amplitude_envelope.start_time = time;
                             try self.audio_channels[i].amplitude_envelope.xv.append(0);
                         }
-                        try self.audio_channels[i].amplitude_envelope.yv.append(state.status.EnvelopeLevel);
-                        if (zgui.plot.beginPlot("Envelope", .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        try self.audio_channels[i].amplitude_envelope.yv.append(state.amp_env_level);
+                        if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxis(.x1, .{ .label = "time" });
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });

@@ -38,14 +38,17 @@ const BlockCache = struct {
     min_address: u32 = std.math.maxInt(u32),
     max_address: u32 = 0,
 
+    addr_mask: u32 = 0xFFFFFFFF,
+
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
+    pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
         try std.posix.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
 
         var r: @This() = .{
             .buffer = buffer,
+            .addr_mask = addr_mask,
             ._allocator = allocator,
         };
         try r.allocate_blocks();
@@ -118,14 +121,14 @@ const BlockCache = struct {
     }
 
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
-        return self.blocks[address >> 2];
+        return self.blocks[(address & self.addr_mask) >> 2];
     }
 
     pub fn put(self: *@This(), address: u32, end_address: u32, block: BasicBlock) void {
-        self.min_address = @min(self.min_address, address);
-        self.max_address = @max(self.max_address, end_address);
+        self.min_address = @min(self.min_address, address & self.addr_mask);
+        self.max_address = @max(self.max_address, end_address & self.addr_mask);
 
-        self.blocks[address >> 2] = block;
+        self.blocks[(address & self.addr_mask) >> 2] = block;
     }
 };
 
@@ -141,9 +144,9 @@ pub const ARM7JIT = struct {
 
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
+    pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
         return .{
-            .block_cache = try BlockCache.init(allocator),
+            .block_cache = try BlockCache.init(allocator, addr_mask),
             ._allocator = allocator,
         };
     }
@@ -157,7 +160,7 @@ pub const ARM7JIT = struct {
 
         var spent_cycles: i32 = 0;
         while (spent_cycles < cycles) {
-            const pc = cpu.pc() - 4; // Pipelining...
+            const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
             var block = self.block_cache.get(pc);
             if (block == null) {
                 arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
@@ -172,12 +175,20 @@ pub const ARM7JIT = struct {
             }
             // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(cpu);
+            cpu.check_fiq(); // FIXME: Non-tested.
+
             spent_cycles += @intCast(block.?.cycles);
 
             // Not necessary, just here to allow compatibility with the interpreter if we need it.
             // (Right now we're always calling to the interpreter so this should stay in sync, but once
             //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() - 4) & cpu.memory_address_mask]))).*;
+            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+
+            if (cpu.pc() > cpu.memory_address_mask) {
+                arm_jit_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{cpu.pc()});
+                cpu.running = false;
+                break;
+            }
         }
 
         return spent_cycles;

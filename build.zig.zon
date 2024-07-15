@@ -6,6 +6,7 @@
         .zgpu = .{ .path = "libs/zig-gamedev/libs/zgpu" },
         .zglfw = .{ .path = "libs/zig-gamedev/libs/zglfw" },
         .zgui = .{ .path = "libs/zig-gamedev/libs/zgui" },
+        .zaudio = .{ .path = "libs/zig-gamedev/libs/zaudio" },
         .common = .{ .path = "libs/zig-gamedev/libs/common" },
         .system_sdk = .{ .path = "libs/zig-gamedev/libs/system-sdk" },
         .zpool = .{ .path = "libs/zig-gamedev/libs/zpool" },

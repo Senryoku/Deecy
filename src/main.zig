@@ -33,7 +33,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .syscall_log, .level = .info },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .info },
+        .{ .scope = .gdrom, .level = .warn },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },
@@ -92,7 +92,7 @@ pub fn main() !void {
         dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
 
     if (binary_path) |path| {
-        dc.skip_bios();
+        dc.skip_bios(false);
 
         var bin_file = try std.fs.cwd().openFile(path, .{});
         defer bin_file.close();
@@ -108,7 +108,7 @@ pub fn main() !void {
         }
     } else if (gdi_path) |path| {
         if (skip_bios) {
-            dc.skip_bios();
+            dc.skip_bios(true);
 
             // Load 1STREAD.BIN (Actual name might change)
             const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
@@ -136,7 +136,7 @@ pub fn main() !void {
     } else {
         if (skip_bios) {
             // Boot to menu
-            dc.skip_bios();
+            dc.skip_bios(true);
             // Skip IP.bin (Maybe we should bundle one to load here).
             dc.cpu.pc = 0xAC010000;
         }
@@ -148,6 +148,8 @@ pub fn main() !void {
     var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);
 
     var blit_framebuffer_from_vram = true;
+
+    var last_wait = try std.time.Instant.now();
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
@@ -176,12 +178,13 @@ pub fn main() !void {
 
         if (d.running) {
             const start = try std.time.Instant.now();
+            var cycles: u64 = 0;
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
             while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
                 if (!d.enable_jit) {
                     const max_instructions: u8 = if (d.breakpoints.items.len == 0) 16 else 1;
 
-                    _ = try dc.tick(max_instructions);
+                    cycles += try dc.tick(max_instructions);
 
                     // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
                     if (max_instructions == 1) {
@@ -194,11 +197,15 @@ pub fn main() !void {
                     }
                 } else {
                     for (0..32) |_| {
-                        _ = try dc.tick_jit();
+                        cycles += try dc.tick_jit();
                         if (dc.gpu.render_start) break;
                     }
                 }
             }
+
+            // Busy wait to limit SH4 clock speed. FIXME: This is gross.
+            while ((try std.time.Instant.now()).since(last_wait) < @divTrunc(std.time.ns_per_s * cycles, 200_000_000)) {}
+            last_wait = try std.time.Instant.now();
         }
 
         const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
