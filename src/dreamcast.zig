@@ -120,7 +120,7 @@ pub const Dreamcast = struct {
 
     _allocator: std.mem.Allocator,
 
-    _dummy: [4]u8 align(32) = undefined, // FIXME: Dummy space for non-implemented features
+    _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
 
     _stopping: bool = false,
     _aica_thread: std.Thread = undefined,
@@ -234,6 +234,8 @@ pub const Dreamcast = struct {
         try self.sh4_jit.block_cache.reset();
 
         @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
+
+        @memset(self.hardware_registers, 0x00);
 
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_MDST).* = 0;
