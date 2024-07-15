@@ -714,6 +714,7 @@ pub const ModifierVolume = struct {
     instructions: ModifierVolumeInstruction,
     first_triangle_index: u32,
     triangle_count: u32 = 0,
+    closed: bool,
 };
 
 pub const PackedColor = packed struct(u32) {
@@ -1467,6 +1468,7 @@ pub const Holly = struct {
                             .parameter_control_word = modifier_volume.*.parameter_control_word,
                             .instructions = modifier_volume.*.instructions,
                             .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
+                            .closed = modifier_volume.parameter_control_word.obj_control.volume == 1,
                         };
                     } else if (modifier_volume.instructions.volume_instruction == .InsideLastPolygon or modifier_volume.instructions.volume_instruction == .OutsideLastPolygon) {
                         if (modifier_volume.*.instructions.volume_instruction == .OutsideLastPolygon) {
@@ -1475,6 +1477,7 @@ pub const Holly = struct {
                         if (self._ta_current_volume) |*cv| {
                             self._ta_volume_next_polygon_is_last = true;
                             cv.instructions = modifier_volume.*.instructions;
+                            cv.closed = modifier_volume.parameter_control_word.obj_control.volume == 1;
                         }
                     }
                 } else {
@@ -1520,6 +1523,7 @@ pub const Holly = struct {
                 if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                     if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
                     self._ta_volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
+
                     if (self._ta_volume_next_polygon_is_last) {
                         self.check_end_of_modifier_volume();
                     }
