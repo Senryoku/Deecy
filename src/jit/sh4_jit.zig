@@ -25,6 +25,15 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
+const MaxCyclesPerBlock = 16;
+
+// Enable or Disable some optimizations
+const Optimizations = .{
+    .div1_simplification = true,
+    .inline_small_forward_jumps = true,
+    .inline_jumps_to_start_of_block = true,
+};
+
 const BlockCache = struct {
     // 0x02200000 possible addresses, but 16bit aligned, multiplied by permutations of (sz, pr)
     const BlockEntryCount = (0x02200000 >> 1) << 2;
@@ -437,6 +446,8 @@ pub const SH4JIT = struct {
 
     // Try to match some common division patterns and replace them with a "single" instruction.
     fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext) !void {
+        if (!Optimizations.div1_simplification) return;
+
         _ = self;
         // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
         //        Tested by looking at the timer in Soulcalibur :^)
@@ -501,6 +512,7 @@ pub const SH4JIT = struct {
 
         ctx.start_index = @intCast(b.instructions.items.len);
 
+        var branch = false;
         while (true) {
             try self.simplify_div(&b, &ctx);
 
@@ -511,13 +523,13 @@ pub const SH4JIT = struct {
                 if (op.use_fallback()) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
-            const branch = try op.jit_emit_fn(&b, &ctx, @bitCast(instr));
+            branch = try op.jit_emit_fn(&b, &ctx, @bitCast(instr));
 
             ctx.cycles += op.issue_cycles;
             ctx.index += 1;
             ctx.address += 2;
 
-            if (branch)
+            if (branch or ctx.cycles >= MaxCyclesPerBlock)
                 break;
         }
 
@@ -529,7 +541,9 @@ pub const SH4JIT = struct {
 
         // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
         // cpu.pc += 2;
-        if (ctx.outdated_pc) {
+        if (!branch) {
+            try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
+        } else if (ctx.outdated_pc) {
             try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
             try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
@@ -1844,7 +1858,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
 
     // Jump back at the start of this block
-    if (dest == ctx.start_address) {
+    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.start_address) {
         if (delay_slot) try ctx.compile_delay_slot(block);
 
         const loop_cycles = ctx.cycles + instr_lookup(@bitCast(instr)).issue_cycles;
@@ -1856,10 +1870,9 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         try load_t(block, ctx);
         var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
-        // Break out if we already spent too many cycles here.
-        const MaxCycles = 256;
+        // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
         try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } });
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCycles } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
         var break_loop = try block.jmp(.Greater);
 
         // Count cycles spent into one traversal of the loop.
@@ -1878,7 +1891,10 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         to_end.patch();
 
         ctx.outdated_pc = false;
-    } else {
+        return true;
+    }
+
+    if (Optimizations.inline_small_forward_jumps) {
         // Optimize small forward jumps if possible
         const max_instructions = 4;
         const first_instr = if (delay_slot) 2 else 1;
@@ -1937,10 +1953,10 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
             taken.patch();
 
             return false;
-        } else return default_conditional_branch(block, ctx, instr, jump_if, delay_slot);
+        }
     }
 
-    return true;
+    return default_conditional_branch(block, ctx, instr, jump_if, delay_slot);
 }
 
 pub fn bf_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
