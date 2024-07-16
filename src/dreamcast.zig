@@ -24,7 +24,7 @@ const GDROM = @import("gdrom.zig").GDROM;
 
 const dc_log = std.log.scoped(.dc);
 
-const Region = enum(u8) {
+pub const Region = enum(u8) {
     Japan = 0,
     USA = 1,
     Europe = 2,
@@ -94,7 +94,6 @@ const ScheduledInterrupt = struct {
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
 const user_data_directory = "./userdata/";
-const user_flash_path = user_data_directory ++ "flash.bin";
 
 pub const Dreamcast = struct {
     const threaded_aica: bool = false; // FIXME: Ecco crashes when enabled.
@@ -107,8 +106,9 @@ pub const Dreamcast = struct {
 
     sh4_jit: SH4JIT,
 
-    // Pluged in video cable reported to the CPU:e.
+    // Pluged in video cable reported to the CPU.
     cable_type: CableType = .VGA,
+    region: Region = .Unknown,
 
     boot: []u8 align(4),
     flash: Flash,
@@ -152,45 +152,18 @@ pub const Dreamcast = struct {
             dc._aica_thread = try std.Thread.spawn(.{}, aica_thread, .{dc});
         }
 
-        // Load ROM
-        const boot_path = "./bin/dc_boot.bin";
-        var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
-            dc_log.err(termcolor.red("Failed to open boot ROM at '" ++ boot_path ++ "', error: {any}."), .{err});
-            return err;
-        };
-        defer boot_file.close();
-        const bytes_read = try boot_file.readAll(dc.boot);
-        std.debug.assert(bytes_read == 0x200000);
+        // Create 'userdata' folder if it doesn't exist
+        try std.fs.cwd().makePath(user_data_directory);
+
+        try dc.set_region(.USA);
+
+        try dc.reset();
 
         // FIXME: Hack to bypass some checks I'm failling to emulate.
         //        Pretty sure this is linked to the GD ROM, bios is waiting on something here.
         //        Insert a nop instead of the branch.
         // dc.boot[0x077B] = 0x00;
         // dc.boot[0x077A] = 0x09;
-
-        // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath(user_data_directory);
-
-        // Load Flash
-        var flash_file = std.fs.cwd().openFile(user_flash_path, .{}) catch |err| f: {
-            if (err == error.FileNotFound) {
-                dc_log.info("Loading default flash ROM.", .{});
-                const default_flash_path = "./bin/dc_flash.bin";
-                break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-                    dc_log.err(termcolor.red("Failed to open default flash file at '" ++ default_flash_path ++ "', error: {any}."), .{e});
-                    return e;
-                };
-            } else {
-                dc_log.err(termcolor.red("Failed to open user flash file at '" ++ user_flash_path ++ "', error: {any}."), .{err});
-                return err;
-            }
-        };
-
-        defer flash_file.close();
-        const flash_bytes_read = try flash_file.readAll(dc.flash.data);
-        std.debug.assert(flash_bytes_read == 0x20000);
-
-        try dc.reset();
 
         return dc;
     }
@@ -204,13 +177,18 @@ pub const Dreamcast = struct {
 
         // Write flash to disk
         if (!@import("builtin").is_test) {
-            if (std.fs.cwd().createFile(user_flash_path, .{})) |file| {
+            var buf = [1]u8{0} ** 128;
+            const filename = self.get_user_flash_path(&buf) catch |err| {
+                dc_log.err("Failed to get user flash path: {any}", .{err});
+                @panic("Failed to get user flash path");
+            };
+            if (std.fs.cwd().createFile(filename, .{})) |file| {
                 defer file.close();
                 _ = file.writeAll(self.flash.data) catch |err| {
                     dc_log.err("Failed to save user flash: {any}", .{err});
                 };
             } else |err| {
-                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ user_flash_path, err });
+                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
             }
         }
 
@@ -263,6 +241,58 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_G2DSTO).* = 0x000003FF;
         self.hw_register(u32, .SB_G2TRTO).* = 0x000003FF;
+    }
+
+    pub fn userdata_subdir(self: *@This()) []const u8 {
+        return switch (self.region) {
+            .Japan => "jp",
+            .USA => "us",
+            .Europe => "eu",
+            else => "us",
+        };
+    }
+
+    pub fn get_user_flash_path(self: *@This(), buf: []u8) ![]const u8 {
+        return try std.fmt.bufPrint(buf, user_data_directory ++ "{s}/flash.bin", .{self.userdata_subdir()});
+    }
+
+    pub fn set_region(self: *@This(), region: Region) !void {
+        self.region = region;
+        var buf = [1]u8{0} ** 128;
+        try self.load_bios(try std.fmt.bufPrint(&buf, "data/{s}/dc_boot.bin", .{self.userdata_subdir()}));
+        try self.load_flash();
+    }
+
+    pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
+        var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
+            dc_log.err(termcolor.red("Failed to open boot ROM at '{s}', error: {any}."), .{ boot_path, err });
+            return err;
+        };
+        defer boot_file.close();
+        const bytes_read = try boot_file.readAll(self.boot);
+        std.debug.assert(bytes_read == 0x200000);
+    }
+
+    pub fn load_flash(self: *@This()) !void {
+        var buf = [1]u8{0} ** 128;
+
+        var flash_file = std.fs.cwd().openFile(try self.get_user_flash_path(&buf), .{}) catch |err| f: {
+            if (err == error.FileNotFound) {
+                dc_log.info("Loading default flash ROM.", .{});
+                const default_flash_path = try std.fmt.bufPrint(&buf, "data/{s}/dc_flash.bin", .{self.userdata_subdir()});
+                break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
+                    dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
+                    return e;
+                };
+            } else {
+                dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ try self.get_user_flash_path(&buf), err });
+                return err;
+            }
+        };
+
+        defer flash_file.close();
+        const flash_bytes_read = try flash_file.readAll(self.flash.data);
+        std.debug.assert(flash_bytes_read == 0x20000);
     }
 
     pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {

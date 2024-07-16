@@ -8,7 +8,8 @@ const sh4 = @import("./sh4.zig");
 const P4Register = sh4.P4Register;
 const sh4_disassembly = @import("./sh4_disassembly.zig");
 const HardwareRegisters = @import("./hardware_registers.zig");
-const Dreamcast = @import("./dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("./dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 const GDI = @import("./gdi.zig").GDI;
 const Holly = @import("./holly.zig");
 const MapleModule = @import("./maple.zig");
@@ -88,8 +89,25 @@ pub fn main() !void {
         }
     }
 
-    if (gdi_path) |path|
+    if (gdi_path) |path| {
+        std.log.info("Loading GDI: {s}...", .{path});
         dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
+
+        var region = DreamcastModule.Region.Unknown;
+        if (dc.gdrom.disk.?.tracks.items[2].data[0x40] == 'J') {
+            region = .Japan;
+        }
+        if (dc.gdrom.disk.?.tracks.items[2].data[0x41] == 'U') {
+            region = .USA;
+        }
+        if (dc.gdrom.disk.?.tracks.items[2].data[0x42] == 'E') {
+            region = .Europe;
+        }
+        std.log.info("  Detected region: {s}", .{@tagName(region)});
+        if (region != .Unknown) {
+            try dc.set_region(region);
+        }
+    }
 
     if (binary_path) |path| {
         dc.skip_bios(false);
