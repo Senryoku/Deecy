@@ -563,7 +563,7 @@ pub const AICA = struct {
                             self.regs[local_addr / 4] = value & PlayControl.Mask;
 
                             const val: PlayControl = @bitCast(value);
-                            aica_log.info("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
+                            aica_log.debug("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
                             if (val.key_on_execute) self.key_on_execute();
                         },
                         else => @compileError("Invalid value type"),
@@ -799,7 +799,7 @@ pub const AICA = struct {
 
     // Key on execute: Execute a key on for every channel this the KeyOn bit enabled.
     fn key_on_execute(self: *AICA) void {
-        aica_log.info(termcolor.green("Key On Execute"), .{});
+        aica_log.debug(termcolor.green("Key On Execute"), .{});
         for (0..64) |i| {
             const regs = self.get_channel_registers(@intCast(i));
             if (regs.play_control.key_on_bit) {
