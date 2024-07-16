@@ -129,6 +129,15 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
 
+        if (zgui.begin("Settings", .{})) {
+            var volume = try d.audio_device.getMasterVolume();
+            if (zgui.sliderFloat("Volume", .{ .v = &volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
+                try d.audio_device.setMasterVolume(volume);
+            }
+            _ = zguiSelectEnum("CPU Throttling Method", &d.cpu_throttling_method);
+        }
+        zgui.end();
+
         if (zgui.begin("Controls", .{})) {
             var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick.Id, name: [:0]const u8 }).init(self._allocator);
             defer available_controllers.deinit();

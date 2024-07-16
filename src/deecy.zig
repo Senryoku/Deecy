@@ -45,6 +45,8 @@ pub const Deecy = struct {
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
+    cpu_throttling_method: enum { None, BusyWait } = .BusyWait,
+
     running: bool = true,
     enable_jit: bool = true,
     breakpoints: std.ArrayList(u32),
