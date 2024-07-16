@@ -110,7 +110,10 @@ pub fn main() !void {
     }
 
     if (binary_path) |path| {
-        dc.skip_bios(false);
+        // FIXME: I'd rather be using LLE syscalls here,
+        //        but at least the ROM font one requires some initialization
+        //        and won't work if the boot ROM is skipped.
+        dc.skip_bios(true);
 
         var bin_file = try std.fs.cwd().openFile(path, .{});
         defer bin_file.close();
