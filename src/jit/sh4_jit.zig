@@ -937,21 +937,21 @@ pub fn movl_atRmInc_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     return false;
 }
 
-pub fn movb_Rm_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rm -= 1
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
     return movb_Rm_atRn(block, ctx, instr);
 }
 
-pub fn movw_Rm_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn movw_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rm -= 2
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
     return movw_Rm_atRn(block, ctx, instr);
 }
 
-pub fn movl_Rm_atRnDec(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+pub fn movl_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rm -= 4
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
