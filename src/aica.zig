@@ -735,10 +735,19 @@ pub const AICA = struct {
         std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 0, s.arm7.read(u32, s.arm7.pc() - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 0)) });
     }
 
+    fn dump_wave_memory(self: *const @This()) void {
+        const path = "logs/wave_memory_dump.bin";
+        const file = std.fs.cwd().createFile(path, .{}) catch unreachable;
+        defer file.close();
+        _ = file.write(self.wave_memory) catch unreachable;
+        aica_log.err("[+] Wrote wave memory dump to '{s}'.", .{path});
+    }
+
     pub fn read8_from_arm(self: *AICA, addr: u32) u8 {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read8 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
+            self.dump_wave_memory();
             @panic("AICA read8 from ARM out of bounds address");
         }
         return self.read_register(u8, addr);
@@ -748,6 +757,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             aica_log.err(termcolor.red("AICA read32 from ARM out of bounds address: 0x{X:0>8}"), .{addr});
             self.arm_debug_dump();
+            self.dump_wave_memory();
             @panic("AICA read32 from ARM out of bounds address");
         }
         return self.read_register(u32, addr);
@@ -757,6 +767,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             std.debug.print("AICA write8 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
             self.arm_debug_dump();
+            self.dump_wave_memory();
             @panic("AICA write8 from ARM out of bounds address");
         }
         self.write_register(u8, addr, value);
@@ -765,6 +776,7 @@ pub const AICA = struct {
         if (!(addr >= 0x00800000 and addr < 0x00808000)) {
             std.debug.print("AICA write32 from ARM: 0x{X:0>8} = 0x{X:0>8}\n", .{ addr, value });
             self.arm_debug_dump();
+            self.dump_wave_memory();
             @panic("AICA write32 from ARM out of bounds address");
         }
         self.write_register(u32, addr, value);
