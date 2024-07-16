@@ -1528,7 +1528,9 @@ pub const Holly = struct {
                         const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
                         switch (polygon.*) {
                             .Sprite => {
-                                std.debug.assert(parameter_control_word.end_of_strip == 1); // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                                if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                                    holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {any}", .{parameter_control_word});
+                                }
                                 if (polygon_obj_control.texture == 0) {
                                     if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
                                     display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
