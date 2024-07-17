@@ -606,6 +606,17 @@ pub const Polygon = union(PolygonType) {
     PolygonType3: PolygonType3,
     PolygonType4: PolygonType4,
     Sprite: Sprite,
+
+    pub fn tag(self: @This()) PolygonType {
+        return switch (self) {
+            .PolygonType0 => .PolygonType0,
+            .PolygonType1 => .PolygonType1,
+            .PolygonType2 => .PolygonType2,
+            .PolygonType3 => .PolygonType3,
+            .PolygonType4 => .PolygonType4,
+            .Sprite => .Sprite,
+        };
+    }
 };
 
 fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
@@ -997,6 +1008,28 @@ pub const VertexParameter = union(VertexParameterType) {
     Type14: VertexParameter_14,
     SpriteType0: VertexParameter_Sprite_0,
     SpriteType1: VertexParameter_Sprite_1,
+
+    pub fn tag(self: @This()) VertexParameterType {
+        return switch (self) {
+            .Type0 => .Type0,
+            .Type1 => .Type1,
+            .Type2 => .Type2,
+            .Type3 => .Type3,
+            .Type4 => .Type4,
+            .Type5 => .Type5,
+            .Type6 => .Type6,
+            .Type7 => .Type7,
+            .Type8 => .Type8,
+            .Type9 => .Type9,
+            .Type10 => .Type10,
+            .Type11 => .Type11,
+            .Type12 => .Type12,
+            .Type13 => .Type13,
+            .Type14 => .Type14,
+            .SpriteType0 => .SpriteType0,
+            .SpriteType1 => .SpriteType1,
+        };
+    }
 };
 
 // Returns the size in words (4 bytes) of the vertex parameter

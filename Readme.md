@@ -41,7 +41,8 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
         - Test polygons with 'Two Volumes' (another way to use the modifier volumes).
         - TODO: Same, but for the translucent pass.
     - Fog LUT Mode 2.
-    - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
+    - Secondary accumulate buffer (very low priority, not sure if many games use this feature).
+    - Bump mapping.
     - Handle and generate Mipmaps.
     - Sort-DMA?
     - User Tile Clip, only the simplest version is supported.

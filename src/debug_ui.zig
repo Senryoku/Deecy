@@ -528,8 +528,15 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
                     if (zgui.collapsingHeader(header, .{})) {
                         zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
-                        for (list.vertex_strips.items) |strip| {
-                            zgui.text("  {any}", .{strip.polygon});
+                        for (list.vertex_strips.items, 0..) |strip, idx| {
+                            const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d})###strip_{d}", .{ @tagName(strip.polygon.tag()), strip.verter_parameter_count, idx });
+                            if (zgui.collapsingHeader(strip_header, .{})) {
+                                zgui.indent(.{});
+                                for (strip.verter_parameter_index..(strip.verter_parameter_index + strip.verter_parameter_count)) |i| {
+                                    zgui.text("  {s}", .{@tagName(list.vertex_parameters.items[i].tag())});
+                                }
+                                zgui.unindent(.{});
+                            }
                         }
                     }
                 }
