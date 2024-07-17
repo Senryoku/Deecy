@@ -11,19 +11,21 @@
 @group(1) @binding(0) var image_sampler: sampler;
 
 fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+    var idx = index;
+    if(idx > 255) { idx = 0; }
     // textureSample can't be called in non-uniform context, because of this derivative, I guess.
     // This kinda feel like a hack, but works.
     let ddx = dpdx(uv);
     let ddy = dpdy(uv);
     switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-        case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, ddx, ddy); }
-        case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, index, ddx, ddy); }
-        case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, index, ddx, ddy); }
-        case 3u: { return textureSampleGrad(texture_array_64x64, image_sampler, uv, index, ddx, ddy); }
-        case 4u: { return textureSampleGrad(texture_array_128x128, image_sampler, uv, index, ddx, ddy); }
-        case 5u: { return textureSampleGrad(texture_array_256x256, image_sampler, uv, index, ddx, ddy); }
-        case 6u: { return textureSampleGrad(texture_array_512x512, image_sampler, uv, index, ddx, ddy); }
-        case 7u: { return textureSampleGrad(texture_array_1024x1024, image_sampler, uv, index, ddx, ddy); }
+        case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, idx, ddx, ddy); }
+        case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, idx, ddx, ddy); }
+        case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, idx, ddx, ddy); }
+        case 3u: { return textureSampleGrad(texture_array_64x64, image_sampler, uv, idx, ddx, ddy); }
+        case 4u: { return textureSampleGrad(texture_array_128x128, image_sampler, uv, idx, ddx, ddy); }
+        case 5u: { return textureSampleGrad(texture_array_256x256, image_sampler, uv, idx, ddx, ddy); }
+        case 6u: { return textureSampleGrad(texture_array_512x512, image_sampler, uv, idx, ddx, ddy); }
+        case 7u: { return textureSampleGrad(texture_array_1024x1024, image_sampler, uv, idx, ddx, ddy); }
         default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); } 
     }
 }
