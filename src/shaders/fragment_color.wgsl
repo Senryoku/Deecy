@@ -10,22 +10,18 @@
 
 @group(1) @binding(0) var image_sampler: sampler;
 
-fn tex_sample(uv: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
-    var idx = index;
-    if(idx > 255) { idx = 0; }
-    // textureSample can't be called in non-uniform context, because of this derivative, I guess.
-    // This kinda feel like a hack, but works.
-    let ddx = dpdx(uv);
-    let ddy = dpdy(uv);
+fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+    if(index > 255) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+
     switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-        case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, idx, ddx, ddy); }
-        case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, idx, ddx, ddy); }
-        case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, idx, ddx, ddy); }
-        case 3u: { return textureSampleGrad(texture_array_64x64, image_sampler, uv, idx, ddx, ddy); }
-        case 4u: { return textureSampleGrad(texture_array_128x128, image_sampler, uv, idx, ddx, ddy); }
-        case 5u: { return textureSampleGrad(texture_array_256x256, image_sampler, uv, idx, ddx, ddy); }
-        case 6u: { return textureSampleGrad(texture_array_512x512, image_sampler, uv, idx, ddx, ddy); }
-        case 7u: { return textureSampleGrad(texture_array_1024x1024, image_sampler, uv, idx, ddx, ddy); }
+        case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, duvdx, duvdy); }
+        case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, index, duvdx, duvdy); }
+        case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, index, duvdx, duvdy); }
+        case 3u: { return textureSampleGrad(texture_array_64x64, image_sampler, uv, index, duvdx, duvdy); }
+        case 4u: { return textureSampleGrad(texture_array_128x128, image_sampler, uv, index, duvdx, duvdy); }
+        case 5u: { return textureSampleGrad(texture_array_256x256, image_sampler, uv, index, duvdx, duvdy); }
+        case 6u: { return textureSampleGrad(texture_array_512x512, image_sampler, uv, index, duvdx, duvdy); }
+        case 7u: { return textureSampleGrad(texture_array_1024x1024, image_sampler, uv, index, duvdx, duvdy); }
         default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); } 
     }
 }
@@ -92,18 +88,20 @@ fn area_color(
     base_color: vec4<f32>,
     offset_color: vec4<f32>,
     uv: vec2<f32>,
+    duvdx: vec2<f32>,
+    duvdy: vec2<f32>,
     tex: vec2<u32>,
     inv_w: f32,
     punch_through: bool,
 ) -> vec4<f32> {
-    let u_size: f32 = tex_size((tex[1] >> 4) & 7);
-    let v_size: f32 = tex_size((tex[1] >> 7) & 7);
-    let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
-    let tex_color = tex_sample(uv_factor * uv, tex[1], tex[0]);
-
     var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
 
     if (tex[1] & 1) == 1 {
+        let u_size: f32 = tex_size((tex[1] >> 4) & 7);
+        let v_size: f32 = tex_size((tex[1] >> 7) & 7);
+        let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
+        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, tex[1], tex[0]);
+
         let shading = (tex[1] >> 1) & 0x3;
         let ignore_tex_alpha = ((tex[1] >> 3) & 0x1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
@@ -161,29 +159,35 @@ fn fragment_color(
     inv_w: f32,
     punch_through: bool,
 ) -> FragmentColor {
-    
     var output : FragmentColor;
+    
+    let duvdx = dpdx(uv);
+    let duvdy = dpdy(uv);
+    let area1_duvdx= dpdx(area1_uv);
+    let area1_duvdy= dpdy(area1_uv);
+
     output.area0 = area_color(
         base_color,
         offset_color,
         uv,
+        duvdx,
+        duvdy,
         tex,
-        inv_w,
-        punch_through
-    );
-    
-    // Call must done from a uniform context because of texture loads, can't be conditional.
-    let area1 = area_color(
-        area1_base_color,
-        area1_offset_color,
-        area1_uv,
-        area1_tex,
         inv_w,
         punch_through
     );
 
     if(((tex[1] >> 23) & 1) == 1) { // "Two Volume"
-        output.area1 = area1;
+        output.area1 = area_color(
+            area1_base_color,
+            area1_offset_color,
+            area1_uv,
+            area1_duvdx,
+            area1_duvdy,
+            area1_tex,
+            inv_w,
+            punch_through
+        );
     } else {
         output.area1 = output.area0;
     }
