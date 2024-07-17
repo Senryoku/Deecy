@@ -103,11 +103,6 @@ pub const FPSavedRegisters = switch (JITABI) {
     .SystemV => [_]FPRegister{}, // FIXME: This is an issue :))
 };
 
-const PatchableJump = struct {
-    source: u32,
-    address_to_patch: u32,
-};
-
 // RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
 const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
 // I mean, I don't know what to call these... (0xF7 opcode)
@@ -477,41 +472,71 @@ const ScalarFPOpcodes = enum(u8) {
     Max = 0x5F,
 };
 
+const PatchableJump = struct {
+    source: u32 = Invalid,
+    address_to_patch: u32 = Invalid,
+
+    const Invalid: u32 = 0xFFFFFFFF;
+
+    pub fn invalid(self: @This()) bool {
+        return self.source == Invalid or self.address_to_patch == Invalid;
+    }
+};
+
+const PatchableJumpList = struct {
+    items: [4]PatchableJump = .{.{}} ** 4,
+
+    pub fn add(self: *@This(), patchable_jump: PatchableJump) !void {
+        std.debug.assert(!patchable_jump.invalid());
+
+        for (&self.items) |*item| {
+            if (item.invalid()) {
+                item.* = patchable_jump;
+                return;
+            }
+        }
+        return error.PatchableJumpFull;
+    }
+};
+
 pub const Emitter = struct {
     block: BasicBlock,
     block_size: u32 = 0,
 
-    instruction_offsets: []u32 = undefined,
+    instruction_offsets: []u32,
 
-    jumps_to_patch: std.AutoHashMap(u32, std.ArrayList(PatchableJump)) = undefined,
+    jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList) = undefined,
 
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, block_buffer: []u8) @This() {
+    pub fn init(allocator: std.mem.Allocator, block_buffer: []u8) !@This() {
         return .{
             .block = BasicBlock.init(block_buffer),
-            .jumps_to_patch = std.AutoHashMap(u32, std.ArrayList(PatchableJump)).init(allocator),
+            .jumps_to_patch = std.AutoHashMap(u32, PatchableJumpList).init(allocator),
+            .instruction_offsets = try allocator.alloc(u32, 64),
             ._allocator = allocator,
         };
     }
 
     pub fn deinit(self: *@This()) void {
+        self._allocator.free(self.instruction_offsets);
         self.jumps_to_patch.deinit();
     }
 
     pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
-        self.instruction_offsets = try self._allocator.alloc(u32, instructions.len);
-        defer self._allocator.free(self.instruction_offsets);
+        if (self.instruction_offsets.len < instructions.len)
+            self.instruction_offsets = try self._allocator.realloc(self.instruction_offsets, instructions.len);
 
         for (instructions, 0..) |instr, idx| {
             self.instruction_offsets[idx] = self.block_size;
 
             if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
-                    const rel: u32 = @intCast(self.block_size - jump.source);
-                    @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                    if (!jump.invalid()) {
+                        const rel: u32 = @intCast(self.block_size - jump.source);
+                        @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                    }
                 }
-                jumps.deinit();
                 _ = self.jumps_to_patch.remove(@intCast(idx));
             }
 
@@ -1360,9 +1385,9 @@ pub const Emitter = struct {
 
             const jumps = try self.jumps_to_patch.getOrPut(current_idx + @as(u32, @intCast(rel)));
             if (!jumps.found_existing)
-                jumps.value_ptr.* = std.ArrayList(PatchableJump).init(self._allocator);
+                jumps.value_ptr.* = .{};
 
-            try jumps.value_ptr.*.append(.{
+            try jumps.value_ptr.*.add(.{
                 .source = self.block_size,
                 .address_to_patch = address_to_patch,
             });

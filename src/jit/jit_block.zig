@@ -114,7 +114,7 @@ pub const JITBlock = struct {
     }
 
     pub fn emit(self: *@This(), buffer: []u8) !BasicBlock {
-        var emitter = Architecture.Emitter.init(self._allocator, buffer);
+        var emitter = try Architecture.Emitter.init(self._allocator, buffer);
         defer emitter.deinit();
 
         try emitter.emit_block_prologue();
