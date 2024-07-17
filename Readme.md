@@ -33,11 +33,12 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 -   AICA:
     - Stereo
     - DSP
+-   CDPlay SPI command
 -   Renderer:
     - Modifier Volumes.
         - Implemented: Inclusion volumes and shadow bit over opaque geometry.
         - TODO: Exclusion volumes.
-        - TODO: Handle polygons with 'Two Volumes' (another way to use the modifier volumes).
+        - Test polygons with 'Two Volumes' (another way to use the modifier volumes).
         - TODO: Same, but for the translucent pass.
     - Fog LUT Mode 2.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature)
