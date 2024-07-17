@@ -48,7 +48,7 @@ pub const SR = packed struct(u32) {
 };
 
 pub const FPSCR = packed struct(u32) {
-    rm: u2 = 1, // Rounding mode
+    rm: enum(u2) { RoundToNearest = 0, RoundToZero = 1, _reserved } = .RoundToZero, // Rounding mode
     inexact: bool = false,
     underflow: bool = false,
     overflow: bool = false,
@@ -65,7 +65,7 @@ pub const FPSCR = packed struct(u32) {
     cause_dividion_by_zero: bool = false,
     cause_invalid_operation: bool = false,
     cause_fpu_error: bool = false,
-    dn: bool = false, // Denormalization mode
+    dn: bool = false, // Denormalization mode. True means "Denormals are zeroes"
     pr: u1 = 1, // Precision mode
     sz: u1 = 0, // Transfer size mode
     fr: u1 = 0, // Floating-point register bank
@@ -305,7 +305,7 @@ pub const SH4 = struct {
         self.macl = undefined;
         self.pr = undefined;
         self.pc = 0xA0000000 - 2; // FIXME: The instruction loop will increase it.
-        self.fpscr = .{};
+        self.set_fpscr(@as(u32, @bitCast(FPSCR{})));
         self.fpul = undefined;
         self.fp_banks = undefined;
 
@@ -332,7 +332,7 @@ pub const SH4 = struct {
     // Reset state to after bios.
     pub fn state_after_boot_rom(self: *@This()) void {
         self.set_sr(@bitCast(@as(u32, 0x400000F1)));
-        self.fpscr = @bitCast(@as(u32, 0x00040001));
+        self.set_fpscr(@as(u32, 0x00040001));
 
         self.R(0x0).* = 0xAC0005D8;
         self.R(0x1).* = 0x00000009;
@@ -387,6 +387,23 @@ pub const SH4 = struct {
         if (new_value.fr != self.fpscr.fr) {
             std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
         }
+
+        // Adjust SSE settings
+        var mxcsr: u32 = 0x1F80; // Default MXCSR value
+        if (new_value.dn) {
+            mxcsr |= 0x0040; // DAZ - Denormals are zeros
+        }
+        switch (new_value.rm) {
+            .RoundToNearest => mxcsr |= 0x0000, // Yes, there's no bit associated with this mode, it's the default.
+            .RoundToZero => mxcsr |= 0x6000,
+            else => {},
+        }
+        asm volatile ("ldmxcsr (%%rax)"
+            :
+            : [_] "{rax}" (&mxcsr),
+            : "rax"
+        );
+
         self.fpscr = new_value;
     }
 
