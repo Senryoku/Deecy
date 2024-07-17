@@ -61,12 +61,12 @@ const fRGBA = packed struct {
     b: f32 = 0,
     a: f32 = 0,
 
-    pub fn fromPacked(color: HollyModule.PackedColor) fRGBA {
+    pub fn fromPacked(color: HollyModule.PackedColor, use_alpha: bool) fRGBA {
         return .{
             .r = @as(f32, @floatFromInt(color.r)) / 255.0,
             .g = @as(f32, @floatFromInt(color.g)) / 255.0,
             .b = @as(f32, @floatFromInt(color.b)) / 255.0,
-            .a = @as(f32, @floatFromInt(color.a)) / 255.0,
+            .a = if (use_alpha) @as(f32, @floatFromInt(color.a)) / 255.0 else 1.0,
         };
     }
 };
@@ -84,7 +84,8 @@ const ShadingInstructions = packed struct(u32) {
     offset_bit: u1,
     shadow_bit: u1,
     gouraud_bit: u1,
-    _: u8 = 0,
+    volume_bit: u1,
+    _: u7 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -101,6 +102,10 @@ const InvalidTextureIndex = std.math.maxInt(TextureIndex);
 const VertexTextureInfo = packed struct {
     index: TextureIndex,
     shading: ShadingInstructions,
+
+    pub fn invalid() VertexTextureInfo {
+        return .{ .index = InvalidTextureIndex, .shading = @bitCast(@as(u32, 0)) };
+    }
 };
 
 const Uniforms = extern struct {
@@ -118,21 +123,17 @@ const Vertex = packed struct {
     x: f32,
     y: f32,
     z: f32,
-    base_color: packed struct {
-        r: f32,
-        g: f32,
-        b: f32,
-        a: f32,
-    },
-    offset_color: packed struct {
-        r: f32 = 0,
-        g: f32 = 0,
-        b: f32 = 0,
-        a: f32 = 0,
-    } = .{},
+    base_color: fRGBA,
+    offset_color: fRGBA = .{},
     u: f32 = 0.0,
     v: f32 = 0.0,
     tex: VertexTextureInfo,
+
+    area1_base_color: fRGBA = .{},
+    area1_offset_color: fRGBA = .{},
+    area1_u: f32 = 0.0,
+    area1_v: f32 = 0.0,
+    area1_tex: VertexTextureInfo = VertexTextureInfo.invalid(), // NOTE: Both texture infos are constant for the current strip. Use an index instead?
 };
 
 const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/vs.wgsl");
@@ -366,6 +367,10 @@ const vertex_attributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
     .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 5 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 6 },
+    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u"), .shader_location = 7 },
+    .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "area1_tex"), .shader_location = 8 },
 };
 const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
     .array_stride = @sizeOf(Vertex),
@@ -1625,6 +1630,7 @@ pub const Renderer = struct {
                 .offset_bit = isp_tsp_instruction.offset,
                 .shadow_bit = 0,
                 .gouraud_bit = isp_tsp_instruction.gouraud,
+                .volume_bit = 0,
             },
         };
 
@@ -1739,8 +1745,8 @@ pub const Renderer = struct {
         const col_pal = gpu._get_register(HollyModule.PackedColor, .FOG_COL_RAM).*;
         const col_vert = gpu._get_register(HollyModule.PackedColor, .FOG_COL_VERT).*;
 
-        self.fog_col_pal = fRGBA.fromPacked(col_pal);
-        self.fog_col_vert = fRGBA.fromPacked(col_vert);
+        self.fog_col_pal = fRGBA.fromPacked(col_pal, true);
+        self.fog_col_vert = fRGBA.fromPacked(col_vert, true);
         const fog_density = gpu._get_register(u16, .FOG_DENSITY).*;
         const fog_density_mantissa = (fog_density >> 8) & 0xFF;
         const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
@@ -1780,6 +1786,8 @@ pub const Renderer = struct {
                 var isp_tsp_instruction: HollyModule.ISPTSPInstructionWord = undefined;
                 var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
                 var texture_control: HollyModule.TextureControlWord = undefined;
+                var area1_tsp_instruction: ?HollyModule.TSPInstructionWord = null;
+                var area1_texture_control: ?HollyModule.TextureControlWord = null;
 
                 var sprite_base_color: HollyModule.PackedColor = undefined;
                 var sprite_offset_color: HollyModule.PackedColor = undefined;
@@ -1824,6 +1832,14 @@ pub const Renderer = struct {
                                 .a = p.face_offset_color_a,
                             };
                     },
+                    .PolygonType3 => |p| {
+                        parameter_control_word = p.parameter_control_word;
+                        isp_tsp_instruction = p.isp_tsp_instruction;
+                        tsp_instruction = p.tsp_instruction_0;
+                        texture_control = p.texture_control_0;
+                        area1_tsp_instruction = p.tsp_instruction_1;
+                        area1_texture_control = p.texture_control_1;
+                    },
                     // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
                     .Sprite => |p| {
                         parameter_control_word = p.parameter_control_word;
@@ -1839,16 +1855,17 @@ pub const Renderer = struct {
                 }
 
                 var tex_idx: TextureIndex = 0;
+                var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
                 const textured = parameter_control_word.obj_control.texture == 1;
-                const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
                 if (textured) {
-                    const tmp_tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control);
-                    if (tmp_tex_idx == null) {
-                        tex_idx = self.upload_texture(gpu, tsp_instruction, texture_control);
-                    } else {
-                        tex_idx = tmp_tex_idx.?;
-                    }
+                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                    tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
                     self.texture_metadata[texture_size_index][tex_idx].usage += 1;
+                }
+                if (area1_texture_control) |tc| {
+                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                    tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
+                    self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
                 }
 
                 const use_alpha = tsp_instruction.use_alpha == 1;
@@ -1867,9 +1884,9 @@ pub const Renderer = struct {
 
                 const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
-                const tex = VertexTextureInfo{
+                const tex: VertexTextureInfo = .{
                     .index = tex_idx,
-                    .shading = ShadingInstructions{
+                    .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
                         .mode = tsp_instruction.texture_shading_instruction,
                         .ignore_alpha = tsp_instruction.ignore_texture_alpha,
@@ -1882,8 +1899,28 @@ pub const Renderer = struct {
                         .offset_bit = isp_tsp_instruction.offset,
                         .shadow_bit = parameter_control_word.obj_control.shadow,
                         .gouraud_bit = isp_tsp_instruction.gouraud,
+                        .volume_bit = parameter_control_word.obj_control.volume,
                     },
                 };
+
+                const area1_tex: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
+                    .index = tex_idx_area_1,
+                    .shading = .{
+                        .textured = parameter_control_word.obj_control.texture,
+                        .mode = atspi.texture_shading_instruction,
+                        .ignore_alpha = atspi.ignore_texture_alpha,
+                        .tex_u_size = atspi.texture_u_size,
+                        .tex_v_size = atspi.texture_v_size,
+                        .src_blend_factor = atspi.src_alpha_instr,
+                        .dst_blend_factor = atspi.dst_alpha_instr,
+                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                        .fog_control = atspi.fog_control,
+                        .offset_bit = isp_tsp_instruction.offset,
+                        .shadow_bit = parameter_control_word.obj_control.shadow,
+                        .gouraud_bit = isp_tsp_instruction.gouraud,
+                        .volume_bit = parameter_control_word.obj_control.volume,
+                    },
+                } else VertexTextureInfo.invalid();
 
                 const first_vertex = display_list.vertex_strips.items[idx].verter_parameter_index;
                 const last_vertex = display_list.vertex_strips.items[idx].verter_parameter_index + display_list.vertex_strips.items[idx].verter_parameter_count;
@@ -2086,13 +2123,32 @@ pub const Renderer = struct {
                                 .tex = tex,
                             });
                         },
+                        // Textured, Packed Color, with Two Volumes
+                        .Type11 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(area1_texture_control != null);
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(textured);
+                            try self.vertices.append(.{
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = fRGBA.fromPacked(v.offset_color_0, use_alpha),
+                                .offset_color = if (use_offset) fRGBA.fromPacked(v.offset_color_0, true) else .{},
+                                .u = v.u0,
+                                .v = v.v0,
+                                .tex = tex,
+                                .area1_base_color = fRGBA.fromPacked(v.offset_color_1, use_alpha),
+                                .area1_offset_color = if (use_offset) fRGBA.fromPacked(v.offset_color_1, true) else .{},
+                                .area1_u = v.u1,
+                                .area1_v = v.v1,
+                                .area1_tex = area1_tex,
+                            });
+                        },
                         .SpriteType0, .SpriteType1 => {
                             var vs = gen_sprite_vertices(vertex);
                             for (&vs) |*v| {
-                                v.base_color.r = @as(f32, @floatFromInt(sprite_base_color.r)) / 255.0;
-                                v.base_color.g = @as(f32, @floatFromInt(sprite_base_color.g)) / 255.0;
-                                v.base_color.b = @as(f32, @floatFromInt(sprite_base_color.b)) / 255.0;
-                                v.base_color.a = if (use_alpha) @as(f32, @floatFromInt(sprite_base_color.a)) / 255.0 else 1.0;
+                                v.base_color = fRGBA.fromPacked(sprite_base_color, use_alpha);
                                 // FIXME: This is wrong.
                                 //if (use_offset)
                                 //    v.offset_color = .{
