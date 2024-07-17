@@ -11,10 +11,6 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 // Yamaha AICA Audio Chip
 // Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes
 
-const Hacks = struct {
-    const ignore_out_of_bounds_accesses = true; // Don't crash when reading/writing out of bounds. Helps in Speed Devils (See #36).
-};
-
 const SampleFormat = enum(u2) {
     i16 = 0, // 16-bit signed little-endian
     i8 = 1, // 8-bit signed
@@ -748,49 +744,21 @@ pub const AICA = struct {
     }
 
     pub fn read8_from_arm(self: *AICA, addr: u32) u8 {
-        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
-            aica_log.err(termcolor.red("Out of bounds read8 from ARM. Address: 0x{X:0>8}"), .{addr});
-            if (Hacks.ignore_out_of_bounds_accesses)
-                return 0;
-            self.arm_debug_dump();
-            self.dump_wave_memory();
-            @panic("AICA read8 from ARM out of bounds address");
-        }
+        std.debug.assert(addr & self.arm7.external_memory_address_mask != 0);
         return self.read_register(u8, addr);
     }
 
     pub fn read32_from_arm(self: *AICA, addr: u32) u32 {
-        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
-            aica_log.err(termcolor.red("Out of bounds read32 from ARM. Address: 0x{X:0>8}"), .{addr});
-            if (Hacks.ignore_out_of_bounds_accesses)
-                return 0;
-            self.arm_debug_dump();
-            self.dump_wave_memory();
-            @panic("AICA read32 from ARM out of bounds address");
-        }
+        std.debug.assert(addr & self.arm7.external_memory_address_mask != 0);
         return self.read_register(u32, addr);
     }
 
     pub fn write8_from_arm(self: *AICA, addr: u32, value: u8) void {
-        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
-            aica_log.err(termcolor.red("Out of bounds write8 from ARM: 0x{X:0>8} = 0x{X:0>2}"), .{ addr, value });
-            if (Hacks.ignore_out_of_bounds_accesses)
-                return;
-            self.arm_debug_dump();
-            self.dump_wave_memory();
-            @panic("AICA write8 from ARM out of bounds address");
-        }
+        std.debug.assert(addr & self.arm7.external_memory_address_mask != 0);
         self.write_register(u8, addr, value);
     }
     pub fn write32_from_arm(self: *AICA, addr: u32, value: u32) void {
-        if (!(addr >= 0x00800000 and addr < 0x00808000)) {
-            aica_log.err(termcolor.red("Out of bounds write32 from ARM: 0x{X:0>8} = 0x{X:0>8}"), .{ addr, value });
-            if (Hacks.ignore_out_of_bounds_accesses)
-                return;
-            self.arm_debug_dump();
-            self.dump_wave_memory();
-            @panic("AICA write32 from ARM out of bounds address");
-        }
+        std.debug.assert(addr & self.arm7.external_memory_address_mask != 0);
         self.write_register(u32, addr, value);
     }
 

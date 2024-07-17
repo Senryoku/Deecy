@@ -301,7 +301,7 @@ fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, add
 fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
-            if (addr_imm32 < ctx.cpu.external_memory_address_threshold) {
+            if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try load_wave_memory(b, ctx, T, dst, addr_imm32);
             } else {
                 // TODO: External memory, fallback for now!
@@ -336,7 +336,7 @@ fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Reg
 fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
-            if (addr_imm32 < ctx.cpu.external_memory_address_threshold) {
+            if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try store_wave_memory(b, ctx, T, addr_imm32, value);
             } else {
                 // TODO: External memory, fallback for now!
