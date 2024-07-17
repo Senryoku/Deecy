@@ -537,6 +537,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             if (zgui.collapsingHeader("Modifier Volumes", .{ .frame_padding = true })) {
                 zgui.indent(.{});
+                // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
                 {
                     const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.opaque_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
@@ -545,14 +546,15 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         }
                     }
                 }
-                //{
-                //    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.translucent_modifier_volumes.items.len});
-                //    if (zgui.collapsingHeader(header, .{})) {
-                //        for (d.renderer.translucent_modifier_volumes.items) |vol| {
-                //            zgui.text("  {any}", .{vol});
-                //        }
-                //    }
-                //}
+                // NOTE: Translucent Modifier Volumes are not currently supported by the renderer and thus are not transfered there. We're getting them directly from Holly.
+                {
+                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.dc.gpu._ta_translucent_modifier_volumes.items.len});
+                    if (zgui.collapsingHeader(header, .{})) {
+                        for (d.dc.gpu._ta_translucent_modifier_volumes.items) |vol| {
+                            zgui.text("  {any}", .{vol});
+                        }
+                    }
+                }
                 zgui.unindent(.{});
             }
 
