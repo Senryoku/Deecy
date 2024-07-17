@@ -21,7 +21,7 @@ pub fn main() !void {
             common.GeneralAllocator.destroy(dc);
         }
 
-        dc.skip_bios();
+        dc.skip_bios(true);
         // Skip IP.bin.
         dc.cpu.pc = 0xAC010000;
 
@@ -63,7 +63,7 @@ pub fn main() !void {
             common.GeneralAllocator.destroy(dc);
         }
 
-        dc.skip_bios();
+        dc.skip_bios(true);
         dc.gdrom.disk = try GDI.init("./bin/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
         _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
