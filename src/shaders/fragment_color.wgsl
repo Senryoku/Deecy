@@ -85,19 +85,15 @@ fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alp
     }
 }
 
-struct FragmentColor {
-    area0: vec4<f32>,
-    area1: vec4<f32>,
-}
 
-fn fragment_color(
+fn area_color(
     base_color: vec4<f32>,
     offset_color: vec4<f32>,
     uv: vec2<f32>,
     tex: vec2<u32>,
     inv_w: f32,
     punch_through: bool,
-) -> FragmentColor {
+) -> vec4<f32> {
     let u_size: f32 = tex_size((tex[1] >> 4) & 7);
     let v_size: f32 = tex_size((tex[1] >> 7) & 7);
     let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
@@ -143,13 +139,55 @@ fn fragment_color(
         }
     } 
     
+    return apply_fog(tex[1], inv_w, final_color, offset_color.a);
+}
+
+struct FragmentColor {
+    area0: vec4<f32>,
+    area1: vec4<f32>,
+}
+
+fn fragment_color(
+    base_color: vec4<f32>,
+    offset_color: vec4<f32>,
+    uv: vec2<f32>,
+    tex: vec2<u32>,
+    area1_base_color: vec4<f32>,
+    area1_offset_color: vec4<f32>,
+    area1_uv: vec2<f32>,
+    area1_tex: vec2<u32>,
+    inv_w: f32,
+    punch_through: bool,
+) -> FragmentColor {
+    
     var output : FragmentColor;
-    output.area0 = apply_fog(tex[1], inv_w, final_color, offset_color.a);
-    // TODO: Handle 'Two volumes' polygons.
-    if(((tex[1] >> 22) & 1) == 1) { // Shadow
-        output.area1 = uniforms.fpu_shad_scale * output.area0;
+    output.area0 = area_color(
+        base_color,
+        offset_color,
+        uv,
+        tex,
+        inv_w,
+        punch_through
+    );
+    
+    // Call must done from a uniform context because of texture loads, can't be conditional.
+    let area1 = area_color(
+        area1_base_color,
+        area1_offset_color,
+        area1_uv,
+        area1_tex,
+        inv_w,
+        punch_through
+    );
+
+    if(((tex[1] >> 23) & 1) == 1) { // "Two Volume"
+        output.area1 = area1;
     } else {
         output.area1 = output.area0;
+    }
+
+    if(((tex[1] >> 22) & 1) == 1) { // Shadow
+        output.area1 = uniforms.fpu_shad_scale * output.area0;
     }
 
     return output;
