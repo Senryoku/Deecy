@@ -1340,10 +1340,6 @@ pub const Holly = struct {
                     self._ta_current_polygon = null;
                     self._ta_current_volume = null;
                     self._ta_user_tile_clip = null;
-
-                    self._ta_opaque_modifier_volumes.clearRetainingCapacity();
-                    self._ta_translucent_modifier_volumes.clearRetainingCapacity();
-                    self._ta_volume_triangles.clearRetainingCapacity();
                 }
             },
             .TA_LIST_CONT => {

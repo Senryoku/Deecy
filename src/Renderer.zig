@@ -482,6 +482,7 @@ pub const Renderer = struct {
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
     opaque_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
+    translucent_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
@@ -1055,6 +1056,7 @@ pub const Renderer = struct {
             .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
             .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
             .opaque_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
+            .translucent_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
@@ -1078,6 +1080,7 @@ pub const Renderer = struct {
         self.vertices.deinit();
         self.modifier_volume_vertices.deinit();
         self.opaque_modifier_volumes.deinit();
+        self.translucent_modifier_volumes.deinit();
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot more resources to destroy.
         self.deinit_screen_textures();
@@ -2244,9 +2247,12 @@ pub const Renderer = struct {
         // Modifier volumes
 
         self.opaque_modifier_volumes.clearRetainingCapacity();
+        self.translucent_modifier_volumes.clearRetainingCapacity();
         self.modifier_volume_vertices.clearRetainingCapacity();
 
         std.mem.swap(std.ArrayList(HollyModule.ModifierVolume), &self.opaque_modifier_volumes, &gpu._ta_opaque_modifier_volumes);
+        std.mem.swap(std.ArrayList(HollyModule.ModifierVolume), &self.translucent_modifier_volumes, &gpu._ta_translucent_modifier_volumes);
+
         for (gpu._ta_volume_triangles.items) |triangle| {
             try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });

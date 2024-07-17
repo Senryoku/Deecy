@@ -546,11 +546,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         }
                     }
                 }
-                // NOTE: Translucent Modifier Volumes are not currently supported by the renderer and thus are not transfered there. We're getting them directly from Holly.
                 {
-                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.dc.gpu._ta_translucent_modifier_volumes.items.len});
+                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.opaque_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
-                        for (d.dc.gpu._ta_translucent_modifier_volumes.items) |vol| {
+                        for (d.renderer.opaque_modifier_volumes.items) |vol| {
                             zgui.text("  {any}", .{vol});
                         }
                     }
