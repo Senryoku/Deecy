@@ -617,6 +617,39 @@ pub const Polygon = union(PolygonType) {
             .Sprite => .Sprite,
         };
     }
+
+    pub fn control_word(self: @This()) ParameterControlWord {
+        return switch (self) {
+            .PolygonType0 => |p| p.parameter_control_word,
+            .PolygonType1 => |p| p.parameter_control_word,
+            .PolygonType2 => |p| p.parameter_control_word,
+            .PolygonType3 => |p| p.parameter_control_word,
+            .PolygonType4 => |p| p.parameter_control_word,
+            .Sprite => |p| p.parameter_control_word,
+        };
+    }
+
+    pub fn isp_tsp_instruction(self: @This()) ISPTSPInstructionWord {
+        return switch (self) {
+            .PolygonType0 => |p| p.isp_tsp_instruction,
+            .PolygonType1 => |p| p.isp_tsp_instruction,
+            .PolygonType2 => |p| p.isp_tsp_instruction,
+            .PolygonType3 => |p| p.isp_tsp_instruction,
+            .PolygonType4 => |p| p.isp_tsp_instruction,
+            .Sprite => |p| p.isp_tsp_instruction,
+        };
+    }
+
+    pub fn tsp_instruction(self: @This()) TSPInstructionWord {
+        return switch (self) {
+            .PolygonType0 => |p| p.tsp_instruction,
+            .PolygonType1 => |p| p.tsp_instruction,
+            .PolygonType2 => |p| p.tsp_instruction,
+            .PolygonType3 => |p| p.tsp_instruction_0,
+            .PolygonType4 => |p| p.tsp_instruction_0,
+            .Sprite => |p| p.tsp_instruction,
+        };
+    }
 };
 
 fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {

@@ -11,7 +11,7 @@
 @group(1) @binding(0) var image_sampler: sampler;
 
 fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
-    if(index > 255) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+    if index > 255 { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
     switch(max((control >> 4) & 7, (control >> 7) & 7))  {
         case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, duvdx, duvdy); }
@@ -45,8 +45,8 @@ fn fog_alpha_lut(inv_w: f32) -> f32 {
     let uval = bitcast<u32>(val);
     // Bit 6-4: Lower 3 bits for the 1/W index
     // Bit 3-0: Upper 4 bits for the 1/W mantissa
-    let index =  ((((uval >> 23) + 1) & 0x7) << 4) | ((uval >> 19) & 0xF);
-    let low = f32((uniforms.fog_lut[index / 4][index % 4] >> 8) & 0xFF) / 255.0;           
+    let index = ((((uval >> 23) + 1) & 0x7) << 4) | ((uval >> 19) & 0xF);
+    let low = f32((uniforms.fog_lut[index / 4][index % 4] >> 8) & 0xFF) / 255.0;
     let high = f32((uniforms.fog_lut[index / 4][index % 4]) & 0xFF) / 255.0;
     return mix(low, high, f32((uval >> 11) & 0xFF) / 255.0); // Residual fractional part
 }
@@ -61,7 +61,7 @@ fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alp
         }
         case 0x1u: {
             // Per vertex mode
-            if(((shading_instructions >> 21) & 1) == 1) { // Using Offset color?
+            if ((shading_instructions >> 21) & 1) == 1 { // Using Offset color?
                 return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);
             } else {
                 // If the polygon is not set up to use an Offset Color, Fog processing is not performed.
@@ -106,7 +106,7 @@ fn area_color(
         let ignore_tex_alpha = ((tex[1] >> 3) & 0x1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
 
-        if(punch_through && tex_a < uniforms.pt_alpha_ref) {
+        if punch_through && tex_a < uniforms.pt_alpha_ref {
             discard;
         }
 
@@ -137,8 +137,8 @@ fn area_color(
             }
             default: { final_color = base_color + vec4<f32>(offset_color.rgb, 0.0); }
         }
-    } 
-    
+    }
+
     return apply_fog(tex[1], inv_w, final_color, offset_color.a);
 }
 
@@ -159,12 +159,12 @@ fn fragment_color(
     inv_w: f32,
     punch_through: bool,
 ) -> FragmentColor {
-    var output : FragmentColor;
-    
+    var output: FragmentColor;
+
     let duvdx = dpdx(uv);
     let duvdy = dpdy(uv);
-    let area1_duvdx= dpdx(area1_uv);
-    let area1_duvdy= dpdy(area1_uv);
+    let area1_duvdx = dpdx(area1_uv);
+    let area1_duvdy = dpdy(area1_uv);
 
     output.area0 = area_color(
         base_color,
@@ -177,23 +177,35 @@ fn fragment_color(
         punch_through
     );
 
-    if(((tex[1] >> 23) & 1) == 1) { // "Two Volume"
-        output.area1 = area_color(
-            area1_base_color,
-            area1_offset_color,
-            area1_uv,
-            area1_duvdx,
-            area1_duvdy,
-            area1_tex,
-            inv_w,
-            punch_through
-        );
+    // Shadow Bit | Volume Bit | Explanation
+    // -------------------------------------
+    //      0     |     0      | Normal polygons, or polygons for which shadow processing is not performed (in Intensity Volume mode)
+    //      0     |     1      | Reserved
+    //      1     |     0      | Polygons for which shadow processing is performed (in Intensity Volume mode)
+    //      1     |     1      | Polygons in "with Two Volumes" format
+
+    let shadow_bit = ((tex[1] >> 22) & 1) == 1;
+    let volume_bit = ((tex[1] >> 24) & 1) == 1;
+
+    if shadow_bit {
+        if volume_bit { // Volume Bit
+            output.area1 = area_color(
+                area1_base_color,
+                area1_offset_color,
+                area1_uv,
+                area1_duvdx,
+                area1_duvdy,
+                area1_tex,
+                inv_w,
+                punch_through
+            );
+        } else {
+            // FIXME: This might not work properly for Decal and Decal Alpha.
+            //        I think we're supposed to only multiple base_color and offset_color, not the tex color (which is included in this final output)?
+            output.area1 = vec4<f32>(uniforms.fpu_shad_scale * output.area0.rgb, output.area0.a);
+        }
     } else {
         output.area1 = output.area0;
-    }
-
-    if(((tex[1] >> 22) & 1) == 1) { // Shadow
-        output.area1 = uniforms.fpu_shad_scale * output.area0;
     }
 
     return output;
