@@ -1,5 +1,3 @@
-const std = @import("std");
-
 buffer: []u8,
 cycles: u32 = 0,
 

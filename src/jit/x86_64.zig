@@ -500,35 +500,40 @@ const PatchableJumpList = struct {
 };
 
 pub const Emitter = struct {
-    block: BasicBlock,
+    block: BasicBlock = undefined,
     block_size: u32 = 0,
 
-    instruction_offsets: []u32,
+    jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList),
 
-    jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList) = undefined,
-
+    _instruction_offsets: []u32,
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, block_buffer: []u8) !@This() {
+    pub fn init(allocator: std.mem.Allocator) !@This() {
         return .{
-            .block = BasicBlock.init(block_buffer),
             .jumps_to_patch = std.AutoHashMap(u32, PatchableJumpList).init(allocator),
-            .instruction_offsets = try allocator.alloc(u32, 64),
+            ._instruction_offsets = try allocator.alloc(u32, 64),
             ._allocator = allocator,
         };
     }
 
+    // Call this before emitting
+    pub fn set_buffer(self: *@This(), block_buffer: []u8) void {
+        self.block = BasicBlock.init(block_buffer);
+        self.block_size = 0;
+        std.debug.assert(self.jumps_to_patch.count() == 0);
+    }
+
     pub fn deinit(self: *@This()) void {
-        self._allocator.free(self.instruction_offsets);
+        self._allocator.free(self._instruction_offsets);
         self.jumps_to_patch.deinit();
     }
 
     pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
-        if (self.instruction_offsets.len < instructions.len)
-            self.instruction_offsets = try self._allocator.realloc(self.instruction_offsets, instructions.len);
+        if (self._instruction_offsets.len < instructions.len)
+            self._instruction_offsets = try self._allocator.realloc(self._instruction_offsets, instructions.len);
 
         for (instructions, 0..) |instr, idx| {
-            self.instruction_offsets[idx] = self.block_size;
+            self._instruction_offsets[idx] = self.block_size;
 
             if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
@@ -1379,7 +1384,7 @@ pub const Emitter = struct {
             const next_instr_address = address_to_patch + 4;
             const target_idx = @as(i32, @intCast(current_idx)) + rel;
             std.debug.assert(target_idx >= 0);
-            try self.emit(u32, @bitCast(@as(i32, @intCast(self.instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(next_instr_address))));
+            try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(next_instr_address))));
         } else {
             try self.emit(u32, 0xA0C0FFEE);
 

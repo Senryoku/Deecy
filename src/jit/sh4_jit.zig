@@ -402,16 +402,19 @@ pub const JITContext = struct {
 pub const SH4JIT = struct {
     block_cache: BlockCache,
 
+    _working_block: JITBlock,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         return .{
             .block_cache = try BlockCache.init(allocator),
+            ._working_block = try JITBlock.init(allocator),
             ._allocator = allocator,
         };
     }
 
     pub fn deinit(self: *@This()) void {
+        self._working_block.deinit();
         self.block_cache.deinit();
     }
 
@@ -488,8 +491,9 @@ pub const SH4JIT = struct {
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !BasicBlock {
         var ctx = start_ctx;
 
-        var b = JITBlock.init(self._allocator);
-        defer b.deinit();
+        var b = &self._working_block; // FIXME: Taking a pointer here crashes. This is really sus.
+
+        b.clearRetainingCapacity();
 
         // We'll be using these callee saved registers, push 'em to the stack.
         try b.push(.{ .reg = SavedRegisters[0] });
@@ -514,7 +518,7 @@ pub const SH4JIT = struct {
 
         var branch = false;
         while (true) {
-            try self.simplify_div(&b, &ctx);
+            try self.simplify_div(b, &ctx);
 
             const instr = ctx.instructions[ctx.index];
             const op = instr_lookup(instr);
@@ -523,7 +527,7 @@ pub const SH4JIT = struct {
                 if (op.use_fallback()) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
             });
-            branch = try op.jit_emit_fn(&b, &ctx, @bitCast(instr));
+            branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
             ctx.cycles += op.issue_cycles;
             ctx.index += 1;
@@ -549,8 +553,8 @@ pub const SH4JIT = struct {
             try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
         }
 
-        try ctx.gpr_cache.commit_and_invalidate_all(&b);
-        try ctx.fpr_cache.commit_and_invalidate_all(&b);
+        try ctx.gpr_cache.commit_and_invalidate_all(b);
+        try ctx.fpr_cache.commit_and_invalidate_all(b);
 
         // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {

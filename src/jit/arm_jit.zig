@@ -197,7 +197,7 @@ pub const ARM7JIT = struct {
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u32) !BasicBlock {
         var ctx = start_ctx;
 
-        var b = JITBlock.init(self._allocator);
+        var b = try JITBlock.init(self._allocator);
         defer b.deinit();
 
         // We'll be using these callee saved registers, push 'em to the stack.

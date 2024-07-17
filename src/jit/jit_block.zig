@@ -24,16 +24,23 @@ pub const PatchableJump = struct {
 pub const JITBlock = struct {
     instructions: std.ArrayList(Instruction),
 
+    _emitter: Architecture.Emitter,
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) JITBlock {
+    pub fn init(allocator: std.mem.Allocator) !JITBlock {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
+            ._emitter = try Architecture.Emitter.init(allocator),
             ._allocator = allocator,
         };
     }
 
+    pub fn clearRetainingCapacity(self: *@This()) void {
+        self.instructions.clearRetainingCapacity();
+    }
+
     pub fn deinit(self: *@This()) void {
+        self._emitter.deinit();
         self.instructions.deinit();
     }
 
@@ -114,14 +121,13 @@ pub const JITBlock = struct {
     }
 
     pub fn emit(self: *@This(), buffer: []u8) !BasicBlock {
-        var emitter = try Architecture.Emitter.init(self._allocator, buffer);
-        defer emitter.deinit();
+        self._emitter.set_buffer(buffer);
 
-        try emitter.emit_block_prologue();
-        try emitter.emit_instructions(self.instructions.items);
-        try emitter.emit_block_epilogue();
+        try self._emitter.emit_block_prologue();
+        try self._emitter.emit_instructions(self.instructions.items);
+        try self._emitter.emit_block_epilogue();
 
-        emitter.block.buffer = emitter.block.buffer[0..emitter.block_size]; // Update slice size.
-        return emitter.block;
+        self._emitter.block.buffer = self._emitter.block.buffer[0..self._emitter.block_size]; // Update slice size.
+        return self._emitter.block;
     }
 };
