@@ -1732,20 +1732,24 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) void {
 
     if (cpu.fpscr.pr == 0) {
         const f = cpu.FR(opcode.nmd.n).*;
-        const u: u32 = @bitCast(f);
-        if ((u & 0x80000000) == 0) {
-            if (u > 0x7F800000) {
-                cpu.fpul = 0x80000000;
-            } else if (u > 0x4EFFFFFF) {
-                cpu.fpul = 0x7FFFFFFF;
-            } else {
-                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
-            }
+        if (std.math.isNan(f)) { // This helps matching reicast behaviour, and thus passing tests, but I'm not sure if this accurate.
+            cpu.fpul = 0;
         } else {
-            if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
-                cpu.fpul = 0x80000000;
+            const u: u32 = @bitCast(f);
+            if ((u & 0x80000000) == 0) {
+                if (u > 0x7F800000) {
+                    cpu.fpul = 0x80000000;
+                } else if (u > 0x4EFFFFFF) {
+                    cpu.fpul = 0x7FFFFF80; // Some sources say it should be 0x7FFFFFFF
+                } else {
+                    cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+                }
             } else {
-                cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+                if ((u & 0x7FFFFFFF) > (0xCF000000 & 0x7FFFFFFF)) {
+                    cpu.fpul = 0x80000000;
+                } else {
+                    cpu.fpul = @bitCast(std.math.lossyCast(i32, f));
+                }
             }
         }
     } else {
