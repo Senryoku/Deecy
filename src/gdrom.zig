@@ -255,13 +255,13 @@ pub const GDROM = struct {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
         switch (@as(HardwareRegister, @enumFromInt(addr))) {
             .GD_AlternateStatus_DeviceControl => {
-                gdrom_log.info("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
+                gdrom_log.debug("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
                 return @intCast(@as(u8, @bitCast(self.status_register)));
             },
             .GD_Status_Command => {
                 const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
-                gdrom_log.info("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
+                gdrom_log.debug("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // Clear the pending interrupt signal.
                 self.status_register.drq = 0;
                 return val;
@@ -300,17 +300,17 @@ pub const GDROM = struct {
                     (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(GDROMStatus.Empty)
                 else
                     (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(self.state);
-                gdrom_log.info("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
+                gdrom_log.debug("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
                 return val;
             },
             .GD_ByteCountLow => {
                 const val = @as(u8, @truncate(self.data_queue.readableLength()));
-                gdrom_log.info("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
                 return val;
             },
             .GD_ByteCountHigh => {
                 const val = @as(u8, @truncate(self.data_queue.readableLength() >> @intCast(8)));
-                gdrom_log.info("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
+                gdrom_log.debug("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
                 return val;
             },
             .GD_DriveSelect => {
