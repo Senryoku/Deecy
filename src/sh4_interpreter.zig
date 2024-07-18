@@ -1369,7 +1369,7 @@ pub fn sleep(cpu: *SH4, _: Instr) void {
     } else {
         cpu.execution_state = .Sleep;
     }
-    std.debug.print("\u{001B}[33mSleep State: .{s}\u{001B}[0m\n", .{@tagName(cpu.execution_state)});
+    // std.debug.print("\u{001B}[33mSleep State: .{s}\u{001B}[0m\n", .{@tagName(cpu.execution_state)});
 }
 
 pub fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {

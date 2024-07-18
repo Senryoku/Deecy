@@ -150,6 +150,13 @@ pub const MasterVolume = packed struct(u32) {
 
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
 pub const AICARegister = enum(u32) {
+    DSPOutputMixer0 = 0x00002000,
+    // ...
+    DSPOutputMixer15 = 0x0000203C,
+
+    CDDAOutputLeft = 0x00002040,
+    CDDAOutputRight = 0x00002044,
+
     MasterVolume = 0x00002800,
     RingBufferAddress = 0x00002804,
     MIDIInput = 0x00002808,
@@ -229,6 +236,16 @@ const PlayStatus = packed struct(u32) {
     env_state: EnvelopeState = .Release,
     loop_end_flag: bool = false,
     _: u16 = 0,
+};
+
+const MIDIInput = packed struct(u32) {
+    mibuf: u8, // MIDI Input Buffer (MIBUF) - Data coming in from the MIDI port in a 4-byte FIFO.
+    miemp: u1, // MIDI Input FIFO is empty
+    miful: u1, // MIDI Input FIFO is full
+    miovf: u1, // MIDI Input FIFO overflow
+    moemp: u1, // MIDI Output FIFO is empty
+    moful: u1, // MIDI Output FIFO is full
+    _: u19 = 0,
 };
 
 pub const ChannelInfoReq = packed struct(u32) {
@@ -394,7 +411,7 @@ const EnvelopeDecayValue = [_][4]u4{
 pub const AICA = struct {
     pub const SampleRate = 44100;
 
-    const ARM7CycleRatio = 100;
+    const ARM7CycleRatio = 66;
     const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
 
     arm7: arm7.ARM7 = undefined,
@@ -502,7 +519,13 @@ pub const AICA = struct {
     }
 
     pub fn read_register(self: *AICA, comptime T: type, addr: u32) T {
+        aica_log.debug("Read({any}) to AICA Register at 0x{X:0>8}", .{ T, addr });
+
         const local_addr = addr & 0x0000FFFF;
+        if (local_addr % 4 > 1) {
+            aica_log.warn(termcolor.yellow("Read({any}) to non-existent (not 4 bytes aligned) AICA register at 0x{X:0>8}"), .{ T, addr });
+            return 0;
+        }
 
         //aica_log.debug("Read AICA register at 0x{X:0>8} (0x{X:0>8}) = 0x{X:0>8}", .{ addr, local_addr, self.regs[local_addr / 4] });
         if (local_addr < 0x2000) {}
@@ -512,7 +535,17 @@ pub const AICA = struct {
         const high_byte = T == u8 and local_addr % 4 == 1;
 
         switch (@as(AICARegister, @enumFromInt(reg_addr))) {
-            .MasterVolume => return if (!high_byte) 0x10 else 0,
+            //.MasterVolume => return if (!high_byte) 0x10 else 0,
+            .MIDIInput => {
+                var val = self.get_reg(MIDIInput, .MIDIInput);
+                val.mibuf = 0;
+                val.miemp = 1;
+                val.miful = 0;
+                val.miovf = 0;
+                val.moemp = 1;
+                val.moful = 0;
+                val._ = 0;
+            },
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
@@ -522,8 +555,9 @@ pub const AICA = struct {
                     .loop_end_flag = chan.loop_end_flag,
                 };
                 if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
-                if (!high_byte) {
+                if (T == u32 or high_byte)
                     chan.loop_end_flag = false; // Cleared on read.
+                if (!high_byte) {
                     return @truncate(@as(u32, @bitCast(status)));
                 } else {
                     return @truncate(@as(u32, @bitCast(status)) >> 8);
@@ -551,7 +585,6 @@ pub const AICA = struct {
     pub fn write_register(self: *AICA, comptime T: type, addr: u32, value: T) void {
         const local_addr = addr & 0x0000FFFF;
         aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
-
         if (local_addr % 4 > 1) {
             aica_log.warn(termcolor.yellow("Out of bounds Write({any}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}"), .{ T, addr, value });
             return;
@@ -739,7 +772,7 @@ pub const AICA = struct {
         std.debug.print("   [{X:0>8}] {X:0>8} {s}\n", .{ s.arm7.pc() - 0, s.arm7.read(u32, s.arm7.pc() - 0), arm7.ARM7.disassemble(self.arm7.read(u32, s.arm7.pc() - 0)) });
     }
 
-    fn dump_wave_memory(self: *const @This()) void {
+    pub fn dump_wave_memory(self: *const @This()) void {
         const path = "logs/wave_memory_dump.bin";
         const file = std.fs.cwd().createFile(path, .{}) catch unreachable;
         defer file.close();
@@ -1056,7 +1089,7 @@ pub const AICA = struct {
 
                 state.play_position +%= 1;
 
-                if (state.play_position == registers.loop_end & 0xFFFF) {
+                if (state.play_position >= registers.loop_end & 0xFFFF) {
                     state.loop_end_flag = true;
                     if (registers.play_control.sample_loop) {
                         state.play_position = @truncate(registers.loop_start);
@@ -1066,6 +1099,7 @@ pub const AICA = struct {
                         state.playing = false;
                         state.amp_env_level = 0x3FF;
                         state.amp_env_state = .Release;
+                        state.play_position = @truncate(registers.loop_end);
                         return;
                     }
                 }

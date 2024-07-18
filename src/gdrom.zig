@@ -757,8 +757,6 @@ pub const GDROM = struct {
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
 
-        self.state = .Playing;
-
         var start_addr: u32 = if (parameter_type == 0)
             (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
         else
@@ -769,7 +767,10 @@ pub const GDROM = struct {
         gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
         gdrom_log.info("Command: {X}", .{self.packet_command});
 
-        if (start_addr < 45000) start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
+        if (start_addr < 45000) {
+            gdrom_log.warn(termcolor.yellow("  GDROM CDRead - Before Track 3 - Start Address {d} ({X:0>8})"), .{ start_addr, start_addr });
+            start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
+        }
 
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)
@@ -822,7 +823,6 @@ pub const GDROM = struct {
 
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value
-            .state = .Paused,
             .status = .{ .bsy = 0, .drq = 1 },
             .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
         });
