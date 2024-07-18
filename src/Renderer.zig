@@ -448,7 +448,7 @@ pub const Renderer = struct {
     modifier_volume_vertex_buffer: zgpu.BufferHandle,
 
     list_heads_buffer: zgpu.BufferHandle = undefined,
-    init_list_heads_buffer: zgpu.BufferHandle = undefined,
+    init_list_heads_buffer: zgpu.BufferHandle = undefined, // Buffer used to quickly re-initialize the head list without having to remap-it.
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
     texture_arrays: [8]zgpu.TextureHandle,
@@ -2833,7 +2833,8 @@ pub const Renderer = struct {
 
         const init_buffer = self._gctx.lookupResourceInfo(self.init_list_heads_buffer).?.gpuobj.?;
         const mapped = init_buffer.getMappedRange(u32, 0, head_size / 4);
-        @memset(mapped.?, 0xFFFFFFFF);
+        @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
+        mapped.?[0] = 0; // Set fragment count to 0
         init_buffer.unmap();
 
         self.linked_list_buffer = self._gctx.createBuffer(.{
