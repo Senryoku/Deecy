@@ -46,8 +46,6 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
     - Handle and generate Mipmaps.
     - Sort-DMA?
     - User Tile Clip, only the simplest version is supported.
-    - (Improvement?) OIT: Add an option to allocate lists per slice to allow processing them in parallel when memory is not an issue (we're currently limited by the limit on binding buffer size, not total memory).
-        No idea of the potential gain, if any.
       
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
