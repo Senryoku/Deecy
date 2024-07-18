@@ -64,6 +64,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let heads_index = global_id.y * oit_uniforms.target_width + global_id.x;
 
     var element_index = heads.data[heads_index];
+    // Reset the heads buffer for the next pass.
+    heads.data[heads_index] = 0xFFFFFFFFu;
+    if all(global_id == vec3<u32>(0, 0, 0)) {
+        heads.fragment_count = 0;
+    }
 
     if element_index == 0xFFFFFFFFu {return;}
 

@@ -448,7 +448,6 @@ pub const Renderer = struct {
     modifier_volume_vertex_buffer: zgpu.BufferHandle,
 
     list_heads_buffer: zgpu.BufferHandle = undefined,
-    init_list_heads_buffer: zgpu.BufferHandle = undefined, // Buffer used to quickly re-initialize the head list without having to remap-it.
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
     texture_arrays: [8]zgpu.TextureHandle,
@@ -2514,8 +2513,6 @@ pub const Renderer = struct {
             }
 
             // Generate all translucent fragments
-            const heads_info = gctx.lookupResourceInfo(self.list_heads_buffer).?;
-            const init_heads_info = gctx.lookupResourceInfo(self.init_list_heads_buffer).?;
             const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
             const blend_bind_group = gctx.lookupResource(self.blend_bind_group).?;
 
@@ -2543,9 +2540,6 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].start_y = start_y;
 
                 {
-                    // Clear lists
-                    encoder.copyBufferToBuffer(init_heads_info.gpuobj.?, 0, heads_info.gpuobj.?, 0, heads_info.size);
-
                     const pass = encoder.beginRenderPass(oit_render_pass_info);
                     defer {
                         pass.end();
@@ -2670,7 +2664,6 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blit_bind_group);
 
         self._gctx.releaseResource(self.list_heads_buffer);
-        self._gctx.releaseResource(self.init_list_heads_buffer);
         self._gctx.releaseResource(self.linked_list_buffer);
 
         self._gctx.releaseResource(self.translucent_bind_group);
@@ -2822,17 +2815,13 @@ pub const Renderer = struct {
         const list_size = self.get_max_storage_buffer_binding_size();
 
         self.list_heads_buffer = self._gctx.createBuffer(.{
-            .usage = .{ .copy_dst = true, .storage = true },
-            .size = head_size,
-        });
-        self.init_list_heads_buffer = self._gctx.createBuffer(.{
-            .usage = .{ .map_write = true, .copy_src = true },
+            .usage = .{ .storage = true },
             .size = head_size,
             .mapped_at_creation = true,
         });
 
-        const init_buffer = self._gctx.lookupResourceInfo(self.init_list_heads_buffer).?.gpuobj.?;
-        const mapped = init_buffer.getMappedRange(u32, 0, head_size / 4);
+        const init_buffer = self._gctx.lookupResourceInfo(self.list_heads_buffer).?.gpuobj.?;
+        const mapped = init_buffer.getMappedRange(u32, 0, head_size / @sizeOf(u32));
         @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
         mapped.?[0] = 0; // Set fragment count to 0
         init_buffer.unmap();
