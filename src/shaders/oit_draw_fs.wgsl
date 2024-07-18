@@ -16,7 +16,6 @@ struct LinkedListElement {
   depth: f32,
   index_and_blend_mode: u32,
   next: u32,
-  _padding: u32,
 };
 
 struct LinkedList {
@@ -83,19 +82,19 @@ fn main(
 
     let gouraud = ((shading_instructions >> 23) & 1) == 1;
     var final_color = fragment_color(
-        select(flat_base_color, base_color / inv_w , gouraud), 
-        select(flat_offset_color, offset_color / inv_w, gouraud), 
-        uv / inv_w, 
-        tex_idx_shading_instr, 
-        select(area1_flat_base_color, area1_base_color / inv_w , gouraud), 
-        select(area1_flat_offset_color, area1_offset_color / inv_w, gouraud), 
-        area1_uv / inv_w, 
-        area1_tex_idx_shading_instr, 
-        inv_w, 
+        select(flat_base_color, base_color / inv_w, gouraud),
+        select(flat_offset_color, offset_color / inv_w, gouraud),
+        uv / inv_w,
+        tex_idx_shading_instr,
+        select(area1_flat_base_color, area1_base_color / inv_w, gouraud),
+        select(area1_flat_offset_color, area1_offset_color / inv_w, gouraud),
+        area1_uv / inv_w,
+        area1_tex_idx_shading_instr,
+        inv_w,
         false
     );
 
-    if(final_color.area0.a == 0) { discard; }
+    if final_color.area0.a == 0 { discard; }
 
     // Add the fragment to the linked list
 

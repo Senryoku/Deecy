@@ -16,7 +16,6 @@ struct LinkedListElement {
   depth: f32,
   index_and_blend_mode: u32,
   next: u32,
-  _padding: u32,
 };
 
 struct LinkedList {
@@ -87,15 +86,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let to_insert = layers[i];
         var j = i;
 
-        while (j > 0u && 
-            (
-              to_insert.depth > layers[j - 1u].depth ||
-            // If the depths are equal, use the draw order (vertex index) as a tie breaker.
-             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))
-            )
-          ) {
-          layers[j] = layers[j - 1u];
-          j--;
+        while j > 0u && (to_insert.depth > layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
+             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))) {
+            layers[j] = layers[j - 1u];
+            j--;
         }
 
         layers[j] = to_insert;
