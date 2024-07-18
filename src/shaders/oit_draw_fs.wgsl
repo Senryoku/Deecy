@@ -29,23 +29,23 @@ struct LinkedList {
 
 @fragment
 fn main(
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) position_clip: vec4<f32>,
     @location(0) base_color: vec4<f32>,
     @location(1) offset_color: vec4<f32>,
-    @location(2) inv_w: f32,
-    @location(3) uv: vec2<f32>,
-    @location(4) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
-    @location(5) area1_base_color: vec4<f32>,
-    @location(6) area1_offset_color: vec4<f32>,
-    @location(7) area1_uv: vec2<f32>,
-    @location(8) @interpolate(flat) area1_tex_idx_shading_instr: vec2<u32>,
-    @location(9) @interpolate(flat) index: u32,
-    @location(10) @interpolate(flat) flat_base_color: vec4<f32>,
-    @location(11) @interpolate(flat) flat_offset_color: vec4<f32>,
-    @location(12) @interpolate(flat) area1_flat_base_color: vec4<f32>,
-    @location(13) @interpolate(flat) area1_flat_offset_color: vec4<f32>,
+    @location(2) area1_base_color: vec4<f32>,
+    @location(3) area1_offset_color: vec4<f32>,
+    @location(4) @interpolate(flat) flat_base_color: vec4<f32>,
+    @location(5) @interpolate(flat) flat_offset_color: vec4<f32>,
+    @location(6) @interpolate(flat) area1_flat_base_color: vec4<f32>,
+    @location(7) @interpolate(flat) area1_flat_offset_color: vec4<f32>,
+    @location(8) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
+    @location(9) @interpolate(flat) area1_tex_idx_shading_instr: vec2<u32>,
+    @location(10) uv: vec2<f32>,
+    @location(11) area1_uv: vec2<f32>,
+    @location(12) @interpolate(flat) index: u32,
+    @location(13) inv_w: f32,
 ) {
-    let frag_coords = vec2<i32>(position.xy);
+    let frag_coords = vec2<i32>(position_clip.xy);
     let shading_instructions = tex_idx_shading_instr[1];
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
@@ -59,22 +59,22 @@ fn main(
     switch(depth_compare) {
         case 0u: { discard; } // Never
         case 1u: { // Less
-            if position.z <= opaque_depth { discard; }
+            if position_clip.z <= opaque_depth { discard; }
         }
         case 2u: { // Equal
-            if position.z != opaque_depth { discard; }
+            if position_clip.z != opaque_depth { discard; }
         }
         case 3u: { // Less or Equal
-            if position.z < opaque_depth { discard; }
+            if position_clip.z < opaque_depth { discard; }
         }
         case 4u: { // Greater
-            if position.z >= opaque_depth { discard; }
+            if position_clip.z >= opaque_depth { discard; }
         }
         case 5u: { // Not Equal
-            if position.z == opaque_depth { discard; }
+            if position_clip.z == opaque_depth { discard; }
         }
         case 6u: { // Greater or Equal
-            if position.z > opaque_depth { discard; }
+            if position_clip.z > opaque_depth { discard; }
         }
         case 7u: {} // Always
         default: {}
