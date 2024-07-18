@@ -343,16 +343,25 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.begin("AICA", .{})) {
             zgui.text("Master Volume: {X}", .{dc.aica.debug_read_reg(u32, .MasterVolume) & 0xF});
             zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
-            zgui.text("SCIEB: {any}", .{dc.aica.debug_read_reg(AICAModule.InterruptBits, .SCIEB)});
-            zgui.text("INTRequest: {any}", .{dc.aica.debug_read_reg(u32, .INTRequest)});
+            const channel_info_req = dc.aica.debug_read_reg(AICAModule.ChannelInfoReq, .ChannelInfoReq);
+            zgui.text("Channel Select: {d: >2} ({s})", .{ channel_info_req.monitor_select, if (channel_info_req.amplitude_or_filter_select == 1) "filter" else "amplitude" });
+            zgui.text("SCIEB: {X:0>8}, SCIPD: {X:0>8}", .{ dc.aica.debug_read_reg(u32, .SCIEB), dc.aica.debug_read_reg(u32, .SCIPD) });
+            zgui.text("MCIEB: {X:0>8}, MCIPD: {X:0>8}", .{ dc.aica.debug_read_reg(u32, .MCIEB), dc.aica.debug_read_reg(u32, .MCIPD) });
+            zgui.text("INTRequest: {X:0>8}", .{dc.aica.debug_read_reg(u32, .INTRequest)});
             if (zgui.collapsingHeader("Timers", .{ .default_open = true })) {
                 const timer_registers = [_]AICAModule.AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
                 inline for (0..3) |i| {
                     const number = std.fmt.comptimePrint("{d}", .{i});
                     const timer = dc.aica.debug_read_reg(AICAModule.TimerControl, timer_registers[i]);
-                    zgui.text("Timer " ++ number ++ ": Prescale: {X:0>1} - Value: {X:0>2}", .{ timer.prescale, timer.value });
                     const mask: u32 = @as(u32, 1) << @intCast(6 + i);
-                    zgui.text("Interrupt Enabled: {s}", .{if ((dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0) "Yes" else "No"});
+                    const interrupt_enabled = (dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0;
+                    if (interrupt_enabled) {
+                        zgui.textColored(.{ 0.0, 1.0, 0.0, 1.0 }, "!", .{});
+                    } else {
+                        zgui.textColored(.{ 1.0, 0.0, 0.0, 1.0 }, ".", .{});
+                    }
+                    zgui.sameLine(.{});
+                    zgui.text("Timer " ++ number ++ ": Prescale: {X:0>1} - Value: {X:0>2}", .{ timer.prescale, timer.value });
                 }
             }
             if (zgui.plot.beginPlot("Sample Buffer", .{ .flags = zgui.plot.Flags.canvas_only })) {

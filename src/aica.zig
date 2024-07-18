@@ -231,7 +231,7 @@ const PlayStatus = packed struct(u32) {
     _: u16 = 0,
 };
 
-const ChannelInfoReq = packed struct(u32) {
+pub const ChannelInfoReq = packed struct(u32) {
     MIDI_output_buffer: u8,
     monitor_select: u6,
     amplitude_or_filter_select: u1,
@@ -516,7 +516,7 @@ pub const AICA = struct {
                 var chan = &self.channel_states[req.monitor_select];
                 var status: PlayStatus = .{
                     .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
-                    .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
+                    .env_state = chan.amp_env_state,
                     .loop_end_flag = chan.loop_end_flag,
                 };
                 if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
@@ -590,7 +590,7 @@ pub const AICA = struct {
             const high_byte = T == u8 and local_addr % 4 == 1;
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
-                    aica_log.warn(termcolor.yellow("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}"), .{ T, addr, value });
+                    aica_log.info("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
