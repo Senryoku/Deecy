@@ -290,7 +290,8 @@ pub const AICAChannelState = struct {
     }
 
     pub fn key_off(self: *AICAChannelState) void {
-        self.* = .{};
+        self.amp_env_state = .Release;
+        self.filter_env_state = .Release;
     }
 
     pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
@@ -513,11 +514,12 @@ pub const AICA = struct {
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
                 var chan = &self.channel_states[req.monitor_select];
-                const status: PlayStatus = .{
+                var status: PlayStatus = .{
                     .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
                     .env_state = if (req.amplitude_or_filter_select == 0) chan.amp_env_state else chan.filter_env_state,
                     .loop_end_flag = chan.loop_end_flag,
                 };
+                if (status.env_level >= 0x3C0) status.env_level = 0x1FFF;
                 if (!high_byte) {
                     chan.loop_end_flag = false; // Cleared on read.
                     return @truncate(@as(u32, @bitCast(status)));
@@ -633,7 +635,7 @@ pub const AICA = struct {
                     if (T == u32) {
                         aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
                         if (@as(InterruptBits, @bitCast(value)).scpu == 1 and self.get_reg(InterruptBits, .MCIEB).*.scpu == 1) {
-                            aica_log.warn(termcolor.green("SCPU interrupt"), .{});
+                            aica_log.err(termcolor.red("Unimplemented SCPU interrupt!"), .{});
                             // TODO!
                         }
                     } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
@@ -913,12 +915,6 @@ pub const AICA = struct {
             base_play_position_inc <<= 1;
 
         for (self._samples_counter..self._samples_counter + samples) |i| {
-            if (state.amp_env_level > 0x3BF) {
-                state.amp_env_level = 0x1FFF;
-                state.loop_end_flag = true;
-                break;
-            }
-
             if (state.play_position == registers.loop_start) {
                 if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
                     state.amp_env_state = .Decay;
@@ -959,7 +955,8 @@ pub const AICA = struct {
                             state.amp_env_level += EnvelopeDecayValue[idx][i % 4];
                             // FIXME: Not sure about this at all
                             if (state.amp_env_level >= 0x3FF) {
-                                state.key_off();
+                                state.amp_env_level = 0x3FF;
+                                state.amp_env_state = .Release;
                             }
                         },
                     }
@@ -1059,8 +1056,9 @@ pub const AICA = struct {
                         state.adpcm_state.step = state.adpcm_state.step_loopstart;
                         state.adpcm_state.prev = state.adpcm_state.prev_loopstart;
                     } else {
-                        state.play_position = 0;
                         state.playing = false;
+                        state.amp_env_level = 0x3FF;
+                        state.amp_env_state = .Release;
                         return;
                     }
                 }
