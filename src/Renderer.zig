@@ -133,17 +133,20 @@ const Vertex = packed struct {
     x: f32,
     y: f32,
     z: f32,
+    primitive_index: u32,
     base_color: fRGBA,
     offset_color: fRGBA = .{},
-    u: f32 = 0.0,
-    v: f32 = 0.0,
-    tex: VertexTextureInfo,
-
     area1_base_color: fRGBA = .{},
     area1_offset_color: fRGBA = .{},
+    u: f32 = 0.0,
+    v: f32 = 0.0,
     area1_u: f32 = 0.0,
     area1_v: f32 = 0.0,
-    area1_tex: VertexTextureInfo = VertexTextureInfo.invalid(), // NOTE: Both texture infos are constant for the current strip. Use an index instead?
+};
+
+const StripMetadata = packed struct {
+    area0_instructions: VertexTextureInfo,
+    area1_instructions: VertexTextureInfo = VertexTextureInfo.invalid(),
 };
 
 const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/vs.wgsl");
@@ -373,14 +376,13 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
 
 const vertex_attributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 1 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 2 },
-    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 3 },
-    .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "tex"), .shader_location = 4 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 5 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 6 },
+    .{ .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index"), .shader_location = 1 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 2 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 3 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 4 },
+    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 5 },
+    .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 6 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u"), .shader_location = 7 },
-    .{ .format = .uint32x2, .offset = @offsetOf(Vertex, "area1_tex"), .shader_location = 8 },
 };
 const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
     .array_stride = @sizeOf(Vertex),
@@ -447,6 +449,8 @@ pub const Renderer = struct {
     index_buffer: zgpu.BufferHandle,
     modifier_volume_vertex_buffer: zgpu.BufferHandle,
 
+    strips_metadata_buffer: zgpu.BufferHandle,
+
     list_heads_buffer: zgpu.BufferHandle = undefined,
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
@@ -489,6 +493,7 @@ pub const Renderer = struct {
     fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
 
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
+    strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
     opaque_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
     translucent_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
@@ -597,6 +602,7 @@ pub const Renderer = struct {
             zgpu.textureEntry(6, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
+            zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
         });
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.samplerEntry(0, .{ .fragment = true }, .filtering),
@@ -608,7 +614,7 @@ pub const Renderer = struct {
         const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
         defer gctx.releaseResource(blit_pipeline_layout);
 
-        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "vs");
+        const blit_vs_module = zgpu.createWgslShaderModule(gctx.device, blit_vs, "blit_vs");
         defer blit_vs_module.release();
 
         const blit_vertex_attributes = [_]wgpu.VertexAttribute{
@@ -622,7 +628,7 @@ pub const Renderer = struct {
         }};
 
         const blit_pipeline = blit_pl: {
-            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "fs");
+            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "blit_fs");
             defer blit_fs_module.release();
 
             const color_targets = [_]wgpu.ColorTargetState{.{
@@ -727,6 +733,12 @@ pub const Renderer = struct {
             texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
         }
 
+        const StripMetadataSize = 4 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
+        const strips_metadata_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .storage = true },
+            .size = StripMetadataSize,
+        });
+
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
             .{ .binding = 1, .texture_view_handle = texture_array_views[0] },
@@ -737,6 +749,7 @@ pub const Renderer = struct {
             .{ .binding = 6, .texture_view_handle = texture_array_views[5] },
             .{ .binding = 7, .texture_view_handle = texture_array_views[6] },
             .{ .binding = 8, .texture_view_handle = texture_array_views[7] },
+            .{ .binding = 9, .buffer_handle = strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
         });
 
         const vertex_buffer = gctx.createBuffer(.{
@@ -1055,6 +1068,7 @@ pub const Renderer = struct {
             .sampler_bind_groups = sampler_bind_groups,
             .vertex_buffer = vertex_buffer,
             .index_buffer = index_buffer,
+            .strips_metadata_buffer = strips_metadata_buffer,
             .modifier_volume_vertex_buffer = modifier_volume_vertex_buffer,
 
             .texture_arrays = texture_arrays,
@@ -1063,6 +1077,7 @@ pub const Renderer = struct {
             .samplers = samplers,
 
             .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
+            .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
             .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
             .opaque_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
             .translucent_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
@@ -1587,7 +1602,7 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    pub fn update_background(self: *Renderer, gpu: *HollyModule.Holly) void {
+    pub fn update_background(self: *Renderer, gpu: *HollyModule.Holly) !void {
         const tags = gpu._get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
         const param_base = gpu._get_register(u32, .PARAM_BASE).*;
         const addr = param_base + 4 * tags.tag_address;
@@ -1668,6 +1683,7 @@ pub const Renderer = struct {
                 }
             }
             vertices[i] = Vertex{
+                .primitive_index = @intCast(self.strips_metadata.items.len),
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
                 .z = @bitCast(vp[2]),
@@ -1685,7 +1701,6 @@ pub const Renderer = struct {
                 },
                 .u = u,
                 .v = v,
-                .tex = tex,
             };
             // FIXME: We should probably render the background in a separate pass with depth test disabled.
             self.min_depth = @min(self.min_depth, 1 / vertices[i].z);
@@ -1721,6 +1736,7 @@ pub const Renderer = struct {
         vertices[2].y = screen_height;
 
         vertices[3] = Vertex{
+            .primitive_index = vertices[0].primitive_index,
             .x = vertices[1].x,
             .y = vertices[2].y,
             .z = vertices[2].z,
@@ -1728,7 +1744,6 @@ pub const Renderer = struct {
             .base_color = vertices[2].base_color,
             .u = vertices[2].u,
             .v = vertices[1].v,
-            .tex = tex,
         };
 
         const indices = [_]u32{ 0, 1, 2, 3, 0xFFFFFFFF };
@@ -1736,12 +1751,17 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
 
+        try self.strips_metadata.append(.{
+            .area0_instructions = tex,
+        });
+
         std.debug.assert(FirstVertex == vertices.len);
         std.debug.assert(FirstIndex == indices.len);
     }
 
     pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
         self.vertices.clearRetainingCapacity();
+        self.strips_metadata.clearRetainingCapacity();
 
         self.reset_texture_usage(gpu);
         defer self.check_texture_usage();
@@ -1767,7 +1787,7 @@ pub const Renderer = struct {
             self.fog_lut[i] = @as([*]u32, @ptrCast(gpu._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
         }
 
-        self.update_background(gpu);
+        try self.update_background(gpu);
 
         for (&self.passes) |*pass| {
             pass.pass_type = pass.pass_type;
@@ -1896,7 +1916,7 @@ pub const Renderer = struct {
 
                 const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
-                const tex: VertexTextureInfo = .{
+                const area0_instructions: VertexTextureInfo = .{
                     .index = tex_idx,
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
@@ -1915,7 +1935,7 @@ pub const Renderer = struct {
                     },
                 };
 
-                const area1_tex: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
+                const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
                     .index = tex_idx_area_1,
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
@@ -1937,6 +1957,12 @@ pub const Renderer = struct {
                 const first_vertex = display_list.vertex_strips.items[idx].verter_parameter_index;
                 const last_vertex = display_list.vertex_strips.items[idx].verter_parameter_index + display_list.vertex_strips.items[idx].verter_parameter_count;
 
+                const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
+                try self.strips_metadata.append(.{
+                    .area0_instructions = area0_instructions,
+                    .area1_instructions = area1_instructions,
+                });
+
                 for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
                     // std.debug.print("Vertex: {any}\n", .{vertex});
                     switch (vertex) {
@@ -1946,11 +1972,11 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(!textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
                                 .base_color = fRGBA.from_packed(v.base_color, use_alpha),
-                                .tex = tex,
                             });
                         },
                         // Non-Textured, Floating Color
@@ -1958,6 +1984,7 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
                             std.debug.assert(!textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1967,18 +1994,17 @@ pub const Renderer = struct {
                                     .b = v.b,
                                     .a = if (use_alpha) v.a else 1.0,
                                 },
-                                .tex = tex,
                             });
                         },
                         // Non-Textured, Intensity
                         .Type2 => |v| {
                             std.debug.assert(!textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
                                 .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .tex = tex,
                             });
                         },
                         // Packed Color, Textured 32bit UV
@@ -1986,6 +2012,7 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -1993,12 +2020,12 @@ pub const Renderer = struct {
                                 .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color, true) else .{},
                                 .u = v.u,
                                 .v = v.v,
-                                .tex = tex,
                             });
                         },
                         // Packed Color, Textured 16bit UV
                         .Type4 => |v| {
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2006,12 +2033,12 @@ pub const Renderer = struct {
                                 .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color, true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
-                                .tex = tex,
                             });
                         },
                         // Floating Color, Textured
                         .Type5 => |v| {
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2029,12 +2056,12 @@ pub const Renderer = struct {
                                 } else .{},
                                 .u = v.u,
                                 .v = v.v,
-                                .tex = tex,
                             });
                         },
                         // Floating Color, Textured 16bit UV
                         .Type6 => |v| {
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2052,7 +2079,6 @@ pub const Renderer = struct {
                                 } else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
-                                .tex = tex,
                             });
                         },
                         // Intensity
@@ -2060,6 +2086,7 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2067,7 +2094,6 @@ pub const Renderer = struct {
                                 .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                 .u = v.u,
                                 .v = v.v,
-                                .tex = tex,
                             });
                         },
                         // Intensity, 16bit UV
@@ -2075,6 +2101,7 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2082,7 +2109,6 @@ pub const Renderer = struct {
                                 .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
-                                .tex = tex,
                             });
                         },
                         // Textured, Packed Color, with Two Volumes
@@ -2092,6 +2118,7 @@ pub const Renderer = struct {
                             std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                             std.debug.assert(textured);
                             try self.vertices.append(.{
+                                .primitive_index = primitive_index,
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
@@ -2099,17 +2126,16 @@ pub const Renderer = struct {
                                 .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color_0, true) else .{},
                                 .u = v.u0,
                                 .v = v.v0,
-                                .tex = tex,
                                 .area1_base_color = fRGBA.from_packed(v.offset_color_1, use_alpha),
                                 .area1_offset_color = if (use_offset) fRGBA.from_packed(v.offset_color_1, true) else .{},
                                 .area1_u = v.u1,
                                 .area1_v = v.v1,
-                                .area1_tex = area1_tex,
                             });
                         },
                         .SpriteType0, .SpriteType1 => {
                             var vs = gen_sprite_vertices(vertex);
                             for (&vs) |*v| {
+                                v.primitive_index = primitive_index;
                                 v.base_color = fRGBA.from_packed(sprite_base_color, use_alpha);
                                 // FIXME: This is wrong.
                                 //if (use_offset)
@@ -2119,7 +2145,6 @@ pub const Renderer = struct {
                                 //        .b = @as(f32, @floatFromInt(sprite_offset_color.b)) / 255.0,
                                 //        .a = @as(f32, @floatFromInt(sprite_offset_color.a)) / 255.0,
                                 //    };
-                                v.tex = tex;
                                 self.min_depth = @min(self.min_depth, 1.0 / v.z);
                                 self.max_depth = @max(self.max_depth, 1.0 / v.z);
 
@@ -2184,6 +2209,7 @@ pub const Renderer = struct {
         }
 
         // Send everything to the GPU
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, 0, StripMetadata, self.strips_metadata.items);
         if (self.vertices.items.len > 0) {
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
 

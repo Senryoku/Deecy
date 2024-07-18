@@ -1,4 +1,13 @@
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct StripsMetadata {
+    area0_tex_index: u32,
+    area0_instructions: u32,
+    area1_tex_index: u32,
+    area1_instructions: u32,
+};
+
+@group(0) @binding(9) var<storage, read> strips_metadata: array<StripsMetadata>;
  
 struct VertexOut {
     @builtin(position) position_clip: vec4<f32>,
@@ -21,14 +30,13 @@ struct VertexOut {
 @vertex
 fn main(
     @location(0) position: vec3<f32>,
-    @location(1) base_color: vec4<f32>,
-    @location(2) offset_color: vec4<f32>,
-    @location(3) uv: vec2<f32>,
-    @location(4) tex_idx_shading_instr: vec2<u32>, // Texture index and Texture control word
-    @location(5) area1_base_color: vec4<f32>,
-    @location(6) area1_offset_color: vec4<f32>,
+    @location(1) primitive_index: u32,
+    @location(2) base_color: vec4<f32>,
+    @location(3) offset_color: vec4<f32>,
+    @location(4) area1_base_color: vec4<f32>,
+    @location(5) area1_offset_color: vec4<f32>,
+    @location(6) uv: vec2<f32>,
     @location(7) area1_uv: vec2<f32>,
-    @location(8) area1_tex_idx_shading_instr: vec2<u32>,
     @builtin(vertex_index) vertex_index: u32,
 ) -> VertexOut {
     var output: VertexOut;
@@ -49,17 +57,19 @@ fn main(
 
     let inv_w = position.z;
 
+    let metadata = strips_metadata[primitive_index];
+
     output.base_color = inv_w * base_color;
     output.offset_color = inv_w * offset_color;
     output.uv = inv_w * uv;
-    output.tex_idx_shading_instr = tex_idx_shading_instr;
+    output.tex_idx_shading_instr = vec2<u32>(metadata.area0_tex_index, metadata.area0_instructions);
     output.flat_base_color = base_color;
     output.flat_offset_color = offset_color;
 
     output.area1_base_color = inv_w * area1_base_color;
     output.area1_offset_color = inv_w * area1_offset_color;
     output.area1_uv = inv_w * area1_uv;
-    output.area1_tex_idx_shading_instr = area1_tex_idx_shading_instr;
+    output.area1_tex_idx_shading_instr = vec2<u32>(metadata.area1_tex_index, metadata.area1_instructions);
     output.area1_flat_base_color = area1_base_color;
     output.area1_flat_offset_color = area1_offset_color;
 
