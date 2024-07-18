@@ -314,6 +314,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         if (zgui.begin("AICA - ARM", .{})) {
             _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
+            zgui.sameLine(.{});
+            _ = zgui.checkbox("Debug Trace", .{ .v = &dc.aica.arm_debug_trace });
             zgui.text("State: {s} - Run.: {any}", .{ @tagName(dc.aica.arm7.cpsr.m), dc.aica.arm7.running });
             zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
             zgui.beginGroup();
@@ -371,9 +373,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
                 // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
                 zgui.plot.setupFinish();
+                zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
                 zgui.plot.plotLine("sample_read_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_read_offset), @intCast(dc.aica.sample_read_offset) }, .yv = &[_]i32{ 0, std.math.maxInt(i16) } });
                 zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
-                zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
                 zgui.plot.endPlot();
             }
             _ = zgui.checkbox("Show disabled channels", .{ .v = &self.show_disabled_channels });
@@ -414,10 +416,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         if (loop_size == 0) loop_size = 2048;
                         if (channel.play_control.sample_format == .i16) {
                             if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
-                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
+                                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size / 2) });
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                                 zgui.plot.setupFinish();
                                 zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                                zgui.plot.plotLine("play_position", i32, .{ .xv = &[_]i32{ @intCast(state.play_position), @intCast(state.play_position) }, .yv = &[_]i32{ -std.math.maxInt(i16), std.math.maxInt(i16) } });
                                 zgui.plot.endPlot();
                             }
                         } else if (channel.play_control.sample_format == .i8) {
@@ -426,6 +429,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
                                 zgui.plot.setupFinish();
                                 zgui.plot.plotLineValues("samples", i8, .{ .v = @as([*]const i8, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                                zgui.plot.plotLine("play_position", i32, .{ .xv = &[_]i32{ @intCast(state.play_position), @intCast(state.play_position) }, .yv = &[_]i32{ -std.math.maxInt(i8), std.math.maxInt(i8) } });
                                 zgui.plot.endPlot();
                             }
                         }
