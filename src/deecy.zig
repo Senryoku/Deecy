@@ -51,7 +51,7 @@ pub const Deecy = struct {
     enable_jit: bool = true,
     breakpoints: std.ArrayList(u32),
 
-    controllers: [4]?zglfw.Joystick.Id = .{ null, null, null, null },
+    controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
 
     debug_ui: DebugUI = undefined,
 
@@ -115,7 +115,7 @@ pub const Deecy = struct {
             const jid: zglfw.Joystick.Id = @intCast(idx);
             if (zglfw.Joystick.get(jid)) |joystick| {
                 if (joystick.asGamepad()) |_| {
-                    self.controllers[curr_pad] = jid;
+                    self.controllers[curr_pad] = .{ .id = jid };
                     curr_pad += 1;
                     if (curr_pad >= 4)
                         break;
@@ -190,7 +190,7 @@ pub const Deecy = struct {
 
                         if (!any_keyboard_key_pressed) {
                             if (self.controllers[controller_idx]) |host_controller| {
-                                if (zglfw.Joystick.get(host_controller)) |joystick| {
+                                if (zglfw.Joystick.get(host_controller.id)) |joystick| {
                                     if (joystick.asGamepad()) |gamepad| {
                                         const gamepad_state = gamepad.getState();
                                         const gamepad_binds: [9]struct { zglfw.Gamepad.Button, DreamcastModule.Maple.ControllerButtons } = .{
@@ -214,8 +214,18 @@ pub const Deecy = struct {
                                         }
                                         c.axis[0] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)] * 0.5 + 0.5) * 255));
                                         c.axis[1] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)] * 0.5 + 0.5) * 255));
-                                        c.axis[2] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)] * 0.5 + 0.5) * 255));
-                                        c.axis[3] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)] * 0.5 + 0.5) * 255));
+
+                                        var x_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)];
+                                        var y_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)];
+                                        if (@abs(x_axis) < host_controller.deadzone)
+                                            x_axis = 0.0;
+                                        if (@abs(y_axis) < host_controller.deadzone)
+                                            y_axis = 0.0;
+                                        // TODO: Remap with deadzone?
+                                        x_axis = x_axis * 0.5 + 0.5;
+                                        y_axis = y_axis * 0.5 + 0.5;
+                                        c.axis[2] = @as(u8, @intFromFloat(x_axis * 255));
+                                        c.axis[3] = @as(u8, @intFromFloat(y_axis * 255));
                                     }
                                 } else {
                                     // Not valid anymore? Disconnected?

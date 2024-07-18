@@ -154,26 +154,31 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
 
             inline for (0..4) |i| {
+                const number = std.fmt.comptimePrint("{d}", .{i + 1});
                 var connected: bool = d.dc.maple.ports[i].main != null;
-                if (zgui.checkbox("Connected##" ++ std.fmt.comptimePrint("{d}", .{i + 1}), .{ .v = &connected })) {
+                if (zgui.checkbox("Connected##" ++ number, .{ .v = &connected })) {
                     if (d.dc.maple.ports[i].main != null) {
                         d.dc.maple.ports[i].main = null;
                     } else {
                         d.dc.maple.ports[i].main = .{ .Controller = .{} };
                     }
                 }
-                const name = if (d.controllers[i]) |jid|
-                    (if (zglfw.Joystick.get(jid)) |joystick|
+                if (d.controllers[i]) |*j| {
+                    zgui.sameLine(.{});
+                    _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.1, .max = 1.0, .flags = .{} });
+                }
+                const name = if (d.controllers[i]) |j|
+                    (if (zglfw.Joystick.get(j.id)) |joystick|
                         (if (joystick.asGamepad()) |gamepad| gamepad.getName() else "None")
                     else
                         "None")
                 else
                     "None";
-                if (zgui.beginCombo("Controller #" ++ std.fmt.comptimePrint("{d}", .{i + 1}), .{ .preview_value = name })) {
+                if (zgui.beginCombo("Controller #" ++ number, .{ .preview_value = name })) {
                     for (available_controllers.items, 0..) |item, index| {
                         const idx = @as(u32, @intCast(index));
-                        if (zgui.selectable(item.name, .{ .selected = d.controllers[i] == available_controllers.items[idx].id }))
-                            d.controllers[i] = available_controllers.items[idx].id;
+                        if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == available_controllers.items[idx].id }))
+                            d.controllers[i] = .{ .id = available_controllers.items[idx].id.? };
                     }
                     zgui.endCombo();
                 }
