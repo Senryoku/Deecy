@@ -288,6 +288,20 @@ fn write64(addr: u32, val: u64) void {
     };
 }
 
+fn check_fp(expected: f32, actual: f32) !void {
+    if (!is_nan(expected) or !is_nan(actual)) {
+        if (@as(f32, @bitCast(expected)) != actual) {
+            if (@abs(1.0 - (expected / actual)) < 0.0001) {
+                std.debug.print(termcolor.yellow("expected: {}, found {}\n"), .{ expected, actual });
+                return error.ApproximationError;
+            } else {
+                std.debug.print(termcolor.red("expected: {}, found {}\n"), .{ expected, actual });
+                return error.FloatingPointError;
+            }
+        }
+    }
+}
+
 fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     TestState = .{ .cpu = cpu, .cycle = 0, .test_data = t };
 
@@ -344,10 +358,8 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
     try std.testing.expectEqualSlices(u32, t.final.R, &cpu.r);
     try std.testing.expectEqualSlices(u32, t.final.R_, &cpu.r_bank);
     for (0..16) |i| {
-        if (!is_nan(@as(f32, @bitCast(t.final.FP0[i]))) or !is_nan(cpu.fp_banks[0].fr[i]))
-            try std.testing.expectEqual(@as(f32, @bitCast(t.final.FP0[i])), cpu.fp_banks[0].fr[i]);
-        if (!is_nan(@as(f32, @bitCast(t.final.FP1[i]))) or !is_nan(cpu.fp_banks[1].fr[i]))
-            try std.testing.expectEqual(@as(f32, @bitCast(t.final.FP1[i])), cpu.fp_banks[1].fr[i]);
+        try check_fp(@as(f32, @bitCast(t.final.FP0[i])), cpu.fp_banks[0].fr[i]);
+        try check_fp(@as(f32, @bitCast(t.final.FP1[i])), cpu.fp_banks[1].fr[i]);
     }
     try std.testing.expectEqual(t.final.PC, cpu.pc);
     try std.testing.expectEqual(t.final.GBR, cpu.gbr);
