@@ -514,6 +514,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.end();
 
         if (zgui.begin("Holly", .{})) {
+            if (zgui.collapsingHeader("SPG", .{ .frame_padding = true })) {
+                zgui.indent(.{});
+                zgui.text("SPG_HBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK_INT).*});
+                zgui.text("SPG_VBLANK_INT: {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK_INT).*});
+                zgui.text("SPG_CONTROL:    {X:0>8}", .{dc.gpu._get_register(u32, .SPG_CONTROL).*});
+                zgui.text("SPG_HBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_HBLANK).*});
+                zgui.text("SPG_VBLANK:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_VBLANK).*});
+                zgui.text("SPG_WIDTH:      {X:0>8}", .{dc.gpu._get_register(u32, .SPG_WIDTH).*});
+                zgui.text("SPG_STATUS:     {X:0>8}", .{dc.gpu._get_register(u32, .SPG_STATUS).*});
+                zgui.unindent(.{});
+            }
             const ISP_BACKGND_D = dc.gpu._get_register(u32, .ISP_BACKGND_D).*;
             const ISP_BACKGND_T = dc.gpu._get_register(u32, .ISP_BACKGND_T).*;
             zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });

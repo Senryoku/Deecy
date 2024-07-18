@@ -1414,8 +1414,11 @@ pub const Holly = struct {
             .TA_YUV_TEX_BASE => {
                 self._get_register(u32, .TA_YUV_TEX_CNT).* = 0;
             },
-            .SPG_CONTROL, .SPG_LOAD => {
-                holly_log.warn("TODO SPG_CONTROL/SPG_LOAD: {X:0>8}", .{v});
+            .SPG_CONTROL => {
+                holly_log.warn("Write to SPG_CONTROL: {X:0>8}", .{v});
+            },
+            .SPG_LOAD => {
+                holly_log.warn("Write to SPG_LOAD: {X:0>8}", .{v});
             },
             else => |reg| {
                 holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
