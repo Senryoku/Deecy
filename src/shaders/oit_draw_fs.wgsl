@@ -12,7 +12,7 @@ struct Heads {
 };
 
 struct LinkedListElement {
-  color: vec4<f32>,
+  color: u32,
   depth: f32,
   index_and_blend_mode: u32,
   next: u32,
@@ -108,7 +108,7 @@ fn main(
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position_clip.z;
-        linked_list.data[frag_index].color = final_color.area0; // TODO: Handle Modifier volumes/Area 1
+        linked_list.data[frag_index].color = pack4x8unorm(final_color.area0); // TODO: Handle Modifier volumes/Area 1
         linked_list.data[frag_index].index_and_blend_mode = ((shading_instructions >> 10) & 0x3F) | (index << 6);
         linked_list.data[frag_index].next = last_head;
     }

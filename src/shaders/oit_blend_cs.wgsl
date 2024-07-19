@@ -12,7 +12,7 @@ struct Heads {
 };
 
 struct LinkedListElement {
-  color: vec4<f32>,
+  color: u32,
   depth: f32,
   index_and_blend_mode: u32,
   next: u32,
@@ -106,7 +106,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Blend the translucent fragments
     for (var i = 0u; i < layer_count; i++) {
-        let src = layers[i].color;
+        let src = unpack4x8unorm(layers[i].color);
         let dst = color;
         let blend_mode = layers[i].index_and_blend_mode & 0x3F;
         color = src * get_src_factor(blend_mode & 7, src, dst) + dst * get_dst_factor((blend_mode >> 3) & 7, src, dst);
