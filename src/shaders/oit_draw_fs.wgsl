@@ -1,25 +1,8 @@
 // Modified from https://webgpu.github.io/webgpu-samples/samples/A-buffer - BSD-3-Clause license 
 
-struct OITUniforms {
-    max_fragments: u32,
-    target_width: u32,
-    start_y: u32,
-};
-
 struct Heads {
   fragment_count: atomic<u32>,
   data: array<atomic<u32>>
-};
-
-struct LinkedListElement {
-  color: u32,
-  depth: f32,
-  index_and_blend_mode: u32,
-  next: u32,
-};
-
-struct LinkedList {
-  data: array<LinkedListElement>
 };
 
 @group(2) @binding(0) var<uniform> oit_uniforms: OITUniforms;
