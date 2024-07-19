@@ -8,6 +8,12 @@ const wgpu = zgpu.wgpu;
 const common = @import("common.zig");
 const termcolor = @import("termcolor");
 
+const Colors = @import("colors.zig");
+const PackedColor = Colors.PackedColor;
+const fRGBA = Colors.fRGBA;
+const Color16 = Colors.Color16;
+const YUV422 = Colors.YUV422;
+
 const HollyModule = @import("holly.zig");
 
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
@@ -54,32 +60,6 @@ fn uv16(val: u16) f32 {
 fn texture_hash(gpu: *const HollyModule.Holly, start: u32, end: u32) u64 {
     return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
 }
-
-pub const fRGBA = packed struct {
-    r: f32 = 0,
-    g: f32 = 0,
-    b: f32 = 0,
-    a: f32 = 0,
-
-    pub fn from_packed(color: HollyModule.PackedColor, use_alpha: bool) @This() {
-        return .{
-            .r = @as(f32, @floatFromInt(color.r)) / 255.0,
-            .g = @as(f32, @floatFromInt(color.g)) / 255.0,
-            .b = @as(f32, @floatFromInt(color.b)) / 255.0,
-            .a = if (use_alpha) @as(f32, @floatFromInt(color.a)) / 255.0 else 1.0,
-        };
-    }
-
-    pub fn apply_intensity(self: @This(), intensity: f32, use_alpha: bool) @This() {
-        const clampled = @min(1.0, @max(0.0, intensity));
-        return .{
-            .r = clampled * self.r,
-            .g = clampled * self.g,
-            .b = clampled * self.b,
-            .a = if (use_alpha) self.a else 1.0,
-        };
-    }
-};
 
 const ShadingInstructions = packed struct(u32) {
     textured: u1 = 0,
@@ -1114,6 +1094,19 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.pipeline_layout);
     }
 
+    // For external use only (e.g. Debug UI)
+    pub fn get_texture_view(self: *const Renderer, control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
+        const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+            if (entry.status != .Invalid and entry.status != .Outdated and
+                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
+            {
+                return .{ .size_index = size_index, .index = @intCast(idx) };
+            }
+        }
+        return null;
+    }
+
     fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
             if (entry.status != .Invalid and
@@ -1163,7 +1156,7 @@ pub const Renderer = struct {
     }
 
     inline fn bgra_from_16bits_color_non_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        const pixel: HollyModule.Color16 = .{ .value = val };
+        const pixel: Color16 = .{ .value = val };
         switch (format) {
             .ARGB1555 => {
                 return .{
@@ -1197,7 +1190,7 @@ pub const Renderer = struct {
     }
 
     inline fn bgra_from_16bits_color_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        const pixel: HollyModule.Color16 = .{ .value = val };
+        const pixel: Color16 = .{ .value = val };
         switch (format) {
             .ARGB1555 => {
                 return .{
@@ -1378,12 +1371,12 @@ pub const Renderer = struct {
                                 const pixel_idx = 2 * v * u_size + 2 * u;
                                 const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
                                 const halfwords = @as([*]const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx])))[0..4];
-                                const texels_0_1: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
-                                const texels_2_3: HollyModule.YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
-                                const colors_0 = HollyModule.yuv_to_rgba(texels_0_1);
+                                const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
+                                const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
+                                const colors_0 = Colors.yuv_to_rgba(texels_0_1);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors_0[0].b, colors_0[0].g, colors_0[0].r, colors_0[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors_0[1].b, colors_0[1].g, colors_0[1].r, colors_0[1].a };
-                                const colors_1 = HollyModule.yuv_to_rgba(texels_2_3);
+                                const colors_1 = Colors.yuv_to_rgba(texels_2_3);
                                 self.bgra_scratch_pad()[pixel_idx + u_size] = .{ colors_1[0].b, colors_1[0].g, colors_1[0].r, colors_1[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + u_size + 1] = .{ colors_1[1].b, colors_1[1].g, colors_1[1].r, colors_1[1].a };
                             }
@@ -1393,8 +1386,8 @@ pub const Renderer = struct {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = v * u_size + 2 * u;
                                 const texel_idx = 2 * pixel_idx;
-                                const texel: HollyModule.YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
-                                const colors = HollyModule.yuv_to_rgba(texel);
+                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
+                                const colors = Colors.yuv_to_rgba(texel);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
                             }
@@ -1555,14 +1548,14 @@ pub const Renderer = struct {
                     const pixel_addr = addr + bytes_per_pixels * x;
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
-                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
                             self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x1 => { // 565 RGB
-                            const pixel: HollyModule.Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
                             self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                             self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
@@ -1665,8 +1658,8 @@ pub const Renderer = struct {
             const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
             var u: f32 = 0;
             var v: f32 = 0;
-            var base_color: HollyModule.PackedColor = @bitCast(vp[3]);
-            var offset_color: HollyModule.PackedColor = .{ .b = 0, .g = 0, .r = 0, .a = 0 };
+            var base_color: PackedColor = @bitCast(vp[3]);
+            var offset_color: PackedColor = .{ .b = 0, .g = 0, .r = 0, .a = 0 };
             if (isp_tsp_instruction.texture == 1) {
                 if (isp_tsp_instruction.uv_16bit == 1) {
                     u = @as(f32, @bitCast(vp[3] >> 16));
@@ -1774,8 +1767,8 @@ pub const Renderer = struct {
         const fpu_shad_scale = gpu._get_register(u32, .FPU_SHAD_SCALE).*;
         self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
 
-        const col_pal = gpu._get_register(HollyModule.PackedColor, .FOG_COL_RAM).*;
-        const col_vert = gpu._get_register(HollyModule.PackedColor, .FOG_COL_VERT).*;
+        const col_pal = gpu._get_register(PackedColor, .FOG_COL_RAM).*;
+        const col_vert = gpu._get_register(PackedColor, .FOG_COL_VERT).*;
 
         self.fog_col_pal = fRGBA.from_packed(col_pal, true);
         self.fog_col_vert = fRGBA.from_packed(col_vert, true);
@@ -1821,8 +1814,8 @@ pub const Renderer = struct {
                 var area1_tsp_instruction: ?HollyModule.TSPInstructionWord = null;
                 var area1_texture_control: ?HollyModule.TextureControlWord = null;
 
-                var sprite_base_color: HollyModule.PackedColor = undefined;
-                var sprite_offset_color: HollyModule.PackedColor = undefined;
+                var sprite_base_color: PackedColor = undefined;
+                var sprite_offset_color: PackedColor = undefined;
 
                 switch (display_list.vertex_strips.items[idx].polygon) {
                     .PolygonType0 => |p| {

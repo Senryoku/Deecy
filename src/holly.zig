@@ -9,62 +9,9 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const termcolor = @import("termcolor");
 
-pub const Color16 = packed union {
-    value: u16,
-    arbg1555: packed struct(u16) {
-        b: u5,
-        g: u5,
-        r: u5,
-        a: u1,
-    },
-    rgb565: packed struct(u16) {
-        b: u5,
-        g: u6,
-        r: u5,
-    },
-    argb4444: packed struct(u16) {
-        b: u4,
-        g: u4,
-        r: u4,
-        a: u4,
-    },
-};
-
-pub const YUV422 = packed struct(u32) {
-    u: u8,
-    y0: u8,
-    v: u8,
-    y1: u8,
-};
-
-pub const RGBA = packed struct(u32) {
-    a: u8,
-    b: u8,
-    g: u8,
-    r: u8,
-};
-
-// Expects u and v to already be shifted, then, per the documentation:
-//   R = Y + (11/8) × (V-128)
-//   G = Y - 0.25 × (11/8) × (U-128) - 0.5 × (11/8) × (V-128)
-//   B = Y + 1.25 × (11/8) × (U-128)
-//   α= 255
-inline fn _yuv(y: f32, u: f32, v: f32) RGBA {
-    return .{
-        .r = @intFromFloat(std.math.clamp(y + (11.0 / 8.0) * v, 0.0, 255.0)),
-        .g = @intFromFloat(std.math.clamp(y - 0.25 * (11.0 / 8.0) * u - 0.5 * (11.0 / 8.0) * v, 0.0, 255.0)),
-        .b = @intFromFloat(std.math.clamp(y + 1.25 * (11.0 / 8.0) * u, 0.0, 255.0)),
-        .a = 255,
-    };
-}
-
-pub fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
-    const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
-    const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
-    const y0: f32 = @floatFromInt(yuv.y0);
-    const y1: f32 = @floatFromInt(yuv.y1);
-    return .{ _yuv(y0, u, v), _yuv(y1, u, v) };
-}
+const Colors = @import("colors.zig");
+const PackedColor = Colors.PackedColor;
+const YUV422 = Colors.YUV422;
 
 const HollyRegister = enum(u32) {
     ID = 0x005F8000,
@@ -465,6 +412,14 @@ pub const TSPInstructionWord = packed struct(u32) {
     src_select: u1,
     dst_alpha_instr: AlphaInstruction,
     src_alpha_instr: AlphaInstruction,
+
+    pub fn get_u_size(self: @This()) u32 {
+        return (@as(u32, 8) << self.texture_u_size);
+    }
+
+    pub fn get_v_size(self: @This()) u32 {
+        return (@as(u32, 8) << self.texture_v_size);
+    }
 };
 
 pub const TexturePixelFormat = enum(u3) {
@@ -650,6 +605,51 @@ pub const Polygon = union(PolygonType) {
             .Sprite => |p| p.tsp_instruction,
         };
     }
+
+    pub fn texture_control(self: @This()) TextureControlWord {
+        return switch (self) {
+            .PolygonType0 => |p| p.texture_control,
+            .PolygonType1 => |p| p.texture_control,
+            .PolygonType2 => |p| p.texture_control,
+            .PolygonType3 => |p| p.texture_control_0,
+            .PolygonType4 => |p| p.texture_control_0,
+            .Sprite => |p| p.texture_control,
+        };
+    }
+
+    pub fn area1_tsp_instruction(self: @This()) ?TSPInstructionWord {
+        return switch (self) {
+            .PolygonType3 => |p| p.tsp_instruction_1,
+            .PolygonType4 => |p| p.tsp_instruction_1,
+            else => null,
+        };
+    }
+
+    pub fn area1_texture_control(self: @This()) ?TextureControlWord {
+        return switch (self) {
+            .PolygonType3 => |p| p.texture_control_1,
+            .PolygonType4 => |p| p.texture_control_1,
+            else => null,
+        };
+    }
+
+    pub fn base_color(self: @This()) ?[4]f32 {
+        return switch (self) {
+            .PolygonType1 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
+            .PolygonType2 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
+            .PolygonType4 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
+            .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.base_color, true)),
+            else => null,
+        };
+    }
+
+    pub fn offset_color(self: @This()) ?[4]f32 {
+        return switch (self) {
+            .PolygonType2 => |p| .{ p.face_offset_color_r, p.face_offset_color_g, p.face_offset_color_b, p.face_offset_color_a },
+            .PolygonType4 => |p| .{ p.face_offset_color_r, p.face_offset_color_g, p.face_offset_color_b, p.face_offset_color_a },
+            else => null,
+        };
+    }
 };
 
 fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
@@ -752,13 +752,6 @@ pub const ModifierVolume = struct {
     first_triangle_index: u32,
     triangle_count: u32 = 0,
     closed: bool,
-};
-
-pub const PackedColor = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8,
 };
 
 const BumpMapParameter = packed struct(u32) {
@@ -1133,7 +1126,7 @@ pub const UserTileClipInfo = struct {
     height: u32,
 };
 
-const VertexStrip = struct {
+pub const VertexStrip = struct {
     polygon: Polygon,
     user_clip: ?UserTileClipInfo,
     verter_parameter_index: usize = 0,

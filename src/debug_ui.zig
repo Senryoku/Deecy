@@ -13,6 +13,10 @@ const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
 const AICAModule = @import("./aica.zig");
 
+const Colors = @import("colors.zig");
+const Color16 = Colors.Color16;
+const fRGBA = Colors.fRGBA;
+
 const RendererModule = @import("renderer.zig");
 
 const Deecy = @import("deecy.zig").Deecy;
@@ -26,7 +30,7 @@ show_disabled_channels: bool = false,
 
 vram_texture: zgpu.TextureHandle = undefined,
 vram_texture_view: zgpu.TextureViewHandle = undefined,
-renderer_texture_views: [8]zgpu.TextureViewHandle = undefined,
+renderer_texture_views: [8][256]zgpu.TextureViewHandle = undefined,
 
 // Strip Debug Display
 selected_focus: bool = false, // Element has been clicked and remain in focus
@@ -98,12 +102,15 @@ pub fn init(d: *Deecy) !@This() {
 
     self.pixels = try self._allocator.alloc(u8, (vram_width * vram_height) * 4);
 
-    for (0..self.renderer_texture_views.len) |i|
-        self.renderer_texture_views[i] = d.gctx.createTextureView(d.renderer.texture_arrays[i], .{
-            .dimension = .tvdim_2d,
-            .base_array_layer = 0,
-            .array_layer_count = 1,
-        });
+    for (0..self.renderer_texture_views.len) |i| {
+        for (0..RendererModule.Renderer.MaxTextures[i]) |j| {
+            self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i], .{
+                .dimension = .tvdim_2d,
+                .base_array_layer = @intCast(j),
+                .array_layer_count = 1,
+            });
+        }
+    }
 
     for (0..self.audio_channels.len) |i| {
         self.audio_channels[i].amplitude_envelope.xv = std.ArrayList(u32).init(self._allocator);
@@ -119,8 +126,10 @@ pub fn deinit(self: *@This()) void {
         self.audio_channels[i].amplitude_envelope.yv.deinit();
     }
 
-    for (self.renderer_texture_views) |view|
-        self._gctx.releaseResource(view);
+    for (self.renderer_texture_views) |views| {
+        for (views) |view|
+            self._gctx.releaseResource(view);
+    }
 
     self._gctx.releaseResource(self.vram_texture_view);
     self._gctx.releaseResource(self.vram_texture);
@@ -601,6 +610,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                     self.selected_strip = @intCast(idx);
                                 }
                                 if (node_open) {
+                                    self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
                                     for (strip.verter_parameter_index..(strip.verter_parameter_index + strip.verter_parameter_count)) |i| {
                                         self.display_vertex_data(&list.vertex_parameters.items[i]);
                                     }
@@ -668,7 +678,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (addr >= 0x04800000 - bytes_per_pixels) break;
                     switch (static.format & 0b111) {
                         0x0, 0x3 => { // 0555 KRGB 16 bits
-                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
+                            const color: Color16 = .{ .value = dc.cpu.read16(addr) };
                             self.pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
                             self.pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
                             self.pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
@@ -676,7 +686,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             i += 1;
                         },
                         0x1 => { // 565 RGB 16 bit
-                            const color: Holly.Color16 = .{ .value = dc.cpu.read16(addr) };
+                            const color: Color16 = .{ .value = dc.cpu.read16(addr) };
                             self.pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                             self.pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                             self.pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
@@ -752,20 +762,16 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     static.size = std.math.clamp(static.size, 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
                     static.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(static.size))));
                     static.index = std.math.clamp(static.index, 0, RendererModule.Renderer.MaxTextures[@intCast(static.size)] - 1);
-                    d.gctx.releaseResource(self.renderer_texture_views[@intCast(static.size)]);
-                    self.renderer_texture_views[@intCast(static.size)] = d.gctx.createTextureView(d.renderer.texture_arrays[@intCast(static.size)], .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
                 }
                 zgui.sameLine(.{});
                 zgui.text("{d: >3}x{d: >3}", .{ @as(u32, 8) << @intCast(static.size), @as(u32, 8) << @intCast(static.size) });
                 if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
                     static.index = std.math.clamp(static.index, 0, RendererModule.Renderer.MaxTextures[@intCast(static.size)] - 1);
-                    d.gctx.releaseResource(self.renderer_texture_views[@intCast(static.size)]);
-                    self.renderer_texture_views[@intCast(static.size)] = d.gctx.createTextureView(d.renderer.texture_arrays[@intCast(static.size)], .{ .dimension = .tvdim_2d, .base_array_layer = @as(u32, @intCast(static.index)), .array_layer_count = 1 });
                 }
                 if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
                     static.scale = std.math.clamp(static.scale, 1.0, 8.0);
                 }
-                const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(static.size)]).?;
+                const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(static.size)][@intCast(static.index)]).?;
                 zgui.image(tex_id, .{ .w = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))), .h = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))) });
                 if (zgui.collapsingHeader("Parameter Control Word", .{ .default_open = true })) {
                     const control_word = d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].control_word;
@@ -852,20 +858,54 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
 }
 
+fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, strip: *const Holly.VertexStrip) void {
+    const control_word = strip.polygon.control_word();
+    zgui.text("Control Word: {X:0>8}", .{@as(u32, @bitCast(control_word))});
+    const isp_tsp = strip.polygon.isp_tsp_instruction();
+    const tsp = strip.polygon.tsp_instruction();
+    zgui.text("ISPTSP: {X:0>8}", .{@as(u32, @bitCast(isp_tsp))});
+    zgui.text("TSP: {X:0>8}", .{@as(u32, @bitCast(tsp))});
+    if (control_word.obj_control.texture == 1) {
+        const texture_control_word = strip.polygon.texture_control();
+        zgui.text("Texture Control Word: {X:0>8}", .{@as(u32, @bitCast(texture_control_word))});
+        if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
+            const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
+            zgui.image(view, .{
+                .w = @floatFromInt(tsp.get_u_size()),
+                .h = @floatFromInt(tsp.get_v_size()),
+            });
+        }
+    }
+    if (strip.polygon.area1_texture_control()) |area1_texture_control| {
+        zgui.text("Area1 Texture Control: {X:0>8}", .{@as(u32, @bitCast(area1_texture_control))});
+    }
+    if (strip.polygon.area1_tsp_instruction()) |area1_tsp| {
+        zgui.text("Area1 TSP: {X:0>8}", .{@as(u32, @bitCast(area1_tsp))});
+    }
+    if (strip.polygon.base_color()) |base_color| {
+        var local = base_color;
+        _ = zgui.colorEdit4("Base Color", .{ .col = &local, .flags = .{ .float = true } });
+    }
+    if (strip.polygon.offset_color()) |offset_color| {
+        var local = offset_color;
+        _ = zgui.colorEdit4("Offset Color", .{ .col = &local, .flags = .{ .float = true } });
+    }
+}
+
 fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
     zgui.pushPtrId(vertex);
     defer zgui.popId();
 
     var position = vertex.position();
-    var base_color: ?RendererModule.fRGBA = null;
-    var offset_color: ?RendererModule.fRGBA = null;
+    var base_color: ?fRGBA = null;
+    var offset_color: ?fRGBA = null;
     var base_intensity: ?f32 = null;
     var offset_intensity: ?f32 = null;
     var uv: ?[2]f32 = null;
 
     switch (vertex.*) {
         .Type0 => |v| {
-            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
+            base_color = fRGBA.from_packed(v.base_color, true);
         },
         .Type1 => |v| {
             base_color = .{ .r = v.r, .g = v.g, .b = v.b, .a = v.a };
@@ -874,13 +914,13 @@ fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
             base_intensity = v.base_intensity;
         },
         .Type3 => |v| {
-            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
-            offset_color = RendererModule.fRGBA.from_packed(v.offset_color, true);
+            base_color = fRGBA.from_packed(v.base_color, true);
+            offset_color = fRGBA.from_packed(v.offset_color, true);
             uv = .{ v.u, v.v };
         },
         .Type4 => |v| {
-            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
-            offset_color = RendererModule.fRGBA.from_packed(v.offset_color, true);
+            base_color = fRGBA.from_packed(v.base_color, true);
+            offset_color = fRGBA.from_packed(v.offset_color, true);
             uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
         },
         .Type5 => |v| {
@@ -904,10 +944,10 @@ fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
     if (zgui.collapsingHeader(@tagName(vertex.tag()), .{})) {
         _ = zgui.inputFloat3("pos", .{ .v = &position, .flags = .{ .read_only = true } });
         if (base_color) |*color| {
-            _ = zgui.colorEdit4("base color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .no_label = true } });
+            _ = zgui.colorEdit4("base color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
         }
         if (offset_color) |*color| {
-            _ = zgui.colorEdit4("offset color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .no_label = true } });
+            _ = zgui.colorEdit4("offset color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
         }
         if (base_intensity) |*intensity| {
             _ = zgui.inputFloat("base intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
