@@ -11,6 +11,7 @@ const termcolor = @import("termcolor");
 const Colors = @import("colors.zig");
 const PackedColor = Colors.PackedColor;
 const fRGBA = Colors.fRGBA;
+const fARGB = Colors.fARGB;
 const Color16 = Colors.Color16;
 const YUV422 = Colors.YUV422;
 
@@ -122,6 +123,17 @@ const Vertex = packed struct {
     v: f32 = 0.0,
     area1_u: f32 = 0.0,
     area1_v: f32 = 0.0,
+
+    // Allow constructing a vertex with the optional fields correctly initialized.
+    pub fn undef() Vertex {
+        return .{
+            .x = -0.0,
+            .y = -0.0,
+            .z = -0.0,
+            .primitive_index = 0xFFFFFFFF,
+            .base_color = .{ .r = 255, .g = 0, .b = 0, .a = 255 },
+        };
+    }
 };
 
 const StripMetadata = packed struct {
@@ -270,7 +282,7 @@ const PassMetadata = struct {
 };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
-    var r: [4]Vertex = undefined;
+    var r: [4]Vertex = .{Vertex.undef()} ** 4;
 
     // B --- C
     // |  \  |
@@ -1791,8 +1803,8 @@ pub const Renderer = struct {
 
         inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |list_type| {
             // Parameters specific to a polygon type
-            var face_color: fRGBA = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
-            var face_offset_color: fRGBA = undefined;
+            var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
+            var face_offset_color: fARGB = undefined;
             const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
 
             for (0..display_list.vertex_strips.items.len) |idx| {
@@ -1822,12 +1834,7 @@ pub const Renderer = struct {
                         tsp_instruction = p.tsp_instruction;
                         texture_control = p.texture_control;
                         if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_color = .{
-                                .r = p.face_color_r,
-                                .g = p.face_color_g,
-                                .b = p.face_color_b,
-                                .a = p.face_color_a,
-                            };
+                            face_color = p.face_color;
                     },
                     .PolygonType2 => |p| {
                         parameter_control_word = p.parameter_control_word;
@@ -1835,19 +1842,9 @@ pub const Renderer = struct {
                         tsp_instruction = p.tsp_instruction;
                         texture_control = p.texture_control;
                         if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_color = .{
-                                .r = p.face_color_r,
-                                .g = p.face_color_g,
-                                .b = p.face_color_b,
-                                .a = p.face_color_a,
-                            };
+                            face_color = p.face_color;
                         if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_offset_color = .{
-                                .r = p.face_offset_color_r,
-                                .g = p.face_offset_color_g,
-                                .b = p.face_offset_color_b,
-                                .a = p.face_offset_color_a,
-                            };
+                            face_offset_color = p.face_offset_color;
                     },
                     .PolygonType3 => |p| {
                         parameter_control_word = p.parameter_control_word;
@@ -1973,12 +1970,7 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = (fRGBA{
-                                    .r = v.r,
-                                    .g = v.g,
-                                    .b = v.b,
-                                    .a = v.a,
-                                }).to_packed(use_alpha),
+                                .base_color = v.base_color.to_packed(use_alpha),
                             });
                         },
                         // Non-Textured, Intensity
@@ -1989,7 +1981,7 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
                             });
                         },
                         // Packed Color, Textured 32bit UV
@@ -2027,18 +2019,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = (fRGBA{
-                                    .r = v.base_r,
-                                    .g = v.base_g,
-                                    .b = v.base_b,
-                                    .a = v.base_a,
-                                }).to_packed(use_alpha),
-                                .offset_color = if (use_offset) (fRGBA{
-                                    .r = v.offset_r,
-                                    .g = v.offset_g,
-                                    .b = v.offset_b,
-                                    .a = v.offset_a,
-                                }).to_packed(true) else .{},
+                                .base_color = v.base_color.to_packed(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2050,18 +2032,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = (fRGBA{
-                                    .r = v.base_r,
-                                    .g = v.base_g,
-                                    .b = v.base_b,
-                                    .a = v.base_a,
-                                }).to_packed(use_alpha),
-                                .offset_color = if (use_offset) (fRGBA{
-                                    .r = v.offset_r,
-                                    .g = v.offset_g,
-                                    .b = v.offset_b,
-                                    .a = v.offset_a,
-                                }).to_packed(true) else .{},
+                                .base_color = v.base_color.to_packed(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });
@@ -2075,8 +2047,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true).to_packed(true) else .{},
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2090,8 +2062,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true).to_packed(true) else .{},
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });
@@ -2122,14 +2094,8 @@ pub const Renderer = struct {
                             for (&vs) |*v| {
                                 v.primitive_index = primitive_index;
                                 v.base_color = sprite_base_color.with_alpha(use_alpha);
-                                // FIXME: This is wrong.
-                                //if (use_offset)
-                                //    v.offset_color = .{
-                                //        .r = @as(f32, @floatFromInt(sprite_offset_color.r)) / 255.0,
-                                //        .g = @as(f32, @floatFromInt(sprite_offset_color.g)) / 255.0,
-                                //        .b = @as(f32, @floatFromInt(sprite_offset_color.b)) / 255.0,
-                                //        .a = @as(f32, @floatFromInt(sprite_offset_color.a)) / 255.0,
-                                //    };
+                                if (use_offset)
+                                    v.offset_color = sprite_offset_color;
                                 self.min_depth = @min(self.min_depth, 1.0 / v.z);
                                 self.max_depth = @max(self.max_depth, 1.0 / v.z);
 

@@ -12,6 +12,7 @@ const termcolor = @import("termcolor");
 const Colors = @import("colors.zig");
 const PackedColor = Colors.PackedColor;
 const YUV422 = Colors.YUV422;
+const fARGB = Colors.fARGB;
 
 const HollyRegister = enum(u32) {
     ID = 0x005F8000,
@@ -477,10 +478,7 @@ const PolygonType1 = packed struct(u256) {
     isp_tsp_instruction: ISPTSPInstructionWord,
     tsp_instruction: TSPInstructionWord,
     texture_control: TextureControlWord,
-    face_color_a: f32,
-    face_color_r: f32,
-    face_color_g: f32,
-    face_color_b: f32,
+    face_color: fARGB,
 };
 
 // Intensity, use Offset Color
@@ -492,14 +490,8 @@ const PolygonType2 = packed struct(u512) {
     _ignored: u64,
     data_size: u32,
     next_address: u32,
-    face_color_a: f32,
-    face_color_r: f32,
-    face_color_g: f32,
-    face_color_b: f32,
-    face_offset_color_a: f32,
-    face_offset_color_r: f32,
-    face_offset_color_g: f32,
-    face_offset_color_b: f32,
+    face_color: fARGB,
+    face_offset_color: fARGB,
 };
 
 // Packed Color, with Two Volumes
@@ -524,14 +516,8 @@ const PolygonType4 = packed struct(u512) {
     texture_control_1: TextureControlWord,
     data_size: u32,
     next_address: u32,
-    face_color_a: f32,
-    face_color_r: f32,
-    face_color_g: f32,
-    face_color_b: f32,
-    face_offset_color_a: f32,
-    face_offset_color_r: f32,
-    face_offset_color_g: f32,
-    face_offset_color_b: f32,
+    face_color: fARGB,
+    face_offset_color: fARGB,
 };
 
 const Sprite = packed struct(u256) {
@@ -635,9 +621,9 @@ pub const Polygon = union(PolygonType) {
 
     pub fn base_color(self: @This()) ?[4]f32 {
         return switch (self) {
-            .PolygonType1 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
-            .PolygonType2 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
-            .PolygonType4 => |p| .{ p.face_color_r, p.face_color_g, p.face_color_b, p.face_color_a },
+            .PolygonType1 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
+            .PolygonType2 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
+            .PolygonType4 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
             .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.base_color, true)),
             else => null,
         };
@@ -645,8 +631,8 @@ pub const Polygon = union(PolygonType) {
 
     pub fn offset_color(self: @This()) ?[4]f32 {
         return switch (self) {
-            .PolygonType2 => |p| .{ p.face_offset_color_r, p.face_offset_color_g, p.face_offset_color_b, p.face_offset_color_a },
-            .PolygonType4 => |p| .{ p.face_offset_color_r, p.face_offset_color_g, p.face_offset_color_b, p.face_offset_color_a },
+            .PolygonType2 => |p| .{ p.face_offset_color.r, p.face_offset_color.g, p.face_offset_color.b, p.face_offset_color.a },
+            .PolygonType4 => |p| .{ p.face_offset_color.r, p.face_offset_color.g, p.face_offset_color.b, p.face_offset_color.a },
             else => null,
         };
     }
@@ -782,10 +768,7 @@ const VertexParameter_1 = packed struct(u256) {
     x: f32,
     y: f32,
     z: f32,
-    a: f32,
-    r: f32,
-    g: f32,
-    b: f32,
+    base_color: fARGB,
 };
 // Non-Textured, Intensity
 const VertexParameter_2 = packed struct(u256) {
@@ -828,14 +811,8 @@ const VertexParameter_5 = packed struct(u512) {
     u: f32,
     v: f32,
     _ignored: u64,
-    base_a: f32,
-    base_r: f32,
-    base_g: f32,
-    base_b: f32,
-    offset_a: f32,
-    offset_r: f32,
-    offset_g: f32,
-    offset_b: f32,
+    base_color: fARGB,
+    offset_color: fARGB,
 };
 // Floating Color, Textured 16bit UV
 const VertexParameter_6 = packed struct(u512) {
@@ -845,14 +822,8 @@ const VertexParameter_6 = packed struct(u512) {
     z: f32,
     uv: UV16,
     _ignored: u96,
-    base_a: f32,
-    base_r: f32,
-    base_g: f32,
-    base_b: f32,
-    offset_a: f32,
-    offset_r: f32,
-    offset_g: f32,
-    offset_b: f32,
+    base_color: fARGB,
+    offset_color: fARGB,
 };
 // Intensity, Textured 32bit UV
 const VertexParameter_7 = packed struct(u256) {

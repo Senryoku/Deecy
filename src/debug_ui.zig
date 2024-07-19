@@ -856,11 +856,18 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
             });
             const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
             const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
-            for (strip.verter_parameter_index..strip.verter_parameter_index + strip.verter_parameter_count - 2) |i| {
-                const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
-                const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
-                const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
-                draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
+            switch (strip.polygon) {
+                .Sprite => |_| {
+                    // TODO!
+                },
+                else => {
+                    for (strip.verter_parameter_index..strip.verter_parameter_index + strip.verter_parameter_count - 2) |i| {
+                        const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
+                        const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
+                        const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                        draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
+                    }
+                },
             }
         }
     }
@@ -922,7 +929,7 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
             base_color = fRGBA.from_packed(v.base_color, true);
         },
         .Type1 => |v| {
-            base_color = .{ .r = v.r, .g = v.g, .b = v.b, .a = v.a };
+            base_color = .{ .r = v.base_color.r, .g = v.base_color.g, .b = v.base_color.b, .a = v.base_color.a };
         },
         .Type2 => |v| {
             base_intensity = v.base_intensity;
@@ -938,13 +945,13 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
             uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
         },
         .Type5 => |v| {
-            base_color = .{ .r = v.base_r, .g = v.base_g, .b = v.base_b, .a = v.base_a };
-            offset_color = .{ .r = v.offset_r, .g = v.offset_g, .b = v.offset_b, .a = v.offset_a };
+            base_color = .{ .r = v.base_color.r, .g = v.base_color.g, .b = v.base_color.b, .a = v.base_color.a };
+            offset_color = .{ .r = v.offset_color.r, .g = v.offset_color.g, .b = v.offset_color.b, .a = v.offset_color.a };
             uv = .{ v.u, v.v };
         },
         .Type6 => |v| {
-            base_color = .{ .r = v.base_r, .g = v.base_g, .b = v.base_b, .a = v.base_a };
-            offset_color = .{ .r = v.offset_r, .g = v.offset_g, .b = v.offset_b, .a = v.offset_a };
+            base_color = .{ .r = v.base_color.r, .g = v.base_color.g, .b = v.base_color.b, .a = v.base_color.a };
+            offset_color = .{ .r = v.offset_color.r, .g = v.offset_color.g, .b = v.offset_color.b, .a = v.offset_color.a };
             uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
         },
         .Type7 => |v| {

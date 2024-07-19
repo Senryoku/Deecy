@@ -47,6 +47,38 @@ pub const PackedColor = packed struct(u32) {
     }
 };
 
+pub const fARGB = packed struct {
+    a: f32 = 0,
+    r: f32 = 0,
+    g: f32 = 0,
+    b: f32 = 0,
+
+    pub fn to_packed(self: @This(), use_alpha: bool) PackedColor {
+        return .{
+            .r = std.math.lossyCast(u8, self.r * 255.0),
+            .g = std.math.lossyCast(u8, self.g * 255.0),
+            .b = std.math.lossyCast(u8, self.b * 255.0),
+            .a = if (use_alpha) std.math.lossyCast(u8, self.a * 255.0) else 255,
+        };
+    }
+
+    pub fn apply_intensity(self: @This(), intensity: f32, use_alpha: bool) PackedColor {
+        // "Convert the Face Color alpha values specified in the Global
+        // Parameters into 8-bit integers (0 to 255). Multiply the RGB
+        // values by the corresponding Face Color R/G/B value, and
+        // convert the result into an 8-bit integer (0 to 255). Combine
+        // each 8-bit value thus obtained into a 32-bit value and store it
+        // in the ISP/TSP Parameters."
+        const clampled = std.math.clamp(intensity, 0.0, 1.0);
+        return (@This(){
+            .r = clampled * self.r,
+            .g = clampled * self.g,
+            .b = clampled * self.b,
+            .a = self.a,
+        }).to_packed(use_alpha);
+    }
+};
+
 pub const fRGBA = packed struct {
     r: f32 = 0,
     g: f32 = 0,
@@ -64,28 +96,11 @@ pub const fRGBA = packed struct {
 
     pub fn to_packed(self: @This(), use_alpha: bool) PackedColor {
         return .{
-            .r = @intFromFloat(std.math.clamp(self.r * 255.0, 0.0, 255.0)),
-            .g = @intFromFloat(std.math.clamp(self.g * 255.0, 0.0, 255.0)),
-            .b = @intFromFloat(std.math.clamp(self.b * 255.0, 0.0, 255.0)),
-            .a = if (use_alpha) @intFromFloat(std.math.clamp(self.a * 255.0, 0.0, 255.0)) else 255,
+            .r = std.math.lossyCast(u8, self.r * 255.0),
+            .g = std.math.lossyCast(u8, self.g * 255.0),
+            .b = std.math.lossyCast(u8, self.b * 255.0),
+            .a = if (use_alpha) std.math.lossyCast(u8, self.a * 255.0) else 255,
         };
-    }
-
-    pub fn apply_intensity(self: @This(), intensity: f32, use_alpha: bool) @This() {
-        // "Convert the Face Color alpha values specified in the Global
-        // Parameters into 8-bit integers (0 to 255). Multiply the RGB
-        // values by the corresponding Face Color R/G/B value, and
-        // convert the result into an 8-bit integer (0 to 255). Combine
-        // each 8-bit value thus obtained into a 32-bit value and store it
-        // in the ISP/TSP Parameters."
-        // NOTE: I'm not entirely sure what this describes... Clamping the intensity helps in Grandia II at least.
-        const clampled = std.math.clamp(intensity, 0.0, 1.0);
-        return (@This(){
-            .r = clampled * self.r,
-            .g = clampled * self.g,
-            .b = clampled * self.b,
-            .a = if (use_alpha) self.a else 1.0,
-        }).clamped();
     }
 
     pub fn clamped(self: @This()) @This() {
