@@ -37,10 +37,14 @@ pub const RGBA = packed struct(u32) {
 };
 
 pub const PackedColor = packed struct(u32) {
-    b: u8,
-    g: u8,
-    r: u8,
-    a: u8,
+    b: u8 = 0,
+    g: u8 = 0,
+    r: u8 = 0,
+    a: u8 = 0,
+
+    pub fn with_alpha(self: @This(), use_alpha: bool) @This() {
+        return .{ .r = self.r, .g = self.g, .b = self.b, .a = if (use_alpha) self.a else 255 };
+    }
 };
 
 pub const fRGBA = packed struct {
@@ -55,6 +59,15 @@ pub const fRGBA = packed struct {
             .g = @as(f32, @floatFromInt(color.g)) / 255.0,
             .b = @as(f32, @floatFromInt(color.b)) / 255.0,
             .a = if (use_alpha) @as(f32, @floatFromInt(color.a)) / 255.0 else 1.0,
+        };
+    }
+
+    pub fn to_packed(self: @This(), use_alpha: bool) PackedColor {
+        return .{
+            .r = @intFromFloat(std.math.clamp(self.r * 255.0, 0.0, 255.0)),
+            .g = @intFromFloat(std.math.clamp(self.g * 255.0, 0.0, 255.0)),
+            .b = @intFromFloat(std.math.clamp(self.b * 255.0, 0.0, 255.0)),
+            .a = if (use_alpha) @intFromFloat(std.math.clamp(self.a * 255.0, 0.0, 255.0)) else 255,
         };
     }
 

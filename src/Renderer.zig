@@ -114,10 +114,10 @@ const Vertex = packed struct {
     y: f32,
     z: f32,
     primitive_index: u32,
-    base_color: fRGBA,
-    offset_color: fRGBA = .{},
-    area1_base_color: fRGBA = .{},
-    area1_offset_color: fRGBA = .{},
+    base_color: PackedColor,
+    offset_color: PackedColor = .{},
+    area1_base_color: PackedColor = .{},
+    area1_offset_color: PackedColor = .{},
     u: f32 = 0.0,
     v: f32 = 0.0,
     area1_u: f32 = 0.0,
@@ -357,10 +357,10 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
 const vertex_attributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
     .{ .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index"), .shader_location = 1 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 2 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 3 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 4 },
-    .{ .format = .float32x4, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 5 },
+    .{ .format = .uint32, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 2 },
+    .{ .format = .uint32, .offset = @offsetOf(Vertex, "offset_color"), .shader_location = 3 },
+    .{ .format = .uint32, .offset = @offsetOf(Vertex, "area1_base_color"), .shader_location = 4 },
+    .{ .format = .uint32, .offset = @offsetOf(Vertex, "area1_offset_color"), .shader_location = 5 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 6 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u"), .shader_location = 7 },
 };
@@ -1675,23 +1675,15 @@ pub const Renderer = struct {
                         offset_color = @bitCast(vp[6]);
                 }
             }
+            if (!use_alpha) base_color.a = 255;
+
             vertices[i] = Vertex{
                 .primitive_index = @intCast(self.strips_metadata.items.len),
                 .x = @bitCast(vp[0]),
                 .y = @bitCast(vp[1]),
                 .z = @bitCast(vp[2]),
-                .base_color = .{
-                    .r = @as(f32, @floatFromInt(base_color.r)) / 255.0,
-                    .g = @as(f32, @floatFromInt(base_color.g)) / 255.0,
-                    .b = @as(f32, @floatFromInt(base_color.b)) / 255.0,
-                    .a = if (use_alpha) @as(f32, @floatFromInt(base_color.a)) / 255.0 else 1.0,
-                },
-                .offset_color = .{
-                    .r = @as(f32, @floatFromInt(offset_color.r)) / 255.0,
-                    .g = @as(f32, @floatFromInt(offset_color.g)) / 255.0,
-                    .b = @as(f32, @floatFromInt(offset_color.b)) / 255.0,
-                    .a = if (use_alpha) @as(f32, @floatFromInt(offset_color.a)) / 255.0 else 1.0,
-                },
+                .base_color = base_color,
+                .offset_color = offset_color,
                 .u = u,
                 .v = v,
             };
@@ -1969,7 +1961,7 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = fRGBA.from_packed(v.base_color, use_alpha),
+                                .base_color = v.base_color.with_alpha(use_alpha),
                             });
                         },
                         // Non-Textured, Floating Color
@@ -1985,8 +1977,8 @@ pub const Renderer = struct {
                                     .r = v.r,
                                     .g = v.g,
                                     .b = v.b,
-                                    .a = if (use_alpha) v.a else 1.0,
-                                }).clamped(),
+                                    .a = v.a,
+                                }).to_packed(use_alpha),
                             });
                         },
                         // Non-Textured, Intensity
@@ -1997,7 +1989,7 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
                             });
                         },
                         // Packed Color, Textured 32bit UV
@@ -2009,8 +2001,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = fRGBA.from_packed(v.base_color, use_alpha),
-                                .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color, true) else .{},
+                                .base_color = v.base_color.with_alpha(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2022,8 +2014,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = fRGBA.from_packed(v.base_color, use_alpha),
-                                .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color, true) else .{},
+                                .base_color = v.base_color.with_alpha(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });
@@ -2039,14 +2031,14 @@ pub const Renderer = struct {
                                     .r = v.base_r,
                                     .g = v.base_g,
                                     .b = v.base_b,
-                                    .a = if (use_alpha) v.base_a else 1.0,
-                                }).clamped(),
+                                    .a = v.base_a,
+                                }).to_packed(use_alpha),
                                 .offset_color = if (use_offset) (fRGBA{
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
                                     .a = v.offset_a,
-                                }).clamped() else .{},
+                                }).to_packed(true) else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2062,14 +2054,14 @@ pub const Renderer = struct {
                                     .r = v.base_r,
                                     .g = v.base_g,
                                     .b = v.base_b,
-                                    .a = if (use_alpha) v.base_a else 1.0,
-                                }).clamped(),
+                                    .a = v.base_a,
+                                }).to_packed(use_alpha),
                                 .offset_color = if (use_offset) (fRGBA{
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
                                     .a = v.offset_a,
-                                }).clamped() else .{},
+                                }).to_packed(true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });
@@ -2083,8 +2075,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true).to_packed(true) else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2098,8 +2090,8 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha).to_packed(use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true).to_packed(true) else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });
@@ -2115,12 +2107,12 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = fRGBA.from_packed(v.offset_color_0, use_alpha),
-                                .offset_color = if (use_offset) fRGBA.from_packed(v.offset_color_0, true) else .{},
+                                .base_color = v.offset_color_0.with_alpha(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
                                 .u = v.u0,
                                 .v = v.v0,
-                                .area1_base_color = fRGBA.from_packed(v.offset_color_1, use_alpha),
-                                .area1_offset_color = if (use_offset) fRGBA.from_packed(v.offset_color_1, true) else .{},
+                                .area1_base_color = v.offset_color_1.with_alpha(use_alpha),
+                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
                                 .area1_u = v.u1,
                                 .area1_v = v.v1,
                             });
@@ -2129,7 +2121,7 @@ pub const Renderer = struct {
                             var vs = gen_sprite_vertices(vertex);
                             for (&vs) |*v| {
                                 v.primitive_index = primitive_index;
-                                v.base_color = fRGBA.from_packed(sprite_base_color, use_alpha);
+                                v.base_color = sprite_base_color.with_alpha(use_alpha);
                                 // FIXME: This is wrong.
                                 //if (use_offset)
                                 //    v.offset_color = .{

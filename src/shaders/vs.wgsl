@@ -31,10 +31,10 @@ struct VertexOut {
 fn main(
     @location(0) position: vec3<f32>,
     @location(1) primitive_index: u32,
-    @location(2) base_color: vec4<f32>,
-    @location(3) offset_color: vec4<f32>,
-    @location(4) area1_base_color: vec4<f32>,
-    @location(5) area1_offset_color: vec4<f32>,
+    @location(2) packed_base_color: u32,
+    @location(3) packed_offset_color: u32,
+    @location(4) packed_area1_base_color: u32,
+    @location(5) packed_area1_offset_color: u32,
     @location(6) uv: vec2<f32>,
     @location(7) area1_uv: vec2<f32>,
     @builtin(vertex_index) vertex_index: u32,
@@ -58,6 +58,11 @@ fn main(
     let inv_w = position.z;
 
     let metadata = strips_metadata[primitive_index];
+
+    let base_color = unpack4x8unorm(packed_base_color).zyxw; // BGRA => RGBA
+    let offset_color = unpack4x8unorm(packed_offset_color).zyxw;
+    let area1_base_color = unpack4x8unorm(packed_area1_base_color).zyxw;
+    let area1_offset_color = unpack4x8unorm(packed_area1_offset_color).zyxw;
 
     output.base_color = inv_w * base_color;
     output.offset_color = inv_w * offset_color;
