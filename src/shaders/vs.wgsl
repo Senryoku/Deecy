@@ -15,10 +15,10 @@ struct VertexOut {
     @location(1) offset_color: vec4<f32>,
     @location(2) area1_base_color: vec4<f32>,
     @location(3) area1_offset_color: vec4<f32>,
-    @location(4) @interpolate(flat) flat_base_color: vec4<f32>, // Probably not the best use of bandwidth, but this beats using a separate pass/shader combination for now. 
-    @location(5) @interpolate(flat) flat_offset_color: vec4<f32>,
-    @location(6) @interpolate(flat) area1_flat_base_color: vec4<f32>,
-    @location(7) @interpolate(flat) area1_flat_offset_color: vec4<f32>,
+    @location(4) @interpolate(flat) flat_base_color: u32, // Probably not the best use of bandwidth, but this beats using a separate pass/shader combination for now. 
+    @location(5) @interpolate(flat) flat_offset_color: u32,
+    @location(6) @interpolate(flat) area1_flat_base_color: u32,
+    @location(7) @interpolate(flat) area1_flat_offset_color: u32,
     @location(8) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
     @location(9) @interpolate(flat) area1_tex_idx_shading_instr: vec2<u32>,
     @location(10) uv: vec2<f32>,
@@ -68,15 +68,15 @@ fn main(
     output.offset_color = inv_w * offset_color;
     output.uv = inv_w * uv;
     output.tex_idx_shading_instr = vec2<u32>(metadata.area0_tex_index, metadata.area0_instructions);
-    output.flat_base_color = base_color;
-    output.flat_offset_color = offset_color;
+    output.flat_base_color = packed_base_color;
+    output.flat_offset_color = packed_offset_color;
 
     output.area1_base_color = inv_w * area1_base_color;
     output.area1_offset_color = inv_w * area1_offset_color;
     output.area1_uv = inv_w * area1_uv;
     output.area1_tex_idx_shading_instr = vec2<u32>(metadata.area1_tex_index, metadata.area1_instructions);
-    output.area1_flat_base_color = area1_base_color;
-    output.area1_flat_offset_color = area1_offset_color;
+    output.area1_flat_base_color = packed_area1_base_color;
+    output.area1_flat_offset_color = packed_area1_offset_color;
 
     output.index = vertex_index;
     output.inv_w = inv_w;
