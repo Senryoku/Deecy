@@ -1029,7 +1029,14 @@ pub const VertexParameter = union(VertexParameterType) {
     }
 
     pub fn position(self: *const @This()) [3]f32 {
+        std.debug.assert(self.tag() != .SpriteType0 and self.tag() != .SpriteType1);
         return @as([*]const f32, @alignCast(@ptrCast(self)))[1..4].*;
+    }
+
+    // NOTE: Z position of the last vertex will be garbage.
+    pub fn sprite_positions(self: *const @This()) [4][3]f32 {
+        std.debug.assert(self.tag() == .SpriteType0 or self.tag() == .SpriteType1);
+        return @bitCast(@as([*]const f32, @alignCast(@ptrCast(self)))[1 .. 1 + 4 * 3].*);
     }
 };
 

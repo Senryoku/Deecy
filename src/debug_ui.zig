@@ -41,6 +41,10 @@ selected_strip_index: u32 = 0xFFFFFFFF,
 selected_vertex_focus: bool = false,
 selected_vertex: ?[2]f32 = null,
 
+selected_volume_focus: bool = false,
+selected_volume_list: Holly.ListType = .OpaqueModifierVolume,
+selected_volume_index: ?u32 = null,
+
 pixels: []u8 = undefined,
 
 audio_channels: [64]struct {
@@ -155,6 +159,9 @@ fn reset_hover(self: *@This()) void {
     }
     if (!self.selected_vertex_focus) {
         self.selected_vertex = null;
+    }
+    if (!self.selected_volume_focus) {
+        self.selected_volume_index = null;
     }
 }
 
@@ -643,16 +650,40 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 {
                     const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.opaque_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
-                        for (d.renderer.opaque_modifier_volumes.items) |vol| {
+                        for (d.renderer.opaque_modifier_volumes.items, 0..) |vol, idx| {
                             zgui.text("  {any}", .{vol});
+                            if (zgui.isItemClicked(.left)) {
+                                self.selected_volume_focus = true;
+                                self.selected_volume_list = .OpaqueModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_volume_focus = false;
+                            }
+                            if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
+                                self.selected_volume_list = .OpaqueModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                            }
                         }
                     }
                 }
                 {
-                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.opaque_modifier_volumes.items.len});
+                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.translucent_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
-                        for (d.renderer.opaque_modifier_volumes.items) |vol| {
+                        for (d.renderer.translucent_modifier_volumes.items, 0..) |vol, idx| {
                             zgui.text("  {any}", .{vol});
+                            if (zgui.isItemClicked(.left)) {
+                                self.selected_volume_focus = true;
+                                self.selected_volume_list = .TranslucentModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_volume_focus = false;
+                            }
+                            if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
+                                self.selected_volume_list = .TranslucentModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                            }
                         }
                     }
                 }
@@ -846,19 +877,27 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
         if (self.selected_strip_index < dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items.len) {
-            draw_list.addQuad(.{
-                .p1 = min,
-                .p2 = .{ min[0] + size[0], min[1] },
-                .p3 = .{ min[0] + size[0], min[1] + size[1] },
-                .p4 = .{ min[0], min[1] + size[1] },
-                .col = 0x0000FFFF,
-                .thickness = 1.0,
-            });
             const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
             const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
             switch (strip.polygon) {
                 .Sprite => |_| {
-                    // TODO!
+                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
+                        const pos = parameters[i].sprite_positions();
+                        draw_list.addTriangle(.{
+                            .p1 = add(mul(scale, pos[0][0..2].*), min),
+                            .p2 = add(mul(scale, pos[3][0..2].*), min),
+                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .col = 0xFFFF00FF,
+                            .thickness = 1.0,
+                        });
+                        draw_list.addTriangle(.{
+                            .p1 = add(mul(scale, pos[3][0..2].*), min),
+                            .p2 = add(mul(scale, pos[2][0..2].*), min),
+                            .p3 = add(mul(scale, pos[1][0..2].*), min),
+                            .col = 0xFFFF00FF,
+                            .thickness = 1.0,
+                        });
+                    }
                 },
                 else => {
                     for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
@@ -873,6 +912,22 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
     if (self.selected_vertex) |vertex| {
         draw_list.addCircleFilled(.{ .p = add(mul(scale, vertex), min), .r = 5.0, .col = 0xFF4000FF });
+    }
+    if (self.selected_volume_index) |idx| {
+        const list = switch (self.selected_volume_list) {
+            .OpaqueModifierVolume => d.renderer.opaque_modifier_volumes.items,
+            .TranslucentModifierVolume => d.renderer.translucent_modifier_volumes.items,
+            else => unreachable,
+        };
+        if (idx < list.len) {
+            const volume = list[idx];
+            for (0..volume.triangle_count) |i| {
+                const p1 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 0][0..2].*), min);
+                const p2 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 1][0..2].*), min);
+                const p3 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 2][0..2].*), min);
+                draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFF0000FF, .thickness = 1.0 });
+            }
+        }
     }
 }
 
@@ -912,10 +967,18 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
 }
 
 fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) void {
-    zgui.beginGroup();
-
     zgui.pushPtrId(vertex);
     defer zgui.popId();
+
+    if (vertex.tag() == .SpriteType0 or vertex.tag() == .SpriteType1) {
+        const sprite_positions = vertex.sprite_positions();
+        for (0..3) |i| {
+            zgui.text("Pos: {d: >3.2} | {d: >3.2} | {d: >3.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
+        }
+        // TODO: UVs
+        // TODO: Overlay on hover?
+        return;
+    }
 
     var position = vertex.position();
     var base_color: ?fRGBA = null;
@@ -962,6 +1025,7 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
         else => {},
     }
 
+    zgui.beginGroup();
     const node_open = zgui.treeNodeFlags(@tagName(vertex.tag()), .{
         .open_on_double_click = true,
         .open_on_arrow = true,
