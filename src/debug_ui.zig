@@ -33,9 +33,13 @@ vram_texture_view: zgpu.TextureViewHandle = undefined,
 renderer_texture_views: [8][256]zgpu.TextureViewHandle = undefined,
 
 // Strip Debug Display
-selected_focus: bool = false, // Element has been clicked and remain in focus
-selected_list: Holly.ListType = .Opaque,
-selected_strip: u32 = 0xFFFFFFFF,
+selected_strip_focus: bool = false, // Element has been clicked and remain in focus
+selected_strip_list: Holly.ListType = .Opaque,
+selected_strip_index: u32 = 0xFFFFFFFF,
+
+// Vertex Debug Display
+selected_vertex_focus: bool = false,
+selected_vertex: ?[2]f32 = null,
 
 pixels: []u8 = undefined,
 
@@ -146,8 +150,11 @@ fn mul(a: [2]f32, b: [2]f32) [2]f32 {
 }
 
 fn reset_hover(self: *@This()) void {
-    if (!self.selected_focus) {
-        self.selected_strip = 0xFFFFFFFF;
+    if (!self.selected_strip_focus) {
+        self.selected_strip_index = 0xFFFFFFFF;
+    }
+    if (!self.selected_vertex_focus) {
+        self.selected_vertex = null;
     }
 }
 
@@ -572,7 +579,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const FB_R_CTRL = dc.gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
             const FB_R_SOF1 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
             const FB_R_SOF2 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
-            zgui.text("FB_C_SOF: 0x{X:0>8}", .{FB_C_SOF});
+            zgui.text("FB_C_SOF:  0x{X:0>8}", .{FB_C_SOF});
             zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
             zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
@@ -604,10 +611,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                     .open_on_double_click = true,
                                     .open_on_arrow = true,
                                 });
-                                if (zgui.isItemClicked(.left)) {
-                                    self.selected_focus = true;
-                                    self.selected_list = list_type;
-                                    self.selected_strip = @intCast(idx);
+                                if (zgui.isItemClicked(.left) and !zgui.isItemToggledOpen()) {
+                                    self.selected_strip_focus = true;
+                                    self.selected_strip_list = list_type;
+                                    self.selected_strip_index = @intCast(idx);
                                 }
                                 if (node_open) {
                                     self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
@@ -619,11 +626,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 zgui.endGroup();
                             }
                             if (zgui.isItemClicked(.right)) {
-                                self.selected_focus = false;
+                                self.selected_strip_focus = false;
                             }
-                            if (!self.selected_focus and zgui.isItemHovered(.{})) {
-                                self.selected_list = list_type;
-                                self.selected_strip = @intCast(idx);
+                            if (!self.selected_strip_focus and zgui.isItemHovered(.{})) {
+                                self.selected_strip_list = list_type;
+                                self.selected_strip_index = @intCast(idx);
                             }
                         }
                     }
@@ -826,18 +833,19 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 fn draw_overlay(self: *@This(), d: *Deecy) void {
     const dc = d.dc;
     const draw_list = zgui.getBackgroundDrawList();
-    if (self.selected_list == .Opaque or self.selected_list == .PunchThrough or self.selected_list == .Translucent) {
-        if (self.selected_strip < dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_strips.items.len) {
-            // TODO: We only support the "Centered" display mode for now.
-            const size = [2]f32{
-                @floatFromInt(d.renderer.resolution.width),
-                @floatFromInt(d.renderer.resolution.height),
-            };
-            const scale = [2]f32{ size[0] / 640.0, size[1] / 480.0 }; // Scale of inner render compared to native DC resolution.
-            const min = [2]f32{
-                @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / 2.0 - size[0] / 2.0,
-                @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,
-            };
+    // TODO: We only support the "Centered" display mode for now.
+    const size = [2]f32{
+        @floatFromInt(d.renderer.resolution.width),
+        @floatFromInt(d.renderer.resolution.height),
+    };
+    const scale = [2]f32{ size[0] / 640.0, size[1] / 480.0 }; // Scale of inner render compared to native DC resolution.
+    const min = [2]f32{
+        @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / 2.0 - size[0] / 2.0,
+        @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,
+    };
+
+    if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
+        if (self.selected_strip_index < dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items.len) {
             draw_list.addQuad(.{
                 .p1 = min,
                 .p2 = .{ min[0] + size[0], min[1] },
@@ -846,8 +854,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
                 .col = 0x0000FFFF,
                 .thickness = 1.0,
             });
-            const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_parameters.items;
-            const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_strips.items[self.selected_strip];
+            const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
+            const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
             for (strip.verter_parameter_index..strip.verter_parameter_index + strip.verter_parameter_count - 2) |i| {
                 const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
                 const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
@@ -856,18 +864,22 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
             }
         }
     }
+    if (self.selected_vertex) |vertex| {
+        draw_list.addCircleFilled(.{ .p = add(mul(scale, vertex), min), .r = 5.0, .col = 0xFF4000FF });
+    }
 }
 
 fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, strip: *const Holly.VertexStrip) void {
     const control_word = strip.polygon.control_word();
-    zgui.text("Control Word: {X:0>8}", .{@as(u32, @bitCast(control_word))});
     const isp_tsp = strip.polygon.isp_tsp_instruction();
     const tsp = strip.polygon.tsp_instruction();
-    zgui.text("ISPTSP: {X:0>8}", .{@as(u32, @bitCast(isp_tsp))});
-    zgui.text("TSP: {X:0>8}", .{@as(u32, @bitCast(tsp))});
+    // TODO: Display some actually useful information :)
+    zgui.text("Control Word:    {X:0>8}", .{@as(u32, @bitCast(control_word))});
+    zgui.text("ISP TSP:         {X:0>8}", .{@as(u32, @bitCast(isp_tsp))});
+    zgui.text("TSP:             {X:0>8}", .{@as(u32, @bitCast(tsp))});
     if (control_word.obj_control.texture == 1) {
         const texture_control_word = strip.polygon.texture_control();
-        zgui.text("Texture Control Word: {X:0>8}", .{@as(u32, @bitCast(texture_control_word))});
+        zgui.text("Texture Control: {X:0>8}", .{@as(u32, @bitCast(texture_control_word))});
         if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
             const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
             zgui.image(view, .{
@@ -877,10 +889,10 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
         }
     }
     if (strip.polygon.area1_texture_control()) |area1_texture_control| {
-        zgui.text("Area1 Texture Control: {X:0>8}", .{@as(u32, @bitCast(area1_texture_control))});
+        zgui.text("Area1 Tex.:   {X:0>8}", .{@as(u32, @bitCast(area1_texture_control))});
     }
     if (strip.polygon.area1_tsp_instruction()) |area1_tsp| {
-        zgui.text("Area1 TSP: {X:0>8}", .{@as(u32, @bitCast(area1_tsp))});
+        zgui.text("Area1 TSP:    {X:0>8}", .{@as(u32, @bitCast(area1_tsp))});
     }
     if (strip.polygon.base_color()) |base_color| {
         var local = base_color;
@@ -892,7 +904,9 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
     }
 }
 
-fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
+fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) void {
+    zgui.beginGroup();
+
     zgui.pushPtrId(vertex);
     defer zgui.popId();
 
@@ -941,22 +955,39 @@ fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
         else => {},
     }
 
-    if (zgui.collapsingHeader(@tagName(vertex.tag()), .{})) {
+    const node_open = zgui.treeNodeFlags(@tagName(vertex.tag()), .{
+        .open_on_double_click = true,
+        .open_on_arrow = true,
+    });
+    if (zgui.isItemClicked(.left) and !zgui.isItemToggledOpen()) {
+        self.selected_vertex_focus = true;
+        self.selected_vertex = position[0..2].*;
+    }
+    if (node_open) {
         _ = zgui.inputFloat3("pos", .{ .v = &position, .flags = .{ .read_only = true } });
         if (base_color) |*color| {
-            _ = zgui.colorEdit4("base color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
+            _ = zgui.colorEdit4("Base Color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
         }
         if (offset_color) |*color| {
-            _ = zgui.colorEdit4("offset color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
+            _ = zgui.colorEdit4("Offset Color", .{ .col = @ptrCast(color), .flags = .{ .float = true } });
         }
         if (base_intensity) |*intensity| {
-            _ = zgui.inputFloat("base intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
+            _ = zgui.inputFloat("Base Intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
         }
         if (offset_intensity) |*intensity| {
-            _ = zgui.inputFloat("offset intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
+            _ = zgui.inputFloat("Offset Intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
         }
         if (uv) |*uvs| {
-            _ = zgui.inputFloat2("uv", .{ .v = uvs, .flags = .{ .read_only = true } });
+            _ = zgui.inputFloat2("UV", .{ .v = uvs, .flags = .{ .read_only = true } });
         }
+        zgui.treePop();
+    }
+
+    zgui.endGroup();
+    if (zgui.isItemClicked(.right)) {
+        self.selected_vertex_focus = false;
+    }
+    if (!self.selected_vertex_focus and zgui.isItemHovered(.{})) {
+        self.selected_vertex = position[0..2].*;
     }
 }
