@@ -1,25 +1,8 @@
 // Modified from https://webgpu.github.io/webgpu-samples/samples/A-buffer - BSD-3-Clause license 
 
-struct OITUniforms {
-    max_fragments: u32,
-    target_width: u32,
-    start_y: u32,
-};
-
 struct Heads {
   fragment_count: atomic<u32>,
   data: array<atomic<u32>>
-};
-
-struct LinkedListElement {
-  color: vec4<f32>,
-  depth: f32,
-  index_and_blend_mode: u32,
-  next: u32,
-};
-
-struct LinkedList {
-  data: array<LinkedListElement>
 };
 
 @group(2) @binding(0) var<uniform> oit_uniforms: OITUniforms;
@@ -34,10 +17,10 @@ fn main(
     @location(1) offset_color: vec4<f32>,
     @location(2) area1_base_color: vec4<f32>,
     @location(3) area1_offset_color: vec4<f32>,
-    @location(4) @interpolate(flat) flat_base_color: vec4<f32>,
-    @location(5) @interpolate(flat) flat_offset_color: vec4<f32>,
-    @location(6) @interpolate(flat) area1_flat_base_color: vec4<f32>,
-    @location(7) @interpolate(flat) area1_flat_offset_color: vec4<f32>,
+    @location(4) @interpolate(flat) flat_base_color: u32,
+    @location(5) @interpolate(flat) flat_offset_color: u32,
+    @location(6) @interpolate(flat) area1_flat_base_color: u32,
+    @location(7) @interpolate(flat) area1_flat_offset_color: u32,
     @location(8) @interpolate(flat) tex_idx_shading_instr: vec2<u32>,
     @location(9) @interpolate(flat) area1_tex_idx_shading_instr: vec2<u32>,
     @location(10) uv: vec2<f32>,
@@ -82,12 +65,12 @@ fn main(
 
     let gouraud = ((shading_instructions >> 23) & 1) == 1;
     var final_color = fragment_color(
-        select(flat_base_color, base_color / inv_w, gouraud),
-        select(flat_offset_color, offset_color / inv_w, gouraud),
+        select(unpack4x8unorm(flat_base_color).zyxw, base_color / inv_w, gouraud),
+        select(unpack4x8unorm(flat_offset_color).zyxw, offset_color / inv_w, gouraud),
         uv / inv_w,
         tex_idx_shading_instr,
-        select(area1_flat_base_color, area1_base_color / inv_w, gouraud),
-        select(area1_flat_offset_color, area1_offset_color / inv_w, gouraud),
+        select(unpack4x8unorm(area1_flat_base_color).zyxw, area1_base_color / inv_w, gouraud),
+        select(unpack4x8unorm(area1_flat_offset_color).zyxw, area1_offset_color / inv_w, gouraud),
         area1_uv / inv_w,
         area1_tex_idx_shading_instr,
         inv_w,
@@ -108,7 +91,7 @@ fn main(
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position_clip.z;
-        linked_list.data[frag_index].color = final_color.area0; // TODO: Handle Modifier volumes/Area 1
+        linked_list.data[frag_index].color = pack4x8unorm(final_color.area0); // TODO: Handle Modifier volumes/Area 1
         linked_list.data[frag_index].index_and_blend_mode = ((shading_instructions >> 10) & 0x3F) | (index << 6);
         linked_list.data[frag_index].next = last_head;
     }
