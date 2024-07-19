@@ -28,6 +28,11 @@ vram_texture: zgpu.TextureHandle = undefined,
 vram_texture_view: zgpu.TextureViewHandle = undefined,
 renderer_texture_views: [8]zgpu.TextureViewHandle = undefined,
 
+// Strip Debug Display
+selected_focus: bool = false, // Element has been clicked and remain in focus
+selected_list: Holly.ListType = .Opaque,
+selected_strip: u32 = 0xFFFFFFFF,
+
 pixels: []u8 = undefined,
 
 audio_channels: [64]struct {
@@ -123,11 +128,27 @@ pub fn deinit(self: *@This()) void {
     self._allocator.free(self.pixels);
 }
 
+fn add(a: [2]f32, b: [2]f32) [2]f32 {
+    return .{ a[0] + b[0], a[1] + b[1] };
+}
+
+fn mul(a: [2]f32, b: [2]f32) [2]f32 {
+    return .{ a[1] * b[0], a[0] * b[1] };
+}
+
+fn reset_hover(self: *@This()) void {
+    if (!self.selected_focus) {
+        self.selected_strip = 0xFFFFFFFF;
+    }
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     if (self.draw_debug_ui) {
         var dc = d.dc;
 
         _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
+
+        self.reset_hover();
 
         if (zgui.begin("Settings", .{})) {
             var volume = try d.audio_device.getMasterVolume();
@@ -568,12 +589,31 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 @tagName(strip.polygon.tsp_instruction().texture_shading_instruction),
                                 idx,
                             });
-                            if (zgui.collapsingHeader(strip_header, .{})) {
-                                zgui.indent(.{});
-                                for (strip.verter_parameter_index..(strip.verter_parameter_index + strip.verter_parameter_count)) |i| {
-                                    zgui.text("  {s}", .{@tagName(list.vertex_parameters.items[i].tag())});
+                            {
+                                zgui.beginGroup();
+                                const node_open = zgui.treeNodeFlags(strip_header, .{
+                                    .open_on_double_click = true,
+                                    .open_on_arrow = true,
+                                });
+                                if (zgui.isItemClicked(.left)) {
+                                    self.selected_focus = true;
+                                    self.selected_list = list_type;
+                                    self.selected_strip = @intCast(idx);
                                 }
-                                zgui.unindent(.{});
+                                if (node_open) {
+                                    for (strip.verter_parameter_index..(strip.verter_parameter_index + strip.verter_parameter_count)) |i| {
+                                        self.display_vertex_data(&list.vertex_parameters.items[i]);
+                                    }
+                                    zgui.treePop();
+                                }
+                                zgui.endGroup();
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_focus = false;
+                            }
+                            if (!self.selected_focus and zgui.isItemHovered(.{})) {
+                                self.selected_list = list_type;
+                                self.selected_strip = @intCast(idx);
                             }
                         }
                     }
@@ -772,5 +812,111 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
         zgui.end();
+
+        self.draw_overlay(d);
+    }
+}
+
+fn draw_overlay(self: *@This(), d: *Deecy) void {
+    const dc = d.dc;
+    const draw_list = zgui.getBackgroundDrawList();
+    if (self.selected_list == .Opaque or self.selected_list == .PunchThrough or self.selected_list == .Translucent) {
+        if (self.selected_strip < dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_strips.items.len) {
+            // TODO: We only support the "Centered" display mode for now.
+            const size = [2]f32{
+                @floatFromInt(d.renderer.resolution.width),
+                @floatFromInt(d.renderer.resolution.height),
+            };
+            const scale = [2]f32{ size[0] / 640.0, size[1] / 480.0 }; // Scale of inner render compared to native DC resolution.
+            const min = [2]f32{
+                @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / 2.0 - size[0] / 2.0,
+                @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,
+            };
+            draw_list.addQuad(.{
+                .p1 = min,
+                .p2 = .{ min[0] + size[0], min[1] },
+                .p3 = .{ min[0] + size[0], min[1] + size[1] },
+                .p4 = .{ min[0], min[1] + size[1] },
+                .col = 0x0000FFFF,
+                .thickness = 1.0,
+            });
+            const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_parameters.items;
+            const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_list)].vertex_strips.items[self.selected_strip];
+            for (strip.verter_parameter_index..strip.verter_parameter_index + strip.verter_parameter_count - 2) |i| {
+                const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
+                const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
+                const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
+            }
+        }
+    }
+}
+
+fn display_vertex_data(_: *@This(), vertex: *const Holly.VertexParameter) void {
+    zgui.pushPtrId(vertex);
+    defer zgui.popId();
+
+    var position = vertex.position();
+    var base_color: ?RendererModule.fRGBA = null;
+    var offset_color: ?RendererModule.fRGBA = null;
+    var base_intensity: ?f32 = null;
+    var offset_intensity: ?f32 = null;
+    var uv: ?[2]f32 = null;
+
+    switch (vertex.*) {
+        .Type0 => |v| {
+            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
+        },
+        .Type1 => |v| {
+            base_color = .{ .r = v.r, .g = v.g, .b = v.b, .a = v.a };
+        },
+        .Type2 => |v| {
+            base_intensity = v.base_intensity;
+        },
+        .Type3 => |v| {
+            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
+            offset_color = RendererModule.fRGBA.from_packed(v.offset_color, true);
+            uv = .{ v.u, v.v };
+        },
+        .Type4 => |v| {
+            base_color = RendererModule.fRGBA.from_packed(v.base_color, true);
+            offset_color = RendererModule.fRGBA.from_packed(v.offset_color, true);
+            uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
+        },
+        .Type5 => |v| {
+            base_color = .{ .r = v.base_r, .g = v.base_g, .b = v.base_b, .a = v.base_a };
+            offset_color = .{ .r = v.offset_r, .g = v.offset_g, .b = v.offset_b, .a = v.offset_a };
+            uv = .{ v.u, v.v };
+        },
+        .Type6 => |v| {
+            base_color = .{ .r = v.base_r, .g = v.base_g, .b = v.base_b, .a = v.base_a };
+            offset_color = .{ .r = v.offset_r, .g = v.offset_g, .b = v.offset_b, .a = v.offset_a };
+            uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
+        },
+        .Type7 => |v| {
+            base_intensity = v.base_intensity;
+            offset_intensity = v.offset_intensity;
+            uv = .{ v.u, v.v };
+        },
+        else => {},
+    }
+
+    if (zgui.collapsingHeader(@tagName(vertex.tag()), .{})) {
+        _ = zgui.inputFloat3("pos", .{ .v = &position, .flags = .{ .read_only = true } });
+        if (base_color) |*color| {
+            _ = zgui.colorEdit4("base color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .no_label = true } });
+        }
+        if (offset_color) |*color| {
+            _ = zgui.colorEdit4("offset color", .{ .col = @ptrCast(color), .flags = .{ .float = true, .no_label = true } });
+        }
+        if (base_intensity) |*intensity| {
+            _ = zgui.inputFloat("base intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
+        }
+        if (offset_intensity) |*intensity| {
+            _ = zgui.inputFloat("offset intensity", .{ .v = intensity, .flags = .{ .read_only = true } });
+        }
+        if (uv) |*uvs| {
+            _ = zgui.inputFloat2("uv", .{ .v = uvs, .flags = .{ .read_only = true } });
+        }
     }
 }

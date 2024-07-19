@@ -55,7 +55,7 @@ fn texture_hash(gpu: *const HollyModule.Holly, start: u32, end: u32) u64 {
     return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
 }
 
-const fRGBA = packed struct {
+pub const fRGBA = packed struct {
     r: f32 = 0,
     g: f32 = 0,
     b: f32 = 0,

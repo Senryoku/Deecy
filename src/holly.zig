@@ -1063,6 +1063,10 @@ pub const VertexParameter = union(VertexParameterType) {
             .SpriteType1 => .SpriteType1,
         };
     }
+
+    pub fn position(self: *const @This()) [3]f32 {
+        return @as([*]const f32, @alignCast(@ptrCast(self)))[1..4].*;
+    }
 };
 
 // Returns the size in words (4 bytes) of the vertex parameter
