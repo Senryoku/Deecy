@@ -1100,8 +1100,8 @@ pub const UserTileClipInfo = struct {
 pub const VertexStrip = struct {
     polygon: Polygon,
     user_clip: ?UserTileClipInfo,
-    verter_parameter_index: usize = 0,
-    verter_parameter_count: usize = 0,
+    vertex_parameter_index: usize = 0,
+    vertex_parameter_count: usize = 0,
 };
 
 pub const DisplayList = struct {
@@ -1604,8 +1604,8 @@ pub const Holly = struct {
                             display_list.vertex_strips.append(.{
                                 .polygon = polygon.*,
                                 .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
-                                .verter_parameter_index = display_list.next_first_vertex_parameters_index,
-                                .verter_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
+                                .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
+                                .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
                             }) catch unreachable;
 
                             display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;

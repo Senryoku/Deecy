@@ -1936,8 +1936,8 @@ pub const Renderer = struct {
                     },
                 } else VertexTextureInfo.invalid();
 
-                const first_vertex = display_list.vertex_strips.items[idx].verter_parameter_index;
-                const last_vertex = display_list.vertex_strips.items[idx].verter_parameter_index + display_list.vertex_strips.items[idx].verter_parameter_count;
+                const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
+                const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
 
                 const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
                 try self.strips_metadata.append(.{

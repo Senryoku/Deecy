@@ -601,7 +601,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         for (list.vertex_strips.items, 0..) |strip, idx| {
                             const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d}) - {s}###strip_{d}", .{
                                 @tagName(strip.polygon.tag()),
-                                strip.verter_parameter_count,
+                                strip.vertex_parameter_count,
                                 @tagName(strip.polygon.tsp_instruction().texture_shading_instruction),
                                 idx,
                             });
@@ -618,7 +618,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 }
                                 if (node_open) {
                                     self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
-                                    for (strip.verter_parameter_index..(strip.verter_parameter_index + strip.verter_parameter_count)) |i| {
+                                    for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
                                         self.display_vertex_data(&list.vertex_parameters.items[i]);
                                     }
                                     zgui.treePop();
@@ -861,7 +861,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
                     // TODO!
                 },
                 else => {
-                    for (strip.verter_parameter_index..strip.verter_parameter_index + strip.verter_parameter_count - 2) |i| {
+                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
                         const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
                         const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
                         const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
