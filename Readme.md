@@ -40,6 +40,7 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
         - TODO: Exclusion volumes.
         - Test polygons with 'Two Volumes' (another way to use the modifier volumes).
         - TODO: Same, but for the translucent pass.
+        - "Region Array Data Configuration" (written by the CPU directly to VRAM) are completely ignored. I don't know if it's actually used much.
     - Fog LUT Mode 2.
     - Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     - Bump mapping.
@@ -50,6 +51,9 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
     The fact that the issue arise before issuing a pref instruction with the MMU on lead me to think there's more to it.
+
+### Nice to have
+-   Per game VMU. 
 
 ## Things I don't know I have to do
 
