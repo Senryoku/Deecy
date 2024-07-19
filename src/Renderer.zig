@@ -1981,12 +1981,12 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = .{
+                                .base_color = (fRGBA{
                                     .r = v.r,
                                     .g = v.g,
                                     .b = v.b,
                                     .a = if (use_alpha) v.a else 1.0,
-                                },
+                                }).clamped(),
                             });
                         },
                         // Non-Textured, Intensity
@@ -2035,18 +2035,18 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = .{
+                                .base_color = (fRGBA{
                                     .r = v.base_r,
                                     .g = v.base_g,
                                     .b = v.base_b,
                                     .a = if (use_alpha) v.base_a else 1.0,
-                                },
-                                .offset_color = if (use_offset) .{
+                                }).clamped(),
+                                .offset_color = if (use_offset) (fRGBA{
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
                                     .a = v.offset_a,
-                                } else .{},
+                                }).clamped() else .{},
                                 .u = v.u,
                                 .v = v.v,
                             });
@@ -2058,18 +2058,18 @@ pub const Renderer = struct {
                                 .x = v.x,
                                 .y = v.y,
                                 .z = v.z,
-                                .base_color = .{
+                                .base_color = (fRGBA{
                                     .r = v.base_r,
                                     .g = v.base_g,
                                     .b = v.base_b,
                                     .a = if (use_alpha) v.base_a else 1.0,
-                                },
-                                .offset_color = if (use_offset) .{
+                                }).clamped(),
+                                .offset_color = if (use_offset) (fRGBA{
                                     .r = v.offset_r,
                                     .g = v.offset_g,
                                     .b = v.offset_b,
                                     .a = v.offset_a,
-                                } else .{},
+                                }).clamped() else .{},
                                 .u = @bitCast(@as(u32, v.uv.u) << 16),
                                 .v = @bitCast(@as(u32, v.uv.v) << 16),
                             });

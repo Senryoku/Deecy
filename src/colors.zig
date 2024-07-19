@@ -59,12 +59,28 @@ pub const fRGBA = packed struct {
     }
 
     pub fn apply_intensity(self: @This(), intensity: f32, use_alpha: bool) @This() {
-        const clampled = @min(1.0, @max(0.0, intensity));
-        return .{
+        // "Convert the Face Color alpha values specified in the Global
+        // Parameters into 8-bit integers (0 to 255). Multiply the RGB
+        // values by the corresponding Face Color R/G/B value, and
+        // convert the result into an 8-bit integer (0 to 255). Combine
+        // each 8-bit value thus obtained into a 32-bit value and store it
+        // in the ISP/TSP Parameters."
+        // NOTE: I'm not entirely sure what this describes... Clamping the intensity helps in Grandia II at least.
+        const clampled = std.math.clamp(intensity, 0.0, 1.0);
+        return (@This(){
             .r = clampled * self.r,
             .g = clampled * self.g,
             .b = clampled * self.b,
             .a = if (use_alpha) self.a else 1.0,
+        }).clamped();
+    }
+
+    pub fn clamped(self: @This()) @This() {
+        return .{
+            .r = std.math.clamp(self.r, 0.0, 1.0),
+            .g = std.math.clamp(self.g, 0.0, 1.0),
+            .b = std.math.clamp(self.b, 0.0, 1.0),
+            .a = std.math.clamp(self.a, 0.0, 1.0),
         };
     }
 };
