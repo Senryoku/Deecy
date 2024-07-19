@@ -245,7 +245,8 @@ pub fn main() !void {
         }
 
         // FIXME: Find a better way to start a render.
-        if (dc.gpu.render_start) {
+        const render_start = dc.gpu.render_start;
+        if (render_start) {
             // FIXME: Remove
             blit_framebuffer_from_vram = false;
             d.renderer.read_framebuffer_enabled = false;
@@ -260,8 +261,10 @@ pub fn main() !void {
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
         }
-        // FIXME: Complete render every frame to help capture debugging, this could be called only on render_start.
-        try d.renderer.render();
+
+        const always_render = true; // Enable to re-render every time and help capturing with RenderDoc.
+        if (always_render or render_start)
+            try d.renderer.render();
 
         d.renderer.draw(); //  Blit to screen
 

@@ -63,16 +63,22 @@ fn main(
         default: {}
     }
 
-    let gouraud = ((shading_instructions >> 23) & 1) == 1;
+
     var final_color = fragment_color(
-        select(unpack4x8unorm(flat_base_color).zyxw, base_color / inv_w, gouraud),
-        select(unpack4x8unorm(flat_offset_color).zyxw, offset_color / inv_w, gouraud),
-        uv / inv_w,
-        tex_idx_shading_instr,
-        select(unpack4x8unorm(area1_flat_base_color).zyxw, area1_base_color / inv_w, gouraud),
-        select(unpack4x8unorm(area1_flat_offset_color).zyxw, area1_offset_color / inv_w, gouraud),
-        area1_uv / inv_w,
-        area1_tex_idx_shading_instr,
+        base_color,
+        unpack4x8unorm(flat_base_color).zyxw,
+        offset_color,
+        unpack4x8unorm(flat_offset_color).zyxw,
+        uv,
+        tex_idx_shading_instr[0],
+        tex_idx_shading_instr[1],
+        area1_base_color,
+        unpack4x8unorm(area1_flat_base_color).zyxw,
+        area1_offset_color,
+        unpack4x8unorm(area1_flat_offset_color).zyxw,
+        area1_uv,
+        area1_tex_idx_shading_instr[0],
+        area1_tex_idx_shading_instr[1],
         inv_w,
         false
     );

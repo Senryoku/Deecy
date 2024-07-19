@@ -90,20 +90,21 @@ fn area_color(
     uv: vec2<f32>,
     duvdx: vec2<f32>,
     duvdy: vec2<f32>,
-    tex: vec2<u32>,
+    texture_index: u32,
+    shading_instructions: u32,
     inv_w: f32,
     punch_through: bool,
 ) -> vec4<f32> {
     var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
 
-    if (tex[1] & 1) == 1 {
-        let u_size: f32 = tex_size((tex[1] >> 4) & 7);
-        let v_size: f32 = tex_size((tex[1] >> 7) & 7);
+    if (shading_instructions & 1) == 1 {
+        let u_size: f32 = tex_size((shading_instructions >> 4) & 7);
+        let v_size: f32 = tex_size((shading_instructions >> 7) & 7);
         let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
-        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, tex[1], tex[0]);
+        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, shading_instructions, texture_index);
 
-        let shading = (tex[1] >> 1) & 0x3;
-        let ignore_tex_alpha = ((tex[1] >> 3) & 0x1) == 1;
+        let shading = (shading_instructions >> 1) & 0x3;
+        let ignore_tex_alpha = ((shading_instructions >> 3) & 0x1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
 
         if punch_through && tex_a < uniforms.pt_alpha_ref {
@@ -139,7 +140,7 @@ fn area_color(
         }
     }
 
-    return apply_fog(tex[1], inv_w, final_color, offset_color.a);
+    return apply_fog(shading_instructions, inv_w, final_color, offset_color.a);
 }
 
 struct FragmentColor {
@@ -148,18 +149,36 @@ struct FragmentColor {
 }
 
 fn fragment_color(
-    base_color: vec4<f32>,
-    offset_color: vec4<f32>,
-    uv: vec2<f32>,
-    tex: vec2<u32>,
-    area1_base_color: vec4<f32>,
-    area1_offset_color: vec4<f32>,
-    area1_uv: vec2<f32>,
-    area1_tex: vec2<u32>,
+    varying_base_color: vec4<f32>,
+    flat_base_color: vec4<f32>,
+    varying_offset_color: vec4<f32>,
+    flat_offset_color: vec4<f32>,
+    varying_uv: vec2<f32>,
+    texture_index: u32,
+    shading_instructions: u32,
+    varying_area1_base_color: vec4<f32>,
+    flat_area1_base_color: vec4<f32>,
+    varying_area1_offset_color: vec4<f32>,
+    flat_area1_offset_color: vec4<f32>,
+    varying_area1_uv: vec2<f32>,
+    area1_texture_index: u32,
+    area1_shading_instructions: u32,
     inv_w: f32,
     punch_through: bool,
 ) -> FragmentColor {
     var output: FragmentColor;
+
+    let gouraud_area0 = ((shading_instructions >> 23) & 1) == 1;
+    let gouraud_area1 = ((area1_shading_instructions >> 23) & 1) == 1;
+
+    let base_color = select(flat_base_color, varying_base_color / inv_w, gouraud_area0);
+    let offset_color = select(flat_offset_color, varying_offset_color / inv_w, gouraud_area0);
+
+    let area1_base_color = select(flat_area1_base_color, varying_area1_base_color / inv_w, gouraud_area1);
+    let area1_offset_color = select(flat_area1_offset_color, varying_area1_offset_color / inv_w, gouraud_area1);
+
+    let uv = varying_uv / inv_w;
+    let area1_uv = varying_area1_uv / inv_w;
 
     let duvdx = dpdx(uv);
     let duvdy = dpdy(uv);
@@ -172,7 +191,8 @@ fn fragment_color(
         uv,
         duvdx,
         duvdy,
-        tex,
+        texture_index,
+        shading_instructions,
         inv_w,
         punch_through
     );
@@ -184,8 +204,8 @@ fn fragment_color(
     //      1     |     0      | Polygons for which shadow processing is performed (in Intensity Volume mode)
     //      1     |     1      | Polygons in "with Two Volumes" format
 
-    let shadow_bit = ((tex[1] >> 22) & 1) == 1;
-    let volume_bit = ((tex[1] >> 24) & 1) == 1;
+    let shadow_bit = ((shading_instructions >> 22) & 1) == 1;
+    let volume_bit = ((shading_instructions >> 24) & 1) == 1;
 
     if shadow_bit {
         if volume_bit { // Volume Bit
@@ -195,7 +215,8 @@ fn fragment_color(
                 area1_uv,
                 area1_duvdx,
                 area1_duvdy,
-                area1_tex,
+                area1_texture_index,
+                area1_shading_instructions,
                 inv_w,
                 punch_through
             );
