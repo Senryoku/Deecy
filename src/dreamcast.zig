@@ -571,7 +571,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn start_gd_dma(self: *@This()) void {
-        if (self.hw_register(u32, .SB_GDEN).* == 1) {
+        if ((self.hw_register(u32, .SB_GDEN).* & 1) == 1) {
             const dst_addr = self.read_hw_register(u32, .SB_GDSTAR) & 0x1FFFFFE0;
             const len = self.read_hw_register(u32, .SB_GDLEN);
             const direction = self.read_hw_register(u32, .SB_GDDIR);

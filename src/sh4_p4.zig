@@ -212,7 +212,7 @@ pub const TCR = packed struct(u16) {
     unie: u1 = 0,
     icpe: u2 = 0, // Only available on channel 2
     unf: u1 = 0,
-    icpf: u1 = 0,
+    icpf: u1 = 0, // Only available on channel 2
     _: u6 = 0,
 };
 
@@ -277,4 +277,14 @@ pub const ICR = packed struct(u16) {
     _r1: u4 = 0,
     mai: u1 = 0, // NMI Interrupt Mask (MAI): Specifies whether or not all interrupts are to be masked while the NMI pin input level is low, irrespective of the CPU’s SR.BL bit.
     nmil: u1 = 0, // NMI Input Level (NMIL): Sets the level of the signal input at the NMI pin. This bit can be read to determine the NMI pin level. It cannot be modified.
+};
+
+pub const FRQCR = packed struct(u16) {
+    pfc: u3 = 0b010, // Peripheral clock
+    bfc: u3 = 0b001, // Bus clock
+    ifc: u3 = 0b000, // CPU clock
+    pll2en: u1 = 0, // Use PLL2
+    pll1en: u1 = 0, // Use PLL1
+    ckoen: u1 = 0, // CKIO clock input
+    _r0: u4 = 0,
 };
