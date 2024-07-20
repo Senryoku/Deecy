@@ -1785,9 +1785,8 @@ pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
     const m = (opcode.nmd.n << 2) & 0b1100;
     // FIXME: Not accurate to the actual hardware implementation.
 
-    // TODO: Use direct address, unless the compiler can figure it out itself?
-    const FVn = @Vector(4, f32){ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
-    const FVm = @Vector(4, f32){ cpu.FR(m + 0).*, cpu.FR(m + 1).*, cpu.FR(m + 2).*, cpu.FR(m + 3).* };
+    const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n)))[0..4].*;
+    const FVm: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(m)))[0..4].*;
     cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
 }
 
