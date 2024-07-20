@@ -21,6 +21,10 @@ const sign_extension_u12 = bit_manip.sign_extension_u12;
 const sign_extension_u16 = bit_manip.sign_extension_u16;
 const as_i32 = bit_manip.as_i32;
 
+const Experimental = struct {
+    const intermediate_results_double_precision = true;
+};
+
 pub fn unknown(cpu: *SH4, opcode: Instr) void {
     std.debug.print("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
     std.debug.print("  CPU State: PC={X:0>8}\n", .{cpu.pc});
@@ -1816,13 +1820,25 @@ pub fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
 
     // Note: Doesn't handle exceptions.
-    // TODO: Improve Vectorization?
 
     const n = opcode.nmd.n & 0b1100;
-    const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
-    inline for (0..4) |u| {
-        const i: u4 = @intCast(u);
-        cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
+
+    // cpu.fpscr.inexact = true;
+    // cpu.fpscr.cause_inexact = true;
+
+    if (comptime Experimental.intermediate_results_double_precision) {
+        @setFloatMode(.optimized);
+        const FVn: @Vector(4, f64) = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+        inline for (0..4) |u| {
+            const i: u4 = @intCast(u);
+            cpu.FR(n + i).* = @floatCast(@reduce(.Add, FVn * @Vector(4, f64){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* }));
+        }
+    } else {
+        const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
+        inline for (0..4) |u| {
+            const i: u4 = @intCast(u);
+            cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
+        }
     }
 }
 
