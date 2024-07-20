@@ -1666,7 +1666,7 @@ pub fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
-    cpu.FR(opcode.nmd.n).* += cpu.FR(0).* * cpu.FR(opcode.nmd.m).*;
+    cpu.FR(opcode.nmd.n).* = @mulAdd(f32, cpu.FR(0).*, cpu.FR(opcode.nmd.m).*, cpu.FR(opcode.nmd.n).*);
 }
 pub fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) void {
     // FIXME: There's a lot more to do here.
