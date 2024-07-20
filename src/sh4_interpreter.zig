@@ -22,7 +22,7 @@ const sign_extension_u16 = bit_manip.sign_extension_u16;
 const as_i32 = bit_manip.as_i32;
 
 const Experimental = struct {
-    const intermediate_results_double_precision = true;
+    const ftrv: enum { Double, Vectorized, Standard } = .Vectorized;
 };
 
 pub fn unknown(cpu: *SH4, opcode: Instr) void {
@@ -1826,19 +1826,44 @@ pub fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     // cpu.fpscr.inexact = true;
     // cpu.fpscr.cause_inexact = true;
 
-    if (comptime Experimental.intermediate_results_double_precision) {
-        @setFloatMode(.optimized);
-        const FVn: @Vector(4, f64) = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
-        inline for (0..4) |u| {
-            const i: u4 = @intCast(u);
-            cpu.FR(n + i).* = @floatCast(@reduce(.Add, FVn * @Vector(4, f64){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* }));
-        }
-    } else {
-        const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
-        inline for (0..4) |u| {
-            const i: u4 = @intCast(u);
-            cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
-        }
+    switch (comptime Experimental.ftrv) {
+        .Double => {
+            @setFloatMode(.optimized);
+            const FVn: @Vector(4, f64) = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+            inline for (0..4) |u| {
+                const i: u4 = @intCast(u);
+                cpu.FR(n + i).* = @floatCast(@reduce(.Add, FVn * @Vector(4, f64){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* }));
+            }
+        },
+        .Vectorized => {
+            // This version perfectly matches reicast behavior (passes all sh4 unit tests)
+            @setFloatMode(.optimized);
+            const pFR = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4];
+
+            const XF = [4]@Vector(4, f32){
+                @as([*]f32, @ptrCast(cpu.XF(0)))[0..4].*,
+                @as([*]f32, @ptrCast(cpu.XF(4)))[0..4].*,
+                @as([*]f32, @ptrCast(cpu.XF(8)))[0..4].*,
+                @as([*]f32, @ptrCast(cpu.XF(12)))[0..4].*,
+            };
+            const FR: @Vector(4, f32) = pFR.*;
+            const FRs = .{
+                @shuffle(f32, FR, undefined, [4]i32{ 0, 0, 0, 0 }),
+                @shuffle(f32, FR, undefined, [4]i32{ 1, 1, 1, 1 }),
+                @shuffle(f32, FR, undefined, [4]i32{ 2, 2, 2, 2 }),
+                @shuffle(f32, FR, undefined, [4]i32{ 3, 3, 3, 3 }),
+            };
+            const r = FRs[0] * XF[0] + FRs[1] * XF[1] + FRs[2] * XF[2] + FRs[3] * XF[3];
+
+            pFR.* = .{ r[0], r[1], r[2], r[3] };
+        },
+        .Standard => {
+            const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
+            inline for (0..4) |u| {
+                const i: u4 = @intCast(u);
+                cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
+            }
+        },
     }
 }
 
