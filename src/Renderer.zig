@@ -399,6 +399,10 @@ pub const Renderer = struct {
     pub const Resolution = struct { width: u32, height: u32 };
     pub const NativeResolution: Resolution = .{ .width = 640, .height = 480 };
 
+    const OITHorizontalSlices = 4; // Divides the OIT pass into multiple passes to limit memory usage.
+    const MaxFragmentsPerPixel = 24;
+    const OITLinkedListNodeSize = 4 + 4 + 4 + 4;
+
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
@@ -2505,14 +2509,12 @@ pub const Renderer = struct {
                 .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
             };
 
-            const horizontal_slices: u32 = 4;
-            const slice_size = self.resolution.height / horizontal_slices;
-            for (0..horizontal_slices) |i| {
+            const slice_size = self.resolution.height / OITHorizontalSlices;
+            for (0..OITHorizontalSlices) |i| {
                 const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
                 const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
-                const LinkedListNodeSize = 4 * 4 + 4 + 4 + 4;
-                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / LinkedListNodeSize);
+                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
                 oit_uniform_mem.slice[0].target_width = self.resolution.width;
                 oit_uniform_mem.slice[0].start_y = start_y;
 
@@ -2561,7 +2563,7 @@ pub const Renderer = struct {
                         pass.end();
                         pass.release();
                     }
-                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, horizontal_slices * 8) };
+                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
                     pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
 
                     pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
@@ -2788,7 +2790,7 @@ pub const Renderer = struct {
     }
 
     fn create_oit_buffers(self: *@This()) void {
-        const head_size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32);
+        const head_size = (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
         const list_size = self.get_max_storage_buffer_binding_size();
 
         self.list_heads_buffer = self._gctx.createBuffer(.{
@@ -2812,7 +2814,7 @@ pub const Renderer = struct {
     fn create_translucent_bind_group(self: *@This()) void {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32) },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.depth_only_texture_view },
         });
@@ -2821,7 +2823,7 @@ pub const Renderer = struct {
     fn create_blend_bind_group(self: *@This()) void {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32) },
+            .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32) },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture_view },
