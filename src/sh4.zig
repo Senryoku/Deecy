@@ -1217,6 +1217,9 @@ pub const SH4 = struct {
                                 @panic("Unimplemented");
                             }
                         },
+                        @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => {
+                            sh4_log.warn(termcolor.yellow("Write to non implemented-P4 register {s}: {X:0>4}."), .{ @tagName(@as(P4Register, @enumFromInt(virtual_addr))), value });
+                        },
                         @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
                             self.p4_register_addr(T, virtual_addr).* = value;
                             self.compute_interrupt_priorities();
@@ -1352,13 +1355,13 @@ pub const SH4 = struct {
                             self.software_reset();
                     },
                     .SB_ADST => {
-                        if (value == 1)
+                        if (value == 1) {
                             self._dc.?.aica.start_dma(self._dc.?);
+                        }
                     },
                     .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
-                        if (value == 1) {
-                            sh4_log.warn(termcolor.yellow("Unimplemented {any} DMA initiation!"), .{reg});
-                        }
+                        if (value == 1)
+                            sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
                     },
                     .SB_GDST => {
                         if (value == 1) {

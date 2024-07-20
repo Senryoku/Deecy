@@ -844,7 +844,7 @@ pub const AICA = struct {
         const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
 
         if (sample_count > 0) {
-            self.get_reg(u32, .SCIPD).* |= @as(u32, 1) << @bitOffsetOf(InterruptBits, "one_sample_interval");
+            self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
             // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
             // FIXME: Really not sure I'm handling this correctly!
@@ -861,11 +861,6 @@ pub const AICA = struct {
             {
                 self.sample_mutex.lock();
                 defer self.sample_mutex.unlock();
-
-                // Avoid overflow in channel update. FIXME in another way?
-                if (self._samples_counter +% sample_count < self._samples_counter) {
-                    self._samples_counter &= 0xFFFF;
-                }
 
                 @memset(self.sample_buffer[self.sample_write_offset .. self.sample_write_offset + sample_count], 0);
                 for (0..64) |i| {
@@ -893,7 +888,7 @@ pub const AICA = struct {
                 var timer = self.get_reg(TimerControl, timer_registers[i]);
                 self._timer_counters[i] += sample_count;
                 const scaled = @as(u32, 1) << timer.prescale;
-                if (self._timer_counters[i] >= scaled) {
+                while (self._timer_counters[i] >= scaled) {
                     self._timer_counters[i] -= scaled;
                     if (timer.value == 0xFF) {
                         const mask: u32 = @as(u32, 1) << @intCast(6 + i);
@@ -954,7 +949,9 @@ pub const AICA = struct {
         if (registers.play_control.sample_format == .ADPCM and registers.sample_pitch_rate.oct >= 0x2 and registers.sample_pitch_rate.oct <= 0x7)
             base_play_position_inc <<= 1;
 
-        for (self._samples_counter..self._samples_counter + samples) |i| {
+        for (0..samples) |sample_number| {
+            const i = self._samples_counter +% sample_number;
+
             if (state.play_position == registers.loop_start) {
                 if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
                     state.amp_env_state = .Decay;
@@ -1174,7 +1171,13 @@ pub const AICA = struct {
         dc.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
 
         // Schedule the end of the transfer interrupt
-        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 10 * len_in_bytes); // FIXME: Compute the actual cycle count.
+
+        // FIXME: G2 Bus: 25MHz 16bit -  200MHz (SH4 Clock) / 25MHz / 2 = 4
+        // If I understood correctly, a logical value for the cycles would be 4 * len_in_bytes. However this doesn't work in practice.
+        // In Sonic Adventure for example, `4 * len_in_bytes` cycles is immediately stuck at the start of the intro,
+        //                                 `len_in_bytes` cycles allows the intro to play correctly, but it then hangs in the demo.
+        // This completely arbitrary value is the best I can find for now
+        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 128);
     }
 
     fn end_dma(_: *AICA, dc: *Dreamcast) void {
@@ -1201,6 +1204,5 @@ pub const AICA = struct {
         dc.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
 
         dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
-        dc.raise_external_interrupt(.{ .AICA = 1 });
     }
 };

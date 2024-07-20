@@ -1779,9 +1779,10 @@ pub const Holly = struct {
                         }
                     }
                 }
-                self._get_register(u32, .TA_YUV_TEX_CNT).* = u_size * v_size; // NOTE: If this was async, we could update it as we go.
+                self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.
                 // FIXME: Delay is arbitrary.
-                self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
+                if (self._get_register(u32, .TA_YUV_TEX_CNT).* == u_size * v_size)
+                    self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
             } else {
                 //   YUV_Tex = 1
                 // [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of the macro size (16 * 16 pixels) are
