@@ -28,13 +28,12 @@ fn main(
     @location(12) @interpolate(flat) index: u32,
 ) {
     let frag_coords = vec2<i32>(position_clip.xy);
-    let shading_instructions = tex_idx_shading_instr[1];
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
     // This setting is ignored for Translucent polygons in Auto-sort mode;
     // the comparison must be made on a "Greater or Equal" basis.
     // TODO: Handle pre-sorted mode.
-    let depth_compare = 6u; // (shading_instructions >> 16) & 0x7;
+    let depth_compare = 6u; // (tex_idx_shading_instr[1] >> 16) & 0x7;
 
     // NOTE: The label denotes when the fragment is kept, not when it's discarded.
     switch(depth_compare) {
@@ -80,7 +79,7 @@ fn main(
         false
     );
 
-    if final_color.area0.a == 0 { discard; }
+    if final_color.area0.a == 0 && final_color.area1.a == 0 { discard; }
 
     // Add the fragment to the linked list
 
@@ -94,8 +93,11 @@ fn main(
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position_clip.z;
-        linked_list.data[frag_index].color = pack4x8unorm(final_color.area0); // TODO: Handle Modifier volumes/Area 1
-        linked_list.data[frag_index].index_and_blend_mode = ((shading_instructions >> 10) & 0x3F) | (index << 6);
+        linked_list.data[frag_index].color_area0 = pack4x8unorm(final_color.area0);
+        linked_list.data[frag_index].color_area1 = pack4x8unorm(final_color.area1);
+        let blend_modes_area0 = ((tex_idx_shading_instr[1] >> 10) & 0x3F);
+        let blend_modes_area1 = ((area1_tex_idx_shading_instr[1] >> 10) & 0x3F);
+        linked_list.data[frag_index].index_and_blend_modes = (index << (2 * 6)) | (blend_modes_area1 << 6) | blend_modes_area0;
         linked_list.data[frag_index].next = last_head;
     }
 }

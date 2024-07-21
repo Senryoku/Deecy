@@ -5,12 +5,22 @@ struct OITUniforms {
 };
 
 struct LinkedListElement {
-  color: u32,
-  depth: f32,
-  index_and_blend_mode: u32,
   next: u32,
+  depth: f32,
+  index_and_blend_modes: u32, // I hope 24 bits for the index is enough!
+  color_area0: u32,
+  color_area1: u32,
 };
 
 struct LinkedList {
   data: array<LinkedListElement>
+};
+
+struct VolumeLinkedListElement {
+  next: u32,
+  depth: f32,
+};
+
+struct VolumeLinkedList {
+  data: array<VolumeLinkedListElement>
 };

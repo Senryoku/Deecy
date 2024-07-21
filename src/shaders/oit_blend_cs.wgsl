@@ -71,7 +71,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
         while j > 0u && (to_insert.depth < layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
-             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))) {
+             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_modes >> 12) < (layers[j - 1u].index_and_blend_modes >> 12))) {
             layers[j] = layers[j - 1u];
             j--;
         }
@@ -89,10 +89,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // Blend the translucent fragments
     for (var i = 0u; i < layer_count; i++) {
-        let src = unpack4x8unorm(layers[i].color);
+        let use_area1 = false; // TODO! :)
+        let src = unpack4x8unorm(select(layers[i].color_area0, layers[i].color_area1, use_area1));
         let dst = color;
-        let blend_mode = layers[i].index_and_blend_mode & 0x3F;
-        color = src * get_src_factor(blend_mode & 7, src, dst) + dst * get_dst_factor((blend_mode >> 3) & 7, src, dst);
+        let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
+        color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
     }
 
     textureStore(output_texture, frag_coords, color);

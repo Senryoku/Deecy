@@ -399,7 +399,8 @@ pub const Renderer = struct {
 
     const OITHorizontalSlices = 4; // Divides the OIT pass into multiple passes to limit memory usage.
     const MaxFragmentsPerPixel = 24;
-    const OITLinkedListNodeSize = 4 + 4 + 4 + 4;
+    const OITLinkedListNodeSize = 5 * 4;
+    const VolumeLinkedListNodeSize = 2 * 4;
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
