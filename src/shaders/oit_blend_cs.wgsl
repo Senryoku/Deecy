@@ -70,7 +70,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         var j = layer_count;
 
         // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
-        while j > 0u && (to_insert.depth > layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
+        while j > 0u && (to_insert.depth < layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
              (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))) {
             layers[j] = layers[j - 1u];
             j--;

@@ -221,17 +221,15 @@ fn translate_dst_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFa
     };
 }
 
-// NOTE: Holly assumes 1/z depth values, we re-invert them in the vertex shader,
-//       so we also need to invert the compare modes; this is not a mistake.
 fn translate_depth_compare_mode(mode: HollyModule.DepthCompareMode) wgpu.CompareFunction {
     return switch (mode) {
         .Never => .never,
-        .Less => .greater,
+        .Less => .less,
         .Equal => .equal,
-        .LessEqual => .greater_equal,
-        .Greater => .less,
+        .LessEqual => .less_equal,
+        .Greater => .greater,
         .NotEqual => .not_equal,
-        .GreaterEqual => .less_equal,
+        .GreaterEqual => .greater_equal,
         .Always => .always,
     };
 }
@@ -862,7 +860,7 @@ pub const Renderer = struct {
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
-                .depth_compare = .less,
+                .depth_compare = .greater,
                 .stencil_read_mask = 0x01,
                 .stencil_write_mask = 0x01,
                 .stencil_front = .{
@@ -942,7 +940,7 @@ pub const Renderer = struct {
             .depth_stencil = &wgpu.DepthStencilState{
                 .format = .depth32_float_stencil8,
                 .depth_write_enabled = false,
-                .depth_compare = .less,
+                .depth_compare = .greater,
                 .stencil_read_mask = 0x02,
                 .stencil_write_mask = 0x03,
                 .stencil_front = .{
@@ -1703,9 +1701,10 @@ pub const Renderer = struct {
                 .u = u,
                 .v = v,
             };
-            // FIXME: We should probably render the background in a separate pass with depth test disabled.
-            self.min_depth = @min(self.min_depth, 1 / vertices[i].z);
-            self.max_depth = @max(self.max_depth, 1 / vertices[i].z);
+            // NOTE: We draw the background with depth test disabled, but it might get clipped if for some reason it's drawn in front and we don't consider it for the max_depth.
+            //       So, even if we're not using the min_depth right now (where it is most likely to matter), I'd rather be safe :)
+            self.min_depth = @min(self.min_depth, vertices[i].z);
+            self.max_depth = @max(self.max_depth, vertices[i].z);
         }
 
         // FIXME: In Crazy Taxi (and 2) and Soulcalibur, the vertices coordinates make no sense, even if the data format seems right:
@@ -2100,8 +2099,8 @@ pub const Renderer = struct {
                                 v.base_color = sprite_base_color.with_alpha(use_alpha);
                                 if (use_offset)
                                     v.offset_color = sprite_offset_color;
-                                self.min_depth = @min(self.min_depth, 1.0 / v.z);
-                                self.max_depth = @max(self.max_depth, 1.0 / v.z);
+                                self.min_depth = @min(self.min_depth, v.z);
+                                self.max_depth = @max(self.max_depth, v.z);
 
                                 try self.vertices.append(v.*);
                             }
@@ -2112,8 +2111,8 @@ pub const Renderer = struct {
                         },
                     }
 
-                    self.min_depth = @min(self.min_depth, 1.0 / self.vertices.getLast().z);
-                    self.max_depth = @max(self.max_depth, 1.0 / self.vertices.getLast().z);
+                    self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
+                    self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
                 }
 
                 // Triangle Strips
@@ -2197,12 +2196,12 @@ pub const Renderer = struct {
             try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
-            self.min_depth = @min(self.min_depth, 1 / triangle.az);
-            self.max_depth = @max(self.max_depth, 1 / triangle.az);
-            self.min_depth = @min(self.min_depth, 1 / triangle.bz);
-            self.max_depth = @max(self.max_depth, 1 / triangle.bz);
-            self.min_depth = @min(self.min_depth, 1 / triangle.cz);
-            self.max_depth = @max(self.max_depth, 1 / triangle.cz);
+            self.min_depth = @min(self.min_depth, triangle.az);
+            self.max_depth = @max(self.max_depth, triangle.az);
+            self.min_depth = @min(self.min_depth, triangle.bz);
+            self.max_depth = @max(self.max_depth, triangle.bz);
+            self.min_depth = @min(self.min_depth, triangle.cz);
+            self.max_depth = @max(self.max_depth, triangle.cz);
         }
 
         gpu._ta_volume_triangles.clearRetainingCapacity();
@@ -2299,8 +2298,6 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth_texture_view).?;
 
-            // TODO: Modify the passes to have two ouputs: one for area 0 and one for area 1 (pixels without shadow bit and 'two volumes' will simply output the same color twice)
-            //       Then the 'apply' pass of the modifier volume will simply select between the two outputs, rather than doing any computation.
             {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{ .{
                     .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
@@ -2315,7 +2312,7 @@ pub const Renderer = struct {
                     .view = depth_view,
                     .depth_load_op = .clear,
                     .depth_store_op = .store,
-                    .depth_clear_value = 1.0,
+                    .depth_clear_value = 0.0,
                     .stencil_load_op = .clear,
                     .stencil_store_op = .discard,
                     .stencil_clear_value = 0,
@@ -2393,7 +2390,7 @@ pub const Renderer = struct {
                         .view = depth_view,
                         .depth_load_op = .load,
                         .depth_store_op = .store,
-                        .depth_clear_value = 1.0,
+                        .depth_clear_value = 0.0,
                         .depth_read_only = false,
                         .stencil_load_op = .clear,
                         .stencil_store_op = .store,
@@ -2451,7 +2448,7 @@ pub const Renderer = struct {
                         .view = depth_view,
                         .depth_load_op = .undef,
                         .depth_store_op = .undef,
-                        .depth_clear_value = 1.0,
+                        .depth_clear_value = 0.0,
                         .depth_read_only = true,
                         .stencil_load_op = .undef,
                         .stencil_store_op = .undef,

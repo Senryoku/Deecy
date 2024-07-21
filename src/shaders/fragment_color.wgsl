@@ -40,8 +40,8 @@ fn tex_size(idx: u32) -> f32 {
     }
 }
 
-fn fog_alpha_lut(inv_w: f32) -> f32 {
-    let val: f32 = clamp(inv_w * uniforms.fog_density, 1.0, 255.9999);
+fn fog_alpha_lut() -> f32 {
+    let val: f32 = clamp(uniforms.fog_density, 1.0, 255.9999);
     let uval = bitcast<u32>(val);
     // Bit 6-4: Lower 3 bits for the 1/W index
     // Bit 3-0: Upper 4 bits for the 1/W mantissa
@@ -51,12 +51,12 @@ fn fog_alpha_lut(inv_w: f32) -> f32 {
     return mix(low, high, f32((uval >> 11) & 0xFF) / 255.0); // Residual fractional part
 }
 
-fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
+fn apply_fog(shading_instructions: u32, color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
     // TODO: Color Clamping
     switch((shading_instructions >> 19) & 0x3) {
         case 0x0u: {
             // Lookup table mode
-            let fog_alpha = fog_alpha_lut(inv_w);
+            let fog_alpha = fog_alpha_lut();
             return vec4<f32>(mix(color.rgb, uniforms.fog_col_pal.rgb, fog_alpha), color.a);
         }
         case 0x1u: {
@@ -75,7 +75,7 @@ fn apply_fog(shading_instructions: u32, inv_w: f32, color: vec4<f32>, offset_alp
         case 0x3u: {
             // Look up table Mode 2
             // Substitutes the polygon color for the Fog Color, and the polygon α value for the Fog α value.
-            let fog_alpha = fog_alpha_lut(inv_w);
+            let fog_alpha = fog_alpha_lut();
             return vec4<f32>(1.0, 0.0, 0.0, 1.0); // FIXME: This is untested, output a solid red to identify some places where it's used.
             //return vec4<f32>(uniforms.fog_col_pal.rgb, fog_alpha);
         }
@@ -92,7 +92,6 @@ fn area_color(
     duvdy: vec2<f32>,
     texture_index: u32,
     shading_instructions: u32,
-    inv_w: f32,
     punch_through: bool,
 ) -> vec4<f32> {
     var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
@@ -140,7 +139,7 @@ fn area_color(
         }
     }
 
-    return apply_fog(shading_instructions, inv_w, final_color, offset_color.a);
+    return apply_fog(shading_instructions, final_color, offset_color.a);
 }
 
 struct FragmentColor {
@@ -153,17 +152,16 @@ fn fragment_color(
     flat_base_color: vec4<f32>,
     varying_offset_color: vec4<f32>,
     flat_offset_color: vec4<f32>,
-    varying_uv: vec2<f32>,
+    uv: vec2<f32>,
     texture_index: u32,
     shading_instructions: u32,
-    varying_area1_base_color: vec4<f32>,
-    flat_area1_base_color: vec4<f32>,
-    varying_area1_offset_color: vec4<f32>,
-    flat_area1_offset_color: vec4<f32>,
-    varying_area1_uv: vec2<f32>,
+    area1_varying_base_color: vec4<f32>,
+    area1_flat_base_color: vec4<f32>,
+    area1_varying_offset_color: vec4<f32>,
+    area1_flat_offset_color: vec4<f32>,
+    area1_uv: vec2<f32>,
     area1_texture_index: u32,
     area1_shading_instructions: u32,
-    inv_w: f32,
     punch_through: bool,
 ) -> FragmentColor {
     var output: FragmentColor;
@@ -171,14 +169,11 @@ fn fragment_color(
     let gouraud_area0 = ((shading_instructions >> 23) & 1) == 1;
     let gouraud_area1 = ((area1_shading_instructions >> 23) & 1) == 1;
 
-    let base_color = select(flat_base_color, varying_base_color / inv_w, gouraud_area0);
-    let offset_color = select(flat_offset_color, varying_offset_color / inv_w, gouraud_area0);
+    let base_color = select(flat_base_color, varying_base_color, gouraud_area0);
+    let offset_color = select(flat_offset_color, varying_offset_color, gouraud_area0);
 
-    let area1_base_color = select(flat_area1_base_color, varying_area1_base_color / inv_w, gouraud_area1);
-    let area1_offset_color = select(flat_area1_offset_color, varying_area1_offset_color / inv_w, gouraud_area1);
-
-    let uv = varying_uv / inv_w;
-    let area1_uv = varying_area1_uv / inv_w;
+    let area1_base_color = select(area1_flat_base_color, area1_varying_base_color, gouraud_area1);
+    let area1_offset_color = select(area1_flat_offset_color, area1_varying_offset_color, gouraud_area1);
 
     let duvdx = dpdx(uv);
     let duvdy = dpdy(uv);
@@ -193,7 +188,6 @@ fn fragment_color(
         duvdy,
         texture_index,
         shading_instructions,
-        inv_w,
         punch_through
     );
 
@@ -217,7 +211,6 @@ fn fragment_color(
                 area1_duvdy,
                 area1_texture_index,
                 area1_shading_instructions,
-                inv_w,
                 punch_through
             );
         } else {

@@ -24,7 +24,6 @@ struct VertexOut {
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
-    @location(13) inv_w: f32,
  }
 
 @vertex
@@ -43,19 +42,14 @@ fn main(
 
     let screen_size = vec2<f32>(640.0, 480.0); // TODO: Adjust depending on video mode.
 
+    let inv_w = 1.0 / position.z;
+
      // Positions are supplied in screen space (0..640, 0..480)
      // Convert it to wgpu clip space (-1..1, -1..1)
-    output.position_clip.x = position.x * 2.0 / screen_size.x - 1.0;
-    output.position_clip.y = position.y * -2.0 / screen_size.y + 1.0;
-
-    if uniforms.depth_max > uniforms.depth_min {
-        output.position_clip.z = ((1.0 / position.z) - uniforms.depth_min) / (uniforms.depth_max - uniforms.depth_min); // Remap to the [0.0..1.0] range used by WGPU
-    } else {
-        output.position_clip.z = (1.0 / position.z);
-    }
-    output.position_clip.w = 1.0;
-
-    let inv_w = position.z;
+    output.position_clip.x = inv_w * (position.x * 2.0 / screen_size.x - 1.0);
+    output.position_clip.y = inv_w * (position.y * -2.0 / screen_size.y + 1.0);
+    output.position_clip.z = 1.0 / uniforms.depth_max; // Remap to the [0..1] clip range used by WebGPU
+    output.position_clip.w = inv_w;
 
     let metadata = strips_metadata[primitive_index];
 
@@ -64,22 +58,21 @@ fn main(
     let area1_base_color = unpack4x8unorm(packed_area1_base_color).zyxw;
     let area1_offset_color = unpack4x8unorm(packed_area1_offset_color).zyxw;
 
-    output.base_color = inv_w * base_color;
-    output.offset_color = inv_w * offset_color;
-    output.uv = inv_w * uv;
+    output.base_color = base_color;
+    output.offset_color = offset_color;
+    output.uv = uv;
     output.tex_idx_shading_instr = vec2<u32>(metadata.area0_tex_index, metadata.area0_instructions);
     output.flat_base_color = packed_base_color;
     output.flat_offset_color = packed_offset_color;
 
-    output.area1_base_color = inv_w * area1_base_color;
-    output.area1_offset_color = inv_w * area1_offset_color;
-    output.area1_uv = inv_w * area1_uv;
+    output.area1_base_color = area1_base_color;
+    output.area1_offset_color = area1_offset_color;
+    output.area1_uv = area1_uv;
     output.area1_tex_idx_shading_instr = vec2<u32>(metadata.area1_tex_index, metadata.area1_instructions);
     output.area1_flat_base_color = packed_area1_base_color;
     output.area1_flat_offset_color = packed_area1_offset_color;
 
     output.index = vertex_index;
-    output.inv_w = inv_w;
 
     return output;
 }

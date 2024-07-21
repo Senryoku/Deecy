@@ -26,7 +26,6 @@ fn main(
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
-    @location(13) inv_w: f32,
 ) {
     let frag_coords = vec2<i32>(position_clip.xy);
     let shading_instructions = tex_idx_shading_instr[1];
@@ -37,27 +36,26 @@ fn main(
     // TODO: Handle pre-sorted mode.
     let depth_compare = 6u; // (shading_instructions >> 16) & 0x7;
 
-    // NOTE: Comparisons are inversed compared to Holly's 1/z depth.
-    //       Also, the label denotes when the fragment is kept, not when it's discarded.
+    // NOTE: The label denotes when the fragment is kept, not when it's discarded.
     switch(depth_compare) {
         case 0u: { discard; } // Never
         case 1u: { // Less
-            if position_clip.z <= opaque_depth { discard; }
+            if position_clip.z >= opaque_depth { discard; }
         }
         case 2u: { // Equal
             if position_clip.z != opaque_depth { discard; }
         }
         case 3u: { // Less or Equal
-            if position_clip.z < opaque_depth { discard; }
+            if position_clip.z > opaque_depth { discard; }
         }
         case 4u: { // Greater
-            if position_clip.z >= opaque_depth { discard; }
+            if position_clip.z <= opaque_depth { discard; }
         }
         case 5u: { // Not Equal
             if position_clip.z == opaque_depth { discard; }
         }
         case 6u: { // Greater or Equal
-            if position_clip.z > opaque_depth { discard; }
+            if position_clip.z < opaque_depth { discard; }
         }
         case 7u: {} // Always
         default: {}
@@ -79,7 +77,6 @@ fn main(
         area1_uv,
         area1_tex_idx_shading_instr[0],
         area1_tex_idx_shading_instr[1],
-        inv_w,
         false
     );
 
