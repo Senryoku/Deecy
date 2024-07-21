@@ -6,7 +6,9 @@ const aica_log = std.log.scoped(.aica);
 const arm7 = @import("arm7");
 const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegisters = @import("hardware_registers.zig");
 
 // Yamaha AICA Audio Chip
 // Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes
@@ -1104,6 +1106,9 @@ pub const AICA = struct {
         }
     }
 
+    // TODO: Move these DMA functions to the Dreamcast module? Make them generic for the other G2 DMAs ?
+    // NOTE: AD: AICA-DMA (ch0), E1: Ext1-DMA (ch1), E2: Ext2-DMA (ch2), DD: Dev-DMA (ch3)
+
     pub fn start_dma(self: *AICA, dc: *Dreamcast) void {
         const enabled = dc.read_hw_register(u32, .SB_ADEN);
         if (enabled == 0) return;
@@ -1168,40 +1173,40 @@ pub const AICA = struct {
 
         // Signals the DMA is in progress
         dc.hw_register(u32, .SB_ADST).* = 1;
-        dc.hw_register(u32, .SB_ADSUSP).* &= 0b101111; // Clear "DMA Suspend or DMA Stop"
+        var adsusp = dc.hw_register(HardwareRegisters.SB_SUSP, .SB_ADSUSP);
+        adsusp.dma_request_input_state = 0;
+        adsusp.dma_suspend_or_dma_stop = 0;
+
+        // Debug registers. NOTE: These are supposed to update during the transfer.
+        dc.hw_register(u32, .SB_ADSTARD).* = root_bus_addr;
+        dc.hw_register(u32, .SB_ADSTAGD).* = aica_addr;
+        dc.hw_register(u32, .SB_ADLEND).* = len_in_bytes; // Remaining length.
 
         // Schedule the end of the transfer interrupt
 
-        // FIXME: G2 Bus: 25MHz 16bit -  200MHz (SH4 Clock) / 25MHz / 2 = 4
-        // If I understood correctly, a logical value for the cycles would be 4 * len_in_bytes. However this doesn't work in practice.
-        // In Sonic Adventure for example, `4 * len_in_bytes` cycles is immediately stuck at the start of the intro,
-        //                                 `len_in_bytes` cycles allows the intro to play correctly, but it then hangs in the demo.
-        // This completely arbitrary value is the best I can find for now
-        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 128);
+        // G2 Bus: 25MHz 16bits - 200MHz (SH4 Clock) / 25MHz / 2 = 4 cycles per byte.
+        // Used as theorical max speed.
+        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 4 * len_in_bytes);
     }
 
     fn end_dma(_: *AICA, dc: *Dreamcast) void {
-        const suspended = dc.read_hw_register(u32, .SB_ADSUSP);
-        if ((suspended & 1) == 1) {
-            // The DMA is suspended, wait.
-            // FIXME: This is probably not how it's supposed to work.
-            return;
-        }
-
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
-        const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End//Restart
+        const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End/Restart
         const len = len_reg & 0x7FFFFFFF;
         // When a transfer ends, the DMA enable register is set to "0".
         if (dma_end)
             dc.hw_register(u32, .SB_ADEN).* = 0;
 
-        dc.hw_register(u32, .SB_ADSTAR).* += len;
-        dc.hw_register(u32, .SB_ADSTAG).* += len;
-        dc.hw_register(u32, .SB_ADLEN).* = 0;
         dc.hw_register(u32, .SB_ADST).* = 0;
 
-        // Set "DMA Suspend or DMA Stop" bit in SB_ADSUSP
-        dc.hw_register(u32, .SB_ADSUSP).* |= 0b010000;
+        // Debug registers. Used to keep track of the transfer state.
+        dc.hw_register(u32, .SB_ADSTARD).* += len;
+        dc.hw_register(u32, .SB_ADSTAGD).* += len;
+        dc.hw_register(u32, .SB_ADLEND).* = 0; // Remaining length. "this value returns to its original setting immediately after DMA terminates." Does "original setting" mean "value at the start of the transfer", or 0?
+
+        var adsusp = dc.hw_register(HardwareRegisters.SB_SUSP, .SB_ADSUSP);
+        adsusp.dma_request_input_state = 1;
+        adsusp.dma_suspend_or_dma_stop = 1;
 
         dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
     }

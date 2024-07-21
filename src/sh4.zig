@@ -1262,19 +1262,6 @@ pub const SH4 = struct {
                         check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
                         return self._dc.?.gdrom.read_register(T, addr);
                     },
-                    @intFromEnum(HardwareRegister.SB_ADSUSP), @intFromEnum(HardwareRegister.SB_E1SUSP), @intFromEnum(HardwareRegister.SB_E2SUSP), @intFromEnum(HardwareRegister.SB_DDSUSP) => {
-                        // DMA status, always report transfer possible and not in progress.
-                        //    Bit 5: DMA Request Input State
-                        //      0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
-                        //      1: The DMA transfer request is low (transfer possible)
-                        //    Bit 4: DMA Suspend or DMA Stop
-                        //      0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
-                        //      1: DMA transfer has ended, or is stopped due to a suspen
-                        sh4_log.warn("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                            @constCast(self)._get_memory(addr),
-                        ))).* });
-                        return 0x30;
-                    },
                     @intFromEnum(HardwareRegister.SB_ISTNRM), @intFromEnum(HardwareRegister.SB_FFST) => return self._dc.?.hw_register_addr(T, addr).*, // Too spammy even for debugging.
                     else => {
                         sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
@@ -1354,20 +1341,30 @@ pub const SH4 = struct {
                         if (value == 0x00007611)
                             self.software_reset();
                     },
+                    .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
+                        if (value == 1)
+                            sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
+                    },
+                    .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
+                        if ((value & 1) == 1) {
+                            sh4_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+                        }
+                        return;
+                    },
                     .SB_ADST => {
                         if (value == 1) {
                             self._dc.?.aica.start_dma(self._dc.?);
                         }
-                    },
-                    .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
-                        if (value == 1)
-                            sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
                     },
                     .SB_GDST => {
                         if (value == 1) {
                             sh4_log.info("{any} DMA (ch0-DMA) initiation!", .{reg});
                             self._dc.?.start_gd_dma();
                         }
+                    },
+                    .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
+                        // Read Only
+                        return;
                     },
                     .SB_MDAPRO => {
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });

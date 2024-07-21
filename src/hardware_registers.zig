@@ -248,3 +248,21 @@ pub const SCFSR2 = packed struct(u16) {
     fer_number: u4 = 0,
     per_number: u4 = 0,
 };
+
+// SB_ADSUSP - SB_E1SUSP - SB_E2SUSP - SB_DDSUSP
+pub const SB_SUSP = packed struct(u32) {
+    dma_suspend_request: u1 = 0, // Write Only
+    // 0: Continues DMA transfer without going to the suspended state. Or, bit 2 of the SB_ADTSEL register is "0"
+    // 1: Suspends and terminates DMA transfer
+    _r: u3 = 0,
+    dma_suspend_or_dma_stop: u1 = 1, // Read Only
+    // 0: DMA transfer is in progress, or bit 2 of the SB_ADTSEL register is "0"
+    // 1: DMA transfer has ended, or is stopped due to a suspend
+    // * When bit 2 of the SB_ADTSEL register is "1" and bit 0 of the SB_ADSUSP
+    // register is "1", and data is not being transferred due to being in the suspended
+    // state, this bit becomes "1" when G2-DMA ends.
+    dma_request_input_state: u1 = 1, // Read Only
+    // 0: The DMA transfer request is high (transfer not possible), or bit 2 of the SB_ADTSEL register is "0"
+    // 1: The DMA transfer request is low (transfer possible)
+    _: u26 = 0,
+};
