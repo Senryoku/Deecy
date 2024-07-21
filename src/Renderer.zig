@@ -2601,6 +2601,8 @@ pub const Renderer = struct {
                 .color_attachment_count = oit_color_attachments.len,
                 .color_attachments = &oit_color_attachments,
                 .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+                // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
+                //       mode where the depth_compare mode can be set by the user (it is written, but unused).
             };
 
             const slice_size = self.resolution.height / OITHorizontalSlices;
@@ -2672,19 +2674,12 @@ pub const Renderer = struct {
                                 pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
                                 pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                             }
+                        } else {
+                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
+                            // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
+                            //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                         }
                     }
-
-                    // Open "volume" pass.
-
-                    // TODO!
-
-                    // pass.setStencilReference(0x02);
-                    // pass.setPipeline(gctx.lookupResource(self.open_modifier_volume_pipeline).?);
-                    // for (self.opaque_modifier_volumes.items) |volume| {
-                    //     if (!volume.closed)
-                    //         pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                    // }
                 }
 
                 {

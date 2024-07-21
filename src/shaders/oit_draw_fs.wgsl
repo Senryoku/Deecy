@@ -96,7 +96,13 @@ fn main(
         linked_list.data[frag_index].color_area0 = pack4x8unorm(final_color.area0);
         linked_list.data[frag_index].color_area1 = pack4x8unorm(final_color.area1);
         let blend_modes_area0 = ((tex_idx_shading_instr[1] >> 10) & 0x3F);
-        let blend_modes_area1 = ((area1_tex_idx_shading_instr[1] >> 10) & 0x3F);
+        var blend_modes_area1 = blend_modes_area0 ;
+        // Shading instruction for Area1 are only valid if both shadow and volume bits are set.
+        let shadow_bit = ((area1_tex_idx_shading_instr[1] >> 22) & 1) == 1;
+        let volume_bit = ((area1_tex_idx_shading_instr[1] >> 24) & 1) == 1;
+        if shadow_bit && volume_bit {
+            blend_modes_area1 = ((area1_tex_idx_shading_instr[1] >> 10) & 0x3F);
+        }
         linked_list.data[frag_index].index_and_blend_modes = (index << (2 * 6)) | (blend_modes_area1 << 6) | blend_modes_area0;
         linked_list.data[frag_index].next = last_head;
     }
