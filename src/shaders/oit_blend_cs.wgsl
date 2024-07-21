@@ -54,6 +54,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         heads.fragment_count = 0;
     }
 
+    let modvol = modvols[heads_index];
+    // Reset the count for the next pass.
+    modvols[heads_index].count = 0;
+
     if element_index == 0xFFFFFFFFu {return;}
 
     var layers: array<LinkedListElement, MaxLayers>;
@@ -81,10 +85,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         layer_count++;
     }
-
-    let modvol = modvols[heads_index];
-    // Reset the count for the next pass.
-    modvols[heads_index].count = 0;
 
     let depth_interfaces_count = 2 * modvol.count;
     let depth_interfaces = modvol.interfaces;
