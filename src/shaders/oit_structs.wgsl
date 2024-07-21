@@ -16,6 +16,9 @@ struct LinkedList {
   data: array<LinkedListElement>
 };
 
+const MaxVolumes = 4;
+const MaxVolumesInterfaces = 2 * MaxVolumes;
+
 struct VolumeLinkedListElement {
   next: u32,
   depth: f32,
@@ -23,4 +26,9 @@ struct VolumeLinkedListElement {
 
 struct VolumeLinkedList {
   data: array<VolumeLinkedListElement>
+};
+
+struct Volumes {
+	count: u32,
+	intervals: array<vec2<f32>, MaxVolumes>,
 };
