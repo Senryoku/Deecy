@@ -30,5 +30,13 @@ struct VolumeLinkedList {
 
 struct Volumes {
 	count: u32,
+  _padding: u32,
 	intervals: array<vec2<f32>, MaxVolumes>,
+};
+
+// A way to re-interpret the "Volumes" struct
+struct VolumesInterfaces {
+	count: u32,
+  _padding: u32,
+	interfaces: array<f32, MaxVolumesInterfaces>,
 };

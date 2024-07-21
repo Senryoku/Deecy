@@ -6,16 +6,12 @@ struct Heads {
 @group(1) @binding(0) var<uniform> oit_uniforms: OITUniforms;
 @group(1) @binding(1) var<storage, read_write> heads: Heads;
 @group(1) @binding(2) var<storage, read_write> linked_list: VolumeLinkedList;
-@group(1) @binding(3) var opaque_depth_texture: texture_depth_2d;
 
 @fragment
 fn main(
     @builtin(position) position_clip: vec4<f32>,
 ) {
     let frag_coords = vec2<i32>(position_clip.xy);
-    let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
-
-    if position_clip.z < opaque_depth { discard; }
 	
 	// See oit_draw_fs.wgsl
     let heads_index = (u32(frag_coords.y) - oit_uniforms.start_y) * oit_uniforms.target_width + u32(frag_coords.x);

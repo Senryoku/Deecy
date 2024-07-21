@@ -403,7 +403,7 @@ pub const Renderer = struct {
     const MaxFragmentsPerPixel = 24;
     const OITLinkedListNodeSize = 5 * 4;
     const VolumeLinkedListNodeSize = 2 * 4;
-    const VolumePixelSize = 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
+    const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
@@ -798,7 +798,6 @@ pub const Renderer = struct {
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
-            zgpu.textureEntry(3, .{ .fragment = true }, .depth, .tvdim_2d, false),
         });
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "modvol_vs");
@@ -832,6 +831,20 @@ pub const Renderer = struct {
                     .format = .depth32_float_stencil8,
                     .depth_write_enabled = false,
                     .depth_compare = .greater,
+                    .stencil_read_mask = 0x00,
+                    .stencil_write_mask = 0x00,
+                    .stencil_front = .{
+                        .compare = .always,
+                        .fail_op = .keep,
+                        .pass_op = .keep,
+                        .depth_fail_op = .keep,
+                    },
+                    .stencil_back = .{
+                        .compare = .always,
+                        .fail_op = .keep,
+                        .pass_op = .keep,
+                        .depth_fail_op = .keep,
+                    },
                 },
                 .fragment = &wgpu.FragmentState{
                     .module = translucent_modvol_fs_module,
@@ -842,6 +855,7 @@ pub const Renderer = struct {
             };
             break :tmodvolp gctx.createRenderPipeline(translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor);
         };
+        gctx.lookupResource(translucent_modvol_pipeline).?.setLabel("Translucent Modifier Volume Pipeline");
 
         const translucent_modvol_merge_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .compute = true }, .uniform, true, 0),
@@ -862,6 +876,7 @@ pub const Renderer = struct {
             };
             break :p gctx.createComputePipeline(translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor);
         };
+        gctx.lookupResource(translucent_modvol_merge_pipeline).?.setLabel("Translucent Modifier Volume Merge Pipeline");
 
         const color_targets = [_]wgpu.ColorTargetState{.{
             .format = zgpu.GraphicsContext.swapchain_format,
@@ -2610,6 +2625,10 @@ pub const Renderer = struct {
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
+                        //.depth_load_op = .load,
+                        //.depth_store_op = .discard,
+                        //.stencil_load_op = .clear,
+                        //.stencil_store_op = .discard,
                         .depth_read_only = true,
                         .stencil_read_only = true,
                     };
@@ -2635,10 +2654,14 @@ pub const Renderer = struct {
                                 pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_uniform_mem.offset});
 
                                 pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
+
+                                pass.setStencilReference(0x00);
+                                pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
+
                                 pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                             }
                             {
-                                const pass = encoder.beginComputePass(null);
+                                const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
                                 defer {
                                     pass.end();
                                     pass.release();
@@ -2950,6 +2973,7 @@ pub const Renderer = struct {
                 .size = self.get_linked_list_heads_size(),
                 .mapped_at_creation = true,
             });
+            self._gctx.lookupResource(self.list_heads_buffer).?.setLabel("OIT List Heads Buffer");
             const init_buffer = self._gctx.lookupResourceInfo(self.list_heads_buffer).?.gpuobj.?;
             const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
             @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
@@ -2960,6 +2984,7 @@ pub const Renderer = struct {
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_max_storage_buffer_binding_size(),
             });
+            self._gctx.lookupResource(self.linked_list_buffer).?.setLabel("OIT Linked List Buffer");
         }
 
         // Mod Vol
@@ -2969,21 +2994,33 @@ pub const Renderer = struct {
                 .size = self.get_linked_list_heads_size(),
                 .mapped_at_creation = true,
             });
-            const init_buffer = self._gctx.lookupResourceInfo(self.modvol_list_heads_buffer).?.gpuobj.?;
-            const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
-            @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
-            mapped.?[0] = 0; // Set fragment count to 0
-            init_buffer.unmap();
-
+            self._gctx.lookupResource(self.modvol_list_heads_buffer).?.setLabel("ModVol List Heads Buffer");
+            {
+                const init_buffer = self._gctx.lookupResourceInfo(self.modvol_list_heads_buffer).?.gpuobj.?;
+                const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
+                @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
+                mapped.?[0] = 0; // Set fragment count to 0
+                init_buffer.unmap();
+            }
             self.modvol_linked_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_modvol_linked_list_size(),
             });
+            self._gctx.lookupResource(self.modvol_linked_list_buffer).?.setLabel("ModVol Fragments Buffer");
 
             self.modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_modvol_volumes_size(),
+                .mapped_at_creation = true,
             });
+            self._gctx.lookupResource(self.modvol_volumes_buffer).?.setLabel("ModVol Volumes Buffer");
+
+            {
+                const init_buffer = self._gctx.lookupResourceInfo(self.modvol_volumes_buffer).?.gpuobj.?;
+                const mapped = init_buffer.getMappedRange(u8, 0, self.get_modvol_volumes_size());
+                @memset(mapped.?, 0); // Set all counts to 0
+                init_buffer.unmap();
+            }
         }
     }
 
@@ -3001,7 +3038,6 @@ pub const Renderer = struct {
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
-            .{ .binding = 3, .texture_view_handle = self.depth_only_texture_view },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {

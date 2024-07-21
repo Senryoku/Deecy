@@ -46,11 +46,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     var new_volumes = Volumes();
     new_volumes.count = modvol_count / 2;
-    for (var i = 0u; i < new_volumes.count / 2; i++) {
+    for (var i = 0u; i < new_volumes.count; i++) {
         new_volumes.intervals[i] = vec2<f32>(modvol[2 * i], modvol[2 * i + 1]);
     }
     if modvol_count % 2 == 1 { // Last volume is open (backside behind the depth plane)
-        new_volumes.intervals[new_volumes.count] = vec2<f32>(modvol[2 * new_volumes.count], 100000.0);
+        new_volumes.intervals[new_volumes.count] = vec2<f32>(modvol[2 * new_volumes.count], 10.0);
         new_volumes.count++;
 	}
 
@@ -63,8 +63,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 
 fn volume_union(a: Volumes, b: Volumes) -> Volumes {
-    if a.count == 0 { return b ; }
-    if b.count == 0 { return a ; }
+    if a.count == 0 { return b; }
+    if b.count == 0 { return a; }
 
     var union_volumes = Volumes();
 
@@ -98,7 +98,7 @@ fn volume_union(a: Volumes, b: Volumes) -> Volumes {
             }
         }
 
-        if to_insert.x < union_volumes.intervals[union_volumes.count - 1].y {
+        if to_insert.x <= union_volumes.intervals[union_volumes.count - 1].y {
 			// Merge
             union_volumes.intervals[union_volumes.count - 1].y = max(to_insert.y, union_volumes.intervals[union_volumes.count - 1].y);
         } else {

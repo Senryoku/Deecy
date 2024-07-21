@@ -10,7 +10,7 @@ struct Heads {
 @group(0) @binding(2) var<storage, read_write> linked_list: LinkedList;
 @group(0) @binding(3) var opaque_texture: texture_2d<f32>; // FIXME: Should be the same as output_texture, but WGPU doesn't support reading from storage textures.
 @group(0) @binding(4) var output_texture: texture_storage_2d<bgra8unorm, write>;
-@group(0) @binding(5) var<storage, read_write> modvols: array<Volumes>;
+@group(0) @binding(5) var<storage, read_write> modvols: array<VolumesInterfaces>;
 
 fn get_blend_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
     switch(factor) {
@@ -82,16 +82,12 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         layer_count++;
     }
 
-    var modvol = modvols[heads_index];
+    let modvol = modvols[heads_index];
     // Reset the count for the next pass.
     modvols[heads_index].count = 0;
 
     let depth_interfaces_count = 2 * modvol.count;
-    var depth_interfaces: array<f32, MaxVolumesInterfaces>;
-    for (var i = 0u; i < modvol.count; i++) {
-        depth_interfaces[2 * i + 0] = modvol.intervals[i].x;
-        depth_interfaces[2 * i + 1] = modvol.intervals[i].y;
-    }
+    let depth_interfaces = modvol.interfaces;
 
     var frag_coords = global_id.xy;
     frag_coords.y += oit_uniforms.start_y;
