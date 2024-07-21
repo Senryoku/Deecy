@@ -2615,7 +2615,7 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].start_y = start_y;
 
                 // Render Modifier Volumes
-                {
+                if (self.translucent_modifier_volumes.items.len > 0) {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                     const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
                     const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
@@ -2627,10 +2627,6 @@ pub const Renderer = struct {
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
-                        //.depth_load_op = .load,
-                        //.depth_store_op = .discard,
-                        //.stencil_load_op = .clear,
-                        //.stencil_store_op = .discard,
                         .depth_read_only = true,
                         .stencil_read_only = true,
                     };
@@ -2656,8 +2652,6 @@ pub const Renderer = struct {
                                 pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_uniform_mem.offset});
 
                                 pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
-
-                                pass.setStencilReference(0x00);
                                 pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
 
                                 pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
