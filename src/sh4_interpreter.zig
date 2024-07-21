@@ -22,7 +22,10 @@ const sign_extension_u16 = bit_manip.sign_extension_u16;
 const as_i32 = bit_manip.as_i32;
 
 const Experimental = struct {
-    const ftrv: enum { Double, Vectorized, Standard } = .Vectorized;
+    // https://godbolt.org/#z:OYLghAFBqd5QCxAYwPYBMCmBRdBLAF1QCcAaPECAMzwBtMA7AQwFtMQByARg9KtQYEAysib0QXACx8BBAKoBnTAAUAHpwAMvAFYTStJg1AAvPMFJL6yAngGVG6AMKpaAVxYMQAJgDMpBwAyeAyYAHLuAEaYxN4ArKQADqgKhLYMzm4e3n5JKTYCQSHhLFExXvGWmNZpQgRMxAQZ7p6%2BFphW%2BQy19QSFYZHRcRZ1DU1ZrQojvcH9JYPlAJQWqK7EyOwcaAyTANST6DsApD4AIjsAAngsSQ0Qh15e%2B/deC8cAQocaAIKfXwmuER2DFQwVoMx2VAYEIIxAAbgB9YiYdCudYQABiADVPBdMVUiMQINIIT4XqQdgANACyABUAEoUkBHWJvSSHWInc546wkInkqikhYLZms9knAVeI4Adg%2B3x28ouSgI6NoqCYBCpGEwEAAdKgEjYWHhjMjXj5ZV8FTtYfUdgRrjsmezRRyJUdTjtXAwsDQQuh3r8raDwfxiDsIBodTrJMLDlLHK4445pRarVatrsKJ7JO6zpdBI4mJMIK4zam0/L7QlnXgxbn5ecqKr1YXi%2BckSi0Tqvuh0OSsVCAFS4/G84lUABsMbjb0ptIZzo0YprYvJ1PpFOdXGXLNrHLX883LK8O7ee5OB43zp8p/P0pOQoDcoVcZOgYVSIIqyhVafPylb7fL8/yAsCwYhBCUJUDCCKwqOhIDkyXLwXyJJknOG5OiybIcshPKEuOgqxthYpujO74NkqKpqhqWq6vqhrGqaf7pgIuzonSCj1jq5HPhW5wKAgrhUE22oSv22Lkl6PozH2Io4SceCkjOOwaOSamqep95LBRaYCUJIn0NQpISQwUnepgvrIuSzoKUpJ4yjsXDks5TkudppC6Va%2BnCaJxleKZ5kyX6NkkRy9kqQFOxRTFHleQqPmGWJJk7AOQWWbJoUuopymOX4Oz5YVcV8feLEKhmBA7GGxxnBxCiLnWw7rguLJLhyRxeLOdVbo1GEtW827tfcXWcc6J7tU1h5jXWw2paNLI3hNfVHm8i1vuaumft%2BOw8Y5xANfuVU9Yd%2B3HquR0LTNAF/q%2Bvy/AA9PdqUkOsOxoFgOyYEaCgpAId3fJgqg3JVkKfaoBDwtBcKIsiqLagkHFYW8g6kSlCQUuiSMo66gpoSm8XyhVqXYkh3IEqhEqxh6CN0ouUYKTqKMbSVrHbJVzUUvWtlinh5OES8vGWhWelFncLLY%2BKKXnAaxCtgQdxeBO6PogdD6vK19Nioznks8L5yi86EviRcMtywrSsY9zHKPhr0Za4OOtC8LCUG%2BLqNRdLMJm/cFsqyyAAcYo228kZ2xy2sEyLChi8j7vkp7stFvLPvK1u41q3TYcnBHuvyrdzNO2mW3EFBMEw522ppct6sDcuBe3UBANAyQINQoDENQ7BKE01jcc7Mrvc4y8eOC87ROISO%2BEU7jNX9xxmcM0z5YVkTHNc2FnJk2O/KCqPzsu9Hht9wn3uK6nrVBzXoeL47%2B8HzHRtS6bSfm%2Bf2XB9f9u33fFyu7HQ/x2fsWFOlsA6XwXl/SO3k/6Pw9kA5OZ9QEDXTh/TW4cHaR3zsvIumAvwl2hNDOCU8q4cxroNdaFoG5fA4EsWgnBYi8E8NwXgqBOAAC0zB7BWGsTAHUfA8FIAQTQNClgIEwEwLAMQIBLAANYgFiJIHU/sfAaC8P7KUXgNATkVhOfh%2BhOCSF4CwCQGg1JMK0KQVhHBeAKBAGpIRHAtBLDgLAGAiAUCoGuHQaI5BKBoC8fQGIxgYRehkXwOgBBoi2IgBEYRpAIjBHqAAT04AIhJzBiBJIAPIRG0PiVJvB/FsEEFkhgtAUmON4FgCIrhgCFloLQWxzDSBYBYIYYA4hKktLwEiaocEmkWMBlUVwkSCnkEEO0OJYIIjEGSc4LAcSYRXDGXBYgERkiYBOF9dpYIjDCKWE2JgwAFCYjwJgAA7lkhIjAxn8EECIMQ7ApAyEEIoFQ6gum6GcgYPZphzDTNsZAJYDE0hNIALRZLpO0cRSh0RJxYas4geAsCAukW0DoaR7DejGJ4ZygQZjFFKHoXIqQBA4uJckUlDA%2BiEsGM5So1QBDdFGC4ZoegGWdGZdMIoAwYj0qmOS/lPQaW8okEsBQ3D1hiv0RwBhpBzEsM4DsP5dpiChPDLgQgJA%2BFcAWLwBxTjRHiMkZQWR8i1J0I4IY0gxipSRh8Hah1GgnUuqlPKuJVibF2MEfs0gLj3ErAIP8AgviID%2BISN44goRWAbBVSEhgMjeDIi1Ui9Aeg7nCFEOIZ5Ga3lqDiV80g5zZkJAKbQ%2BhjCPWcCySM4NOxUBUGVZw%2BNMjwzOACdEHVeqfWVKFDK61xivAAE4dTaKHWOidw7tETndV0z1FhvUGpEaQORkhYg6i4BOIdUouBeClEOh1PgfBbplT4Stc7OD6v2eWjgXhz0WPnUuvtqzfqeEkEAA%3D
+    const ftrv: enum { Vectorized, ReduceDouble, ReduceSingle } = .ReduceSingle;
+    // https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,selection:(endColumn:2,endLineNumber:13,positionColumn:2,positionLineNumber:13,selectionStartColumn:2,selectionStartLineNumber:13,startColumn:2,startLineNumber:13),source:'const+std+%3D+@import(%22std%22)%3B%0A%0Aexport+fn+fpir_fma(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++var+tmp:+f32+%3D+FVn%5B0%5D+*+FVm%5B0%5D%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B1%5D,+FVm%5B1%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B2%5D,+FVm%5B2%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B3%5D,+FVm%5B3%5D,+tmp)%3B%0A++++return+tmp%3B%0A%7D%0A%0Aexport+fn+fpir_reduce(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++return+@reduce(.Add,+FVn+*+FVm)%3B%0A%7D'),l:'5',n:'1',o:'Zig+source+%231',t:'0')),header:(),k:50,l:'4',m:100,n:'0',o:'',s:0,t:'0'),(g:!((g:!((h:compiler,i:(compiler:ztrunk,filters:(b:'0',binary:'1',binaryObject:'1',commentOnly:'0',debugCalls:'1',demangle:'0',directives:'0',execute:'1',intel:'0',libraryCode:'0',trim:'1',verboseDemangling:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,libs:!(),options:'-OReleaseSafe',overrides:!(),selection:(endColumn:1,endLineNumber:1,positionColumn:1,positionLineNumber:1,selectionStartColumn:1,selectionStartLineNumber:1,startColumn:1,startLineNumber:1),source:1),l:'5',n:'0',o:'+zig+trunk+(Editor+%231)',t:'0')),header:(),k:50,l:'4',m:87.26851851851852,n:'0',o:'',s:0,t:'0'),(g:!((h:output,i:(compilerName:'zig+trunk',editorid:1,fontScale:14,fontUsePx:'0',j:1,wrap:'1'),l:'5',n:'0',o:'Output+of+zig+trunk+(Compiler+%231)',t:'0')),l:'4',m:12.731481481481477,n:'0',o:'',s:0,t:'0')),k:50,l:'3',n:'0',o:'',t:'0')),l:'2',n:'0',o:'',t:'0')),version:4
+    const fpir: enum { FMA, Reduce } = .FMA;
 };
 
 pub fn unknown(cpu: *SH4, opcode: Instr) void {
@@ -1787,7 +1790,20 @@ pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
 
     const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n)))[0..4].*;
     const FVm: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(m)))[0..4].*;
-    cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
+    switch (Experimental.fpir) {
+        .FMA => {
+            // This passes units tests.
+            var tmp: f32 = FVn[0] * FVm[0];
+            tmp = @mulAdd(f32, FVn[1], FVm[1], tmp);
+            tmp = @mulAdd(f32, FVn[2], FVm[2], tmp);
+            tmp = @mulAdd(f32, FVn[3], FVm[3], tmp);
+            cpu.FR(n + 3).* = tmp;
+        },
+        .Reduce => {
+            // This produces slightly shorter assembly.
+            cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
+        },
+    }
 }
 
 pub fn test_fipr(n: [4]f32, m: [4]f32) !void {
@@ -1825,42 +1841,42 @@ pub fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) void {
     // cpu.fpscr.inexact = true;
     // cpu.fpscr.cause_inexact = true;
 
+    const pFVn = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4];
+    const FVn: @Vector(4, f32) = pFVn.*;
+
+    const XMTRX = [4]@Vector(4, f32){
+        @as([*]f32, @ptrCast(cpu.XF(0)))[0..4].*,
+        @as([*]f32, @ptrCast(cpu.XF(4)))[0..4].*,
+        @as([*]f32, @ptrCast(cpu.XF(8)))[0..4].*,
+        @as([*]f32, @ptrCast(cpu.XF(12)))[0..4].*,
+    };
+
     switch (comptime Experimental.ftrv) {
-        .Double => {
+        .Vectorized => {
+            // This version perfectly matches reicast behavior (passes all sh4 unit tests) AND generate less assembly (emits vfmadd231ps).
             @setFloatMode(.optimized);
-            const FVn: @Vector(4, f64) = .{ cpu.FR(n + 0).*, cpu.FR(n + 1).*, cpu.FR(n + 2).*, cpu.FR(n + 3).* };
+            const FRs = .{
+                @shuffle(f32, FVn, undefined, [4]i32{ 0, 0, 0, 0 }),
+                @shuffle(f32, FVn, undefined, [4]i32{ 1, 1, 1, 1 }),
+                @shuffle(f32, FVn, undefined, [4]i32{ 2, 2, 2, 2 }),
+                @shuffle(f32, FVn, undefined, [4]i32{ 3, 3, 3, 3 }),
+            };
+            const r = FRs[0] * XMTRX[0] + FRs[1] * XMTRX[1] + FRs[2] * XMTRX[2] + FRs[3] * XMTRX[3];
+            pFVn.* = .{ r[0], r[1], r[2], r[3] };
+        },
+        .ReduceDouble => {
+            // 274/500 fails
+            @setFloatMode(.optimized);
             inline for (0..4) |u| {
                 const i: u4 = @intCast(u);
-                cpu.FR(n + i).* = @floatCast(@reduce(.Add, FVn * @Vector(4, f64){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* }));
+                cpu.FR(n + i).* = @floatCast(@reduce(.Add, FVn * @Vector(4, f64){ XMTRX[0][i], XMTRX[1][i], XMTRX[2][i], XMTRX[3][i] }));
             }
         },
-        .Vectorized => {
-            // This version perfectly matches reicast behavior (passes all sh4 unit tests)
-            @setFloatMode(.optimized);
-            const pFR = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4];
-
-            const XF = [4]@Vector(4, f32){
-                @as([*]f32, @ptrCast(cpu.XF(0)))[0..4].*,
-                @as([*]f32, @ptrCast(cpu.XF(4)))[0..4].*,
-                @as([*]f32, @ptrCast(cpu.XF(8)))[0..4].*,
-                @as([*]f32, @ptrCast(cpu.XF(12)))[0..4].*,
-            };
-            const FR: @Vector(4, f32) = pFR.*;
-            const FRs = .{
-                @shuffle(f32, FR, undefined, [4]i32{ 0, 0, 0, 0 }),
-                @shuffle(f32, FR, undefined, [4]i32{ 1, 1, 1, 1 }),
-                @shuffle(f32, FR, undefined, [4]i32{ 2, 2, 2, 2 }),
-                @shuffle(f32, FR, undefined, [4]i32{ 3, 3, 3, 3 }),
-            };
-            const r = FRs[0] * XF[0] + FRs[1] * XF[1] + FRs[2] * XF[2] + FRs[3] * XF[3];
-
-            pFR.* = .{ r[0], r[1], r[2], r[3] };
-        },
-        .Standard => {
-            const FVn: @Vector(4, f32) = @as([*]f32, @ptrCast(cpu.FR(n + 0)))[0..4].*;
+        .ReduceSingle => {
+            // 288/500 fails
             inline for (0..4) |u| {
                 const i: u4 = @intCast(u);
-                cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ cpu.XF(i + 0).*, cpu.XF(i + 4).*, cpu.XF(i + 8).*, cpu.XF(i + 12).* });
+                cpu.FR(n + i).* = @reduce(.Add, FVn * @Vector(4, f32){ XMTRX[0][i], XMTRX[1][i], XMTRX[2][i], XMTRX[3][i] });
             }
         },
     }
