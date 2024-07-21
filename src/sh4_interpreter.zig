@@ -1799,6 +1799,7 @@ pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) void {
         },
         .Reduce => {
             // This produces slightly shorter assembly.
+            @setFloatMode(.optimized); // Strict: 94/500 fails, Optimized: 117/500 fails.
             cpu.FR(n + 3).* = @reduce(.Add, FVn * FVm);
         },
     }
