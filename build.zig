@@ -32,6 +32,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    // Check target for IDE support
+    const exe_check = b.addExecutable(.{
+        .name = "foo",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     { // zig-gamedev
         const zgui = b.dependency("zgui", .{
@@ -41,33 +48,49 @@ pub fn build(b: *std.Build) void {
         });
         exe.root_module.addImport("zgui", zgui.module("root"));
         exe.linkLibrary(zgui.artifact("imgui"));
+        exe_check.root_module.addImport("zgui", zgui.module("root"));
+        exe_check.linkLibrary(zgui.artifact("imgui"));
 
         @import("system_sdk").addLibraryPathsTo(exe);
         @import("zgpu").addLibraryPathsTo(exe);
+        @import("system_sdk").addLibraryPathsTo(exe_check);
+        @import("zgpu").addLibraryPathsTo(exe_check);
 
         const zglfw = b.dependency("zglfw", .{});
         exe.root_module.addImport("zglfw", zglfw.module("root"));
         exe.linkLibrary(zglfw.artifact("glfw"));
+        exe_check.root_module.addImport("zglfw", zglfw.module("root"));
+        exe_check.linkLibrary(zglfw.artifact("glfw"));
 
         const zpool = b.dependency("zpool", .{});
         exe.root_module.addImport("zpool", zpool.module("root"));
+        exe_check.root_module.addImport("zpool", zpool.module("root"));
 
         const zgpu = b.dependency("zgpu", .{});
         exe.root_module.addImport("zgpu", zgpu.module("root"));
         exe.linkLibrary(zgpu.artifact("zdawn"));
+        exe_check.root_module.addImport("zgpu", zgpu.module("root"));
+        exe_check.linkLibrary(zgpu.artifact("zdawn"));
 
         const zaudio = b.dependency("zaudio", .{});
         exe.root_module.addImport("zaudio", zaudio.module("root"));
         exe.linkLibrary(zaudio.artifact("miniaudio"));
+        exe_check.root_module.addImport("zaudio", zaudio.module("root"));
+        exe_check.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
     exe.root_module.addImport("arm7", arm7_module);
     exe.root_module.addImport("termcolor", termcolor_module);
+    exe_check.root_module.addImport("arm7", arm7_module);
+    exe_check.root_module.addImport("termcolor", termcolor_module);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
     b.installArtifact(exe);
+
+    const check = b.step("check", "Check if Deecy compiles");
+    check.dependOn(&exe_check.step);
 
     // This *creates* a Run step in the build graph, to be executed when another
     // step is evaluated that depends on it. The next line below will establish
