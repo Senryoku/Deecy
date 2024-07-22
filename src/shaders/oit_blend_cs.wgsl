@@ -10,6 +10,7 @@ struct Heads {
 @group(0) @binding(2) var<storage, read_write> linked_list: LinkedList;
 @group(0) @binding(3) var opaque_texture: texture_2d<f32>; // FIXME: Should be the same as output_texture, but WGPU doesn't support reading from storage textures.
 @group(0) @binding(4) var output_texture: texture_storage_2d<bgra8unorm, write>;
+@group(0) @binding(5) var<storage, read_write> modvols: array<VolumesInterfaces>;
 
 fn get_blend_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
     switch(factor) {
@@ -53,6 +54,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         heads.fragment_count = 0;
     }
 
+    let modvol = modvols[heads_index];
+    // Reset the count for the next pass.
+    modvols[heads_index].count = 0;
+
     if element_index == 0xFFFFFFFFu {return;}
 
     var layers: array<LinkedListElement, MaxLayers>;
@@ -71,7 +76,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
         while j > 0u && (to_insert.depth < layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
-             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_mode >> 6) < (layers[j - 1u].index_and_blend_mode >> 6))) {
+             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_modes >> 12) < (layers[j - 1u].index_and_blend_modes >> 12))) {
             layers[j] = layers[j - 1u];
             j--;
         }
@@ -81,18 +86,30 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         layer_count++;
     }
 
+    let depth_interfaces_count = 2 * modvol.count;
+    let depth_interfaces = modvol.interfaces;
+
     var frag_coords = global_id.xy;
     frag_coords.y += oit_uniforms.start_y;
 
     var color = textureLoad(opaque_texture, frag_coords, 0);
     color.a = 1.0;
 
+    var curr_depth_interface = 0u;
+    var use_area1 = false; // Start in area0
+
     // Blend the translucent fragments
     for (var i = 0u; i < layer_count; i++) {
-        let src = unpack4x8unorm(layers[i].color);
+        while curr_depth_interface < depth_interfaces_count && depth_interfaces[curr_depth_interface] < layers[i].depth {
+            // Crossed the interface between area0 and area1.
+            use_area1 = !use_area1;
+            curr_depth_interface++;
+        }
+
+        let src = unpack4x8unorm(select(layers[i].color_area0, layers[i].color_area1, use_area1));
         let dst = color;
-        let blend_mode = layers[i].index_and_blend_mode & 0x3F;
-        color = src * get_src_factor(blend_mode & 7, src, dst) + dst * get_dst_factor((blend_mode >> 3) & 7, src, dst);
+        let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
+        color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
     }
 
     textureStore(output_texture, frag_coords, color);
