@@ -1117,7 +1117,7 @@ pub const SH4 = struct {
             },
             0xE4000000...0xEFFFFFFF => {
                 // Reserved
-                @panic("Reserved");
+                @panic("Write to Reserved space in P4 (E4000000...0xEFFFFFFF)");
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
@@ -1139,9 +1139,22 @@ pub const SH4 = struct {
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array
+                sh4_log.warn(termcolor.yellow("Unhandled write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                if (T == u32) {
+                    const entry: u6 = @truncate(virtual_addr >> 8);
+                    const association_bit: u1 = @truncate(virtual_addr >> 7);
+                    const val: mmu.UTLBAddressData = @bitCast(value);
+                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+                }
             },
             0xF7000000...0xF7FFFFFF => {
                 // Unified TLB data arrays 1 and 2
+                sh4_log.warn(termcolor.yellow("Unhandled write({any}) to Unified TLB data arrays:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                if (T == u32) {
+                    const entry: u6 = @truncate(virtual_addr >> 8);
+                    const val: mmu.UTLBArrayData1 = @bitCast(value);
+                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                }
             },
             0xF8000000...0xFBFFFFFF => {
                 // Reserved

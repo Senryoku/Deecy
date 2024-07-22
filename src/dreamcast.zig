@@ -243,7 +243,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_G2TRTO).* = 0x000003FF;
     }
 
-    pub fn userdata_subdir(self: *@This()) []const u8 {
+    pub fn region_subdir(self: *@This()) []const u8 {
         return switch (self.region) {
             .Japan => "jp",
             .USA => "us",
@@ -253,13 +253,13 @@ pub const Dreamcast = struct {
     }
 
     pub fn get_user_flash_path(self: *@This(), buf: []u8) ![]const u8 {
-        return try std.fmt.bufPrint(buf, user_data_directory ++ "{s}/flash.bin", .{self.userdata_subdir()});
+        return try std.fmt.bufPrint(buf, user_data_directory ++ "{s}/flash.bin", .{self.region_subdir()});
     }
 
     pub fn set_region(self: *@This(), region: Region) !void {
         self.region = region;
         var buf = [1]u8{0} ** 128;
-        try self.load_bios(try std.fmt.bufPrint(&buf, "data/{s}/dc_boot.bin", .{self.userdata_subdir()}));
+        try self.load_bios(try std.fmt.bufPrint(&buf, "./data/{s}/dc_boot.bin", .{self.region_subdir()}));
         try self.load_flash();
     }
 
@@ -279,7 +279,7 @@ pub const Dreamcast = struct {
         var flash_file = std.fs.cwd().openFile(try self.get_user_flash_path(&buf), .{}) catch |err| f: {
             if (err == error.FileNotFound) {
                 dc_log.info("Loading default flash ROM.", .{});
-                const default_flash_path = try std.fmt.bufPrint(&buf, "data/{s}/dc_flash.bin", .{self.userdata_subdir()});
+                const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
                 break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
                     dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
                     return e;

@@ -1298,23 +1298,49 @@ pub fn ocbwb_atRn(_: *SH4, _: Instr) void {
 pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     if (addr & 0xEC000000 == 0xE0000000) {
-        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at == 1) {
-            sh4_log.err(termcolor.yellow("  MMU ON: Not implemented"), .{});
-            @panic("pref @Rn with MMU ON: Not implemented");
-        } else {
-            const sq_addr: sh4.StoreQueueAddr = @bitCast(addr);
-            std.debug.assert(sq_addr.spec == 0b111000);
-            //               The full address also includes the sq bit.
-            const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
-            std.log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
+        const sq_addr: sh4.StoreQueueAddr = @bitCast(addr);
+        std.debug.assert(sq_addr.spec == 0b111000);
 
-            // pref is often used to send commands to the GPU, we can optimize this use case.
-            if (ext_addr >= 0x10000000 and ext_addr < 0x10800000 or ext_addr >= 0x12000000 and ext_addr < 0x12800000) {
-                cpu._dc.?.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
+        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at == 1) {
+            // TODO:
+            // The SQ area (H'E000 0000 to H'E3FF FFFF) is set in VPN of the UTLB, and the transfer
+            // destination external memory address in PPN. The ASID, V, SZ, SH, PR, and D bits have the
+            // same meaning as for normal address translation, but the C and WT bits have no meaning
+            // with regard to this page. Since burst transfer is prohibited for PCMCIA areas, the SA and TC
+            // bits also have no meaning.
+            // When a prefetch instruction is issued for the SQ area, address translation is performed and
+            // external memory address bits [28:10] are generated in accordance with the SZ bit
+            // specification. For external memory address bits [9:5], the address prior to address translation
+            // is generated in the same way as when the MMU is off. External memory address bits [4:0]
+            // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
+
+            sh4_log.err("pref @{X:0>8} with MMU ON not implemented", .{addr});
+
+            if (comptime false) {
+                // Attempt at a hack for Ikaruga, looking at the writes to UTBL it performs
+                // (1MB pages, VPN 0x380000 => PPN 0x30000, 0x380400 => 0x30400...).
+                // Crashes very early, no idea if this is because of this hack, or something else!
+                const vpn = ((addr >> 20) & 0x3F);
+                const ppn: u32 = 0x30000 + 0x400 * vpn;
+                const translated = (ppn << 10) | (addr & 0xFFFE0);
+
+                sh4_log.err("  VPN: {X:0>2}, PPN: {X:0>5}, Result: {X:0>8}", .{ vpn, ppn, translated });
+                // const ext_addr = translated;
             } else {
-                inline for (0..8) |i| {
-                    cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
-                }
+                @panic("pref with MMU ON not implemented");
+            }
+        }
+
+        //               The full address also includes the sq bit.
+        const ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
+        sh4_log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
+
+        // pref is often used to send commands to the GPU, we can optimize this use case.
+        if (ext_addr >= 0x10000000 and ext_addr < 0x10800000 or ext_addr >= 0x12000000 and ext_addr < 0x12800000) {
+            cpu._dc.?.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
+        } else {
+            inline for (0..8) |i| {
+                cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             }
         }
     } else {

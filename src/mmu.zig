@@ -69,6 +69,27 @@ pub const UTLBEntry = packed struct {
     tc: u1 = undefined, // Timing control bit
 };
 
+pub const UTLBAddressData = packed struct(u32) {
+    asid: u8,
+    v: u1,
+    d: u1,
+    vpn: u22,
+};
+
+pub const UTLBArrayData1 = packed struct(u32) {
+    wt: u1,
+    sh: u1,
+    d: u1,
+    c: u1,
+    sz0: u1,
+    pr: u2,
+    sz1: u1,
+    v: u1,
+    _0: u1,
+    ppn: u19,
+    _1: u3,
+};
+
 pub fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
     switch (sz) {
         0b00 => return lhs == rhs,
