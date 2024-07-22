@@ -141,13 +141,13 @@ const StripMetadata = packed struct {
     area1_instructions: VertexTextureInfo = VertexTextureInfo.invalid(),
 };
 
-const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/vs.wgsl");
+const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/vs.wgsl");
 const wgsl_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
 const wgsl_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
 const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
 const wgsl_modvol_merge_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
 const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
-const wgsl_modifier_volume_vs = @embedFile("./shaders/modifier_volume_vs.wgsl");
+const wgsl_modifier_volume_vs = @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/modifier_volume_vs.wgsl");
 const wgsl_modifier_volume_fs = @embedFile("./shaders/modifier_volume_fs.wgsl");
 const wgsl_modifier_volume_apply_fs = @embedFile("./shaders/modifier_volume_apply_fs.wgsl");
 const blit_vs = @embedFile("./shaders/blit_vs.wgsl");
