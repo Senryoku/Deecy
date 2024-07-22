@@ -28,6 +28,9 @@ struct VolumeLinkedList {
   data: array<VolumeLinkedListElement>
 };
 
+// NOTE: I tried packing the depths into u8 and u16, but the depths values are too clamped together and this results
+//       in very visible precision loss. u16 was ok in certain scenes, but there are some where all the opaque geometry
+//       lies in a very small depth range while the UI is very far away. In this case 16bit precision isn't enough.
 struct Volumes {
 	count: u32,
   _padding: u32,
