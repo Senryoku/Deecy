@@ -256,6 +256,31 @@ pub const TA_YUV_TEX_CTRL = packed struct(u32) {
     _r3: u7,
 };
 
+pub const RegionArrayDataConfiguration = packed struct(u192) {
+    pub const ListPointer = packed struct(u32) {
+        _0: u2 = 0,
+        pointer_to_object_list: u22,
+        _1: u7 = 0,
+        empty: bool,
+    };
+
+    settings: packed struct(u32) {
+        _r: u2,
+        tile_x_position: u6,
+        tile_y_position: u6,
+        _r1: u14,
+        flush_accumulate: u1,
+        pre_sort: u1, // Forced 0 for Type 1
+        z_clear: u1,
+        last_region: u1,
+    },
+    opaque_list_pointer: ListPointer,
+    opaque_modifier_volume_pointer: ListPointer,
+    translucent_list_pointer: ListPointer,
+    translucent_modifier_volume_pointer: ListPointer,
+    punch_through_list_pointer: ListPointer, // Absent for Type 1
+};
+
 pub const ParameterType = enum(u3) {
     // Control Parameter
     EndOfList = 0,
@@ -1141,7 +1166,7 @@ const ScheduledInterrupt = struct {
 };
 
 pub const Holly = struct {
-    vram: []u8,
+    vram: []align(32) u8,
     registers: []u8,
 
     render_start: bool = false, // Signals to start rendering. TODO: Find a better way to start rendering (and run the CPU on another thread I guess).
@@ -1168,7 +1193,7 @@ pub const Holly = struct {
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         var holly = @This(){
-            .vram = try allocator.alloc(u8, 8 * 1024 * 1024),
+            .vram = try allocator.alignedAlloc(u8, 32, 8 * 1024 * 1024),
             .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
             ._allocator = allocator,
             ._dc = dc,
@@ -1649,10 +1674,17 @@ pub const Holly = struct {
                     // I don't know if I'm the one misinterpreting the doc, but how the triangles are grouped doesn't really matter anyway.
 
                     if (volume.triangle_count > 0) {
-                        (if (list_type == .OpaqueModifierVolume)
-                            self._ta_opaque_modifier_volumes
-                        else
-                            self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
+                        const config = self.get_region_array_data_config();
+                        if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
+                            // Both lists are actually the same, we'll add it twice for convience.
+                            self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
+                            self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+                        } else {
+                            (if (list_type == .OpaqueModifierVolume)
+                                self._ta_opaque_modifier_volumes
+                            else
+                                self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
+                        }
                     }
 
                     // Soul Calibur will continue sending triangles without submitting a new Global Parameter, prepare for that.
@@ -1812,6 +1844,19 @@ pub const Holly = struct {
     pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= HollyRegisterStart and addr < HollyRegisterStart + self.registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
+    }
+
+    pub inline fn get_region_array_data_config(self: *const @This()) RegionArrayDataConfiguration {
+        // Sadly we can't just return a pointer to the RegionArrayDataConfiguration directly in VRAM because of alignment.
+        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[@constCast(self)._get_register(u32, .REGION_BASE).*]));
+        return .{
+            .settings = @bitCast(r[0]),
+            .opaque_list_pointer = @bitCast(r[1]),
+            .opaque_modifier_volume_pointer = @bitCast(r[2]),
+            .translucent_list_pointer = @bitCast(r[3]),
+            .translucent_modifier_volume_pointer = @bitCast(r[4]),
+            .punch_through_list_pointer = @bitCast(r[5]),
+        };
     }
 
     pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {
