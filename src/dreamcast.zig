@@ -616,8 +616,13 @@ pub const Dreamcast = struct {
             self.gdrom.interrupt_reason_register.cod = .Command;
             self.gdrom.interrupt_reason_register.io = .DeviceToHost;
 
-            self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 20000);
-            // self.schedule_external_interrupt(.{ .GDRom = 1 }, 20000);
+            if (len <= 128 * 1024) {
+                // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
+                self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 14 * len);
+            } else {
+                // GDROM speed: 1.8 MB/s
+                self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 14 * 128 * 1024 + 111 * (len - 128 * 1024));
+            }
         }
     }
 
