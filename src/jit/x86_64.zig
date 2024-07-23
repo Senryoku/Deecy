@@ -290,6 +290,7 @@ pub const InstructionType = enum {
     Sub,
     Mul,
     Div,
+    Fma, // Fused Multiply Add
     And,
     Or,
     Xor,
@@ -324,6 +325,7 @@ pub const Instruction = union(InstructionType) {
     Sub: struct { dst: Operand, src: Operand },
     Mul: struct { dst: Operand, src: Operand },
     Div: struct { dst: Operand, src: Operand },
+    Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
@@ -360,6 +362,7 @@ pub const Instruction = union(InstructionType) {
             .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
             .Mul => |mul| writer.print("mul {any}, {any}", .{ mul.dst, mul.src }),
             .Div => |div| writer.print("div {any}, {any}", .{ div.dst, div.src }),
+            .Fma => |fma| writer.print("fma {any} += {any} * {any}", .{ fma.dst, fma.src1, fma.src2 }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
@@ -437,6 +440,30 @@ const REX = packed struct(u8) {
     r: bool = false, // Extension of the ModR/M reg field
     w: bool = false, // 0 = Operand size determined by CS.D; 1 = 64 Bit Operand Siz
     _: u4 = 0b0100,
+};
+
+const VEX3 = packed struct(u24) {
+    prefix: u8 = 0xC4,
+    // Byte 1
+    m: enum(u5) {
+        x0F = 0x1,
+        x0F38 = 0x2,
+        x0F3A = 0x3,
+        _,
+    }, // Opcode map.
+    not_b: bool,
+    not_x: bool,
+    not_r: bool, // Inversion of REX r, x and b bits.
+    // Byte 2
+    p: enum(u2) {
+        no = 0x0,
+        x66 = 0x1,
+        xF3 = 0x2,
+        xF2 = 0x3,
+    }, // Additional prefix bytes. The values 0, 1, 2, and 3 correspond to implied no, 0x66, 0xF3, and 0xF2 prefixes.
+    l: u1, // Vector length, 0: 128bit SSE (XMM), 1: 256bit AVX (YMM)
+    not_v: u4, // Inversion of additional source register index
+    w: bool, // 64-bit operand?
 };
 
 const Mod = enum(u2) {
@@ -577,6 +604,7 @@ pub const Emitter = struct {
                 .Sub => |a| try self.sub(a.dst, a.src),
                 .Mul => |a| try self.mul(a.dst, a.src),
                 .Div => |a| try self.div(a.dst, a.src),
+                .Fma => |a| try self.fma(a.dst, a.src1, a.src2),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
@@ -621,6 +649,13 @@ pub const Emitter = struct {
             // See Intel Manual Vol. 2A 2-11.
             if (value.mod == .indirect and value.r_m == 0b101)
                 return error.UnhandledSpecialCase;
+        }
+        if (T == VEX3) { // Could be extended to other packed structs.
+            const slice = @as([@bitSizeOf(VEX3) / 8]u8, @bitCast(value));
+            for (slice) |b| {
+                try self.emit_byte(b);
+            }
+            return;
         }
 
         if (@sizeOf(T) == 1) {
@@ -1209,6 +1244,28 @@ pub const Emitter = struct {
                 }
             },
             else => return error.InvalidDivDestination,
+        }
+    }
+
+    pub fn fma(self: *@This(), dst: FPRegister, src1: FPRegister, src2: Operand) !void {
+        // Assumes dst and src1 are f32
+        // vfmadd231ss xmm1, xmm2, xmm3/m32 - Multiply scalar single precision floating-point value from xmm2 and xmm3/m32, add to xmm1 and put result in xmm1.
+        switch (src2) {
+            .freg32 => |src2_reg| {
+                try self.emit(VEX3, .{
+                    .not_r = !need_rex(dst),
+                    .not_x = true,
+                    .not_b = !need_rex(src2_reg),
+                    .m = .x0F38,
+                    .w = false,
+                    .not_v = ~@intFromEnum(src1),
+                    .l = 0,
+                    .p = .x66,
+                });
+                try self.emit(u8, 0xB9); // Opcode
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src2_reg) });
+            },
+            else => return error.UnsupportedFmaSource,
         }
     }
 

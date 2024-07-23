@@ -1344,11 +1344,7 @@ pub fn fmac_FR0_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
             const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
             const fr0 = try load_fp_register(block, ctx, 0);
             const frm = try load_fp_register(block, ctx, instr.nmd.m);
-            // TODO: Actually use a FMA instruction (VFMADD132SS).
-            const tmp: JIT.Operand = .{ .freg32 = .xmm0 }; // Use a temporary register, we don't want to modify FR0 or FRm.
-            try block.mov(tmp, fr0);
-            try block.append(.{ .Mul = .{ .dst = tmp, .src = frm } });
-            try block.add(frn, tmp);
+            try block.append(.{ .Fma = .{ .dst = frn.freg32, .src1 = frm.freg32, .src2 = fr0 } });
         },
         .Double => {
             return interpreter_fallback_cached(block, ctx, instr);
