@@ -1461,6 +1461,18 @@ pub fn ftrc_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     return false;
 }
 
+pub fn fsrra_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    std.debug.assert(ctx.fpscr_pr == .Single);
+    // NOTE: x86 rsqrt is less precise than its SH4 equivalent.
+    const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Sqrt = .{ .dst = .{ .freg32 = .xmm0 }, .src = frn } }); // xmm0 = sqrt(FRn)
+    try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // rax = 1.0
+    try block.mov(frn, .{ .reg = ReturnRegister }); // Frn = 1.0
+    try block.append(.{ .Div = .{ .dst = frn, .src = .{ .freg32 = .xmm0 } } }); // FRn /= xmm0
+
+    return false;
+}
+
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 

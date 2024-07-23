@@ -306,7 +306,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000011101101, .mask = 0b0000111100000000, .fn_ = interpreter.fipr_FVm_FVn, .name = "fipr FVm,FVn", .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000111111101, .mask = 0b0000110000000000, .fn_ = interpreter.ftrv_XMTRX_FVn, .name = "ftrv XMTRX,FVn", .latency_cycles = 5, .access = .{ .r = .{}, .w = .{} } },
     // Undocumented opcodes - Supposed to be exclusive to the SH4A, but the SH7091 seem to have them.
-    .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = interpreter.fsrra_FRn, .name = "fsrra FRn", .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b1111000001111101, .mask = 0b0000111100000000, .fn_ = interpreter.fsrra_FRn, .name = "fsrra FRn", .jit_emit_fn = sh4_jit.fsrra_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000011111101, .mask = 0b0000111000000000, .fn_ = interpreter.fsca_FPUL_DRn, .name = "fsca FPUL,DRn", .latency_cycles = 3, .access = .{ .r = .{}, .w = .{} } },
 
     // Handled by single precision version - Switched by SR register pr flag
