@@ -443,28 +443,39 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (zgui.collapsingHeader("Channel " ++ number, .{ .default_open = true })) {
                         _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                         const start_addr = channel.sample_address();
-                        zgui.text("KeyOn: {any} - Format: {s} - Loop: {any}", .{
-                            channel.play_control.key_on_bit,
-                            @tagName(channel.play_control.sample_format),
-                            channel.play_control.sample_loop,
-                        });
-                        zgui.text("Start Address: {X: >8} - Loop: {X:0>4} - {X:0>4}", .{
+
+                        zgui.textColored(if (channel.play_control.key_on_bit) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
+                        zgui.sameLine(.{});
+                        zgui.text(" - {s} - ", .{@tagName(channel.play_control.sample_format)});
+                        zgui.sameLine(.{});
+                        zgui.textColored(if (channel.play_control.sample_loop) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
+                        zgui.text("Start Address: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
                             start_addr,
                             channel.loop_start,
                             channel.loop_end,
                         });
                         zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
-                        zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Playing: {s: >3}", .{if (state.playing) "Yes" else "No"});
+                        zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                         zgui.sameLine(.{});
-                        zgui.text("PlayPos: {d: >10} - LoopEnd: {s: >3}", .{ state.play_position, if (state.loop_end_flag) "Yes" else "No" });
+                        zgui.text("PlayPos: {X: >6} - ", .{state.play_position});
+                        zgui.sameLine(.{});
+                        zgui.textColored(if (state.loop_end_flag) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "LoodEnd: {s: >3}", .{if (state.loop_end_flag) "Yes" else "No"});
                         const effective_rate = AICAModule.AICAChannelState.compute_effective_rate(channel, switch (state.amp_env_state) {
                             .Attack => channel.amp_env_1.attack_rate,
                             .Decay => channel.amp_env_1.decay_rate,
                             .Sustain => channel.amp_env_1.sustain_rate,
                             .Release => channel.amp_env_2.release_rate,
                         });
-                        zgui.text("AmpEnv    {s: >7} - level: {X: >5} - rate: {X: >5}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
-                        zgui.text("FilterEnv {s: >7} - level: {X: >5}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        zgui.text("AmpEnv {s: >7} - level: {X: >4} - rate: {X: >2}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
+                        zgui.text("FilEnv {s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        zgui.text("ALFOS {X: >1} ALFOWS {X: >1} PLFOS {X: >1} PLFOWS {X: >1} F {X: >2} R {any}", .{
+                            channel.lfo_control.amplitude_modulation_depth,
+                            @intFromEnum(channel.lfo_control.amplitude_modulation_waveform),
+                            channel.lfo_control.pitch_modulation_depth,
+                            @intFromEnum(channel.lfo_control.pitch_modulation_waveform),
+                            channel.lfo_control.frequency,
+                            channel.lfo_control.reset,
+                        });
                         var loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
                         if (loop_size == 0) loop_size = 2048;
                         if (channel.play_control.sample_format == .i16) {

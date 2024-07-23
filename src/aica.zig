@@ -37,7 +37,7 @@ const PlayControl = packed struct(u32) {
     key_on_execute: bool,
     _1: u16 = 0,
 
-    const Mask: u32 = 0x47FF; // NOTE: key_on_execute is not saved and will always be read as 0.
+    const Mask: u32 = 0x0000_47FF; // NOTE: key_on_execute is not saved and will always be read as 0.
 };
 
 pub const AmpEnv1 = packed struct(u32) {
@@ -62,13 +62,20 @@ pub const SamplePitchRate = packed struct(u32) {
     _: u17 = 0,
 };
 
+pub const Waveform = enum(u2) {
+    Sawtooth = 0,
+    Square = 1,
+    Triangle = 2,
+    Noise = 3,
+};
+
 pub const LFOControl = packed struct(u32) {
     amplitude_modulation_depth: u3, // (ALFOS)
-    amplitude_modulation_waveform: u2, // (ALFOWS)
+    amplitude_modulation_waveform: Waveform, // (ALFOWS)
     pitch_modulation_depth: u3, // (PLFOS)
-    pitch_modulation_waveform: u2, // (PLFOWS)
+    pitch_modulation_waveform: Waveform, // (PLFOWS)
     frequency: u5, // (LFOF)
-    reset: u1, // (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
+    reset: bool, // (LFORE) 1=on, 0=off If set, the LFO phase is reset at the start of EACH SAMPLE LOOP.
     _: u16,
 };
 
@@ -85,7 +92,7 @@ pub const DirectPanVolSend = packed struct(u32) {
     _2: u16,
 };
 
-pub const LPF1Volume = packed struct(u32) {
+pub const EnvSettings = packed struct(u32) {
     q: u5, // filter resonance value Q = (0.75*value)-3, from -3 to 20.25 db
     lpoff: bool, // 1 = turn off lowpass filter.
     voff: bool, // if this bit is set to 1, the constant attenuation, envelope, and LFO volumes will not take effect. however, the note will still end when the envelope level reaches zero in the release state.
@@ -94,7 +101,7 @@ pub const LPF1Volume = packed struct(u32) {
     _r: u16,
 };
 
-pub const LPF7 = packed struct(u32) {
+pub const LPFRates1 = packed struct(u32) {
     lpf_decay_rate: u5,
     _0: u3,
     lpf_attack_rate: u5,
@@ -104,7 +111,7 @@ pub const LPF7 = packed struct(u32) {
     pub const Mask: u32 = 0x1F1F;
 };
 
-pub const LPF8 = packed struct(u32) {
+pub const LPFRates2 = packed struct(u32) {
     lpf_release_rate: u5,
     _0: u3,
     lpf_sustain_rate: u5,
@@ -126,14 +133,14 @@ pub const AICAChannel = packed struct(u576) {
     lfo_control: LFOControl, //            0x1C
     dps_channel_send: DirectPanVolSend, // 0x20
     direct_pan_vol_send: u32, //           0x24
-    lpf1_volume: LPF1Volume, //            0x28
-    lpf2: u32, //                          0x2C Bits 0-12: Filter value (FLV0)
-    lpf3: u32, //                          0x30 Bits 0-12: Filter value (FLV1)
-    lpf4: u32, //                          0x34 Bits 0-12: Filter value (FLV2)
-    lpf5: u32, //                          0x38 Bits 0-12: Filter value (FLV3)
-    lpf6: u32, //                          0x3C Bits 0-12: Filter value (FLV4)
-    lpf7: LPF7, //                         0x40
-    lpf8: LPF8, //                         0x44
+    env_settings: EnvSettings, //          0x28 Also Named 'LPF1Volume'
+    flv0: u32, //              Bits 0-12   0x2C Cutoff frequency at the time of attack start.                  Also named lpf2
+    flv1: u32, //              Bits 0-12   0x30 Cutoff frequency at the time of attack end (dacay start time). Also named lpf3
+    flv2: u32, //              Bits 0-12   0x34 Cutoff frequency at the time of decay end (sustain start time) Also named lpf4
+    flv3: u32, //              Bits 0-12   0x38 Cutoff frequency at the time of KOFF.                          Also named lpf5
+    flv4: u32, //              Bits 0-12   0x3C Cutoff frequency after release.                                Also named lpf6
+    lpf_rates_1: LPFRates1, //             0x40                                                                Also named lpf7
+    lpf_rates_2: LPFRates2, //             0x44                                                                Also named lpf8
 
     pub fn sample_address(self: *const AICAChannel) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
@@ -277,6 +284,8 @@ pub const AICAChannelState = struct {
     filter_env_level: u16 = 0x1FFF,
     filter_env_state: EnvelopeState = .Release,
 
+    lfo_phase: u32 = 0,
+
     prev_sample: i32 = 0,
     curr_sample: i32 = 0,
 
@@ -302,15 +311,23 @@ pub const AICAChannelState = struct {
         self.play_position = 0; // Looping channels also start at 0
         self.amp_env_level = 0x280;
         self.amp_env_state = .Attack;
-        self.filter_env_level = @truncate(registers.lpf2);
+        self.filter_env_level = @truncate(registers.flv0);
         self.filter_env_state = .Attack;
+
+        self.prev_sample = 0;
+        self.curr_sample = 0;
+
+        self.fractional_play_position = 0;
 
         self.adpcm_state = .{};
     }
 
     pub fn key_off(self: *AICAChannelState) void {
+        self.playing = false;
         self.amp_env_state = .Release;
+        self.amp_env_level = 0x3FF;
         self.filter_env_state = .Release;
+        self.filter_env_level = 0x3FF;
     }
 
     pub fn compute_effective_rate(registers: *const AICAChannel, rate: u32) u32 {
@@ -614,12 +631,13 @@ pub const AICA = struct {
                 0x01 => { // Play control - High byte
                     switch (T) {
                         u8 => {
-                            @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value;
+                            @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value & @as(u8, @truncate(PlayControl.Mask >> 8));
                             const val: PlayControl = @bitCast(@as(u32, value) << 8);
                             if (val.key_on_execute) self.key_on_execute();
                         },
                         else => unreachable,
                     }
+                    return;
                 },
                 else => {},
             }
@@ -949,6 +967,11 @@ pub const AICA = struct {
     pub fn update_channel(self: *@This(), channel_number: u8, samples: u32) void {
         var state = &self.channel_states[channel_number];
         if (!state.playing) return;
+        if (state.amp_env_level >= 0x3FF) {
+            state.amp_env_level = 0x3FF;
+            state.amp_env_state = .Release;
+            return;
+        }
 
         const registers = self.get_channel_registers(channel_number);
 
@@ -970,6 +993,9 @@ pub const AICA = struct {
             if (state.play_position == registers.loop_start) {
                 if (registers.amp_env_2.link == 1 and state.amp_env_state == .Attack)
                     state.amp_env_state = .Decay;
+                if (registers.lfo_control.reset) {
+                    state.lfo_phase = 0;
+                }
                 if (!state.adpcm_state.loop_init) {
                     state.adpcm_state.step_loopstart = state.adpcm_state.step;
                     state.adpcm_state.prev_loopstart = state.adpcm_state.prev;
@@ -979,12 +1005,15 @@ pub const AICA = struct {
 
             // Advance amplitude envelope
             {
-                const effective_rate = AICAChannelState.compute_effective_rate(registers, switch (state.amp_env_state) {
-                    .Attack => registers.amp_env_1.attack_rate,
-                    .Decay => registers.amp_env_1.decay_rate,
-                    .Sustain => registers.amp_env_1.sustain_rate,
-                    .Release => registers.amp_env_2.release_rate,
-                });
+                const effective_rate = AICAChannelState.compute_effective_rate(
+                    registers,
+                    switch (state.amp_env_state) {
+                        .Attack => registers.amp_env_1.attack_rate,
+                        .Decay => registers.amp_env_1.decay_rate,
+                        .Sustain => registers.amp_env_1.sustain_rate,
+                        .Release => registers.amp_env_2.release_rate,
+                    },
+                );
                 if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
                     const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                     switch (state.amp_env_state) {
@@ -1008,7 +1037,6 @@ pub const AICA = struct {
                             // FIXME: Not sure about this at all
                             if (state.amp_env_level >= 0x3FF) {
                                 state.amp_env_level = 0x3FF;
-                                state.amp_env_state = .Release;
                             }
                         },
                     }
@@ -1016,19 +1044,22 @@ pub const AICA = struct {
             }
             // Advance low pass filter envelope
             {
-                const effective_rate = AICAChannelState.compute_effective_rate(registers, switch (state.filter_env_state) {
-                    .Attack => registers.lpf2 & 0x1FFF,
-                    .Decay => registers.lpf3 & 0x1FFF,
-                    .Sustain => registers.lpf4 & 0x1FFF,
-                    .Release => registers.lpf5 & 0x1FFF,
-                });
+                const effective_rate = AICAChannelState.compute_effective_rate(
+                    registers,
+                    switch (state.filter_env_state) {
+                        .Attack => registers.lpf_rates_1.lpf_attack_rate,
+                        .Decay => registers.lpf_rates_1.lpf_decay_rate,
+                        .Sustain => registers.lpf_rates_2.lpf_sustain_rate,
+                        .Release => registers.lpf_rates_2.lpf_release_rate,
+                    },
+                );
                 if (AICAChannelState.env_should_advance(effective_rate, @intCast(i))) {
                     const idx = if (effective_rate < 0x30) 0 else effective_rate - 0x30;
                     const decay = EnvelopeDecayValue[idx][i % 4];
                     const target: u16 = @truncate(switch (state.filter_env_state) {
-                        .Attack => registers.lpf3 & 0x1FFF,
-                        .Decay => registers.lpf4 & 0x1FFF,
-                        .Sustain => registers.lpf5 & 0x1FFF,
+                        .Attack => registers.flv1 & 0x1FFF,
+                        .Decay => registers.flv2 & 0x1FFF,
+                        .Sustain => registers.flv3 & 0x1FFF,
                         else => 0,
                     });
                     if (state.filter_env_level < target) {
@@ -1075,28 +1106,45 @@ pub const AICA = struct {
                             s >>= 4;
                         break :adpcm state.compute_adpcm(@truncate(s));
                     },
-                    // else => 0,
                 };
 
-                if (!registers.lpf1_volume.lpoff) {
-                    // TODO!
+                if (!registers.env_settings.lpoff) {
+                    // TODO! Resonant Low Pass Filter
                 }
 
+                const lfo_phase_speed = [_]u32{ 0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00, 0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00, 0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000, 0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100 };
+                state.lfo_phase +%= @intCast(@as(u64, 0x100000000) / lfo_phase_speed[registers.lfo_control.frequency]);
+
                 // Apply amplitude envelope
-                if (!registers.lpf1_volume.voff) {
-                    var attenuation: i32 = registers.lpf1_volume.constant_attenuation;
+                if (!registers.env_settings.voff) {
+                    var attenuation: u32 = registers.env_settings.constant_attenuation;
                     attenuation <<= 2;
-                    attenuation += state.amp_env_level;
+                    attenuation +|= state.amp_env_level;
                     if (registers.lfo_control.amplitude_modulation_depth != 0) {
-                        // TODO
+                        // Low Frequency Oscillator amplitude modulation
+                        // FIXME: This wasn't tested at all.
+                        const att: u8 = @truncate(switch (registers.lfo_control.amplitude_modulation_waveform) {
+                            .Sawtooth => state.lfo_phase >> 24,
+                            .Square => (state.lfo_phase >> 31) * 0xFF,
+                            .Triangle => if (state.lfo_phase & 0x80000000 == 0)
+                                ((state.lfo_phase >> 23) & 0xFF)
+                            else
+                                (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
+                            .Noise => 0, // TODO
+                        });
+                        attenuation +|= 2 * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
                     }
                     if (attenuation >= 0x3C0) {
                         state.curr_sample = 0;
                     } else {
-                        const linearvol = ((attenuation & 0x3F) ^ 0x7F) + 1;
-                        state.curr_sample *|= linearvol;
+                        const linear_volume: i32 = @intCast(((attenuation & 0x3F) ^ 0x7F) + 1);
+                        state.curr_sample *|= linear_volume;
                         state.curr_sample >>= @intCast(7 + (attenuation >> 6));
                     }
+                }
+
+                if (registers.lfo_control.pitch_modulation_depth > 0) {
+                    // TODO: Low Frequency Oscillator (LFO) pitch modulation
                 }
 
                 state.play_position +%= 1;

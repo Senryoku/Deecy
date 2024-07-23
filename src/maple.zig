@@ -494,7 +494,7 @@ pub const VMU = struct {
                 const bytes: [*]const u8 = @ptrCast(data.ptr);
                 @memcpy(self.blocks[block_num][0..BlockSize], bytes[0..BlockSize]);
 
-                self.save();
+                self.save(); // FIXME: Debounce these calls?
             },
             else => {
                 maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function});
