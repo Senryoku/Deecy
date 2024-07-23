@@ -1489,6 +1489,14 @@ pub fn sts_FPUL_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn ldsl_atRnInc_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, .{ .reg = ReturnRegister });
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+    return false;
+}
+
 pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     _ = try interpreter_fallback_cached(block, ctx, instr);
     switch (ctx.fpscr_sz) {

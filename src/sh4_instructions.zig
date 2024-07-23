@@ -330,7 +330,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPSCR_atRnDec, .name = "sts.l FPSCR,@-Rn", .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPUL, .name = "lds Rn,FPUL", .jit_emit_fn = sh4_jit.lds_Rn_FPUL, .access = .{ .r = .{ .rn = true }, .w = .{} } },
     .{ .code = 0b0000000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPUL_Rn, .name = "sts FPUL,Rn", .latency_cycles = 3, .jit_emit_fn = sh4_jit.sts_FPUL_Rn, .access = .{ .r = .{}, .w = .{ .rn = true } } },
-    .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_atRnInc_FPUL, .name = "lds.l @Rn+,FPUL", .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000001010110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_atRnInc_FPUL, .name = "lds.l @Rn+,FPUL", .jit_emit_fn = sh4_jit.ldsl_atRnInc_FPUL, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000001010010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPUL_atRnDec, .name = "sts.l FPUL,@-Rn", .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b1111101111111101, .mask = 0b0000000000000000, .fn_ = interpreter.frchg, .name = "frchg", .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111001111111101, .mask = 0b0000000000000000, .fn_ = interpreter.fschg, .name = "fschg", .jit_emit_fn = sh4_jit.fschg, .access = .{ .r = .{}, .w = .{} } },
