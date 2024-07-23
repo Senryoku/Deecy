@@ -1378,6 +1378,18 @@ pub fn fdiv_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     return false;
 }
 
+pub fn fsqrt_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    switch (ctx.fpscr_pr) {
+        .Single => {
+            const rn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
+            try block.append(.{ .Sqrt = .{ .dst = rn, .src = rn } });
+        },
+        .Double => return interpreter_fallback_cached(block, ctx, instr),
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn fcmp_eq_FRm_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Cmp = .{

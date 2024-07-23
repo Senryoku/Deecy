@@ -298,7 +298,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1111000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.fmul_FRm_FRn, .name = "fmul FRm,FRn", .latency_cycles = 3, .jit_emit_fn = sh4_jit.fmul_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000001110, .mask = 0b0000111111110000, .fn_ = interpreter.fmac_FR0_FRm_FRn, .name = "fmac FR0,FRm,FRn", .latency_cycles = 3, .jit_emit_fn = sh4_jit.fmac_FR0_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.fdiv_FRm_FRn, .name = "fdiv FRm,FRn", .latency_cycles = 11, .jit_emit_fn = sh4_jit.fdiv_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = interpreter.fsqrt_FRn, .name = "fsqrt FRn", .latency_cycles = 11, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b1111000001101101, .mask = 0b0000111100000000, .fn_ = interpreter.fsqrt_FRn, .name = "fsqrt FRn", .latency_cycles = 11, .jit_emit_fn = sh4_jit.fsqrt_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000000100, .mask = 0b0000111111110000, .fn_ = interpreter.fcmp_eq_FRm_FRn, .name = "fcmp/eq FRm,FRn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.fcmp_eq_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000000101, .mask = 0b0000111111110000, .fn_ = interpreter.fcmp_gt_FRm_FRn, .name = "fcmp/gt FRm,FRn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.fcmp_gt_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000101101, .mask = 0b0000111100000000, .fn_ = interpreter.float_FPUL_FRn, .name = "float FPUL,FRn", .latency_cycles = 3, .jit_emit_fn = sh4_jit.float_FPUL_FRn, .access = .{ .r = .{}, .w = .{} } },

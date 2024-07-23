@@ -291,6 +291,7 @@ pub const InstructionType = enum {
     Mul,
     Div,
     Fma, // Fused Multiply Add
+    Sqrt,
     And,
     Or,
     Xor,
@@ -326,6 +327,7 @@ pub const Instruction = union(InstructionType) {
     Mul: struct { dst: Operand, src: Operand },
     Div: struct { dst: Operand, src: Operand },
     Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
+    Sqrt: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
@@ -363,6 +365,7 @@ pub const Instruction = union(InstructionType) {
             .Mul => |mul| writer.print("mul {any}, {any}", .{ mul.dst, mul.src }),
             .Div => |div| writer.print("div {any}, {any}", .{ div.dst, div.src }),
             .Fma => |fma| writer.print("fma {any} += {any} * {any}", .{ fma.dst, fma.src1, fma.src2 }),
+            .Sqrt => |sqrt| writer.print("sqrt {any}, {any}", .{ sqrt.dst, sqrt.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
@@ -487,6 +490,7 @@ const SIB = packed struct(u8) {
 
 const ScalarFPOpcodes = enum(u8) {
     Mov = 0x10,
+    Sqrt = 0x51,
     Rsqrt = 0x52, // Reciprocal of Square Root
     Rcp = 0x53, // Reciprocal
     Add = 0x58,
@@ -605,6 +609,7 @@ pub const Emitter = struct {
                 .Mul => |a| try self.mul(a.dst, a.src),
                 .Div => |a| try self.div(a.dst, a.src),
                 .Fma => |a| try self.fma(a.dst, a.src1, a.src2),
+                .Sqrt => |a| try self.sqrt(a.dst, a.src),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
@@ -1266,6 +1271,18 @@ pub const Emitter = struct {
                 try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src2_reg) });
             },
             else => return error.UnsupportedFmaSource,
+        }
+    }
+
+    pub fn sqrt(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| {
+                switch (src) {
+                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Sqrt, dst_reg, src_reg),
+                    else => return error.InvalidSqrtSource,
+                }
+            },
+            else => return error.InvalidSqrtDestination,
         }
     }
 
