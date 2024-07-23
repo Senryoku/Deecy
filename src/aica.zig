@@ -878,7 +878,10 @@ pub const AICA = struct {
             //        0xF       |    0dB
             const attenuation = std.math.pow(i32, 2, 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F));
             {
-                @memset(self.sample_buffer[self.sample_write_offset .. self.sample_write_offset + sample_count], 0);
+                @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + sample_count, self.sample_buffer.len)], 0);
+                if (self.sample_write_offset + sample_count > self.sample_buffer.len)
+                    @memset(self.sample_buffer[0 .. (self.sample_write_offset + sample_count) % self.sample_buffer.len], 0);
+
                 for (0..64) |i| {
                     self.update_channel(@intCast(i), sample_count);
                 }
@@ -1063,11 +1066,11 @@ pub const AICA = struct {
                         else => 0,
                     });
                     if (state.filter_env_level < target) {
-                        state.filter_env_level += decay;
+                        state.filter_env_level +|= decay;
                         state.filter_env_level = @min(state.filter_env_level, target);
                     } else if (state.filter_env_level > target) {
                         if (state.filter_env_level > decay) {
-                            state.filter_env_level -= decay;
+                            state.filter_env_level -|= decay;
                         } else {
                             state.filter_env_level = 0;
                         }
@@ -1087,7 +1090,7 @@ pub const AICA = struct {
             const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
             const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
             if (!state.debug.mute)
-                self.sample_buffer[i % self.sample_buffer.len] += sample;
+                self.sample_buffer[i % self.sample_buffer.len] +|= sample;
 
             state.fractional_play_position += base_play_position_inc;
             while (state.fractional_play_position >= sample_length) {
@@ -1132,7 +1135,7 @@ pub const AICA = struct {
                                 (0xFF - ((state.lfo_phase >> 23) & 0xFF)),
                             .Noise => 0, // TODO
                         });
-                        attenuation +|= 2 * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
+                        attenuation +|= @as(u32, 2) * (att >> (7 - registers.lfo_control.amplitude_modulation_depth));
                     }
                     if (attenuation >= 0x3C0) {
                         state.curr_sample = 0;
