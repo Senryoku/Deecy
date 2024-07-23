@@ -42,19 +42,38 @@ pub const std_options: std.Options = .{
     },
 };
 
+fn safe_path(path: []u8) void {
+    for (path) |*c| {
+        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/')) {
+            c.* = '_';
+        }
+    }
+}
+
 fn trapa_handler(app: *anyopaque) void {
     @as(*Deecy, @alignCast(@ptrCast(app))).running = false;
 }
+
+const Configuration = struct {
+    per_game_vmu: bool = true,
+};
 
 pub fn main() !void {
     var d = try Deecy.create(common.GeneralAllocator);
     defer d.destroy();
     var dc = d.dc;
 
+    const config: Configuration = .{};
+
     var binary_path: ?[]const u8 = null;
     var ip_bin_path: ?[]const u8 = null;
 
     var gdi_path: ?[]const u8 = null;
+
+    var default_vmu = true;
+    var vmu_path = std.ArrayList(u8).init(common.GeneralAllocator);
+    defer vmu_path.deinit();
+    try vmu_path.appendSlice("./userdata/vmu_default.bin");
 
     var skip_bios = false;
 
@@ -79,6 +98,15 @@ pub fn main() !void {
                 return error.InvalidArguments;
             };
         }
+        if (std.mem.eql(u8, arg, "--vmu")) {
+            const path = args.next() orelse {
+                std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
+                return error.InvalidArguments;
+            };
+            vmu_path.clearRetainingCapacity();
+            try vmu_path.appendSlice(path);
+            default_vmu = false;
+        }
         if (std.mem.eql(u8, arg, "-d")) {
             dc.cpu.debug_trace = true;
         }
@@ -87,26 +115,6 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, arg, "--stop")) {
             d.running = false;
-        }
-    }
-
-    if (gdi_path) |path| {
-        std.log.info("Loading GDI: {s}...", .{path});
-        dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
-
-        var region = DreamcastModule.Region.Unknown;
-        if (dc.gdrom.disk.?.tracks.items[2].data[0x40] == 'J') {
-            region = .Japan;
-        }
-        if (dc.gdrom.disk.?.tracks.items[2].data[0x41] == 'U') {
-            region = .USA;
-        }
-        if (dc.gdrom.disk.?.tracks.items[2].data[0x42] == 'E') {
-            region = .Europe;
-        }
-        std.log.info("  Detected region: {s}", .{@tagName(region)});
-        if (region != .Unknown) {
-            try dc.set_region(region);
         }
     }
 
@@ -129,6 +137,23 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     } else if (gdi_path) |path| {
+        std.log.info("Loading GDI: {s}...", .{path});
+        dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
+
+        const region = dc.gdrom.disk.?.get_region();
+        std.log.info("  Detected region: {s}", .{@tagName(region)});
+        if (region != .Unknown) {
+            try dc.set_region(region);
+        }
+
+        if (default_vmu and config.per_game_vmu) {
+            if (dc.gdrom.disk.?.get_product_id()) |product_id| {
+                vmu_path.clearRetainingCapacity();
+                try vmu_path.writer().print("./userdata/{s}/vmu_0.bin", .{product_id});
+                safe_path(vmu_path.items);
+            }
+        }
+
         if (skip_bios) {
             dc.skip_bios(true);
 
@@ -163,6 +188,8 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     }
+
+    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(common.GeneralAllocator, vmu_path.items) };
 
     dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 

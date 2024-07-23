@@ -53,9 +53,8 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 
 ### Nice to have
 
--   Per game VMU. Regular VMU back up to disk?
 -   Display VMU animation :^)
--   Some rendering performance metrics directly in the emulator?
+-   Some (rendering) performance metrics directly in the emulator?
 
 ## Things I don't know I have to do
 

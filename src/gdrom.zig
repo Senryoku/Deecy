@@ -351,7 +351,7 @@ pub const GDROM = struct {
                         self.error_register = .{};
                     },
                     .PacketCommand => {
-                        gdrom_log.info("  Command: PacketCommand", .{});
+                        gdrom_log.debug("  Command: PacketCommand", .{});
                         self.status_register.bsy = 1;
 
                         self.packet_command_idx = 0;
@@ -522,7 +522,7 @@ pub const GDROM = struct {
     }
 
     fn test_unit(self: *@This()) void {
-        gdrom_log.info("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
+        gdrom_log.debug("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value
             .status = .{},

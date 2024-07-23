@@ -3,6 +3,8 @@ const common = @import("common.zig");
 
 const windows = @import("windows.zig");
 
+const Region = @import("dreamcast.zig").Region;
+
 const DirectoryRecord = extern struct {
     length: u8 align(1),
     extended_length: u8 align(1),
@@ -250,6 +252,27 @@ pub const GDI = struct {
             track.deinit(self._allocator);
         }
         self.tracks.deinit();
+    }
+
+    pub fn get_region(self: *const @This()) Region {
+        var region: Region = .Unknown;
+        if (self.tracks.items.len >= 3) {
+            if (self.tracks.items[2].data[0x40] == 'J') {
+                region = .Japan;
+            }
+            if (self.tracks.items[2].data[0x41] == 'U') {
+                region = .USA;
+            }
+            if (self.tracks.items[2].data[0x42] == 'E') {
+                region = .Europe;
+            }
+        }
+        return region;
+    }
+
+    pub fn get_product_id(self: *const @This()) ?[]const u8 {
+        if (self.tracks.items.len < 3) return null;
+        return self.tracks.items[2].data[0x50..0x60];
     }
 
     pub fn get_primary_volume_descriptor(self: *const @This()) *const PVD {

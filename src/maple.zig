@@ -6,8 +6,6 @@ const maple_log = std.log.scoped(.maple);
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
-const zglfw = @import("zglfw");
-
 const PatternSelection = enum(u3) {
     Normal = 0b000,
     LightGun = 0b001,
@@ -175,8 +173,8 @@ pub const ControllerButtons = packed struct(u16) {
 };
 
 const Controller = struct {
-    capabilities: FunctionCodesMask = .{ .controller = 1 },
-    subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 },
+    const Capabilities: FunctionCodesMask = .{ .controller = 1 };
+    const Subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 };
 
     buttons: ControllerButtons = .{},
     axis: [6]u8 = .{0x80} ** 6,
@@ -187,11 +185,11 @@ const Controller = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
-    pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
+    pub fn get_identity(_: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
         var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
         @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
-            .FunctionCodesMask = self.capabilities,
-            .SubFunctionCodesMasks = self.subcapabilities,
+            .FunctionCodesMask = Capabilities,
+            .SubFunctionCodesMasks = Subcapabilities,
             .DescriptionString = "Dreamcast Controller         \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
             .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
             .StandbyConsumption = 0x01AE,
@@ -202,7 +200,7 @@ const Controller = struct {
 
     pub fn get_condition(self: *const @This()) [3]u32 {
         var r = [3]u32{ 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
-        r[0] = @bitCast(self.capabilities);
+        r[0] = @bitCast(Capabilities);
         r[1] = @as(u16, @bitCast(self.buttons));
         for (0..6) |i| {
             @as([*]u8, @ptrCast(&r))[6 + i] = self.axis[i];
@@ -253,7 +251,7 @@ const FATValue = enum(u16) {
     _, // # of the next data block.
 };
 
-const VMU = struct {
+pub const VMU = struct {
     const BlockSize: u32 = 512;
     const BlockCount = 256;
     const ReadAccessPerBlock = 1;
@@ -261,10 +259,8 @@ const VMU = struct {
     const FATBlock = 0x00FE;
     const SystemBlock = BlockCount - 1;
 
-    backing_file: []const u8 = "userdata/vmu_0.bin", // TODO: Make this customizable.
-
-    capabilities: FunctionCodesMask = VMUCapabilities,
-    subcapabilities: [3]u32 = .{
+    const Capabilities: FunctionCodesMask = VMUCapabilities;
+    const Subcapabilities: [3]u32 = .{
         @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)),
         @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // One of these is ScreenFunctionDefinition
         @bitCast(StorageFunctionDefinition{
@@ -275,71 +271,102 @@ const VMU = struct {
             .bb = 0x0F,
             .pt = 0,
         }),
-    },
-    blocks: [][BlockSize]u8 = undefined,
+    };
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
-        var vmu: @This() = .{};
+    backing_file_path: []const u8,
+    blocks: [][BlockSize]u8,
 
-        vmu.blocks = try allocator.alloc([BlockSize]u8, 0x100);
+    pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
+        var vmu: @This() = .{
+            .backing_file_path = try allocator.dupe(u8, backing_file_path),
+            .blocks = try allocator.alloc([BlockSize]u8, 0x100),
+        };
+        try vmu.load_or_init();
+        return vmu;
+    }
 
-        var new_file = std.fs.cwd().createFile(vmu.backing_file, .{ .exclusive = true }) catch |e| {
+    fn load_or_init(self: *@This()) !void {
+        try std.fs.cwd().makePath(std.fs.path.dirname(self.backing_file_path) orelse ".");
+        var new_file = std.fs.cwd().createFile(self.backing_file_path, .{ .exclusive = true }) catch |e| {
             switch (e) {
                 error.PathAlreadyExists => {
-                    maple_log.info("Loading VMU from file '{s}'.", .{vmu.backing_file});
-                    var file = try std.fs.cwd().openFile(vmu.backing_file, .{});
+                    maple_log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
+                    var file = try std.fs.cwd().openFile(self.backing_file_path, .{});
                     defer file.close();
-                    _ = try file.readAll(@as([*]u8, @ptrCast(vmu.blocks.ptr))[0 .. vmu.blocks.len * BlockSize]);
-                    return vmu;
+                    _ = try file.readAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
+                    return;
                 },
                 else => {
-                    maple_log.err("Failed to create VMU file '{s}': {any}", .{ vmu.backing_file, e });
+                    maple_log.err("Failed to create VMU file '{s}': {any}", .{ self.backing_file_path, e });
                     return e;
                 },
             }
         };
         defer new_file.close();
 
-        @memset(vmu.blocks[0xFF][0..0x200], 0);
-        // Fill system area
-        @memset(vmu.blocks[0xFF][0..0x10], 0x55); // Format Information, all 0x55 means formatted.
-        @memcpy(vmu.blocks[0xFF][0x10..0x30], "Volume Label                    "); // Volume Label
-        @memcpy(vmu.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
-        @memset(vmu.blocks[0xFF][0x38..0x40], 0); // Reserved
+        // FIXME: Something's wrong here. I'm not initiliazing it properly.
+        //        Switching to a dumb copy of a freshly formatted VMU by the bios, until I understand it better.
+        if (comptime true) {
+            for (0..self.blocks.len) |i| {
+                @memset(&self.blocks[i], 0);
+            }
+            var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
+            @memset(fat_entries[0..0x100], FATValue.Unused);
+            @memcpy(self.blocks[FATBlock][0x1E0..], &[_]u8{
+                0xFC, 0xFF, 0xFA, 0xFF, 0xF1, 0x00, 0xF2, 0x00,
+                0xF3, 0x00, 0xF4, 0x00, 0xF5, 0x00, 0xF6, 0x00,
+                0xF7, 0x00, 0xF8, 0x00, 0xF9, 0x00, 0xFA, 0x00,
+                0xFB, 0x00, 0xFC, 0x00, 0xFA, 0xFF, 0xFA, 0xFF,
+            });
+            @memcpy(self.blocks[0xFF][0..96], &[_]u8{
+                0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+                0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x20, 0x24, 0x07, 0x23, 0x01, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0xFE, 0x00, 0x01, 0x00, 0xFD, 0x00, 0x0D, 0x00, 0x00, 0x00,
+                0xC8, 0x00, 0xC8, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            });
+        } else {
+            @memset(self.blocks[0xFF][0..0x200], 0);
+            // Fill system area
+            @memset(self.blocks[0xFF][0..0x10], 0x55); // Format Information, all 0x55 means formatted.
+            @memcpy(self.blocks[0xFF][0x10..0x30], "Volume Label                    "); // Volume Label
+            @memcpy(self.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
+            @memset(self.blocks[0xFF][0x38..0x40], 0); // Reserved
 
-        @as(*GetMediaInformationResponse, @alignCast(@ptrCast(&vmu.blocks[0xFF][0x40]))).* = .{
-            .total_size = BlockCount - 1,
-            .partition_number = 0x0000,
-            .system_area_block_number = SystemBlock,
-            .fat_area_block_number = 0x00FE,
-            .number_of_fat_area_blocks = 0x0001,
-            .file_information_block_number = 0x00FD,
-            .number_of_file_information_blocks = 0x000D,
-            .volume_icon = 0,
-            .save_area_block_number = 0x00C8,
-            .number_of_save_area_blocks = 0x00C8,
-        };
+            @as(*GetMediaInformationResponse, @alignCast(@ptrCast(&self.blocks[0xFF][0x40]))).* = .{
+                .total_size = BlockCount - 1,
+                .partition_number = 0x0000,
+                .system_area_block_number = SystemBlock,
+                .fat_area_block_number = 0x00FE,
+                .number_of_fat_area_blocks = 0x0001,
+                .file_information_block_number = 0x00FD,
+                .number_of_file_information_blocks = 0x000D,
+                .volume_icon = 0,
+                .save_area_block_number = 0x00C8,
+                .number_of_save_area_blocks = 0x00C8,
+            };
 
-        // "Format" the device.
-        var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&vmu.blocks[FATBlock][0])));
-        @memset(fat_entries[0..0x100], FATValue.Unused);
-        fat_entries[FATBlock] = FATValue.DataEnd;
-        fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
-
-        try new_file.writeAll(@as([*]u8, @ptrCast(vmu.blocks.ptr))[0 .. vmu.blocks.len * BlockSize]);
-
-        return vmu;
+            // "Format" the device.
+            var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
+            @memset(fat_entries[0..0x100], FATValue.Unused);
+            fat_entries[FATBlock] = FATValue.DataEnd;
+            fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
+        }
+        try new_file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
     }
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
         self.save();
         allocator.free(self.blocks);
+        allocator.free(self.backing_file_path);
     }
 
     pub fn save(self: *const @This()) void {
-        maple_log.info("Save VMU to file '{s}'.", .{self.backing_file});
-        var file = std.fs.cwd().openFile(self.backing_file, .{ .mode = .write_only }) catch |err| {
-            maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file, err });
+        maple_log.info("Save VMU to file '{s}'.", .{self.backing_file_path});
+        self.save_backup();
+        var file = std.fs.cwd().openFile(self.backing_file_path, .{ .mode = .write_only }) catch |err| {
+            maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file_path, err });
             return;
         };
         defer file.close();
@@ -348,11 +375,29 @@ const VMU = struct {
         };
     }
 
-    pub fn get_identity(self: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
+    pub fn save_backup(self: *const @This()) void {
+        const filename = std.fs.path.basename(self.backing_file_path);
+        const dir_path = std.fs.path.dirname(self.backing_file_path) orelse ".";
+        var dest_dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
+            maple_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
+            return;
+        };
+        var buf: [256]u8 = .{0} ** 256;
+        const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
+            maple_log.err("Failed to format backup filename: {any}", .{err});
+            return;
+        };
+        defer dest_dir.close();
+        std.fs.cwd().copyFile(self.backing_file_path, dest_dir, backup_filename, .{}) catch |err| {
+            maple_log.err("Failed to backup VMU file '{s}': {any}", .{ backup_filename, err });
+        };
+    }
+
+    pub fn get_identity(_: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
         var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
         @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
-            .FunctionCodesMask = self.capabilities,
-            .SubFunctionCodesMasks = self.subcapabilities,
+            .FunctionCodesMask = Capabilities,
+            .SubFunctionCodesMasks = Subcapabilities,
         };
         return r;
     }
@@ -616,7 +661,7 @@ pub const MapleHost = struct {
     pub fn init(allocator: std.mem.Allocator) !MapleHost {
         return .{
             .ports = .{
-                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ .{ .VMU = try VMU.init(allocator) }, null, null, null, null } },
+                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
                 .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
                 .{},
                 .{},
