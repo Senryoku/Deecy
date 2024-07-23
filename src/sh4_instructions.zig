@@ -199,7 +199,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000001011, .mask = 0b0000111100000000, .fn_ = interpreter.jsr_Rn, .name = "jsr @Rn", .is_branch = true, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.jsr_rn },
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .is_branch = true, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
 
-    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .latency_cycles = 3, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .latency_cycles = 3, .jit_emit_fn = sh4_jit.clrmac, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrt, .name = "clrt", .access = .{ .r = .{}, .w = .{} } },
 

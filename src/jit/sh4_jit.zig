@@ -2069,6 +2069,12 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     return true;
 }
 
+pub fn clrmac(block: *JITBlock, _: *JITContext, _: sh4.Instr) !bool {
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "mach"), .size = 32 } }, .{ .imm32 = 0 });
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, .{ .imm32 = 0 });
+    return false;
+}
+
 fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     // We might change GPR banks.
     for (0..8) |i| {
