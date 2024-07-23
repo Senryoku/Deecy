@@ -1497,8 +1497,13 @@ pub fn ldsl_atRnInc_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
     return false;
 }
 
-pub fn fschg(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try interpreter_fallback_cached(block, ctx, instr);
+pub fn fschg(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    try block.append(.{
+        .Xor = .{
+            .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpscr"), .size = 32 } },
+            .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.FPSCR, "sz") },
+        },
+    });
     switch (ctx.fpscr_sz) {
         .Single => ctx.fpscr_sz = .Double,
         .Double => ctx.fpscr_sz = .Single,
