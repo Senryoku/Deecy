@@ -411,6 +411,8 @@ const EnvelopeDecayValue = [_][4]u4{
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
 pub const AICA = struct {
+    pub const ExperimentalExternalSampleGeneration = true;
+
     pub const SampleRate = 44100;
 
     const ARM7CycleRatio = 66;
@@ -841,10 +843,7 @@ pub const AICA = struct {
         }
     }
 
-    pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
-        self._timer_cycles_counter += @intCast(sh4_cycles);
-        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
-
+    pub fn generate_samples(self: *AICA, sample_count: u32) void {
         if (sample_count > 0) {
             self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
@@ -861,9 +860,6 @@ pub const AICA = struct {
             //        0xF       |    0dB
             const attenuation = std.math.pow(i32, 2, 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F));
             {
-                self.sample_mutex.lock();
-                defer self.sample_mutex.unlock();
-
                 @memset(self.sample_buffer[self.sample_write_offset .. self.sample_write_offset + sample_count], 0);
                 for (0..64) |i| {
                     self.update_channel(@intCast(i), sample_count);
@@ -883,29 +879,46 @@ pub const AICA = struct {
                 self.sample_write_offset = (self.sample_write_offset + sample_count) % self.sample_buffer.len;
                 self._samples_counter +%= sample_count;
             }
-
-            self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
-            const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
-            for (0..3) |i| {
-                var timer = self.get_reg(TimerControl, timer_registers[i]);
-                self._timer_counters[i] += sample_count;
-                const scaled = @as(u32, 1) << timer.prescale;
-                while (self._timer_counters[i] >= scaled) {
-                    self._timer_counters[i] -= scaled;
-                    if (timer.value == 0xFF) {
-                        const mask: u32 = @as(u32, 1) << @intCast(6 + i);
-
-                        self.get_reg(u32, .SCIPD).* |= mask;
-                        self.get_reg(u32, .MCIPD).* |= mask;
-
-                        timer.value = 0;
-                    } else timer.value += 1;
-                }
-            }
-
-            self.check_sh4_interrupt(dc);
-            self.check_interrupts();
         }
+    }
+
+    fn update_timers(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
+        if (sample_count == 0) return;
+
+        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+        const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
+        for (0..3) |i| {
+            var timer = self.get_reg(TimerControl, timer_registers[i]);
+            self._timer_counters[i] += sample_count;
+            const scaled = @as(u32, 1) << timer.prescale;
+            while (self._timer_counters[i] >= scaled) {
+                self._timer_counters[i] -= scaled;
+                if (timer.value == 0xFF) {
+                    const mask: u32 = @as(u32, 1) << @intCast(6 + i);
+
+                    self.get_reg(u32, .SCIPD).* |= mask;
+                    self.get_reg(u32, .MCIPD).* |= mask;
+
+                    timer.value = 0;
+                } else timer.value += 1;
+            }
+        }
+
+        self.check_sh4_interrupt(dc);
+        self.check_interrupts();
+    }
+
+    pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
+        self._timer_cycles_counter += @intCast(sh4_cycles);
+        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+
+        self.sample_mutex.lock();
+        defer self.sample_mutex.unlock();
+
+        if (!ExperimentalExternalSampleGeneration)
+            self.generate_samples(sample_count);
+
+        self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
 
         if (self.arm7.running) {
             self._arm_cycles_counter += @intCast(sh4_cycles);

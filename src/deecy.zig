@@ -9,6 +9,7 @@ const common = @import("./common.zig");
 
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
+const AICA = DreamcastModule.AICAModule.AICA;
 
 const Renderer = @import("./renderer.zig").Renderer;
 
@@ -27,8 +28,22 @@ fn glfw_key_callback(
     const maybe_app = window.getUserPointer(Deecy);
 
     if (maybe_app) |app| {
-        if (key == .escape and action == .press) {
-            app.debug_ui.draw_debug_ui = !app.debug_ui.draw_debug_ui;
+        if (action == .press) {
+            switch (key) {
+                .escape => {
+                    app.debug_ui.draw_debug_ui = !app.debug_ui.draw_debug_ui;
+                },
+                .space => {
+                    app.running = !app.running;
+                },
+                .l => {
+                    switch (app.cpu_throttling_method) {
+                        .None => app.cpu_throttling_method = .BusyWait,
+                        .BusyWait => app.cpu_throttling_method = .None,
+                    }
+                },
+                else => {},
+            }
         }
     }
 }
@@ -100,6 +115,7 @@ pub const Deecy = struct {
         audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
         audio_device_config.data_callback = audio_callback;
         audio_device_config.user_data = self;
+        audio_device_config.period_size_in_frames = 16;
         audio_device_config.playback.format = .signed32;
         audio_device_config.playback.channels = 1;
         // std.debug.print("Audio device config: {}\n", .{audio_device_config});
@@ -271,8 +287,13 @@ pub const Deecy = struct {
         const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
         const aica = &self.dc.aica;
 
+        if (!self.running) return;
+
         aica.sample_mutex.lock();
         defer aica.sample_mutex.unlock();
+
+        if (AICA.ExperimentalExternalSampleGeneration)
+            aica.generate_samples(frame_count);
 
         var out: [*]i32 = @ptrCast(@alignCast(output));
 

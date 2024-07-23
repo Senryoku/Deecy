@@ -96,7 +96,7 @@ const ScheduledInterrupt = struct {
 const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
-    const threaded_aica: bool = false; // FIXME: Ecco crashes when enabled.
+    const ExperimentalThreadedAICA: bool = false; // FIXME: Ecco crashes when enabled. DO NOT USE! This needs a lot more work.
 
     cpu: SH4,
     gpu: Holly,
@@ -146,7 +146,7 @@ pub const Dreamcast = struct {
         };
 
         dc.*.aica.setup_arm();
-        if (threaded_aica) {
+        if (ExperimentalThreadedAICA) {
             dc._aica_condition = .{};
             dc._aica_mutex = .{};
             dc._aica_thread = try std.Thread.spawn(.{}, aica_thread, .{dc});
@@ -169,7 +169,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        if (threaded_aica) {
+        if (ExperimentalThreadedAICA) {
             self._stopping = true;
             self._aica_condition.signal();
             self._aica_thread.join();
@@ -181,6 +181,9 @@ pub const Dreamcast = struct {
             const filename = self.get_user_flash_path(&buf) catch |err| {
                 dc_log.err("Failed to get user flash path: {any}", .{err});
                 @panic("Failed to get user flash path");
+            };
+            std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
+                dc_log.err("Failed to create user flash directory: {any}", .{err});
             };
             if (std.fs.cwd().createFile(filename, .{})) |file| {
                 defer file.close();
@@ -453,7 +456,9 @@ pub const Dreamcast = struct {
     }
 
     fn tick_aica(self: *@This(), cycles: u32) !void {
-        if (threaded_aica) {
+        if (ExperimentalThreadedAICA) {
+            self._aica_mutex.lock();
+            defer self._aica_mutex.unlock();
             if (self._aica_pending_cycles.fetchAdd(cycles, std.builtin.AtomicOrder.seq_cst) == 0)
                 self._aica_condition.signal(); // If there was no pending cycles, make sure to wake up the thread.
         } else {
