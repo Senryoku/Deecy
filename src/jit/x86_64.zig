@@ -170,9 +170,17 @@ pub const EFLAGSCondition = enum(u4) {
 
 pub const OperandSize = enum(u8) { _8 = 8, _16 = 16, _32 = 32, _64 = 64 };
 
+pub const Scale = enum(u2) {
+    _1 = 0b00,
+    _2 = 0b01,
+    _4 = 0b10,
+    _8 = 0b11,
+};
+
 pub const MemOperand = struct {
     base: Register, // NOTE: This could be made optional as well, to allow for absolute addressing. However this is only possible on (r)ax on x86_64.
     index: ?Register = null,
+    scale: Scale = ._1, // Only valid if index is supplied.
     displacement: u32 = 0,
     size: u8,
 
@@ -485,7 +493,7 @@ const MODRM = packed struct(u8) {
 const SIB = packed struct(u8) {
     base: u3,
     index: u3,
-    scale: u2,
+    scale: Scale,
 };
 
 const ScalarFPOpcodes = enum(u8) {
@@ -801,7 +809,7 @@ pub const Emitter = struct {
 
         if (r_m == 0b100) {
             try self.emit(SIB, .{
-                .scale = 0,
+                .scale = mem.scale,
                 // NOTE: ESP/R12-based addressing needs a SIB byte, this is the 0b100 case.
                 .index = if (mem.index) |i| encode(i) else 0b100,
                 .base = encode(mem.base),

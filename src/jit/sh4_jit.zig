@@ -1473,6 +1473,22 @@ pub fn fsrra_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+const fsca_table = @embedFile("../data/fsca.bin");
+
+pub fn fsca_FPUL_DRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    std.debug.assert(ctx.fpscr_pr == .Single);
+    std.debug.assert(instr.nmd.n & 1 == 0);
+
+    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 16 } }); // Load low 16-bits of FPUL
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(fsca_table.ptr) });
+    // Lookup into the pre-computed table ([0x10000][2]f32)
+    //    This is 512kB LUT, I wonder how efficient it really is. Looks like ~5% gain in my very stupid benchmark.
+    try store_fp_register(block, ctx, instr.nmd.n + 0, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .scale = ._8, .displacement = 0, .size = 32 } });
+    try store_fp_register(block, ctx, instr.nmd.n + 1, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .scale = ._8, .displacement = 4, .size = 32 } });
+
+    return false;
+}
+
 pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 

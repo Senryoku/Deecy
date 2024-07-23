@@ -1942,12 +1942,9 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) void {
     std.debug.assert(cpu.fpscr.pr == 0);
     std.debug.assert(opcode.nmd.n & 1 == 0);
 
-    // TODO: Check implementation.
-
     const fraction = cpu.fpul & 0x0000_FFFF;
     const angle = 2 * std.math.pi * @as(f32, @floatFromInt(fraction)) / 0x10000;
 
-    // TODO: Use the fsca-table graciously shared by Raziel!
     cpu.FR(opcode.nmd.n).* = @sin(angle);
     cpu.FR(opcode.nmd.n + 1).* = @cos(angle);
 }
