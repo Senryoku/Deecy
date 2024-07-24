@@ -1643,6 +1643,8 @@ pub fn extuw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // NOTE: SR.S == 1 mode not implemented.
+
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
@@ -1661,6 +1663,32 @@ pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
     try block.add(.{ .reg = rm }, .{ .imm32 = 4 });
+    return false;
+}
+
+pub fn macw_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // NOTE: SR.S == 1 mode not implemented.
+
+    sh4_jit_log.warn("Emitting mac.w @Rm+,@Rn+: This is untested!", .{});
+
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 16);
+    try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
+    try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
+    try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
+
+    try block.pop(.{ .reg = ReturnRegister });
+
+    try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
+
+    std.debug.assert(@offsetOf(sh4.SH4, "macl") + 4 == @offsetOf(sh4.SH4, "mach"));
+    try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg = ReturnRegister });
+
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 2 });
+    const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
+    try block.add(.{ .reg = rm }, .{ .imm32 = 2 });
     return false;
 }
 
