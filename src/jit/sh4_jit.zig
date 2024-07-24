@@ -1642,6 +1642,28 @@ pub fn extuw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try block.movsx(.{ .reg = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
+    try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+
+    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
+    try block.movsx(.{ .reg = ArgRegisters[0] }, .{ .reg = ReturnRegister });
+
+    try block.pop(.{ .reg = ReturnRegister });
+
+    try block.append(.{ .Mul = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = ArgRegisters[0] }, .is_64 = true } });
+
+    std.debug.assert(@offsetOf(sh4.SH4, "macl") + 4 == @offsetOf(sh4.SH4, "mach"));
+    try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg = ReturnRegister });
+
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+    const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
+    try block.add(.{ .reg = rm }, .{ .imm32 = 4 });
+    return false;
+}
+
 pub fn mull_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);

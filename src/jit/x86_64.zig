@@ -332,7 +332,7 @@ pub const Instruction = union(InstructionType) {
     Neg: struct { dst: Operand },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
-    Mul: struct { dst: Operand, src: Operand },
+    Mul: struct { dst: Operand, src: Operand, is_64: bool = false },
     Div: struct { dst: Operand, src: Operand },
     Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
     Sqrt: struct { dst: Operand, src: Operand },
@@ -588,7 +588,7 @@ pub const Emitter = struct {
                 .Nop => {},
                 .Break => {
                     if (builtin.mode != .Debug) {
-                        x86_64_emitter_log.warn("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
+                        x86_64_emitter_log.warn("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.", .{});
                     }
                     try self.emit_byte(0xCC);
                 },
@@ -615,7 +615,7 @@ pub const Emitter = struct {
                 },
                 .Add => |a| try self.add(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
-                .Mul => |a| try self.mul(a.dst, a.src),
+                .Mul => |a| try self.mul(a.dst, a.src, a.is_64),
                 .Div => |a| try self.div(a.dst, a.src),
                 .Fma => |a| try self.fma(a.dst, a.src1, a.src2),
                 .Sqrt => |a| try self.sqrt(a.dst, a.src),
@@ -1015,6 +1015,16 @@ pub const Emitter = struct {
                             .r_m = encode(src_reg),
                         });
                     },
+                    .reg => |src_reg| {
+                        // Assume user expects a movsxd (sign extend to 64bit)
+                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit(u8, 0x63);
+                        try self.emit(MODRM, .{
+                            .mod = .reg,
+                            .reg_opcode = encode(dst.reg),
+                            .r_m = encode(src_reg),
+                        });
+                    },
                     else => return error.InvalidMovsxSource,
                 }
             },
@@ -1084,11 +1094,14 @@ pub const Emitter = struct {
             .mem => |dst_m| {
                 switch (src) {
                     .reg => |src_reg| {
-                        if (dst_m.size != 32) return error.OperandSizeMismatch;
-
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
-                        try self.emit(u8, mr_opcode);
-                        try self.emit_mem_addressing(encode(src_reg), dst_m);
+                        switch (dst_m.size) {
+                            32, 64 => {
+                                try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                                try self.emit(u8, mr_opcode);
+                                try self.emit_mem_addressing(encode(src_reg), dst_m);
+                            },
+                            else => return error.OperandSizeMismatch,
+                        }
                     },
                     .imm32 => |imm| {
                         try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm);
@@ -1213,7 +1226,7 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
+    pub fn mul(self: *@This(), dst: Operand, src: Operand, is_64: bool) !void {
         switch (dst) {
             .reg => |dst_reg| {
                 switch (src) {
@@ -1222,11 +1235,11 @@ pub const Emitter = struct {
                         //        but it's measurably slower on my machine. What?
                         //        Disabling it for now.
                         if (comptime false and dst_reg == .rax) {
-                            try self.emit_rex_if_needed(.{ .b = need_rex(src_reg) });
+                            try self.emit_rex_if_needed(.{ .w = is_64, .b = need_rex(src_reg) });
                             try self.emit(u8, 0xF7);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 5, .r_m = encode(src_reg) });
                         } else {
-                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                            try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                             try self.emit(u8, 0x0F);
                             try self.emit(u8, 0xAF);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
