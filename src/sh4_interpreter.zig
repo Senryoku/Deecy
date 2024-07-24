@@ -258,7 +258,8 @@ pub fn movt_Rn(cpu: *SH4, opcode: Instr) void {
 // The upper 16 bits of Rm are transferred directly to the upper 16 bits of Rn.
 pub fn swapb(cpu: *SH4, opcode: Instr) void {
     const val = cpu.R(opcode.nmd.m).*;
-    cpu.R(opcode.nmd.n).* = (val & 0xFFFF0000) | (val & 0x0000FF00) >> 8 | (val & 0x000000FF) << 8;
+    const l: u16 = @truncate(val);
+    cpu.R(opcode.nmd.n).* = (val & 0xFFFF0000) | @byteSwap(l);
 }
 pub fn swapw(cpu: *SH4, opcode: Instr) void {
     const val = cpu.R(opcode.nmd.m).*;
