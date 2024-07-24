@@ -23,8 +23,70 @@ const Renderer = RendererModule.Renderer;
 
 const Deecy = @import("deecy.zig").Deecy;
 
+pub fn customLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const static = struct {
+        var last_message: struct {
+            message_level: std.log.Level,
+            // scope: @Type(.EnumLiteral),
+            format: []const u8,
+            args_hash: u64,
+        } = undefined;
+        var count: u32 = 0;
+    };
+
+    const args_hash = std.hash.CityHash64.hash(std.mem.asBytes(&args));
+
+    if (message_level == static.last_message.message_level and
+        //  scope == static.last_message.scope and
+        std.mem.eql(u8, format, static.last_message.format) and
+        args_hash == static.last_message.args_hash)
+    {
+        static.count +|= 1;
+        const stderr = std.io.getStdErr().writer();
+        var bw = std.io.bufferedWriter(stderr);
+        const writer = bw.writer();
+
+        std.debug.lockStdErr();
+        defer std.debug.unlockStdErr();
+        nosuspend {
+            writer.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
+            bw.flush() catch return;
+        }
+        return;
+    }
+
+    if (static.count > 1) {
+        const stderr = std.io.getStdErr().writer();
+        var bw = std.io.bufferedWriter(stderr);
+        const writer = bw.writer();
+
+        std.debug.lockStdErr();
+        defer std.debug.unlockStdErr();
+        nosuspend {
+            writer.print("\n", .{}) catch return;
+            bw.flush() catch return;
+        }
+    }
+
+    static.last_message = .{
+        .message_level = message_level,
+        //.scope = scope,
+        .format = format,
+        .args_hash = args_hash,
+    };
+    static.count = 1;
+
+    std.log.defaultLog(message_level, scope, format, args);
+}
+
 pub const std_options: std.Options = .{
     .log_level = .info,
+    .logFn = customLog,
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .warn },
