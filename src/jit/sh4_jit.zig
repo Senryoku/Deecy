@@ -1662,6 +1662,16 @@ pub fn mulsw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn muluw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try block.mov(.{ .reg = ReturnRegister }, .{ .reg16 = rn });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg16 = rm });
+    try block.append(.{ .Mul = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = ArgRegisters[0] } } });
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, .{ .reg = ReturnRegister });
+    return false;
+}
+
 pub fn neg_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
