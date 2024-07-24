@@ -587,9 +587,10 @@ pub const Emitter = struct {
             switch (instr) {
                 .Nop => {},
                 .Break => {
-                    if (builtin.mode == .Debug) {
-                        try self.emit_byte(0xCC);
-                    } else std.debug.print("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
+                    if (builtin.mode != .Debug) {
+                        x86_64_emitter_log.warn("[x86_64 Emitter] Warning: Emitting a break instruction outside of Debug Build.\n", .{});
+                    }
+                    try self.emit_byte(0xCC);
                 },
                 .FunctionCall => |function| try self.native_call(function),
                 .Mov => |m| try self.mov(m.dst, m.src),
@@ -1217,11 +1218,19 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
-                        if (dst_reg == .rax) {
+                        // FIXME: This is supposed to be a condensed version of the instruction for rax,
+                        //        but it's measurably slower on my machine. What?
+                        //        Disabling it for now.
+                        if (comptime false and dst_reg == .rax) {
                             try self.emit_rex_if_needed(.{ .b = need_rex(src_reg) });
                             try self.emit(u8, 0xF7);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(src_reg) });
-                        } else return error.InvalidMulDestination;
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 5, .r_m = encode(src_reg) });
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                            try self.emit(u8, 0x0F);
+                            try self.emit(u8, 0xAF);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                        }
                     },
                     else => return error.InvalidMulSource,
                 }
