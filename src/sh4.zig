@@ -129,15 +129,12 @@ pub var DebugHooks: struct {
     write64: ?*const fn (addr: addr_t, value: u64) void = null,
 } = .{};
 
+comptime {
+    // Make sure the compiler can treat those as a single u64.
+    std.debug.assert(@offsetOf(SH4, "mach") == @offsetOf(SH4, "macl") + 4);
+}
+
 pub const SH4 = struct {
-    on_trapa: ?struct {
-        callback: *const fn (userdata: *anyopaque) void, // Debugging callback
-        userdata: *anyopaque,
-    } = null,
-    debug_trace: bool = false,
-
-    execution_state: ExecutionState = .Running,
-
     // General Registers
     r: [16]u32 = undefined, // R0-R15
     r_bank: [8]u32 = undefined, // R0-R7_BANK
@@ -152,10 +149,10 @@ pub const SH4 = struct {
     vbr: u32 = 0x00000000,
 
     // System Registers
-    mach: u32 = undefined, // Multiply-and-accumulate register high
-    macl: u32 = undefined, // Multiply-and-accumulate register low
-    pr: u32 = undefined, // Procedure register
     pc: u32 = 0xA0000000, // Program counter
+    macl: u32 = undefined, // Multiply-and-accumulate register low
+    mach: u32 = undefined, // Multiply-and-accumulate register high
+    pr: u32 = undefined, // Procedure register
     fpscr: FPSCR = .{}, // Floating-point status/control register
     fpul: u32 = undefined, // Floating-point communication register
 
@@ -172,6 +169,14 @@ pub const SH4 = struct {
     interrupt_requests: u64 = 0,
 
     timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
+
+    execution_state: ExecutionState = .Running,
+
+    on_trapa: ?struct {
+        callback: *const fn (userdata: *anyopaque) void, // Debugging callback
+        userdata: *anyopaque,
+    } = null,
+    debug_trace: bool = false,
 
     _allocator: std.mem.Allocator,
     _dc: ?*Dreamcast = null,
