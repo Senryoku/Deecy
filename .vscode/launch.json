@@ -45,8 +45,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
 			"args": [
 				"-g",
-				"D:\\DC Games\\[GDI] Metropolis Street Racer (US)\\Metropolis Street Racer v1.010 (2000)(Sega)(NTSC)(US)[!].gdi",
-				"--stop"
+				"D:\\DC Games\\[GDI] Speed Devils (US)\\Speed Devils v1.004 (1999)(Ubi Soft)(NTSC)(US)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

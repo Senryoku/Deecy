@@ -121,10 +121,13 @@ const Track = struct {
 
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
         var sector_start = (lba - self.offset) * self.format;
-        if (self.format == 2048) {
+
+        // Each sector only has raw data.
+        if (self.track_type == 0 or self.format == 2048) {
             var copied: u32 = 0;
             for (0..count) |_| {
-                const chunk_size = @min(self.format, dest.len - copied);
+                var chunk_size = @min(self.format, dest.len - copied);
+                chunk_size = @min(chunk_size, self.data.len - sector_start);
                 @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
                 copied += chunk_size;
                 sector_start += chunk_size;
@@ -187,7 +190,7 @@ pub const GDI = struct {
             var vals = std.mem.splitSequence(u8, lines.next().?, " ");
 
             const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-            const offset = try std.fmt.parseUnsigned(u32, vals.next().?, 10) + GDI_SECTOR_OFFSET;
+            const offset = (try std.fmt.parseUnsigned(u32, vals.next().?, 10)) + GDI_SECTOR_OFFSET; // FIXME?
             const track_type = try std.fmt.parseUnsigned(u8, vals.next().?, 10);
             const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
             const filename = vals.next().?;
@@ -284,7 +287,7 @@ pub const GDI = struct {
         std.debug.assert(self.tracks.items.len > 0);
         var idx: u32 = 0;
         while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].offset <= lda) : (idx += 1) {}
-        return &self.tracks.items[@max(0, idx)];
+        return &self.tracks.items[idx];
     }
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {

@@ -193,6 +193,27 @@ pub const GDROM = struct {
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = [_]u8{0} ** 12,
 
+    audio_state: struct {
+        mutex: std.Thread.Mutex = .{},
+
+        status: CDAudioStatus = .NoInfo,
+
+        start_addr: u32 = 0,
+        end_addr: u32 = 0,
+        current_addr: u32 = 0,
+        repetitions: u4 = 0, // 0xF means infinite
+
+        current_position: u32 = 0,
+        samples_in_buffer: u32 = 0,
+        buffer: []i16,
+
+        fn set_start_addr(self: *@This(), fad: u32) void {
+            self.start_addr = fad;
+            self.current_addr = self.start_addr;
+            self.samples_in_buffer = 0;
+        }
+    },
+
     scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
 
     // HLE
@@ -205,10 +226,11 @@ pub const GDROM = struct {
 
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) GDROM {
+    pub fn init(allocator: std.mem.Allocator) !GDROM {
         var gdrom = GDROM{
             .data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
             .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
+            .audio_state = .{ .buffer = try allocator.alloc(i16, 2352 / 2) },
             ._allocator = allocator,
         };
         gdrom.reinit();
@@ -223,6 +245,7 @@ pub const GDROM = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self._allocator.free(self.audio_state.buffer);
         self.data_queue.deinit();
     }
 
@@ -237,7 +260,8 @@ pub const GDROM = struct {
                     dc.raise_external_interrupt(.{ .GDRom = 1 });
                 if (event.interrupt_reason) |reason| {
                     self.interrupt_reason_register = reason;
-                    dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
+                    if (reason.cod == .Data)
+                        dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 }
                 _ = self.scheduled_events.remove();
             }
@@ -245,6 +269,40 @@ pub const GDROM = struct {
         for (self.scheduled_events.items) |*event| {
             event.cycles = @max(0, @as(i32, @intCast(event.cycles)) - @as(i32, @intCast(cycles)));
         }
+    }
+
+    pub fn get_cdda_samples(self: *@This()) [2]i16 {
+        self.audio_state.mutex.lock();
+        defer self.audio_state.mutex.unlock();
+
+        if (self.audio_state.status != .Playing) return .{ 0, 0 };
+
+        if (self.audio_state.samples_in_buffer <= self.audio_state.current_position + 1) {
+            if (!self.fetch_next_cdda_sector()) return .{ 0, 0 };
+        }
+        defer self.audio_state.current_position += 2;
+        return self.audio_state.buffer[self.audio_state.current_position..][0..2].*;
+    }
+
+    // Return true if we're still playing
+    fn fetch_next_cdda_sector(self: *@This()) bool {
+        if (self.audio_state.current_addr >= self.audio_state.end_addr) {
+            self.audio_state.current_addr = self.audio_state.start_addr;
+            if (self.audio_state.repetitions == 0) {
+                self.audio_state.status = .Ended;
+                return false;
+            }
+            if (self.audio_state.repetitions < 0xF)
+                self.audio_state.repetitions -= 1;
+        }
+        self.audio_state.current_position = 0;
+        self.audio_state.samples_in_buffer = 0;
+
+        const count = self.disk.?.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
+        self.audio_state.samples_in_buffer = count / 2; // 16-bit samples
+        self.audio_state.current_addr += 1;
+
+        return true;
     }
 
     fn schedule_event(self: *@This(), event: ScheduledEvent) void {
@@ -419,7 +477,7 @@ pub const GDROM = struct {
                 }
             },
             .GD_Error_Features => {
-                gdrom_log.info("  GDROM Write to Features @{X:0>8} = 0x{X:0>8}", .{ addr, value });
+                gdrom_log.debug("  GDROM Write to Features @{X:0>8} = 0x{X:0>8}", .{ addr, value });
                 if (T == u8) {
                     self.features = @bitCast(value);
                 } else {
@@ -473,18 +531,8 @@ pub const GDROM = struct {
                         .GetToC => self.get_toc(),
                         .ReqSes => self.req_ses(),
                         .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
-                        .CDPlay => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
-                            self.state = .Playing;
-                            self.state = .Paused; // FIXME: Do not resolve immediatly?
-                            self.status_register.dsc = 1;
-                        },
-                        .CDSeek => {
-                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
-                            self.state = .Seeking;
-                            self.state = .Paused; // FIXME: Do not resolve immediatly?
-                            self.status_register.dsc = 1;
-                        },
+                        .CDPlay => self.cd_play(),
+                        .CDSeek => self.cd_seek(),
                         .CDScan => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
                             self.state = .Scanning;
@@ -496,7 +544,9 @@ pub const GDROM = struct {
                         .SYS_CHK_SECU => self.chk_secu(),
                         .SYS_REQ_SECU => self.req_secu(),
                         else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
-                    } catch unreachable);
+                    } catch |err| {
+                        gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{any}\n", .{ err, self.packet_command });
+                    });
                 }
             },
             else => {
@@ -748,6 +798,73 @@ pub const GDROM = struct {
         });
     }
 
+    fn cd_play(self: *@This()) !void {
+        gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
+
+        self.audio_state.mutex.lock();
+        defer self.audio_state.mutex.unlock();
+
+        const parameter_type = self.packet_command[1] & 0x7;
+
+        self.state = .Playing;
+        self.audio_state.status = .Playing;
+        self.audio_state.repetitions = @truncate(self.packet_command[6]);
+
+        switch (parameter_type) {
+            0b001 => {
+                self.audio_state.set_start_addr((@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4]);
+                self.audio_state.end_addr = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10];
+                self.status_register.dsc = 1;
+            },
+            0b010 => {
+                self.audio_state.set_start_addr(msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]));
+                self.audio_state.end_addr = msf_to_lba(self.packet_command[8], self.packet_command[9], self.packet_command[10]);
+                self.status_register.dsc = 1;
+            },
+            0b111 => {
+                // (Re)Start playing without changing position.
+            },
+            else => {
+                gdrom_log.err(termcolor.red("  GDROM CDPlay: Unrecognized parameter type {X:0>1}"), .{parameter_type});
+            },
+        }
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
+    }
+
+    fn cd_seek(self: *@This()) !void {
+        gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
+
+        self.audio_state.status = .Paused;
+        self.state = .Seeking;
+        self.state = .Paused; // FIXME: Do not resolve immediatly?
+
+        const parameter_type = self.packet_command[1] & 0x7;
+        switch (parameter_type) {
+            0b001 => {
+                self.audio_state.set_start_addr((@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4]);
+            },
+            0b010 => {
+                self.audio_state.set_start_addr(msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]));
+            },
+            0b011 => {
+                // Stop playback (move to home position)
+            },
+            0b100 => {
+                // Pause playback (seek position is unchanged)
+            },
+            else => {
+                gdrom_log.err(termcolor.red("  GDROM CDPlay: Unrecognized parameter type {X:0>1}"), .{parameter_type});
+            },
+        }
+
+        self.status_register.dsc = 1;
+    }
+
     fn cd_read(self: *@This()) !void {
         if (self.features.DMA != 1) {
             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM CDRead PIO mode (features == 1)"), .{});
@@ -757,6 +874,9 @@ pub const GDROM = struct {
         const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
         const data_select = (self.packet_command[1] >> 4) & 0xF;
 
+        self.state = .Paused;
+        self.audio_state.status = .Paused;
+
         var start_addr: u32 = if (parameter_type == 0)
             (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
         else
@@ -764,8 +884,8 @@ pub const GDROM = struct {
 
         const transfer_length: u32 = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
 
-        gdrom_log.info("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
-        gdrom_log.info("Command: {X}", .{self.packet_command});
+        gdrom_log.debug("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
+        gdrom_log.debug("Command: {X}", .{self.packet_command});
 
         if (start_addr < 45000) {
             gdrom_log.warn(termcolor.yellow("  GDROM CDRead - Before Track 3 - Start Address {d} ({X:0>8})"), .{ start_addr, start_addr });
@@ -833,7 +953,7 @@ pub const GDROM = struct {
         const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
         gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
         try self.data_queue.writeItem(0); // Reserved
-        try self.data_queue.writeItem(@intFromEnum(CDAudioStatus.NoInfo)); // Audio Status
+        try self.data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
         switch (data_format) {
             0 => {
                 // All subcode information is transferred as raw data
@@ -855,6 +975,12 @@ pub const GDROM = struct {
         // TODO
         for (0..alloc_length - 2) |_| {
             try self.data_queue.writeItem(0);
+        }
+
+        // Ended normally/ended abnormally is only reported once
+        switch (self.audio_state.status) {
+            .Ended, .Error => self.audio_state.status = CDAudioStatus.NoInfo,
+            else => {},
         }
 
         self.schedule_event(.{

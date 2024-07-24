@@ -392,7 +392,7 @@ const modifier_volume_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
 }};
 
 pub const Renderer = struct {
-    pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 4 }; // Max texture count for each size. FIXME: Not sure what are good values.
+    pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
     pub const DisplayMode = enum { Center, Fit, Stretch };
 

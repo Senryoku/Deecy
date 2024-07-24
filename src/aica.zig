@@ -647,7 +647,7 @@ pub const AICA = struct {
             const high_byte = T == u8 and local_addr % 4 == 1;
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
-                    aica_log.info("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                    aica_log.debug("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
@@ -861,7 +861,7 @@ pub const AICA = struct {
         }
     }
 
-    pub fn generate_samples(self: *AICA, sample_count: u32) void {
+    pub fn generate_samples(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
         if (sample_count > 0) {
             self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
@@ -884,6 +884,13 @@ pub const AICA = struct {
 
                 for (0..64) |i| {
                     self.update_channel(@intCast(i), sample_count);
+                }
+
+                // Stream from GD-ROM
+                for (0..sample_count) |i| {
+                    const samples = dc.gdrom.get_cdda_samples();
+                    // FIXME: This is stereo!
+                    self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] +|= samples[0];
                 }
 
                 if (attenuation == 0) {
@@ -937,7 +944,7 @@ pub const AICA = struct {
         defer self.sample_mutex.unlock();
 
         if (!ExperimentalExternalSampleGeneration)
-            self.generate_samples(sample_count);
+            self.generate_samples(dc, sample_count);
 
         self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
 

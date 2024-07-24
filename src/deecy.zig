@@ -293,7 +293,7 @@ pub const Deecy = struct {
         defer aica.sample_mutex.unlock();
 
         if (AICA.ExperimentalExternalSampleGeneration)
-            aica.generate_samples(frame_count);
+            aica.generate_samples(self.dc, frame_count);
 
         var out: [*]i32 = @ptrCast(@alignCast(output));
 
