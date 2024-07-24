@@ -33,7 +33,6 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
     - Stereo
     - DSP
     - More debug
--   CDPlay SPI command
 -   Renderer:
     - Modifier Volumes.
         - Implemented: Inclusion volumes and shadow bit over opaque geometry.
@@ -49,7 +48,6 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
       
 - Ikaruga need some sort of MMU support :( 
     Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
-    The fact that the issue arise before issuing a pref instruction with the MMU on lead me to think there's more to it.
 
 ### Nice to have
 

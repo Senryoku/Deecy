@@ -273,8 +273,10 @@ pub const VMU = struct {
         }),
     };
 
-    backing_file_path: []const u8,
     blocks: [][BlockSize]u8,
+
+    backing_file_path: []const u8,
+    last_unsaved_change: ?i64 = null,
 
     pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
         var vmu: @This() = .{
@@ -356,14 +358,14 @@ pub const VMU = struct {
         try new_file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
     }
 
-    pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
-        self.save();
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.last_unsaved_change != null)
+            self.save();
         allocator.free(self.blocks);
         allocator.free(self.backing_file_path);
     }
 
-    pub fn save(self: *const @This()) void {
-        maple_log.info("Save VMU to file '{s}'.", .{self.backing_file_path});
+    pub fn save(self: *@This()) void {
         self.save_backup();
         var file = std.fs.cwd().openFile(self.backing_file_path, .{ .mode = .write_only }) catch |err| {
             maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file_path, err });
@@ -373,6 +375,8 @@ pub const VMU = struct {
         file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch |err| {
             maple_log.err("Failed to save VMU: {any}", .{err});
         };
+        maple_log.info("Saved VMU to file '{s}'.", .{self.backing_file_path});
+        self.last_unsaved_change = null;
     }
 
     pub fn save_backup(self: *const @This()) void {
@@ -457,7 +461,7 @@ pub const VMU = struct {
         };
     }
 
-    pub fn block_write(self: *const @This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
+    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .screen = 1 })) => {
                 // TODO: Do something with this frame for the LCD.
@@ -494,7 +498,7 @@ pub const VMU = struct {
                 const bytes: [*]const u8 = @ptrCast(data.ptr);
                 @memcpy(self.blocks[block_num][0..BlockSize], bytes[0..BlockSize]);
 
-                self.save(); // FIXME: Debounce these calls?
+                self.last_unsaved_change = std.time.timestamp();
             },
             else => {
                 maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function});
@@ -531,23 +535,23 @@ const MaplePort = struct {
         }
 
         const maybe_target = switch (command.recipent_address & 0b11111) {
-            0 => self.main,
-            else => self.subperipherals[@ctz(command.recipent_address)],
+            0 => &self.main,
+            else => &self.subperipherals[@ctz(command.recipent_address)],
         };
-        if (maybe_target) |target| {
+        if (maybe_target.*) |*target| {
             switch (command.command) {
                 .DeviceInfoRequest => {
-                    const identity = switch (target) {
-                        .Controller => |c| c.get_identity(),
-                        .VMU => |v| v.get_identity(),
+                    const identity = switch (target.*) {
+                        .Controller => |*c| c.get_identity(),
+                        .VMU => |*v| v.get_identity(),
                     };
                     dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(identity.len) }));
                     const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
                     @memcpy(ptr[0..identity.len], &identity);
                 },
                 .GetCondition => {
-                    switch (target) {
-                        .Controller => |c| {
+                    switch (target.*) {
+                        .Controller => |*c| {
                             std.debug.assert(command.payload_length == 1);
                             const function = data[2];
                             std.debug.assert(function == 0x01000000);
@@ -575,8 +579,8 @@ const MaplePort = struct {
 
                     maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
 
-                    switch (target) {
-                        .VMU => |v| {
+                    switch (target.*) {
+                        .VMU => |*v| {
                             const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
@@ -600,8 +604,8 @@ const MaplePort = struct {
                     maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
                     const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
-                    const payload_size = switch (target) {
-                        .VMU => |v| v.block_read(dest, function_type, partition, block_num, phase),
+                    const payload_size = switch (target.*) {
+                        .VMU => |*v| v.block_read(dest, function_type, partition, block_num, phase),
                         else => s: {
                             maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{target});
                             break :s 0;
@@ -623,8 +627,8 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
 
-                    switch (target) {
-                        .VMU => |v| v.block_write(function_type, partition, phase, block_num, write_data),
+                    switch (target.*) {
+                        .VMU => |*v| v.block_write(function_type, partition, phase, block_num, write_data),
                         else => {
                             maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
                         },
@@ -710,6 +714,30 @@ pub const MapleHost = struct {
 
             if (instr.end_flag == 1) {
                 return;
+            }
+        }
+    }
+
+    // Checks if we have some unsaved changes in VMUs, and writes them to disk,
+    // only if the last write was more than 5 seconds ago.
+    // Not writing to disk after every single VMU write is not only wasteful,
+    // it also make backups useless (a backup with half an update is useless).
+    // VMU will also flush themselves on exit if needed.
+    pub fn flush_vmus(self: *@This()) void {
+        const now = std.time.timestamp();
+        for (&self.ports) |*port| {
+            for (&port.subperipherals) |*maybe_peripheral| {
+                if (maybe_peripheral.*) |*peripheral| {
+                    switch (peripheral.*) {
+                        .VMU => |*vmu| {
+                            if (vmu.last_unsaved_change) |last_unsaved_change| {
+                                if (now - last_unsaved_change > 5)
+                                    vmu.save();
+                            }
+                        },
+                        else => {},
+                    }
+                }
             }
         }
     }

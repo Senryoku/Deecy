@@ -314,6 +314,8 @@ pub fn main() !void {
                 }
             }
 
+            d.dc.maple.flush_vmus();
+
             if (d.cpu_throttling_method == .BusyWait) {
                 // Busy wait to limit SH4 clock speed. FIXME: This is gross.
                 while ((try std.time.Instant.now()).since(last_wait) < @divTrunc(std.time.ns_per_s * cycles, 200_000_000)) {}
