@@ -1644,15 +1644,15 @@ pub fn extuw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
-    try block.movsx(.{ .reg = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
+    try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
 
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
-    try block.movsx(.{ .reg = ArgRegisters[0] }, .{ .reg = ReturnRegister });
+    try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
     try block.pop(.{ .reg = ReturnRegister });
 
-    try block.append(.{ .Mul = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = ArgRegisters[0] }, .is_64 = true } });
+    try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
 
     std.debug.assert(@offsetOf(sh4.SH4, "macl") + 4 == @offsetOf(sh4.SH4, "mach"));
     try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 64 } }, .{ .reg = ReturnRegister });

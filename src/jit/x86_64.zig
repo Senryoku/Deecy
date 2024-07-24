@@ -210,6 +210,7 @@ const OperandType = enum {
     reg8,
     reg16,
     reg,
+    reg64,
     freg32,
     freg64,
     freg128,
@@ -224,6 +225,7 @@ pub const Operand = union(OperandType) {
     reg8: Register,
     reg16: Register,
     reg: Register, // FIXME: This will sometimes be treated as a 32-bit register, and sometimes as a 64-bit register, depending on the instruction, or the size of the other operand. Make it explicit.
+    reg64: Register,
     freg32: FPRegister,
     freg64: FPRegister,
     freg128: FPRegister,
@@ -238,6 +240,7 @@ pub const Operand = union(OperandType) {
             .reg8 => .reg8,
             .reg16 => .reg16,
             .reg => .reg,
+            .reg64 => .reg64,
             .freg32 => .freg32,
             .freg64 => .freg64,
             .freg128 => .freg128,
@@ -256,6 +259,7 @@ pub const Operand = union(OperandType) {
             .reg8 => |reg| writer.print("{any}<8>", .{reg}),
             .reg16 => |reg| writer.print("{any}<16>", .{reg}),
             .reg => |reg| writer.print("{any}", .{reg}),
+            .reg64 => |reg| writer.print("{any}<64>", .{reg}),
             .freg32 => |reg| writer.print("{any}<32>", .{reg}),
             .freg64 => |reg| writer.print("{any}<64>", .{reg}),
             .freg128 => |reg| writer.print("{any}<128>", .{reg}),
@@ -272,6 +276,7 @@ pub const Operand = union(OperandType) {
             .reg8 => |a_reg| b == .reg8 and a_reg == b.reg8,
             .reg16 => |a_reg| b == .reg16 and a_reg == b.reg16,
             .reg => |a_reg| b == .reg and a_reg == b.reg,
+            .reg64 => |a_reg| b == .reg64 and a_reg == b.reg64,
             .freg32 => |a_reg| b == .freg32 and a_reg == b.freg32,
             .freg64 => |a_reg| b == .freg64 and a_reg == b.freg64,
             .freg128 => |a_reg| b == .freg128 and a_reg == b.freg128,
@@ -332,7 +337,7 @@ pub const Instruction = union(InstructionType) {
     Neg: struct { dst: Operand },
     Add: struct { dst: Operand, src: Operand },
     Sub: struct { dst: Operand, src: Operand },
-    Mul: struct { dst: Operand, src: Operand, is_64: bool = false },
+    Mul: struct { dst: Operand, src: Operand },
     Div: struct { dst: Operand, src: Operand },
     Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
     Sqrt: struct { dst: Operand, src: Operand },
@@ -615,7 +620,7 @@ pub const Emitter = struct {
                 },
                 .Add => |a| try self.add(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
-                .Mul => |a| try self.mul(a.dst, a.src, a.is_64),
+                .Mul => |a| try self.mul(a.dst, a.src),
                 .Div => |a| try self.div(a.dst, a.src),
                 .Fma => |a| try self.fma(a.dst, a.src1, a.src2),
                 .Sqrt => |a| try self.sqrt(a.dst, a.src),
@@ -977,10 +982,11 @@ pub const Emitter = struct {
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
-            .reg => |dst_reg| {
+            .reg, .reg64 => |dst_reg| {
+                const is_64 = dst.tag() == .reg64;
                 switch (src) {
                     .mem => |src_m| {
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
                         try self.emit(u8, 0x0F);
                         switch (src_m.size) {
                             8 => try self.emit(u8, 0xBE),
@@ -993,35 +999,35 @@ pub const Emitter = struct {
                         if (src_reg == .rsp or src_reg == .rbp or src_reg == .rsi or src_reg == .rdi) {
                             // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
                             // emit it unconditionally.
-                            try self.emit(REX, .{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                            try self.emit(REX, .{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         } else {
-                            try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                            try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         }
                         try self.emit(u8, 0x0F);
                         try self.emit(u8, 0xBE);
                         try self.emit(MODRM, .{
                             .mod = .reg,
-                            .reg_opcode = encode(dst.reg),
+                            .reg_opcode = encode(dst_reg),
                             .r_m = encode(src_reg),
                         });
                     },
                     .reg16 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         try self.emit(u8, 0x0F);
                         try self.emit(u8, 0xBF);
                         try self.emit(MODRM, .{
                             .mod = .reg,
-                            .reg_opcode = encode(dst.reg),
+                            .reg_opcode = encode(dst_reg),
                             .r_m = encode(src_reg),
                         });
                     },
                     .reg => |src_reg| {
-                        // Assume user expects a movsxd (sign extend to 64bit)
-                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                        if (!is_64) return error.Movsx32to32; // Mov a normal mov instead!
+                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         try self.emit(u8, 0x63);
                         try self.emit(MODRM, .{
                             .mod = .reg,
-                            .reg_opcode = encode(dst.reg),
+                            .reg_opcode = encode(dst_reg),
                             .r_m = encode(src_reg),
                         });
                     },
@@ -1226,11 +1232,14 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn mul(self: *@This(), dst: Operand, src: Operand, is_64: bool) !void {
+    pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
-            .reg => |dst_reg| {
+            .reg, .reg64 => |dst_reg| {
                 switch (src) {
-                    .reg => |src_reg| {
+                    .reg, .reg64 => |src_reg| {
+                        if (dst.tag() != src.tag()) return error.MulOperandMismatch;
+                        const is_64 = dst.tag() == .reg64;
+
                         // FIXME: This is supposed to be a condensed version of the instruction for rax,
                         //        but it's measurably slower on my machine. What?
                         //        Disabling it for now.
