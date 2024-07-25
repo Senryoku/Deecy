@@ -18,6 +18,7 @@ fn main(
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
+    @location(13) original_z: f32,
 ) -> FragmentOutput {
 
     var final_color = fragment_color(
@@ -35,6 +36,7 @@ fn main(
         area1_uv,
         area1_tex_idx_shading_instr[0],
         area1_tex_idx_shading_instr[1],
+        original_z,
         true
     );
 

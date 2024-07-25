@@ -24,6 +24,7 @@ struct VertexOut {
     @location(10) uv: vec2<f32>,
     @location(11) area1_uv: vec2<f32>,
     @location(12) @interpolate(flat) index: u32,
+    @location(13) original_z: f32,
  }
 
 @vertex
@@ -64,6 +65,8 @@ fn main(
     output.area1_flat_offset_color = packed_area1_offset_color;
 
     output.index = vertex_index;
+
+    output.original_z = position.z;
 
     return output;
 }
