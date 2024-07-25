@@ -96,8 +96,6 @@ const ScheduledInterrupt = struct {
 const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
-    const ExperimentalThreadedAICA: bool = false; // FIXME: Ecco crashes when enabled. DO NOT USE! This needs a lot more work.
-
     cpu: SH4,
     gpu: Holly,
     aica: AICA,
@@ -122,12 +120,6 @@ pub const Dreamcast = struct {
 
     _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
 
-    _stopping: bool = false,
-    _aica_thread: std.Thread = undefined,
-    _aica_condition: std.Thread.Condition = undefined,
-    _aica_mutex: std.Thread.Mutex = undefined,
-    _aica_pending_cycles: std.atomic.Value(u32) = .{ .raw = 0 },
-
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
@@ -146,11 +138,6 @@ pub const Dreamcast = struct {
         };
 
         dc.*.aica.setup_arm();
-        if (ExperimentalThreadedAICA) {
-            dc._aica_condition = .{};
-            dc._aica_mutex = .{};
-            dc._aica_thread = try std.Thread.spawn(.{}, aica_thread, .{dc});
-        }
 
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
@@ -169,12 +156,6 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        if (ExperimentalThreadedAICA) {
-            self._stopping = true;
-            self._aica_condition.signal();
-            self._aica_thread.join();
-        }
-
         // Write flash to disk
         if (!@import("builtin").is_test) {
             var buf = [1]u8{0} ** 128;
@@ -448,40 +429,11 @@ pub const Dreamcast = struct {
     }
 
     fn tick_peripherals(self: *@This(), cycles: u32) !u32 {
-        try self.tick_aica(cycles);
         self.advance_scheduled_interrupts(cycles);
+        try self.aica.update(self, cycles);
         self.gdrom.update(self, cycles);
         self.gpu.update(self, cycles);
         return cycles;
-    }
-
-    fn tick_aica(self: *@This(), cycles: u32) !void {
-        if (ExperimentalThreadedAICA) {
-            self._aica_mutex.lock();
-            defer self._aica_mutex.unlock();
-            if (self._aica_pending_cycles.fetchAdd(cycles, std.builtin.AtomicOrder.seq_cst) == 0)
-                self._aica_condition.signal(); // If there was no pending cycles, make sure to wake up the thread.
-        } else {
-            try self.aica.update(self, cycles);
-        }
-    }
-
-    fn aica_thread(self: *@This()) void {
-        dc_log.info(termcolor.green("AICA thread started"), .{});
-        while (!self._stopping) {
-            const cycles = self._aica_pending_cycles.load(std.builtin.AtomicOrder.seq_cst);
-            if (cycles > 0) {
-                self.aica.update(self, cycles) catch |err| {
-                    dc_log.err("Failed to update AICA: {}", .{err});
-                    return;
-                };
-                _ = self._aica_pending_cycles.fetchSub(cycles, std.builtin.AtomicOrder.seq_cst);
-            } else {
-                self._aica_mutex.lock();
-                defer self._aica_mutex.unlock();
-                self._aica_condition.wait(&self._aica_mutex);
-            }
-        }
     }
 
     // TODO: Add helpers for external interrupts and errors.

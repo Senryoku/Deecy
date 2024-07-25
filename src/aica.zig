@@ -689,13 +689,11 @@ pub const AICA = struct {
                     return;
                 },
                 .MCIPD => {
-                    if (T == u32) {
-                        aica_log.warn("Write to AICA Register MCIPD = 0x{X:0>8}", .{value});
-                        if (@as(InterruptBits, @bitCast(value)).scpu == 1 and self.get_reg(InterruptBits, .MCIEB).*.scpu == 1) {
-                            aica_log.err(termcolor.red("Unimplemented SCPU interrupt!"), .{});
-                            // TODO!
-                        }
-                    } else aica_log.err("Write8 to AICA Register MCIPD = 0x{X:0>8}", .{value});
+                    if (!high_byte) {
+                        self.get_reg(u32, .MCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
+                        // FIXME: We should check for interrupts immediately here.
+                        // self.check_sh4_interrupts(dc);
+                    }
                 },
                 .MCIRE => { // Clear interrupt(s)
                     if (!high_byte) {
