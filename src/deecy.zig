@@ -45,8 +45,8 @@ fn glfw_key_callback(
                 },
                 .l => {
                     switch (app.cpu_throttling_method) {
-                        .None => app.cpu_throttling_method = .BusyWait,
-                        .BusyWait => app.cpu_throttling_method = .None,
+                        .None => app.cpu_throttling_method = .PerFrame,
+                        .PerFrame => app.cpu_throttling_method = .None,
                     }
                 },
                 else => {},
@@ -67,10 +67,12 @@ pub const Deecy = struct {
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
-    cpu_throttling_method: enum { None, BusyWait } = .None,
+    cpu_throttling_method: enum { None, PerFrame } = .None,
 
     running: bool = false,
     dc_thread: std.Thread = undefined,
+    dc_thread_semaphore: std.Thread.Semaphore = .{},
+    dc_last_frame: std.time.Instant = undefined,
 
     enable_jit: bool = true,
     breakpoints: std.ArrayList(u32),
@@ -280,6 +282,7 @@ pub const Deecy = struct {
 
     pub fn stop(self: *Deecy) void {
         self.running = false;
+        self.dc_thread_semaphore.post();
         self.dc_thread.join();
     }
 
@@ -307,35 +310,46 @@ pub const Deecy = struct {
         self._allocator.destroy(self);
     }
 
+    pub fn one_frame(self: *Deecy) void {
+        if (self.running and self.cpu_throttling_method == .PerFrame) {
+            const now = std.time.Instant.now() catch unreachable;
+            if (now.since(self.dc_last_frame) >= std.time.ns_per_s / 60) {
+                self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
+                self.dc_last_frame = now;
+            }
+        }
+    }
+
     fn run_dreamcast(self: *Deecy) void {
         deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
 
-        var cycles: u64 = 0;
-
         while (self.running) {
+            if (self.cpu_throttling_method == .PerFrame) {
+                self.dc_thread_semaphore.wait();
+            }
+
+            var cycles: u64 = 0;
             if (!self.enable_jit) {
-                const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
+                while (self.running and !self.dc.gpu.vblank_signal()) {
+                    const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
 
-                cycles += self.dc.tick(max_instructions) catch unreachable;
+                    cycles += self.dc.tick(max_instructions) catch unreachable;
 
-                // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-                if (max_instructions == 1) {
-                    const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
-                        if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
-                    } else null;
-                    if (breakpoint != null) {
-                        self.running = false;
+                    // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+                    if (max_instructions == 1) {
+                        const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
+                            if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
+                        } else null;
+                        if (breakpoint != null) {
+                            self.running = false;
+                        }
                     }
                 }
             } else {
-                while (cycles < 200_000_000 / 60) {
-                    const c = self.dc.tick_jit() catch unreachable;
-                    if (c == 0) break;
-                    cycles += c;
+                while (!self.dc.gpu.vblank_signal()) {
+                    cycles += self.dc.tick_jit() catch unreachable;
                 }
             }
-
-            cycles = 0;
 
             self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
         }

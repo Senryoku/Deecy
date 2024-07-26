@@ -265,6 +265,8 @@ pub fn main() !void {
         d.start();
 
     while (!d.window.shouldClose()) {
+        d.one_frame();
+
         zglfw.pollEvents();
 
         zgui.backend.newFrame(
@@ -317,7 +319,7 @@ pub fn main() !void {
             last_frame_timestamp = now;
         }
 
-        const always_render = true; // Enable to re-render every time and help capturing with RenderDoc.
+        const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
         if (always_render or render_start)
             try d.renderer.render();
 

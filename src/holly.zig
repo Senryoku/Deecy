@@ -1225,6 +1225,8 @@ pub const Holly = struct {
     _pixel: u32 = 0,
     _tmp_cycles: u32 = 0,
 
+    _vblank_signal: bool = false,
+
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         return .{
             .vram = try allocator.alignedAlloc(u8, 32, VRAMSize),
@@ -1307,6 +1309,13 @@ pub const Holly = struct {
         self._get_register(u32, .TA_LIST_CONT).* = 0;
     }
 
+    // Cleared on read
+    pub fn vblank_signal(self: *@This()) bool {
+        const r = self._vblank_signal;
+        self._vblank_signal = false;
+        return r;
+    }
+
     // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         self._tmp_cycles += 10 * cycles;
@@ -1350,8 +1359,8 @@ pub const Holly = struct {
                 }
             }
 
-            if (self._pixel >= spg_load.hcount) {
-                self._pixel %= spg_load.hcount;
+            while (self._pixel >= spg_load.hcount) {
+                self._pixel -= spg_load.hcount;
 
                 const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
                 const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
@@ -1382,6 +1391,7 @@ pub const Holly = struct {
                 //        even if the timing is wrong.
                 if (spg_status.*.scanline == @max(spg_load.vcount, spg_vblank.vbend)) {
                     spg_status.*.scanline = 0;
+                    self._vblank_signal = true;
                 }
             }
         }
