@@ -291,7 +291,7 @@ pub fn main() !void {
             const start = try std.time.Instant.now();
             var cycles: u64 = 0;
             // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
-            while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
+            while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !d.renderer.render_start) {
                 if (!d.enable_jit) {
                     const max_instructions: u8 = if (d.breakpoints.items.len == 0) 16 else 1;
 
@@ -309,7 +309,7 @@ pub fn main() !void {
                 } else {
                     for (0..32) |_| {
                         cycles += try dc.tick_jit();
-                        if (dc.gpu.render_start) break;
+                        if (d.renderer.render_start) break;
                     }
                 }
             }
@@ -331,19 +331,19 @@ pub fn main() !void {
         // However it is actually sometimes used in games, like Namco Museum.
         // TODO: I could start by only updating in on vblank.
         if (blit_framebuffer_from_vram) {
-            d.renderer.update_framebuffer(&dc.gpu);
+            d.renderer.update_framebuffer();
             d.renderer.blit_framebuffer();
         }
 
         // FIXME: Find a better way to start a render.
-        const render_start = dc.gpu.render_start;
+        const render_start = d.renderer.render_start;
         if (render_start) {
             // FIXME: Remove
             blit_framebuffer_from_vram = false;
             d.renderer.read_framebuffer_enabled = false;
 
-            dc.gpu.render_start = false;
-            try d.renderer.update(&dc.gpu);
+            d.renderer.render_start = false;
+            try d.renderer.update();
 
             if (last_n_frametimes.count >= 10) {
                 _ = last_n_frametimes.readItem();

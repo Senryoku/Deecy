@@ -607,10 +607,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
             var buffer: [256]u8 = .{0} ** 256;
 
+            // NOTE: We're actually looking at the data shipped to the renderer.
             if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
                 zgui.indent(.{});
                 inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                    const list = &dc.gpu.ta_display_lists[@intFromEnum(list_type)];
+                    const list = &d.renderer.ta_lists.display_lists[@intFromEnum(list_type)];
                     const name = @tagName(@as(Holly.ListType, list_type));
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
@@ -659,9 +660,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.indent(.{});
                 // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
                 {
-                    const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.opaque_modifier_volumes.items.len});
+                    const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.ta_lists.opaque_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
-                        for (d.renderer.opaque_modifier_volumes.items, 0..) |vol, idx| {
+                        for (d.renderer.ta_lists.opaque_modifier_volumes.items, 0..) |vol, idx| {
                             zgui.text("  {any}", .{vol});
                             if (zgui.isItemClicked(.left)) {
                                 self.selected_volume_focus = true;
@@ -679,9 +680,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     }
                 }
                 {
-                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.translucent_modifier_volumes.items.len});
+                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.ta_lists.translucent_modifier_volumes.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
-                        for (d.renderer.translucent_modifier_volumes.items, 0..) |vol, idx| {
+                        for (d.renderer.ta_lists.translucent_modifier_volumes.items, 0..) |vol, idx| {
                             zgui.text("  {any}", .{vol});
                             if (zgui.isItemClicked(.left)) {
                                 self.selected_volume_focus = true;
@@ -873,7 +874,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 }
 
 fn draw_overlay(self: *@This(), d: *Deecy) void {
-    const dc = d.dc;
     const draw_list = zgui.getBackgroundDrawList();
     // TODO: We only support the "Centered" display mode for now.
     const size = [2]f32{
@@ -887,9 +887,9 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     };
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        if (self.selected_strip_index < dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items.len) {
-            const parameters = dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
-            const strip = &dc.gpu.ta_display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
+        if (self.selected_strip_index < d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items.len) {
+            const parameters = d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
+            const strip = &d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
             switch (strip.polygon) {
                 .Sprite => |_| {
                     for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
@@ -926,8 +926,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
     if (self.selected_volume_index) |idx| {
         const list = switch (self.selected_volume_list) {
-            .OpaqueModifierVolume => d.renderer.opaque_modifier_volumes.items,
-            .TranslucentModifierVolume => d.renderer.translucent_modifier_volumes.items,
+            .OpaqueModifierVolume => d.renderer.ta_lists.opaque_modifier_volumes.items,
+            .TranslucentModifierVolume => d.renderer.ta_lists.translucent_modifier_volumes.items,
             else => unreachable,
         };
         if (idx < list.len) {

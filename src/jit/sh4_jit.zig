@@ -491,7 +491,7 @@ pub const SH4JIT = struct {
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !BasicBlock {
         var ctx = start_ctx;
 
-        var b = &self._working_block; // FIXME: Taking a pointer here crashes. This is really sus.
+        var b = &self._working_block;
 
         b.clearRetainingCapacity();
 

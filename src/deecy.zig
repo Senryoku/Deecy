@@ -110,6 +110,10 @@ pub const Deecy = struct {
         self.scale_factor = @max(scale[0], scale[1]);
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
+        self.dc.on_render_start = .{
+            .function = @ptrCast(&Renderer.on_render_start),
+            .context = &self.renderer,
+        };
 
         var audio_device_config = zaudio.Device.Config.init(.playback);
         audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
@@ -277,6 +281,8 @@ pub const Deecy = struct {
 
         self._allocator.destroy(self);
     }
+
+    fn run_dreamcast(_: *Deecy) void {}
 
     fn audio_callback(
         device: *zaudio.Device,
