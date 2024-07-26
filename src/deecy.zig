@@ -44,10 +44,10 @@ fn glfw_key_callback(
                     }
                 },
                 .l => {
-                    switch (app.cpu_throttling_method) {
-                        .None => app.cpu_throttling_method = .PerFrame,
-                        .PerFrame => app.cpu_throttling_method = .None,
-                    }
+                    app.set_throttle_method(switch (app._cpu_throttling_method) {
+                        .None => .PerFrame,
+                        .PerFrame => .None,
+                    });
                 },
                 else => {},
             }
@@ -58,7 +58,18 @@ fn glfw_key_callback(
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
+pub const CPUThrottleMethod = enum { None, PerFrame };
+
+pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
+    sem.mutex.lock();
+    defer sem.mutex.unlock();
+
+    sem.permits = 0;
+}
+
 pub const Deecy = struct {
+    const ExperimentalThreadedDC = true;
+
     window: *zglfw.Window,
     gctx: *zgpu.GraphicsContext = undefined,
     scale_factor: f32 = 1.0,
@@ -67,7 +78,7 @@ pub const Deecy = struct {
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
-    cpu_throttling_method: enum { None, PerFrame } = .None,
+    _cpu_throttling_method: CPUThrottleMethod = .None,
 
     running: bool = false,
     dc_thread: std.Thread = undefined,
@@ -271,19 +282,37 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn set_throttle_method(self: *Deecy, method: CPUThrottleMethod) void {
+        if (method == self._cpu_throttling_method) return;
+
+        switch (method) {
+            .None => {
+                self.dc_thread_semaphore.post(); // Make sure to wake up.
+            },
+            .PerFrame => {
+                reset_semaphore(&self.dc_thread_semaphore);
+            },
+        }
+        self._cpu_throttling_method = method;
+    }
+
     pub fn start(self: *Deecy) void {
         self.running = true;
-        self.dc_thread = std.Thread.spawn(.{}, run_dreamcast, .{self}) catch |err| {
-            self.running = false;
-            deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
-            return undefined;
-        };
+        if (ExperimentalThreadedDC) {
+            self.dc_thread = std.Thread.spawn(.{}, run_dreamcast, .{self}) catch |err| {
+                self.running = false;
+                deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
+                return undefined;
+            };
+        }
     }
 
     pub fn stop(self: *Deecy) void {
         self.running = false;
-        self.dc_thread_semaphore.post();
-        self.dc_thread.join();
+        if (ExperimentalThreadedDC) {
+            self.dc_thread_semaphore.post();
+            self.dc_thread.join();
+        }
     }
 
     pub fn destroy(self: *Deecy) void {
@@ -311,47 +340,53 @@ pub const Deecy = struct {
     }
 
     pub fn one_frame(self: *Deecy) void {
-        if (self.running and self.cpu_throttling_method == .PerFrame) {
-            const now = std.time.Instant.now() catch unreachable;
-            if (now.since(self.dc_last_frame) >= std.time.ns_per_s / 60) {
-                self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
-                self.dc_last_frame = now;
+        if (ExperimentalThreadedDC) {
+            if (self.running and self._cpu_throttling_method == .PerFrame) {
+                const now = std.time.Instant.now() catch unreachable;
+                if (now.since(self.dc_last_frame) >= std.time.ns_per_s / 60) {
+                    self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
+                    self.dc_last_frame = now;
+                }
+            }
+        } else {
+            self.run_dreamcast_until_next_frame();
+        }
+    }
+
+    fn run_dreamcast_until_next_frame(self: *Deecy) void {
+        var cycles: u64 = 0;
+        if (!self.enable_jit) {
+            while (self.running and !self.dc.gpu.vblank_signal()) {
+                const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
+
+                cycles += self.dc.tick(max_instructions) catch unreachable;
+
+                // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+                if (max_instructions == 1) {
+                    const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
+                        if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
+                    } else null;
+                    if (breakpoint != null) {
+                        self.running = false;
+                    }
+                }
+            }
+        } else {
+            while (!self.dc.gpu.vblank_signal()) {
+                cycles += self.dc.tick_jit() catch unreachable;
             }
         }
+        self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
     }
 
     fn run_dreamcast(self: *Deecy) void {
         deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
 
         while (self.running) {
-            if (self.cpu_throttling_method == .PerFrame) {
+            if (self._cpu_throttling_method == .PerFrame) {
                 self.dc_thread_semaphore.wait();
             }
-
-            var cycles: u64 = 0;
-            if (!self.enable_jit) {
-                while (self.running and !self.dc.gpu.vblank_signal()) {
-                    const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
-
-                    cycles += self.dc.tick(max_instructions) catch unreachable;
-
-                    // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-                    if (max_instructions == 1) {
-                        const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
-                            if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
-                        } else null;
-                        if (breakpoint != null) {
-                            self.running = false;
-                        }
-                    }
-                }
-            } else {
-                while (!self.dc.gpu.vblank_signal()) {
-                    cycles += self.dc.tick_jit() catch unreachable;
-                }
-            }
-
-            self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
+            self.run_dreamcast_until_next_frame();
         }
 
         deecy_log.info(termcolor.red("Dreamcast thread stopped."), .{});

@@ -178,7 +178,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.sliderFloat("Volume", .{ .v = &volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
                 try d.audio_device.setMasterVolume(volume);
             }
-            _ = zguiSelectEnum("CPU Throttling Method", &d.cpu_throttling_method);
+            var method = d._cpu_throttling_method;
+            if (zguiSelectEnum("CPU Throttling Method", &method)) {
+                d.set_throttle_method(method);
+            }
         }
         zgui.end();
 

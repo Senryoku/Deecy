@@ -1334,21 +1334,21 @@ pub const Holly = struct {
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
             if (start_pixel < spg_hblank.hbstart and spg_hblank.hbstart <= self._pixel) {
-                spg_status.*.hblank = 1;
+                spg_status.hblank = 1;
             }
             if (start_pixel < spg_hblank.hbend and spg_hblank.hbend <= self._pixel) {
-                spg_status.*.hblank = 0;
+                spg_status.hblank = 0;
             }
             if (start_pixel < spg_hblank_int.hblank_in_interrupt and spg_hblank_int.hblank_in_interrupt <= self._pixel) {
                 switch (spg_hblank_int.hblank_int_mode) {
                     0 => {
                         // Output when the display line is the value indicated by line_comp_val.
-                        if (spg_status.*.scanline == spg_hblank_int.line_comp_val)
+                        if (spg_status.scanline == spg_hblank_int.line_comp_val)
                             dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     1 => {
                         // Output every line_comp_val lines.
-                        if (spg_status.*.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
+                        if (spg_status.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
                             dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     2 => {
@@ -1365,34 +1365,36 @@ pub const Holly = struct {
                 const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
                 const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
 
-                self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
+                spg_status.scanline +%= 1;
 
                 // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
                 // FIXME: This has nothing to do here.
-                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.*.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
+                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
                     dc.start_maple_dma();
                 }
 
-                if (spg_status.*.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
+                if (spg_status.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
                     dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
                 }
-                if (spg_status.*.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
+                if (spg_status.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
                     dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
                 }
-                if (spg_status.*.scanline == spg_vblank.vbstart) {
-                    spg_status.*.vsync = 1;
+                if (spg_status.scanline == spg_vblank.vbstart) {
+                    spg_status.vsync = 1;
                 }
-                if (spg_status.*.scanline == spg_vblank.vbend) {
-                    spg_status.*.vsync = 0;
+                if (spg_status.scanline == spg_vblank.vbend) {
+                    spg_status.vsync = 0;
                 }
                 // FIXME: spg_load.vcount is sometimes < spg_vblank.vbend, locking the system in constant VSync.
                 //        I don't know why yet, there's probably something I did not understand correcly,
                 //        but the important for now is that all the interrupts are fired and states are reached,
                 //        even if the timing is wrong.
-                if (spg_status.*.scanline == @max(spg_load.vcount, spg_vblank.vbend)) {
-                    spg_status.*.scanline = 0;
-                    self._vblank_signal = true;
+                if (spg_status.scanline >= @max(spg_load.vcount, spg_vblank.vbend)) {
+                    spg_status.scanline = 0;
                 }
+
+                if (spg_status.scanline == 0)
+                    self._vblank_signal = true;
             }
         }
     }

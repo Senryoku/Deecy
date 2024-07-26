@@ -289,9 +289,6 @@ pub fn main() !void {
 
         d.pool_controllers();
 
-        const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
-        defer swapchain_texv.release();
-
         // FIXME: I don't how to handle this correctly, copying the framebuffer from VRAM
         // is very expensive and generally useless outside of splash screen/homebrews.
         // However it is actually sometimes used in games, like Namco Museum.
@@ -318,6 +315,9 @@ pub fn main() !void {
             try last_n_frametimes.writeItem(now - last_frame_timestamp);
             last_frame_timestamp = now;
         }
+
+        const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
+        defer swapchain_texv.release();
 
         const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
         if (always_render or render_start)
