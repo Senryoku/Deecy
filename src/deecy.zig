@@ -291,6 +291,7 @@ pub const Deecy = struct {
             },
             .PerFrame => {
                 reset_semaphore(&self.dc_thread_semaphore);
+                self.dc_last_frame = std.time.Instant.now() catch unreachable;
             },
         }
         self._cpu_throttling_method = method;
@@ -299,7 +300,7 @@ pub const Deecy = struct {
     pub fn start(self: *Deecy) void {
         self.running = true;
         if (ExperimentalThreadedDC) {
-            self.dc_thread = std.Thread.spawn(.{}, run_dreamcast, .{self}) catch |err| {
+            self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
                 self.running = false;
                 deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
                 return undefined;
@@ -341,11 +342,26 @@ pub const Deecy = struct {
 
     pub fn one_frame(self: *Deecy) void {
         if (ExperimentalThreadedDC) {
+            const target_frame_time = std.time.ns_per_s / 60; // FIXME: Adjust that based on the DC settings...
+
+            // Internal representation of std.time.Instant is plateform dependent. To do arithmetic with it, we need to learn about it.
+            // FIXME: This is not ideal... It is unknown at compile tile, on Windows at least. But it should be constant for the duration of the program, I hope.
+            const static = struct {
+                var frame_time: u64 = 0; // In nanoseconds
+                var timestamp_diff: u64 = undefined; // In platform-dependent units
+            };
+            if (static.frame_time != target_frame_time) {
+                static.frame_time = target_frame_time;
+                const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
+                static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+            }
+
             if (self.running and self._cpu_throttling_method == .PerFrame) {
                 const now = std.time.Instant.now() catch unreachable;
-                if (now.since(self.dc_last_frame) >= std.time.ns_per_s / 60) {
+                if (now.since(self.dc_last_frame) >= target_frame_time) {
                     self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
-                    self.dc_last_frame = now;
+                    // Adding to the previous timestamp rather that using 'now' will compensate the latency between calls to one_frame().
+                    self.dc_last_frame.timestamp += static.timestamp_diff;
                 }
             }
         } else {
@@ -379,7 +395,7 @@ pub const Deecy = struct {
         self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
     }
 
-    fn run_dreamcast(self: *Deecy) void {
+    fn dreamcast_thread_fn(self: *Deecy) void {
         deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
 
         while (self.running) {

@@ -298,7 +298,6 @@ pub fn main() !void {
             d.renderer.blit_framebuffer();
         }
 
-        // FIXME: Find a better way to start a render.
         const render_start = d.renderer.render_start;
         if (render_start) {
             // FIXME: Remove
@@ -308,7 +307,7 @@ pub fn main() !void {
             d.renderer.render_start = false;
             try d.renderer.update();
 
-            if (last_n_frametimes.count >= 10) {
+            if (last_n_frametimes.count >= 60) {
                 _ = last_n_frametimes.readItem();
             }
             const now = std.time.microTimestamp();

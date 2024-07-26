@@ -1619,6 +1619,8 @@ pub const Renderer = struct {
         self.gpu_data_mutex.lock();
         defer self.gpu_data_mutex.unlock();
 
+        // FIXME: Now that Holly pushes data to the renderer on render start, this won't work anymore.
+
         const SPG_CONTROL = self.get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
         const FB_R_CTRL = self.get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
         // const FB_C_SOF = self.get_register(u32, .FB_C_SOF).*;
@@ -1704,6 +1706,7 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
+    // NOTE: Caller should hold gpu_data_mutex.
     pub fn update_background(self: *@This()) !void {
         const tags = self.get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
         const param_base = self.get_register(u32, .PARAM_BASE).*;

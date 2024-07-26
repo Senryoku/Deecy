@@ -1389,7 +1389,8 @@ pub const Holly = struct {
                 //        I don't know why yet, there's probably something I did not understand correcly,
                 //        but the important for now is that all the interrupts are fired and states are reached,
                 //        even if the timing is wrong.
-                if (spg_status.scanline >= @max(spg_load.vcount, spg_vblank.vbend)) {
+                // NOTE: vcount: Specify "number of lines per field - 1" for the CRT; in interlace mode, specify"number of lines per field/2 - 1." (default = 0x106)
+                if (spg_status.scanline >= @max(spg_load.vcount + 1, spg_vblank.vbend)) {
                     spg_status.scanline = 0;
                 }
 
