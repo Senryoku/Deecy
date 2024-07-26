@@ -465,6 +465,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         });
                         zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
                         zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume });
+                        zgui.text("DSP Vol: {X:0>1} - DSP Chan: {X:0>1}", .{ channel.dps_channel_send.level, channel.dps_channel_send.channel });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                         zgui.sameLine(.{});
                         zgui.text("PlayPos: {X: >6} - ", .{state.play_position});

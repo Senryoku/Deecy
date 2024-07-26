@@ -901,6 +901,7 @@ pub const AICA = struct {
                 // Stream from GD-ROM
                 for (0..sample_count) |i| {
                     const samples = dc.gdrom.get_cdda_samples();
+                    // TODO: Use CDDAOutputLeft/CDDAOutputRight registers?
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= samples[0];
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= samples[1];
                 }
@@ -1111,22 +1112,22 @@ pub const AICA = struct {
             const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
             if (!state.debug.mute) {
                 const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
-                const dipan = if (self.get_reg(MasterVolume, .MasterVolume).*.mono) 0 else registers.direct_pan_vol_send.pan;
+                const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
                 // Direct send to the DAC
                 if (disdl != 0) { // 0 means full attenuation, not send.
                     // DIPAN == 0x00 and 0x10 means center (no attenuation)
                     const pan_att = dipan & 0xF;
-                    var left = sample;
-                    var right = sample;
-                    // Right side attenuation
+                    var left_att: i32 = 0xF - disdl;
+                    var right_att: i32 = 0xF - disdl;
+                    // 5th bit selects the side to attenuate
                     if (dipan & 0x10 == 0x10) {
-                        right = @divTrunc(right, std.math.pow(i32, 2, pan_att));
+                        right_att += pan_att;
                     } else {
-                        left = @divTrunc(left, std.math.pow(i32, 2, pan_att));
+                        left_att += pan_att;
                     }
-                    const att = std.math.pow(i32, 2, 0xF - disdl);
-                    right = @divTrunc(right, att);
-                    left = @divTrunc(left, att);
+
+                    const left = if (left_att <= 0xF) @divTrunc(sample, std.math.pow(i32, 2, left_att)) else 0;
+                    const right = if (right_att <= 0xF) @divTrunc(sample, std.math.pow(i32, 2, right_att)) else 0;
 
                     self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= left;
                     self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= right;
