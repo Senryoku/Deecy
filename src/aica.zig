@@ -908,7 +908,7 @@ pub const AICA = struct {
         }
     }
 
-    fn update_timers(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
+    pub fn update_timers(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
         if (sample_count == 0) return;
 
         self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
@@ -941,10 +941,10 @@ pub const AICA = struct {
         self.sample_mutex.lock();
         defer self.sample_mutex.unlock();
 
-        if (!ExperimentalExternalSampleGeneration)
+        if (!ExperimentalExternalSampleGeneration) {
             self.generate_samples(dc, sample_count);
-
-        self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
+            self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
+        }
 
         if (self.arm7.running) {
             self._arm_cycles_counter += @intCast(sh4_cycles);

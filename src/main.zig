@@ -113,7 +113,7 @@ fn safe_path(path: []u8) void {
 }
 
 fn trapa_handler(app: *anyopaque) void {
-    @as(*Deecy, @alignCast(@ptrCast(app))).running = false;
+    @as(*Deecy, @alignCast(@ptrCast(app))).stop();
 }
 
 const Configuration = struct {
@@ -138,6 +138,7 @@ pub fn main() !void {
     try vmu_path.appendSlice("./userdata/vmu_default.bin");
 
     var skip_bios = false;
+    var start_immediately = true;
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -176,7 +177,7 @@ pub fn main() !void {
             skip_bios = true;
         }
         if (std.mem.eql(u8, arg, "--stop")) {
-            d.running = false;
+            start_immediately = false;
         }
     }
 
@@ -260,9 +261,12 @@ pub fn main() !void {
 
     var blit_framebuffer_from_vram = true;
 
-    var last_wait = try std.time.Instant.now();
+    if (start_immediately)
+        d.start();
 
     while (!d.window.shouldClose()) {
+        d.one_frame();
+
         zglfw.pollEvents();
 
         zgui.backend.newFrame(
@@ -283,69 +287,27 @@ pub fn main() !void {
             zgui.end();
         }
 
-        try d.debug_ui.draw(d);
-
         d.pool_controllers();
-
-        if (d.running) {
-            const start = try std.time.Instant.now();
-            var cycles: u64 = 0;
-            // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
-            while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !dc.gpu.render_start) {
-                if (!d.enable_jit) {
-                    const max_instructions: u8 = if (d.breakpoints.items.len == 0) 16 else 1;
-
-                    cycles += try dc.tick(max_instructions);
-
-                    // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-                    if (max_instructions == 1) {
-                        const breakpoint = for (d.breakpoints.items, 0..) |addr, index| {
-                            if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
-                        } else null;
-                        if (breakpoint != null) {
-                            d.running = false;
-                        }
-                    }
-                } else {
-                    for (0..32) |_| {
-                        cycles += try dc.tick_jit();
-                        if (dc.gpu.render_start) break;
-                    }
-                }
-            }
-
-            d.dc.maple.flush_vmus();
-
-            if (d.cpu_throttling_method == .BusyWait) {
-                // Busy wait to limit SH4 clock speed. FIXME: This is gross.
-                while ((try std.time.Instant.now()).since(last_wait) < @divTrunc(std.time.ns_per_s * cycles, 200_000_000)) {}
-            }
-            last_wait = try std.time.Instant.now();
-        }
-
-        const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
-        defer swapchain_texv.release();
 
         // FIXME: I don't how to handle this correctly, copying the framebuffer from VRAM
         // is very expensive and generally useless outside of splash screen/homebrews.
         // However it is actually sometimes used in games, like Namco Museum.
         // TODO: I could start by only updating in on vblank.
         if (blit_framebuffer_from_vram) {
-            d.renderer.update_framebuffer(&dc.gpu);
+            d.renderer.update_framebuffer();
             d.renderer.blit_framebuffer();
         }
 
-        // FIXME: Find a better way to start a render.
-        const render_start = dc.gpu.render_start;
+        const render_start = d.renderer.render_start;
         if (render_start) {
             // FIXME: Remove
             blit_framebuffer_from_vram = false;
             d.renderer.read_framebuffer_enabled = false;
 
-            dc.gpu.render_start = false;
-            try d.renderer.update(&dc.gpu);
+            d.renderer.render_start = false;
+            try d.renderer.update();
 
-            if (last_n_frametimes.count >= 10) {
+            if (last_n_frametimes.count >= 60) {
                 _ = last_n_frametimes.readItem();
             }
             const now = std.time.microTimestamp();
@@ -353,11 +315,16 @@ pub fn main() !void {
             last_frame_timestamp = now;
         }
 
-        const always_render = true; // Enable to re-render every time and help capturing with RenderDoc.
+        const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
+        defer swapchain_texv.release();
+
+        const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
         if (always_render or render_start)
             try d.renderer.render();
 
         d.renderer.draw(); //  Blit to screen
+
+        try d.debug_ui.draw(d);
 
         const commands = commands: {
             const encoder = d.gctx.device.createCommandEncoder(null);

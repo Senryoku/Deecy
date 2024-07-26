@@ -15,6 +15,7 @@ const fARGB = Colors.fARGB;
 const Color16 = Colors.Color16;
 const YUV422 = Colors.YUV422;
 
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const HollyModule = @import("holly.zig");
 
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
@@ -55,11 +56,6 @@ pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
 
 fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
-}
-
-// FIXME: This is way too slow.
-fn texture_hash(gpu: *const HollyModule.Holly, start: u32, end: u32) u64 {
-    return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
 }
 
 const ShadingInstructions = packed struct(u32) {
@@ -411,6 +407,8 @@ pub const Renderer = struct {
     const DepthClearValue = 0.0;
     const DepthCompareFunction: wgpu.CompareFunction = .greater;
 
+    render_start: bool = false,
+
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][256]TextureMetadata = [_][256]TextureMetadata{[_]TextureMetadata{.{}} ** 256} ** 8,
 
@@ -506,80 +504,16 @@ pub const Renderer = struct {
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
-    opaque_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
-    translucent_modifier_volumes: std.ArrayList(HollyModule.ModifierVolume) = undefined,
+
+    gpu_data_mutex: std.Thread.Mutex = .{},
+    ta_lists: HollyModule.TALists,
+    registers: []u8,
+    vram: []u8 align(32),
+
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
-
-    fn create_blit_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
-        return gctx.createBindGroupLayout(&.{
-            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
-            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
-        });
-    }
-
-    fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey) !zgpu.RenderPipelineHandle {
-        if (self.opaque_pipelines.get(key)) |pl|
-            return pl;
-
-        renderer_log.info("Creating Pipeline: {any}", .{key});
-
-        const color_targets = [_]wgpu.ColorTargetState{
-            .{
-                .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
-                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
-                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero }, // FIXME: Not sure about this.
-                },
-            },
-            .{
-                .format = zgpu.GraphicsContext.swapchain_format,
-                .blend = &wgpu.BlendState{
-                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
-                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
-                },
-            },
-        };
-
-        const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-            .vertex = wgpu.VertexState{
-                .module = self.opaque_vertex_shader_module,
-                .entry_point = "main",
-                .buffer_count = vertex_buffers.len,
-                .buffers = &vertex_buffers,
-            },
-            .primitive = wgpu.PrimitiveState{
-                .front_face = .ccw,
-                .cull_mode = .none,
-                .topology = .triangle_strip,
-                .strip_index_format = .uint32,
-            },
-            .depth_stencil = &wgpu.DepthStencilState{
-                .format = .depth32_float_stencil8,
-                .depth_write_enabled = key.depth_write_enabled,
-                .depth_compare = key.depth_compare,
-            },
-            .fragment = &wgpu.FragmentState{
-                .module = self.opaque_fragment_shader_module,
-                .entry_point = "main",
-                .target_count = color_targets.len,
-                .targets = &color_targets,
-            },
-        };
-
-        const pl = self._gctx.createRenderPipeline(self.pipeline_layout, pipeline_descriptor);
-
-        if (!self._gctx.isResourceValid(pl)) {
-            renderer_log.err("Error creating pipeline.", .{});
-            renderer_log.err("{any}", .{pipeline_descriptor});
-        }
-
-        try self.opaque_pipelines.putNoClobber(key, pl);
-
-        return pl;
-    }
 
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
         // Write to texture all rely on that.
@@ -1173,8 +1107,11 @@ pub const Renderer = struct {
             .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
             .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
             .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
-            .opaque_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
-            .translucent_modifier_volumes = std.ArrayList(HollyModule.ModifierVolume).init(allocator),
+
+            .ta_lists = HollyModule.TALists.init(allocator),
+            .registers = try allocator.alloc(u8, HollyModule.Holly.RegistersSize),
+            .vram = try allocator.alignedAlloc(u8, 32, HollyModule.Holly.VRAMSize),
+
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
@@ -1195,10 +1132,12 @@ pub const Renderer = struct {
             pass.deinit();
         }
 
+        self._allocator.free(self.registers);
+        self._allocator.free(self.vram);
+        self.ta_lists.deinit();
+
         self.vertices.deinit();
         self.modifier_volume_vertices.deinit();
-        self.opaque_modifier_volumes.deinit();
-        self.translucent_modifier_volumes.deinit();
         self._allocator.free(self._scratch_pad);
         // FIXME: I have a lot more resources to destroy.
         self.deinit_screen_textures();
@@ -1206,6 +1145,35 @@ pub const Renderer = struct {
         self.opaque_fragment_shader_module.release();
         self._gctx.releaseResource(self.bind_group_layout);
         self._gctx.releaseResource(self.pipeline_layout);
+    }
+
+    pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
+        self.gpu_data_mutex.lock();
+        defer self.gpu_data_mutex.unlock();
+
+        self.ta_lists.clearRetainingCapacity();
+        std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta);
+        @memcpy(self.registers, dc.gpu.registers);
+        @memcpy(self.vram, dc.gpu.vram);
+        if (self.render_start) {
+            renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
+        }
+        self.render_start = true;
+    }
+
+    pub inline fn get_palette_data(self: *const @This()) []u8 {
+        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyModule.HollyRegister.PALETTE_RAM_START) - HollyModule.HollyRegisterStart]))[0 .. 4 * 1024];
+    }
+    pub inline fn get_register(self: *@This(), comptime T: type, r: HollyModule.HollyRegister) *T {
+        return self.get_register_from_addr(T, @intFromEnum(r));
+    }
+    pub inline fn get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
+        std.debug.assert(addr >= HollyModule.HollyRegisterStart and addr < HollyModule.HollyRegisterStart + self.registers.len);
+        return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyModule.HollyRegisterStart])));
+    }
+    // FIXME: This is way too slow.
+    fn texture_hash(self: *const @This(), start: u32, end: u32) u64 {
+        return std.hash.CityHash64.hash(self.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
     }
 
     // For external use only (e.g. Debug UI)
@@ -1221,7 +1189,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
+    fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
             if (entry.status != .Invalid and
                 // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
@@ -1232,8 +1200,8 @@ pub const Renderer = struct {
                 if (entry.usage == 0) {
                     const is_palette_texture = entry.control_word.pixel_format == .Palette4BPP or entry.control_word.pixel_format == .Palette8BPP;
                     // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
-                    if ((is_palette_texture and palette_hash(gpu, entry.control_word) != entry.palette_hash) or
-                        texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash)
+                    if ((is_palette_texture and self.palette_hash(entry.control_word) != entry.palette_hash) or
+                        self.texture_hash(entry.start_address, entry.end_address) != entry.hash)
                     {
                         entry.status = .Outdated;
                         entry.usage = 0xFFFFFFFF; // Do not check it again.
@@ -1248,10 +1216,10 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn palette_hash(gpu: *const HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
+    fn palette_hash(self: *const @This(), texture_control_word: HollyModule.TextureControlWord) u32 {
         switch (texture_control_word.pixel_format) {
             .Palette4BPP, .Palette8BPP => |format| {
-                const palette_ram = gpu.get_palette_data();
+                const palette_ram = self.get_palette_data();
                 const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
                 const size: u16 = if (format == .Palette4BPP) 16 else 256;
                 return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
@@ -1341,11 +1309,11 @@ pub const Renderer = struct {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
 
-    fn upload_texture(self: *Renderer, gpu: *HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
+    fn upload_texture(self: *Renderer, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
-        const texture_control_register = gpu._get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
+        const texture_control_register = self.get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
 
         const is_paletted = texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP;
 
@@ -1422,8 +1390,8 @@ pub const Renderer = struct {
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
-            const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
-            const indices = gpu.vram[vq_index_addr..];
+            const code_book = @as([*]u64, @alignCast(@ptrCast(&self.vram[addr])))[0..256];
+            const indices = self.vram[vq_index_addr..];
             // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
             for (0..v_size / 2) |v| {
                 for (0..u_size / 2) |u| {
@@ -1451,13 +1419,13 @@ pub const Renderer = struct {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
+                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&self.vram[addr + 2 * texel_idx]))).*, twiddled);
                         }
                     }
                 },
                 .Palette4BPP, .Palette8BPP => |format| {
-                    const palette_ram = @as([*]const u32, @ptrCast(gpu._get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                    const palette_ctrl_ram: u2 = @truncate(gpu._get_register(u32, .PAL_RAM_CTRL).* & 0b11);
+                    const palette_ram = @as([*]const u32, @ptrCast(self.get_register(u32, .PALETTE_RAM_START)))[0..1024];
+                    const palette_ctrl_ram: u2 = @truncate(self.get_register(u32, .PAL_RAM_CTRL).* & 0b11);
                     const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
                     for (0..v_size) |v| {
@@ -1465,7 +1433,7 @@ pub const Renderer = struct {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
                             const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
-                            const pixel_palette: u8 = gpu.vram[addr + ram_addr];
+                            const pixel_palette: u8 = self.vram[addr + ram_addr];
                             const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
@@ -1484,7 +1452,7 @@ pub const Renderer = struct {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = 2 * v * u_size + 2 * u;
                                 const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx])))[0..4];
+                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&self.vram[addr + 8 * texel_idx])))[0..4];
                                 const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
                                 const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
                                 const colors_0 = Colors.yuv_to_rgba(texels_0_1);
@@ -1500,7 +1468,7 @@ pub const Renderer = struct {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = v * u_size + 2 * u;
                                 const texel_idx = 2 * pixel_idx;
-                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
+                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&self.vram[addr + texel_idx]))).*);
                                 const colors = Colors.yuv_to_rgba(texel);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
@@ -1560,8 +1528,8 @@ pub const Renderer = struct {
             .size = .{ alloc_u_size, alloc_v_size },
             .start_address = addr,
             .end_address = end_address,
-            .hash = texture_hash(gpu, addr, end_address),
-            .palette_hash = palette_hash(gpu, texture_control_word),
+            .hash = self.texture_hash(addr, end_address),
+            .palette_hash = self.palette_hash(texture_control_word),
         };
 
         // Fill with repeating texture data when v_size != u_size to avoid  wrapping artifacts.
@@ -1619,7 +1587,7 @@ pub const Renderer = struct {
         return texture_index;
     }
 
-    fn reset_texture_usage(self: *Renderer, _: *HollyModule.Holly) void {
+    fn reset_texture_usage(self: *Renderer) void {
         for (0..Renderer.MaxTextures.len) |j| {
             for (0..Renderer.MaxTextures[j]) |i| {
                 self.texture_metadata[j][i].usage = 0;
@@ -1647,13 +1615,18 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn update_framebuffer(self: *Renderer, gpu: *HollyModule.Holly) void {
-        const SPG_CONTROL = gpu._get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
-        const FB_R_CTRL = gpu._get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
-        // const FB_C_SOF = gpu._get_register(u32, .FB_C_SOF).*;
-        const FB_R_SOF1 = gpu._get_register(u32, .FB_R_SOF1).*;
-        const FB_R_SOF2 = gpu._get_register(u32, .FB_R_SOF2).*;
-        const FB_R_SIZE = gpu._get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
+    pub fn update_framebuffer(self: *@This()) void {
+        self.gpu_data_mutex.lock();
+        defer self.gpu_data_mutex.unlock();
+
+        // FIXME: Now that Holly pushes data to the renderer on render start, this won't work anymore.
+
+        const SPG_CONTROL = self.get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
+        const FB_R_CTRL = self.get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
+        // const FB_C_SOF = self.get_register(u32, .FB_C_SOF).*;
+        const FB_R_SOF1 = self.get_register(u32, .FB_R_SOF1).*;
+        const FB_R_SOF2 = self.get_register(u32, .FB_R_SOF2).*;
+        const FB_R_SIZE = self.get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
 
         self.read_framebuffer_enabled = FB_R_CTRL.enable;
 
@@ -1686,28 +1659,28 @@ pub const Renderer = struct {
                     const pixel_addr = addr + bytes_per_pixels * x;
                     switch (FB_R_CTRL.format) {
                         0x0 => { // 0555 RGB 16 bit
-                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&self.vram[pixel_addr]))).* };
                             self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x1 => { // 565 RGB
-                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&gpu.vram[pixel_addr]))).* };
+                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&self.vram[pixel_addr]))).* };
                             self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                             self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                             self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x2 => { // 888 RGB 24 bit packed
-                            const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..3].*;
+                            const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[pixel_addr])))[0..3].*;
                             self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
                             self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
                             self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
                             self._scratch_pad[pixel_idx * 4 + 3] = 255;
                         },
                         0x3 => { // 0888 RGB 32 bit
-                            const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[pixel_addr])))[0..4].*;
+                            const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[pixel_addr])))[0..4].*;
                             self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
                             self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
                             self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
@@ -1733,23 +1706,24 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    pub fn update_background(self: *Renderer, gpu: *HollyModule.Holly) !void {
-        const tags = gpu._get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
-        const param_base = gpu._get_register(u32, .PARAM_BASE).*;
+    // NOTE: Caller should hold gpu_data_mutex.
+    pub fn update_background(self: *@This()) !void {
+        const tags = self.get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
+        const param_base = self.get_register(u32, .PARAM_BASE).*;
         const addr = param_base + 4 * tags.tag_address;
-        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
-        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
-        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
+        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&self.vram[addr]))).*;
+        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&self.vram[addr + 4]))).*;
+        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&self.vram[addr + 8]))).*;
         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
         //        which doesn't make sense. The vertices z position looks more inline with what
         //        I understand of the render pipeline.
-        const depth = gpu._get_register(f32, .ISP_BACKGND_D).*;
+        const depth = self.get_register(f32, .ISP_BACKGND_D).*;
         _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
-        const parameter_volume_mode = (gpu._get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
+        const parameter_volume_mode = (self.get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
         const skipped_vertex_byte_size: u32 = @as(u32, 4) * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
@@ -1760,7 +1734,7 @@ pub const Renderer = struct {
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
-            tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+            tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(tsp_instruction, texture_control);
             self.texture_metadata[texture_size_index][tex_idx].usage += 1;
 
             if (isp_tsp_instruction.uv_16bit == 1) {
@@ -1793,7 +1767,7 @@ pub const Renderer = struct {
         };
 
         for (0..3) |i| {
-            const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
+            const vp = @as([*]const u32, @alignCast(@ptrCast(&self.vram[start + i * vertex_byte_size])));
             var u: f32 = 0;
             var v: f32 = 0;
             var base_color: PackedColor = @bitCast(vp[3]);
@@ -1883,35 +1857,38 @@ pub const Renderer = struct {
         std.debug.assert(FirstIndex == indices.len);
     }
 
-    pub fn update(self: *Renderer, gpu: *HollyModule.Holly) !void {
+    pub fn update(self: *Renderer) !void {
+        self.gpu_data_mutex.lock();
+        defer self.gpu_data_mutex.unlock();
+
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
 
-        self.reset_texture_usage(gpu);
+        self.reset_texture_usage();
         defer self.check_texture_usage();
 
         self.min_depth = std.math.floatMax(f32);
         self.max_depth = 0.0;
 
-        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu._get_register(u8, .PT_ALPHA_REF).*)) / 255.0;
+        self.pt_alpha_ref = @as(f32, @floatFromInt(self.get_register(u8, .PT_ALPHA_REF).*)) / 255.0;
 
-        const fpu_shad_scale = gpu._get_register(u32, .FPU_SHAD_SCALE).*;
+        const fpu_shad_scale = self.get_register(u32, .FPU_SHAD_SCALE).*;
         self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
 
-        const col_pal = gpu._get_register(PackedColor, .FOG_COL_RAM).*;
-        const col_vert = gpu._get_register(PackedColor, .FOG_COL_VERT).*;
+        const col_pal = self.get_register(PackedColor, .FOG_COL_RAM).*;
+        const col_vert = self.get_register(PackedColor, .FOG_COL_VERT).*;
 
         self.fog_col_pal = fRGBA.from_packed(col_pal, true);
         self.fog_col_vert = fRGBA.from_packed(col_vert, true);
-        const fog_density = gpu._get_register(u16, .FOG_DENSITY).*;
+        const fog_density = self.get_register(u16, .FOG_DENSITY).*;
         const fog_density_mantissa = (fog_density >> 8) & 0xFF;
         const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
         self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
         for (0..0x80) |i| {
-            self.fog_lut[i] = @as([*]u32, @ptrCast(gpu._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
+            self.fog_lut[i] = @as([*]u32, @ptrCast(self.get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
         }
 
-        try self.update_background(gpu);
+        try self.update_background();
 
         for (&self.passes) |*pass| {
             pass.pass_type = pass.pass_type;
@@ -1932,7 +1909,7 @@ pub const Renderer = struct {
             // Parameters specific to a polygon type
             var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             var face_offset_color: fARGB = undefined;
-            const display_list = gpu.ta_display_lists[@intFromEnum(list_type)];
+            const display_list = self.ta_lists.display_lists[@intFromEnum(list_type)];
 
             for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(self.vertices.items.len);
@@ -2000,12 +1977,12 @@ pub const Renderer = struct {
                 const textured = parameter_control_word.obj_control.texture == 1;
                 if (textured) {
                     const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+                    tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(tsp_instruction, texture_control);
                     self.texture_metadata[texture_size_index][tex_idx].usage += 1;
                 }
                 if (area1_texture_control) |tc| {
                     const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
+                    tex_idx_area_1 = self.get_texture_index(texture_size_index, tc) orelse self.upload_texture(area1_tsp_instruction.?, tc);
                     self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
                 }
 
@@ -2308,15 +2285,9 @@ pub const Renderer = struct {
         }
 
         // Modifier volumes
-
-        self.opaque_modifier_volumes.clearRetainingCapacity();
-        self.translucent_modifier_volumes.clearRetainingCapacity();
         self.modifier_volume_vertices.clearRetainingCapacity();
 
-        std.mem.swap(std.ArrayList(HollyModule.ModifierVolume), &self.opaque_modifier_volumes, &gpu._ta_opaque_modifier_volumes);
-        std.mem.swap(std.ArrayList(HollyModule.ModifierVolume), &self.translucent_modifier_volumes, &gpu._ta_translucent_modifier_volumes);
-
-        for (gpu._ta_volume_triangles.items) |triangle| {
+        for (self.ta_lists.volume_triangles.items) |triangle| {
             try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
@@ -2328,7 +2299,6 @@ pub const Renderer = struct {
             self.max_depth = @max(self.max_depth, triangle.cz);
         }
 
-        gpu._ta_volume_triangles.clearRetainingCapacity();
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, 0, [4]f32, self.modifier_volume_vertices.items);
     }
 
@@ -2500,7 +2470,7 @@ pub const Renderer = struct {
                 .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
-            if (self.opaque_modifier_volumes.items.len > 0) {
+            if (self.ta_lists.opaque_modifier_volumes.items.len > 0) {
                 //  - Write to stencil buffer
                 {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -2539,7 +2509,7 @@ pub const Renderer = struct {
 
                     // Close volume pass.
                     // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                    for (self.opaque_modifier_volumes.items) |volume| {
+                    for (self.ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (volume.closed) {
                             pass.setStencilReference(0x00);
                             pass.setPipeline(gctx.lookupResource(self.closed_modifier_volume_pipeline).?);
@@ -2556,7 +2526,7 @@ pub const Renderer = struct {
                     // Triangle passing the depth test immediately set the stencil buffer.
                     pass.setStencilReference(0x02);
                     pass.setPipeline(gctx.lookupResource(self.open_modifier_volume_pipeline).?);
-                    for (self.opaque_modifier_volumes.items) |volume| {
+                    for (self.ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (!volume.closed)
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                     }
@@ -2642,7 +2612,7 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].start_y = start_y;
 
                 // Render Modifier Volumes
-                if (self.translucent_modifier_volumes.items.len > 0) {
+                if (self.ta_lists.translucent_modifier_volumes.items.len > 0) {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                     const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
                     const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
@@ -2665,7 +2635,7 @@ pub const Renderer = struct {
                     };
 
                     // Close volume pass.
-                    for (self.translucent_modifier_volumes.items) |volume| {
+                    for (self.ta_lists.translucent_modifier_volumes.items) |volume| {
                         if (volume.closed) {
                             {
                                 const pass = encoder.beginRenderPass(render_pass_info);
@@ -2813,6 +2783,74 @@ pub const Renderer = struct {
         defer commands.release();
 
         gctx.submit(&.{commands});
+    }
+
+    fn create_blit_bind_group_layout(gctx: *zgpu.GraphicsContext) zgpu.BindGroupLayoutHandle {
+        return gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .fragment = true }, .float, .tvdim_2d, false),
+            zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
+        });
+    }
+
+    fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey) !zgpu.RenderPipelineHandle {
+        if (self.opaque_pipelines.get(key)) |pl|
+            return pl;
+
+        renderer_log.info("Creating Pipeline: {any}", .{key});
+
+        const color_targets = [_]wgpu.ColorTargetState{
+            .{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero }, // FIXME: Not sure about this.
+                },
+            },
+            .{
+                .format = zgpu.GraphicsContext.swapchain_format,
+                .blend = &wgpu.BlendState{
+                    .color = .{ .operation = .add, .src_factor = key.src_blend_factor, .dst_factor = key.dst_blend_factor },
+                    .alpha = .{ .operation = .add, .src_factor = .one, .dst_factor = .zero },
+                },
+            },
+        };
+
+        const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+            .vertex = wgpu.VertexState{
+                .module = self.opaque_vertex_shader_module,
+                .entry_point = "main",
+                .buffer_count = vertex_buffers.len,
+                .buffers = &vertex_buffers,
+            },
+            .primitive = wgpu.PrimitiveState{
+                .front_face = .ccw,
+                .cull_mode = .none,
+                .topology = .triangle_strip,
+                .strip_index_format = .uint32,
+            },
+            .depth_stencil = &wgpu.DepthStencilState{
+                .format = .depth32_float_stencil8,
+                .depth_write_enabled = key.depth_write_enabled,
+                .depth_compare = key.depth_compare,
+            },
+            .fragment = &wgpu.FragmentState{
+                .module = self.opaque_fragment_shader_module,
+                .entry_point = "main",
+                .target_count = color_targets.len,
+                .targets = &color_targets,
+            },
+        };
+
+        const pl = self._gctx.createRenderPipeline(self.pipeline_layout, pipeline_descriptor);
+
+        if (!self._gctx.isResourceValid(pl)) {
+            renderer_log.err("Error creating pipeline.", .{});
+            renderer_log.err("{any}", .{pipeline_descriptor});
+        }
+
+        try self.opaque_pipelines.putNoClobber(key, pl);
+
+        return pl;
     }
 
     fn deinit_screen_textures(self: *@This()) void {

@@ -14,7 +14,7 @@ const PackedColor = Colors.PackedColor;
 const YUV422 = Colors.YUV422;
 const fARGB = Colors.fARGB;
 
-const HollyRegister = enum(u32) {
+pub const HollyRegister = enum(u32) {
     ID = 0x005F8000,
     REVISION = 0x005F8004,
     SOFTRESET = 0x005F8008,
@@ -104,7 +104,7 @@ const HollyRegister = enum(u32) {
     _,
 };
 
-const HollyRegisterStart: u32 = 0x005F8000;
+pub const HollyRegisterStart: u32 = 0x005F8000;
 
 pub const SOFT_RESET = packed struct(u32) {
     TASoftReset: u1 = 0,
@@ -1153,7 +1153,7 @@ pub const DisplayList = struct {
         self.vertex_strips.deinit();
     }
 
-    pub fn reset(self: *DisplayList) void {
+    pub fn clearRetainingCapacity(self: *DisplayList) void {
         self.vertex_parameters.clearRetainingCapacity();
         self.vertex_strips.clearRetainingCapacity();
         self.next_first_vertex_parameters_index = 0;
@@ -1165,11 +1165,49 @@ const ScheduledInterrupt = struct {
     int: HardwareRegisters.SB_ISTNRM,
 };
 
+pub const TALists = struct {
+    display_lists: [5]DisplayList = undefined,
+    opaque_modifier_volumes: std.ArrayList(ModifierVolume),
+    translucent_modifier_volumes: std.ArrayList(ModifierVolume),
+    volume_triangles: std.ArrayList(ModifierVolumeParameter),
+
+    pub fn init(allocator: std.mem.Allocator) TALists {
+        var r: TALists = .{
+            .opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
+            .translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
+            .volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
+        };
+        for (0..r.display_lists.len) |i| {
+            r.display_lists[i] = DisplayList.init(allocator);
+        }
+        return r;
+    }
+
+    pub fn deinit(self: *TALists) void {
+        for (&self.display_lists) |*dl| {
+            dl.deinit();
+        }
+        self.opaque_modifier_volumes.deinit();
+        self.translucent_modifier_volumes.deinit();
+        self.volume_triangles.deinit();
+    }
+
+    pub fn clearRetainingCapacity(self: *TALists) void {
+        for (&self.display_lists) |*dl| {
+            dl.clearRetainingCapacity();
+        }
+        self.opaque_modifier_volumes.clearRetainingCapacity();
+        self.translucent_modifier_volumes.clearRetainingCapacity();
+        self.volume_triangles.clearRetainingCapacity();
+    }
+};
+
 pub const Holly = struct {
+    pub const VRAMSize = 8 * 1024 * 1024;
+    pub const RegistersSize = 0x2000;
+
     vram: []align(32) u8,
     registers: []u8,
-
-    render_start: bool = false, // Signals to start rendering. TODO: Find a better way to start rendering (and run the CPU on another thread I guess).
 
     _allocator: std.mem.Allocator,
     _dc: *Dreamcast,
@@ -1177,44 +1215,30 @@ pub const Holly = struct {
     _ta_command_buffer: [16]u32 align(16) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
-
     _ta_current_polygon: ?Polygon = null,
     _ta_user_tile_clip: ?UserTileClipInfo = null,
     _ta_current_volume: ?ModifierVolume = null,
-    _ta_opaque_modifier_volumes: std.ArrayList(ModifierVolume),
-    _ta_translucent_modifier_volumes: std.ArrayList(ModifierVolume),
-    _ta_volume_triangles: std.ArrayList(ModifierVolumeParameter),
     _ta_volume_next_polygon_is_last: bool = false,
 
-    ta_display_lists: [5]DisplayList = undefined,
+    _ta: TALists,
 
     _pixel: u32 = 0,
     _tmp_cycles: u32 = 0,
 
+    _vblank_signal: bool = false,
+
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
-        var holly = @This(){
-            .vram = try allocator.alignedAlloc(u8, 32, 8 * 1024 * 1024),
-            .registers = try allocator.alloc(u8, 0x2000), // FIXME: Huge waste of memory
+        return .{
+            .vram = try allocator.alignedAlloc(u8, 32, VRAMSize),
+            .registers = try allocator.alloc(u8, RegistersSize), // FIXME: Huge waste of memory
             ._allocator = allocator,
             ._dc = dc,
-            ._ta_opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
-            ._ta_translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
-            ._ta_volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
+            ._ta = TALists.init(allocator),
         };
-        for (0..holly.ta_display_lists.len) |i| {
-            holly.ta_display_lists[i] = DisplayList.init(allocator);
-        }
-        return holly;
     }
 
     pub fn deinit(self: *@This()) void {
-        for (&self.ta_display_lists) |*display_list| {
-            display_list.deinit();
-        }
-
-        self._ta_opaque_modifier_volumes.deinit();
-        self._ta_translucent_modifier_volumes.deinit();
-        self._ta_volume_triangles.deinit();
+        self._ta.deinit();
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }
@@ -1285,6 +1309,13 @@ pub const Holly = struct {
         self._get_register(u32, .TA_LIST_CONT).* = 0;
     }
 
+    // Cleared on read
+    pub fn vblank_signal(self: *@This()) bool {
+        const r = self._vblank_signal;
+        self._vblank_signal = false;
+        return r;
+    }
+
     // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         self._tmp_cycles += 10 * cycles;
@@ -1303,21 +1334,21 @@ pub const Holly = struct {
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
             if (start_pixel < spg_hblank.hbstart and spg_hblank.hbstart <= self._pixel) {
-                spg_status.*.hblank = 1;
+                spg_status.hblank = 1;
             }
             if (start_pixel < spg_hblank.hbend and spg_hblank.hbend <= self._pixel) {
-                spg_status.*.hblank = 0;
+                spg_status.hblank = 0;
             }
             if (start_pixel < spg_hblank_int.hblank_in_interrupt and spg_hblank_int.hblank_in_interrupt <= self._pixel) {
                 switch (spg_hblank_int.hblank_int_mode) {
                     0 => {
                         // Output when the display line is the value indicated by line_comp_val.
-                        if (spg_status.*.scanline == spg_hblank_int.line_comp_val)
+                        if (spg_status.scanline == spg_hblank_int.line_comp_val)
                             dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     1 => {
                         // Output every line_comp_val lines.
-                        if (spg_status.*.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
+                        if (spg_status.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
                             dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
                     },
                     2 => {
@@ -1328,39 +1359,43 @@ pub const Holly = struct {
                 }
             }
 
-            if (self._pixel >= spg_load.hcount) {
-                self._pixel %= spg_load.hcount;
+            while (self._pixel >= spg_load.hcount) {
+                self._pixel -= spg_load.hcount;
 
                 const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
                 const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
 
-                self._get_register(SPG_STATUS, .SPG_STATUS).*.scanline +%= 1;
+                spg_status.scanline +%= 1;
 
                 // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
                 // FIXME: This has nothing to do here.
-                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.*.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
+                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
                     dc.start_maple_dma();
                 }
 
-                if (spg_status.*.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
+                if (spg_status.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
                     dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
                 }
-                if (spg_status.*.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
+                if (spg_status.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
                     dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
                 }
-                if (spg_status.*.scanline == spg_vblank.vbstart) {
-                    spg_status.*.vsync = 1;
+                if (spg_status.scanline == spg_vblank.vbstart) {
+                    spg_status.vsync = 1;
                 }
-                if (spg_status.*.scanline == spg_vblank.vbend) {
-                    spg_status.*.vsync = 0;
+                if (spg_status.scanline == spg_vblank.vbend) {
+                    spg_status.vsync = 0;
                 }
                 // FIXME: spg_load.vcount is sometimes < spg_vblank.vbend, locking the system in constant VSync.
                 //        I don't know why yet, there's probably something I did not understand correcly,
                 //        but the important for now is that all the interrupts are fired and states are reached,
                 //        even if the timing is wrong.
-                if (spg_status.*.scanline == @max(spg_load.vcount, spg_vblank.vbend)) {
-                    spg_status.*.scanline = 0;
+                // NOTE: vcount: Specify "number of lines per field - 1" for the CRT; in interlace mode, specify"number of lines per field/2 - 1." (default = 0x106)
+                if (spg_status.scanline >= @max(spg_load.vcount + 1, spg_vblank.vbend)) {
+                    spg_status.scanline = 0;
                 }
+
+                if (spg_status.scanline == 0)
+                    self._vblank_signal = true;
             }
         }
     }
@@ -1388,7 +1423,7 @@ pub const Holly = struct {
             .STARTRENDER => {
                 holly_log.debug(termcolor.green("STARTRENDER!"), .{});
 
-                self.render_start = true;
+                self._dc.on_render_start.call(self._dc);
 
                 self._dc.schedule_interrupt(.{ .RenderDoneTSP = 1 }, 200);
                 self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 400);
@@ -1508,7 +1543,7 @@ pub const Holly = struct {
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
+                    self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
                 }
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
@@ -1528,7 +1563,7 @@ pub const Holly = struct {
                         self._ta_current_volume = .{
                             .parameter_control_word = modifier_volume.*.parameter_control_word,
                             .instructions = modifier_volume.*.instructions,
-                            .first_triangle_index = @intCast(self._ta_volume_triangles.items.len),
+                            .first_triangle_index = @intCast(self._ta.volume_triangles.items.len),
                             .closed = modifier_volume.parameter_control_word.obj_control.volume == 1,
                         };
                     } else if (modifier_volume.instructions.volume_instruction == .InsideLastPolygon or modifier_volume.instructions.volume_instruction == .OutsideLastPolygon) {
@@ -1565,7 +1600,7 @@ pub const Holly = struct {
             .SpriteList => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
+                    self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
                 }
 
                 if (parameter_control_word.group_control.en == 1) {
@@ -1579,11 +1614,11 @@ pub const Holly = struct {
             // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
                 const list_type = self._ta_list_type.?;
-                var display_list = &self.ta_display_lists[@intFromEnum(list_type)];
+                var display_list = &self._ta.display_lists[@intFromEnum(list_type)];
 
                 if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                     if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                    self._ta_volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
+                    self._ta.volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
 
                     if (self._ta_volume_next_polygon_is_last) {
                         self.check_end_of_modifier_volume();
@@ -1663,9 +1698,9 @@ pub const Holly = struct {
                 if (self._ta_current_volume) |*volume| {
                     // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volumes can also be clipped.
 
-                    std.debug.assert(volume.first_triangle_index <= self._ta_volume_triangles.items.len); // This could happen if TA_LIST_INIT isn't correctly called...
+                    std.debug.assert(volume.first_triangle_index <= self._ta.volume_triangles.items.len); // This could happen if TA_LIST_INIT isn't correctly called...
 
-                    volume.triangle_count = @intCast(self._ta_volume_triangles.items.len - volume.first_triangle_index);
+                    volume.triangle_count = @intCast(self._ta.volume_triangles.items.len - volume.first_triangle_index);
 
                     // NOTE: Soul Calibur will push volumes with a single triangle by starting each frame with this sequence:
                     //   Global Parameter: Modifier Volume with holly.VolumeInstruction.Normal
@@ -1677,18 +1712,18 @@ pub const Holly = struct {
                         const config = self.get_region_array_data_config();
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convience.
-                            self._ta_opaque_modifier_volumes.append(volume.*) catch unreachable;
-                            self._ta_translucent_modifier_volumes.append(volume.*) catch unreachable;
+                            self._ta.opaque_modifier_volumes.append(volume.*) catch unreachable;
+                            self._ta.translucent_modifier_volumes.append(volume.*) catch unreachable;
                         } else {
                             (if (list_type == .OpaqueModifierVolume)
-                                self._ta_opaque_modifier_volumes
+                                self._ta.opaque_modifier_volumes
                             else
-                                self._ta_translucent_modifier_volumes).append(volume.*) catch unreachable;
+                                self._ta.translucent_modifier_volumes).append(volume.*) catch unreachable;
                         }
                     }
 
                     // Soul Calibur will continue sending triangles without submitting a new Global Parameter, prepare for that.
-                    volume.first_triangle_index = @intCast(self._ta_volume_triangles.items.len);
+                    volume.first_triangle_index = @intCast(self._ta.volume_triangles.items.len);
                     volume.triangle_count = 0;
 
                     self._ta_volume_next_polygon_is_last = false;
@@ -1703,7 +1738,7 @@ pub const Holly = struct {
 
         if (self._ta_list_type == null) {
             self._ta_list_type = parameter_control_word.list_type;
-            self.ta_display_lists[@intFromEnum(self._ta_list_type.?)].reset();
+            self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
         }
         holly_log.debug(termcolor.red("  Unimplemented ObjectListSet"), .{});
         // FIXME: Really not sure if I need to do any thing here...
@@ -1831,10 +1866,6 @@ pub const Holly = struct {
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
         holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
-    }
-
-    pub inline fn get_palette_data(self: *const @This()) []u8 {
-        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart]))[0 .. 4 * 1024];
     }
 
     pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {

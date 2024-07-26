@@ -58,6 +58,10 @@ const CableType = enum(u16) {
 const Callback = struct {
     function: *const fn (*anyopaque, *Dreamcast) void,
     context: *anyopaque,
+
+    pub fn call(self: Callback, dc: *Dreamcast) void {
+        self.function(self.context, dc);
+    }
 };
 
 const ScheduledInterrupt = struct {
@@ -115,6 +119,8 @@ pub const Dreamcast = struct {
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
     _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
+
+    on_render_start: Callback = undefined,
 
     _allocator: std.mem.Allocator,
 

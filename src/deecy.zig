@@ -6,6 +6,7 @@ const zgui = @import("zgui");
 const zaudio = @import("zaudio");
 
 const common = @import("./common.zig");
+const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -14,6 +15,8 @@ const AICA = DreamcastModule.AICAModule.AICA;
 const Renderer = @import("./renderer.zig").Renderer;
 
 const DebugUI = @import("./debug_ui.zig");
+
+const deecy_log = std.log.scoped(.deecy);
 
 fn glfw_key_callback(
     window: *zglfw.Window,
@@ -34,13 +37,17 @@ fn glfw_key_callback(
                     app.debug_ui.draw_debug_ui = !app.debug_ui.draw_debug_ui;
                 },
                 .space => {
-                    app.running = !app.running;
+                    if (app.running) {
+                        app.stop();
+                    } else {
+                        app.start();
+                    }
                 },
                 .l => {
-                    switch (app.cpu_throttling_method) {
-                        .None => app.cpu_throttling_method = .BusyWait,
-                        .BusyWait => app.cpu_throttling_method = .None,
-                    }
+                    app.set_throttle_method(switch (app._cpu_throttling_method) {
+                        .None => .PerFrame,
+                        .PerFrame => .None,
+                    });
                 },
                 else => {},
             }
@@ -51,7 +58,18 @@ fn glfw_key_callback(
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
+pub const CPUThrottleMethod = enum { None, PerFrame };
+
+pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
+    sem.mutex.lock();
+    defer sem.mutex.unlock();
+
+    sem.permits = 0;
+}
+
 pub const Deecy = struct {
+    const ExperimentalThreadedDC = true;
+
     window: *zglfw.Window,
     gctx: *zgpu.GraphicsContext = undefined,
     scale_factor: f32 = 1.0,
@@ -60,9 +78,13 @@ pub const Deecy = struct {
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
-    cpu_throttling_method: enum { None, BusyWait } = .None,
+    _cpu_throttling_method: CPUThrottleMethod = .None,
 
-    running: bool = true,
+    running: bool = false,
+    dc_thread: std.Thread = undefined,
+    dc_thread_semaphore: std.Thread.Semaphore = .{},
+    dc_last_frame: std.time.Instant = undefined,
+
     enable_jit: bool = true,
     breakpoints: std.ArrayList(u32),
 
@@ -110,6 +132,10 @@ pub const Deecy = struct {
         self.scale_factor = @max(scale[0], scale[1]);
 
         self.renderer = try Renderer.init(self._allocator, self.gctx);
+        self.dc.on_render_start = .{
+            .function = @ptrCast(&Renderer.on_render_start),
+            .context = &self.renderer,
+        };
 
         var audio_device_config = zaudio.Device.Config.init(.playback);
         audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
@@ -256,7 +282,43 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn set_throttle_method(self: *Deecy, method: CPUThrottleMethod) void {
+        if (method == self._cpu_throttling_method) return;
+
+        switch (method) {
+            .None => {
+                self.dc_thread_semaphore.post(); // Make sure to wake up.
+            },
+            .PerFrame => {
+                reset_semaphore(&self.dc_thread_semaphore);
+                self.dc_last_frame = std.time.Instant.now() catch unreachable;
+            },
+        }
+        self._cpu_throttling_method = method;
+    }
+
+    pub fn start(self: *Deecy) void {
+        self.running = true;
+        if (ExperimentalThreadedDC) {
+            self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
+                self.running = false;
+                deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
+                return undefined;
+            };
+        }
+    }
+
+    pub fn stop(self: *Deecy) void {
+        self.running = false;
+        if (ExperimentalThreadedDC) {
+            self.dc_thread_semaphore.post();
+            self.dc_thread.join();
+        }
+    }
+
     pub fn destroy(self: *Deecy) void {
+        self.stop();
+
         self.breakpoints.deinit();
 
         self.audio_device.destroy();
@@ -278,6 +340,74 @@ pub const Deecy = struct {
         self._allocator.destroy(self);
     }
 
+    pub fn one_frame(self: *Deecy) void {
+        if (ExperimentalThreadedDC) {
+            const target_frame_time = std.time.ns_per_s / 60; // FIXME: Adjust that based on the DC settings...
+
+            // Internal representation of std.time.Instant is plateform dependent. To do arithmetic with it, we need to learn about it.
+            // FIXME: This is not ideal... It is unknown at compile tile, on Windows at least. But it should be constant for the duration of the program, I hope.
+            const static = struct {
+                var frame_time: u64 = 0; // In nanoseconds
+                var timestamp_diff: u64 = undefined; // In platform-dependent units
+            };
+            if (static.frame_time != target_frame_time) {
+                static.frame_time = target_frame_time;
+                const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
+                static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+            }
+
+            if (self.running and self._cpu_throttling_method == .PerFrame) {
+                const now = std.time.Instant.now() catch unreachable;
+                if (now.since(self.dc_last_frame) >= target_frame_time) {
+                    self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
+                    // Adding to the previous timestamp rather that using 'now' will compensate the latency between calls to one_frame().
+                    self.dc_last_frame.timestamp += static.timestamp_diff;
+                }
+            }
+        } else {
+            self.run_dreamcast_until_next_frame();
+        }
+    }
+
+    fn run_dreamcast_until_next_frame(self: *Deecy) void {
+        var cycles: u64 = 0;
+        if (!self.enable_jit) {
+            while (self.running and !self.dc.gpu.vblank_signal()) {
+                const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
+
+                cycles += self.dc.tick(max_instructions) catch unreachable;
+
+                // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+                if (max_instructions == 1) {
+                    const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
+                        if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
+                    } else null;
+                    if (breakpoint != null) {
+                        self.running = false;
+                    }
+                }
+            }
+        } else {
+            while (!self.dc.gpu.vblank_signal()) {
+                cycles += self.dc.tick_jit() catch unreachable;
+            }
+        }
+        self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
+    }
+
+    fn dreamcast_thread_fn(self: *Deecy) void {
+        deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
+
+        while (self.running) {
+            if (self._cpu_throttling_method == .PerFrame) {
+                self.dc_thread_semaphore.wait();
+            }
+            self.run_dreamcast_until_next_frame();
+        }
+
+        deecy_log.info(termcolor.red("Dreamcast thread stopped."), .{});
+    }
+
     fn audio_callback(
         device: *zaudio.Device,
         output: ?*anyopaque,
@@ -292,8 +422,10 @@ pub const Deecy = struct {
         aica.sample_mutex.lock();
         defer aica.sample_mutex.unlock();
 
-        if (AICA.ExperimentalExternalSampleGeneration)
+        if (AICA.ExperimentalExternalSampleGeneration) {
             aica.generate_samples(self.dc, frame_count);
+            aica.update_timers(self.dc, frame_count);
+        }
 
         var out: [*]i32 = @ptrCast(@alignCast(output));
 
