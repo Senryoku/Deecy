@@ -458,12 +458,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         zgui.text(" - {s} - ", .{@tagName(channel.play_control.sample_format)});
                         zgui.sameLine(.{});
                         zgui.textColored(if (channel.play_control.sample_loop) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
-                        zgui.text("Start Address: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
+                        zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
                             start_addr,
                             channel.loop_start,
                             channel.loop_end,
                         });
                         zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
+                        zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume });
                         zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                         zgui.sameLine(.{});
                         zgui.text("PlayPos: {X: >6} - ", .{state.play_position});

@@ -79,6 +79,19 @@ pub const LFOControl = packed struct(u32) {
     _: u16,
 };
 
+pub const DSPChannelSend = packed struct(u32) {
+    channel: u4, // DSP send channel, 0x0-0xF
+    // "This affects which DSP MIXS register will receive this channel's output.
+    //  I have verified that bit 19 of MIXS corresponds to bit 15 of a
+    //  single 16-bit sample played at the maximum possible volume."
+    level: u4, // DSP send level, 0x0-0xF
+    // Scales the output of this channel to one of the effect send buses.
+    // 0xF is full volume (no attenuation), every level beneath that adds
+    // 3dB, and 0x0 means no output.
+    _0: u8 = 0,
+    _1: u16,
+};
+
 pub const DirectPanVolSend = packed struct(u32) {
     pan: u5, // Direct send pan (DIPAN)
     // 0x00 or 0x10 is center, 0x0F is full right, 0x1F is full left
@@ -123,24 +136,24 @@ pub const LPFRates2 = packed struct(u32) {
 
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
-    play_control: PlayControl, //          0x00
-    sample_address_low: u32, //            0x04 Lowest 16 bits of sample start address (SA) (in bytes)
-    loop_start: u32, //                    0x08
-    loop_end: u32, //                      0x0C
-    amp_env_1: AmpEnv1, //                 0x10
-    amp_env_2: AmpEnv2, //                 0x14
-    sample_pitch_rate: SamplePitchRate, // 0x18
-    lfo_control: LFOControl, //            0x1C
-    dps_channel_send: DirectPanVolSend, // 0x20
-    direct_pan_vol_send: u32, //           0x24
-    env_settings: EnvSettings, //          0x28 Also Named 'LPF1Volume'
-    flv0: u32, //              Bits 0-12   0x2C Cutoff frequency at the time of attack start.                  Also named lpf2
-    flv1: u32, //              Bits 0-12   0x30 Cutoff frequency at the time of attack end (dacay start time). Also named lpf3
-    flv2: u32, //              Bits 0-12   0x34 Cutoff frequency at the time of decay end (sustain start time) Also named lpf4
-    flv3: u32, //              Bits 0-12   0x38 Cutoff frequency at the time of KOFF.                          Also named lpf5
-    flv4: u32, //              Bits 0-12   0x3C Cutoff frequency after release.                                Also named lpf6
-    lpf_rates_1: LPFRates1, //             0x40                                                                Also named lpf7
-    lpf_rates_2: LPFRates2, //             0x44                                                                Also named lpf8
+    play_control: PlayControl, //             0x00
+    sample_address_low: u32, //               0x04 Lowest 16 bits of sample start address (SA) (in bytes)
+    loop_start: u32, //                       0x08
+    loop_end: u32, //                         0x0C
+    amp_env_1: AmpEnv1, //                    0x10
+    amp_env_2: AmpEnv2, //                    0x14
+    sample_pitch_rate: SamplePitchRate, //    0x18
+    lfo_control: LFOControl, //               0x1C
+    dps_channel_send: DSPChannelSend, //      0x20
+    direct_pan_vol_send: DirectPanVolSend, // 0x24
+    env_settings: EnvSettings, //             0x28 Also Named 'LPF1Volume'
+    flv0: u32, //                 Bits 0-12   0x2C Cutoff frequency at the time of attack start.                  Also named lpf2
+    flv1: u32, //                 Bits 0-12   0x30 Cutoff frequency at the time of attack end (dacay start time). Also named lpf3
+    flv2: u32, //                 Bits 0-12   0x34 Cutoff frequency at the time of decay end (sustain start time) Also named lpf4
+    flv3: u32, //                 Bits 0-12   0x38 Cutoff frequency at the time of KOFF.                          Also named lpf5
+    flv4: u32, //                 Bits 0-12   0x3C Cutoff frequency after release.                                Also named lpf6
+    lpf_rates_1: LPFRates1, //                0x40                                                                Also named lpf7
+    lpf_rates_2: LPFRates2, //                0x44                                                                Also named lpf8
 
     pub fn sample_address(self: *const AICAChannel) u32 {
         return (@as(u32, self.play_control.start_address) << 16) | (self.sample_address_low & 0xFFFF);
@@ -155,6 +168,7 @@ pub const MasterVolume = packed struct(u32) {
     _: u5,
     mono: bool, // 0: Enables the panpot information, 1: Disables the panpot information.
     // (Note) If the panpot information has been disabled, a sound that is on only one channel doubles in volume, so it is necessary to lower MVOL
+    _0: u16,
 };
 
 // Address of AICA registers. Add 0x00700000 for access from SH4 and 0x00800000 for access from ARM7
@@ -876,9 +890,9 @@ pub const AICA = struct {
             //        0xF       |    0dB
             const attenuation = std.math.pow(i32, 2, 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F));
             {
-                @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + sample_count, self.sample_buffer.len)], 0);
-                if (self.sample_write_offset + sample_count > self.sample_buffer.len)
-                    @memset(self.sample_buffer[0 .. (self.sample_write_offset + sample_count) % self.sample_buffer.len], 0);
+                @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2 * sample_count, self.sample_buffer.len)], 0);
+                if (self.sample_write_offset + 2 * sample_count > self.sample_buffer.len)
+                    @memset(self.sample_buffer[0 .. (self.sample_write_offset + 2 * sample_count) % self.sample_buffer.len], 0);
 
                 for (0..64) |i| {
                     self.update_channel(@intCast(i), sample_count);
@@ -887,22 +901,24 @@ pub const AICA = struct {
                 // Stream from GD-ROM
                 for (0..sample_count) |i| {
                     const samples = dc.gdrom.get_cdda_samples();
-                    // FIXME: This is stereo!
-                    self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] +|= samples[0];
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= samples[0];
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= samples[1];
                 }
 
                 if (attenuation == 0) {
                     for (0..sample_count) |i| {
-                        self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] = 0;
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] = 0;
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] = 0;
                     }
                 } else if (attenuation > 1) {
                     for (0..sample_count) |i| {
                         // zig doesn't have a arithmetic shift right :(
-                        self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(i + self.sample_write_offset) % self.sample_buffer.len], attenuation);
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len], attenuation);
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len], attenuation);
                     }
                 }
 
-                self.sample_write_offset = (self.sample_write_offset + sample_count) % self.sample_buffer.len;
+                self.sample_write_offset = (self.sample_write_offset + 2 * sample_count) % self.sample_buffer.len;
                 self._samples_counter +%= sample_count;
             }
         }
@@ -1094,8 +1110,31 @@ pub const AICA = struct {
             // Interpolate samples
             const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
             const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
-            if (!state.debug.mute)
-                self.sample_buffer[i % self.sample_buffer.len] +|= sample;
+            if (!state.debug.mute) {
+                const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
+                const dipan = if (self.get_reg(MasterVolume, .MasterVolume).*.mono) 0 else registers.direct_pan_vol_send.pan;
+                // Direct send to the DAC
+                if (disdl != 0) { // 0 means full attenuation, not send.
+                    // DIPAN == 0x00 and 0x10 means center (no attenuation)
+                    const pan_att = dipan & 0xF;
+                    var left = sample;
+                    var right = sample;
+                    // Right side attenuation
+                    if (dipan & 0x10 == 0x10) {
+                        right = @divTrunc(right, std.math.pow(i32, 2, pan_att));
+                    } else {
+                        left = @divTrunc(left, std.math.pow(i32, 2, pan_att));
+                    }
+                    const att = std.math.pow(i32, 2, 0xF - disdl);
+                    right = @divTrunc(right, att);
+                    left = @divTrunc(left, att);
+
+                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= left;
+                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= right;
+                }
+                // TODO: DSP!
+                if (registers.dps_channel_send.level != 0) {}
+            }
 
             state.fractional_play_position += base_play_position_inc;
             while (state.fractional_play_position >= sample_length) {
