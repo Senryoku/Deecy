@@ -1155,6 +1155,9 @@ pub const Renderer = struct {
         std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta);
         @memcpy(self.registers, dc.gpu.registers);
         @memcpy(self.vram, dc.gpu.vram);
+        if (self.render_start) {
+            renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
+        }
         self.render_start = true;
     }
 
@@ -1613,6 +1616,9 @@ pub const Renderer = struct {
     }
 
     pub fn update_framebuffer(self: *@This()) void {
+        self.gpu_data_mutex.lock();
+        defer self.gpu_data_mutex.unlock();
+
         const SPG_CONTROL = self.get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
         const FB_R_CTRL = self.get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
         // const FB_C_SOF = self.get_register(u32, .FB_C_SOF).*;
@@ -1849,6 +1855,9 @@ pub const Renderer = struct {
     }
 
     pub fn update(self: *Renderer) !void {
+        self.gpu_data_mutex.lock();
+        defer self.gpu_data_mutex.unlock();
+
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
 

@@ -262,16 +262,22 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
 
             if (zgui.button(if (d.running) "Pause" else "Run", .{ .w = 200.0 })) {
-                d.running = !d.running;
+                if (d.running) {
+                    d.stop();
+                } else {
+                    d.start();
+                }
             }
 
             if (zgui.button("Step", .{ .w = 200.0 })) {
-                d.running = false;
+                d.stop();
                 _ = try dc.tick(1);
             }
+            zgui.beginDisabled(.{ .disabled = d.running });
             if (zgui.button("Skip", .{ .w = 200.0 })) {
                 dc.cpu.pc += 2;
             }
+            zgui.endDisabled();
 
             if (comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
                 _ = zgui.checkbox("Debug trace", .{ .v = &dc.cpu.debug_trace });

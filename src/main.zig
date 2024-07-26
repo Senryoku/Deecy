@@ -113,7 +113,7 @@ fn safe_path(path: []u8) void {
 }
 
 fn trapa_handler(app: *anyopaque) void {
-    @as(*Deecy, @alignCast(@ptrCast(app))).running = false;
+    @as(*Deecy, @alignCast(@ptrCast(app))).stop();
 }
 
 const Configuration = struct {
@@ -138,6 +138,7 @@ pub fn main() !void {
     try vmu_path.appendSlice("./userdata/vmu_default.bin");
 
     var skip_bios = false;
+    var start_immediately = true;
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -176,7 +177,7 @@ pub fn main() !void {
             skip_bios = true;
         }
         if (std.mem.eql(u8, arg, "--stop")) {
-            d.running = false;
+            start_immediately = false;
         }
     }
 
@@ -260,7 +261,8 @@ pub fn main() !void {
 
     var blit_framebuffer_from_vram = true;
 
-    var last_wait = try std.time.Instant.now();
+    if (start_immediately)
+        d.start();
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
@@ -283,45 +285,7 @@ pub fn main() !void {
             zgui.end();
         }
 
-        try d.debug_ui.draw(d);
-
         d.pool_controllers();
-
-        if (d.running) {
-            const start = try std.time.Instant.now();
-            var cycles: u64 = 0;
-            // FIXME: We break on render start for synchronization, this is not how we'll want to do it in the end.
-            while (d.running and (try std.time.Instant.now()).since(start) < 16 * std.time.ns_per_ms and !d.renderer.render_start) {
-                if (!d.enable_jit) {
-                    const max_instructions: u8 = if (d.breakpoints.items.len == 0) 16 else 1;
-
-                    cycles += try dc.tick(max_instructions);
-
-                    // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-                    if (max_instructions == 1) {
-                        const breakpoint = for (d.breakpoints.items, 0..) |addr, index| {
-                            if (addr & 0x1FFFFFFF == dc.cpu.pc & 0x1FFFFFFF) break index;
-                        } else null;
-                        if (breakpoint != null) {
-                            d.running = false;
-                        }
-                    }
-                } else {
-                    for (0..32) |_| {
-                        cycles += try dc.tick_jit();
-                        if (d.renderer.render_start) break;
-                    }
-                }
-            }
-
-            d.dc.maple.flush_vmus();
-
-            if (d.cpu_throttling_method == .BusyWait) {
-                // Busy wait to limit SH4 clock speed. FIXME: This is gross.
-                while ((try std.time.Instant.now()).since(last_wait) < @divTrunc(std.time.ns_per_s * cycles, 200_000_000)) {}
-            }
-            last_wait = try std.time.Instant.now();
-        }
 
         const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
         defer swapchain_texv.release();
@@ -358,6 +322,8 @@ pub fn main() !void {
             try d.renderer.render();
 
         d.renderer.draw(); //  Blit to screen
+
+        try d.debug_ui.draw(d);
 
         const commands = commands: {
             const encoder = d.gctx.device.createCommandEncoder(null);

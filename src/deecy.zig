@@ -6,6 +6,7 @@ const zgui = @import("zgui");
 const zaudio = @import("zaudio");
 
 const common = @import("./common.zig");
+const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -14,6 +15,8 @@ const AICA = DreamcastModule.AICAModule.AICA;
 const Renderer = @import("./renderer.zig").Renderer;
 
 const DebugUI = @import("./debug_ui.zig");
+
+const deecy_log = std.log.scoped(.deecy);
 
 fn glfw_key_callback(
     window: *zglfw.Window,
@@ -34,7 +37,11 @@ fn glfw_key_callback(
                     app.debug_ui.draw_debug_ui = !app.debug_ui.draw_debug_ui;
                 },
                 .space => {
-                    app.running = !app.running;
+                    if (app.running) {
+                        app.stop();
+                    } else {
+                        app.start();
+                    }
                 },
                 .l => {
                     switch (app.cpu_throttling_method) {
@@ -62,7 +69,9 @@ pub const Deecy = struct {
 
     cpu_throttling_method: enum { None, BusyWait } = .None,
 
-    running: bool = true,
+    running: bool = false,
+    dc_thread: std.Thread = undefined,
+
     enable_jit: bool = true,
     breakpoints: std.ArrayList(u32),
 
@@ -260,7 +269,23 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn start(self: *Deecy) void {
+        self.running = true;
+        self.dc_thread = std.Thread.spawn(.{}, run_dreamcast, .{self}) catch |err| {
+            self.running = false;
+            deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
+            return undefined;
+        };
+    }
+
+    pub fn stop(self: *Deecy) void {
+        self.running = false;
+        self.dc_thread.join();
+    }
+
     pub fn destroy(self: *Deecy) void {
+        self.stop();
+
         self.breakpoints.deinit();
 
         self.audio_device.destroy();
@@ -282,7 +307,41 @@ pub const Deecy = struct {
         self._allocator.destroy(self);
     }
 
-    fn run_dreamcast(_: *Deecy) void {}
+    fn run_dreamcast(self: *Deecy) void {
+        deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
+
+        var cycles: u64 = 0;
+
+        while (self.running) {
+            if (!self.enable_jit) {
+                const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
+
+                cycles += self.dc.tick(max_instructions) catch unreachable;
+
+                // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+                if (max_instructions == 1) {
+                    const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
+                        if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
+                    } else null;
+                    if (breakpoint != null) {
+                        self.running = false;
+                    }
+                }
+            } else {
+                while (cycles < 200_000_000 / 60) {
+                    const c = self.dc.tick_jit() catch unreachable;
+                    if (c == 0) break;
+                    cycles += c;
+                }
+            }
+
+            cycles = 0;
+
+            self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
+        }
+
+        deecy_log.info(termcolor.red("Dreamcast thread stopped."), .{});
+    }
 
     fn audio_callback(
         device: *zaudio.Device,
