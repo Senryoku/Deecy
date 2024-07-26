@@ -993,7 +993,6 @@ pub const AICA = struct {
         if (!state.playing) return;
         if (state.amp_env_level >= 0x3FF) {
             state.amp_env_level = 0x3FF;
-            state.amp_env_state = .Release;
             return;
         }
 
@@ -1205,7 +1204,6 @@ pub const AICA = struct {
                     } else {
                         state.playing = false;
                         state.amp_env_level = 0x3FF;
-                        state.amp_env_state = .Release;
                         state.play_position = @truncate(registers.loop_end);
                         return;
                     }
