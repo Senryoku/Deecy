@@ -298,21 +298,25 @@ pub const Deecy = struct {
     }
 
     pub fn start(self: *Deecy) void {
-        self.running = true;
-        if (ExperimentalThreadedDC) {
-            self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
-                self.running = false;
-                deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
-                return undefined;
-            };
+        if (!self.running) {
+            self.running = true;
+            if (ExperimentalThreadedDC) {
+                self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
+                    self.running = false;
+                    deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
+                    return undefined;
+                };
+            }
         }
     }
 
     pub fn stop(self: *Deecy) void {
-        self.running = false;
-        if (ExperimentalThreadedDC) {
-            self.dc_thread_semaphore.post();
-            self.dc_thread.join();
+        if (self.running) {
+            self.running = false;
+            if (ExperimentalThreadedDC) {
+                self.dc_thread_semaphore.post();
+                self.dc_thread.join();
+            }
         }
     }
 
