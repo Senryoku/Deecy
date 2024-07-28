@@ -477,8 +477,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             .Sustain => channel.amp_env_1.sustain_rate,
                             .Release => channel.amp_env_2.release_rate,
                         });
-                        zgui.text("AmpEnv {s: >7} - level: {X: >4} - rate: {X: >2}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
-                        zgui.text("FilEnv {s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
+                        zgui.textColored(if (!channel.env_settings.voff) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "AmpEnv ", .{});
+                        zgui.sameLine(.{});
+                        zgui.text("{s: >7} - level: {X: >4} - rate: {X: >2}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
+                        zgui.textColored(if (!channel.env_settings.lpoff) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "FilEnv ", .{});
+                        zgui.sameLine(.{});
+                        zgui.text("{s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
                         zgui.text("ALFOS {X: >1} ALFOWS {X: >1} PLFOS {X: >1} PLFOWS {X: >1} F {X: >2} R {any}", .{
                             channel.lfo_control.amplitude_modulation_depth,
                             @intFromEnum(channel.lfo_control.amplitude_modulation_waveform),
@@ -508,15 +512,20 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 zgui.plot.endPlot();
                             }
                         }
-                        if (time - self.audio_channels[i].amplitude_envelope.start_time > 10_000) {
-                            self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
-                            self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
-                        }
-                        if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0) {
-                            try self.audio_channels[i].amplitude_envelope.xv.append(time - self.audio_channels[i].amplitude_envelope.start_time);
+                        if (d.running) {
+                            if (time - self.audio_channels[i].amplitude_envelope.start_time > 10_000) {
+                                self.audio_channels[i].amplitude_envelope.xv.clearRetainingCapacity();
+                                self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
+                            }
+                            if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0) {
+                                try self.audio_channels[i].amplitude_envelope.xv.append(time - self.audio_channels[i].amplitude_envelope.start_time);
+                            } else {
+                                self.audio_channels[i].amplitude_envelope.start_time = time;
+                                try self.audio_channels[i].amplitude_envelope.xv.append(0);
+                            }
                         } else {
-                            self.audio_channels[i].amplitude_envelope.start_time = time;
-                            try self.audio_channels[i].amplitude_envelope.xv.append(0);
+                            if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0)
+                                self.audio_channels[i].amplitude_envelope.start_time += time - self.audio_channels[i].amplitude_envelope.xv.items[self.audio_channels[i].amplitude_envelope.xv.items.len - 1];
                         }
                         try self.audio_channels[i].amplitude_envelope.yv.append(state.amp_env_level);
                         if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {

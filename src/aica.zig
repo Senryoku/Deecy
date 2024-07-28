@@ -901,7 +901,6 @@ pub const AICA = struct {
                 // Stream from GD-ROM
                 for (0..sample_count) |i| {
                     const samples = dc.gdrom.get_cdda_samples();
-                    // TODO: Use CDDAOutputLeft/CDDAOutputRight registers?
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= samples[0];
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= samples[1];
                 }
@@ -1200,8 +1199,11 @@ pub const AICA = struct {
                     state.loop_end_flag = true;
                     if (registers.play_control.sample_loop) {
                         state.play_position = @truncate(registers.loop_start);
-                        state.adpcm_state.step = state.adpcm_state.step_loopstart;
-                        state.adpcm_state.prev = state.adpcm_state.prev_loopstart;
+                        // NOTE: ADPCM long stream mode expects the user to correctly handle this themselves.
+                        if (registers.play_control.sample_format == .ADPCM) {
+                            state.adpcm_state.step = state.adpcm_state.step_loopstart;
+                            state.adpcm_state.prev = state.adpcm_state.prev_loopstart;
+                        }
                     } else {
                         state.playing = false;
                         state.amp_env_level = 0x3FF;
