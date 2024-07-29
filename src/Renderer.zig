@@ -1532,30 +1532,31 @@ pub const Renderer = struct {
             .palette_hash = self.palette_hash(texture_control_word),
         };
 
-        // Fill with repeating texture data when v_size != u_size to avoid  wrapping artifacts.
+        // Fill with repeating texture data when v_size != u_size to avoid wrapping artifacts.
         const repeat_vertically = v_size <= u_size;
         const copies = if (repeat_vertically) u_size / v_size else v_size / u_size;
         var tex_source = [2][]u8{ self._scratch_pad, self._scratch_pad };
-        if (false) {
-            // FIXME: Flip the repetition depending on wrapping settings?
-            //        This is untested (actually haven't found a problematic case yet).
-            const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-            const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
-            const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-            const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
-            if (copies > 1) {
-                if ((clamp_u or flip_u) and !repeat_vertically) {
-                    tex_source[1] = self._scratch_pad[u_size * v_size * 4 ..];
-                    for (0..u_size) |u| {
-                        for (0..v_size) |v| {
-                            tex_source[1][u_size * v + u] = tex_source[0][u_size * v + (u_size - u)];
-                        }
-                    }
-                } else if ((clamp_v or flip_v) and repeat_vertically) {
-                    tex_source[1] = self._scratch_pad[u_size * v_size * 4 ..];
+        // Flip the repetition depending on wrapping settings
+        const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
+        const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
+        const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
+        const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
+        if (copies > 1) {
+            if ((clamp_u or flip_u) and !repeat_vertically) {
+                tex_source[1] = self._scratch_pad[u_size * v_size * 4 ..];
+                for (0..u_size) |u| {
                     for (0..v_size) |v| {
-                        @memcpy(tex_source[1][u_size * v ..][0..u_size], tex_source[0][u_size * (v_size - v) ..][0..u_size]);
+                        tex_source[1][4 * (u_size * v + u) ..][0] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][0];
+                        tex_source[1][4 * (u_size * v + u) ..][1] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][1];
+                        tex_source[1][4 * (u_size * v + u) ..][2] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][2];
+                        tex_source[1][4 * (u_size * v + u) ..][3] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][3];
                     }
+                }
+            } else if ((clamp_v or flip_v) and repeat_vertically) {
+                // FIXME: This is untested (actually haven't found a problematic case yet).
+                tex_source[1] = self._scratch_pad[u_size * v_size * 4 ..];
+                for (0..v_size) |v| {
+                    @memcpy(tex_source[1][4 * u_size * v ..][0 .. 4 * u_size], tex_source[0][4 * u_size * (v_size - v - 1) ..][0 .. 4 * u_size]);
                 }
             }
         }
