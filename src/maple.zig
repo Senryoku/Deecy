@@ -123,7 +123,7 @@ const DeviceInfoPayload = extern struct {
     SubFunctionCodesMasks: [3]u32 align(1),
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
-    DescriptionString: [30]u8 align(1) = .{0} ** 30,
+    DescriptionString: [31]u8 align(1) = .{0} ** 31,
     ProducerString: [60]u8 align(1) = .{0} ** 60,
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
@@ -190,7 +190,7 @@ const Controller = struct {
         @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
             .FunctionCodesMask = Capabilities,
             .SubFunctionCodesMasks = Subcapabilities,
-            .DescriptionString = "Dreamcast Controller         \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+            .DescriptionString = "Dreamcast Controller          \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
             .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
             .StandbyConsumption = 0x01AE,
             .MaximumConsumption = 0x01F4,
@@ -402,6 +402,11 @@ pub const VMU = struct {
         @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
             .FunctionCodesMask = Capabilities,
             .SubFunctionCodesMasks = Subcapabilities,
+            .RegionCode = 0xFF,
+            .DescriptionString = "Visual Memory                  ".*,
+            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
+            .StandbyConsumption = 0x007C,
+            .MaximumConsumption = 0x0082,
         };
         return r;
     }
