@@ -672,7 +672,7 @@ pub const Renderer = struct {
                     .height = @as(u32, 8) << @intCast(i),
                     .depth_or_array_layers = Renderer.MaxTextures[i],
                 },
-                .format = zgpu.GraphicsContext.swapchain_format,
+                .format = .bgra8_unorm,
                 .mip_level_count = 1, // std.math.log2_int(u32, @as(u32, 8))) + 1,
             });
             texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
@@ -1473,6 +1473,17 @@ pub const Renderer = struct {
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
                             }
+                        }
+                    }
+                },
+                .BumpMap => {
+                    renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
+                    for (0..v_size) |v| {
+                        for (0..u_size) |u| {
+                            const pixel_idx = v * u_size + u;
+                            const texel_idx = 2 * pixel_idx;
+                            const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[addr + texel_idx])))[0..2].*;
+                            self.bgra_scratch_pad()[pixel_idx] = .{ texels[0], texels[1], 0, 0 };
                         }
                     }
                 },
