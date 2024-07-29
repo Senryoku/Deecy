@@ -5,7 +5,6 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zaudio = @import("zaudio");
 
-const common = @import("./common.zig");
 const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("./dreamcast.zig");
@@ -14,6 +13,7 @@ const AICA = DreamcastModule.AICAModule.AICA;
 
 const Renderer = @import("./renderer.zig").Renderer;
 
+const DeecyUI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 
 const deecy_log = std.log.scoped(.deecy);
@@ -80,6 +80,9 @@ pub const Deecy = struct {
 
     _cpu_throttling_method: CPUThrottleMethod = .None,
 
+    last_frame_timestamp: i64,
+    last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
+
     running: bool = false,
     dc_thread: std.Thread = undefined,
     dc_thread_semaphore: std.Thread.Semaphore = .{},
@@ -107,7 +110,9 @@ pub const Deecy = struct {
         const self = try allocator.create(Deecy);
         self.* = Deecy{
             .window = try zglfw.Window.create(640 * 2 + 2 * 320, 480 * 2 + 320, "Deecy", null),
-            .dc = try Dreamcast.create(common.GeneralAllocator),
+            .dc = try Dreamcast.create(allocator),
+            .last_frame_timestamp = std.time.microTimestamp(),
+            .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
             .breakpoints = std.ArrayList(u32).init(allocator),
             ._allocator = allocator,
         };
@@ -115,7 +120,7 @@ pub const Deecy = struct {
         self.window.setUserPointer(self);
         _ = self.window.setKeyCallback(glfw_key_callback);
 
-        self.gctx = try zgpu.GraphicsContext.create(common.GeneralAllocator, .{
+        self.gctx = try zgpu.GraphicsContext.create(allocator, .{
             .window = self.window,
             .fn_getTime = @ptrCast(&zglfw.getTime),
             .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
@@ -169,7 +174,7 @@ pub const Deecy = struct {
     }
 
     fn ui_init(self: *Deecy) !void {
-        zgui.init(common.GeneralAllocator);
+        zgui.init(self._allocator);
         zgui.io.setConfigFlags(.{ .dock_enable = true });
 
         _ = zgui.io.addFontFromMemory(
@@ -342,6 +347,33 @@ pub const Deecy = struct {
         zglfw.terminate();
 
         self._allocator.destroy(self);
+    }
+
+    pub fn draw_ui(self: *@This()) !void {
+        zgui.backend.newFrame(
+            self.gctx.swapchain_descriptor.width,
+            self.gctx.swapchain_descriptor.height,
+        );
+
+        if (!self.debug_ui.draw_debug_ui) {
+            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
+            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
+                var sum: i128 = 0;
+                for (0..self.last_n_frametimes.count) |i| {
+                    sum += self.last_n_frametimes.peekItem(i);
+                }
+                const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
+            }
+            zgui.end();
+        }
+
+        try self.debug_ui.draw(self);
+
+        // TODO:  Distiguish between standard and debug UI.
+        if (self.debug_ui.draw_debug_ui) {
+            try DeecyUI.draw(self);
+        }
     }
 
     pub fn one_frame(self: *Deecy) void {

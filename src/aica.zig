@@ -1132,7 +1132,14 @@ pub const AICA = struct {
                     self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= right;
                 }
                 // TODO: DSP!
-                if (registers.dps_channel_send.level != 0) {}
+                if (registers.dps_channel_send.level != 0) {
+                    const channel = registers.dps_channel_send.channel;
+                    _ = channel;
+                    // TEMP: Bypassing the DSP and outputting directly. Some sound without DSP effects is better that nothing for now.
+                    const attenuated = @divTrunc(sample, std.math.pow(i32, 2, 0xF - registers.dps_channel_send.level));
+                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= attenuated;
+                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= attenuated;
+                }
             }
 
             state.fractional_play_position += base_play_position_inc;

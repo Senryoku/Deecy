@@ -30,10 +30,13 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 -   What's "Maple V blank over interrupt"?
     "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
 -   AICA:
-    - Stereo
+    - Stereo debugging
     - DSP
     - More debug
 -   Renderer:
+    - Framebuffer:
+        - Somehow detect writes to framebuffer and display it. 
+        - Write back for games that need it.
     - Modifier Volumes.
         - Implemented: Inclusion volumes and shadow bit over opaque geometry.
         - TODO: Exclusion volumes.

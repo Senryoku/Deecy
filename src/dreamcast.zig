@@ -148,8 +148,6 @@ pub const Dreamcast = struct {
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
 
-        try dc.set_region(.USA);
-
         try dc.reset();
 
         // FIXME: Hack to bypass some checks I'm failling to emulate.

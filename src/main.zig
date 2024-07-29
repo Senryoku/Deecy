@@ -120,20 +120,12 @@ const Configuration = struct {
     per_game_vmu: bool = true,
 };
 
-const TmpDirPath = "./userdata/tmp";
+const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will deleted on program exit!
 
 pub fn main() !void {
     defer {
         // Cleanup temprary directory, if it exists
-        const tmp_dir = std.fs.cwd().openDir(TmpDirPath, .{});
-        if (tmp_dir) |d| {
-            d.deleteTree(".") catch |err| std.log.err("Failed to delete temporary directory ('" ++ TmpDirPath ++ "'): {s}", .{@errorName(err)});
-        } else |err| {
-            switch (err) {
-                error.FileNotFound => {}, // Expected when not used, we can ignore it.
-                else => std.log.err("Failed to open temporary directory ('" ++ TmpDirPath ++ "') for deletion: {s}", .{@errorName(err)}),
-            }
-        }
+        std.fs.cwd().deleteTree(TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ TmpDirPath ++ "'): {s}", .{@errorName(err)});
     }
 
     var d = try Deecy.create(common.GeneralAllocator);
@@ -197,6 +189,8 @@ pub fn main() !void {
     }
 
     if (binary_path) |path| {
+        try dc.set_region(.USA);
+
         // FIXME: I'd rather be using LLE syscalls here,
         //        but at least the ROM font one requires some initialization
         //        and won't work if the boot ROM is skipped.
@@ -253,6 +247,8 @@ pub fn main() !void {
         std.log.info("  Detected region: {s}", .{@tagName(region)});
         if (region != .Unknown) {
             try dc.set_region(region);
+        } else {
+            try dc.set_region(.USA);
         }
 
         if (default_vmu and config.per_game_vmu) {
@@ -291,6 +287,7 @@ pub fn main() !void {
         }
     } else {
         if (skip_bios) {
+            try dc.set_region(.USA);
             // Boot to menu
             dc.skip_bios(true);
             // Skip IP.bin (Maybe we should bundle one to load here).
@@ -302,9 +299,6 @@ pub fn main() !void {
 
     dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 
-    var last_frame_timestamp = std.time.microTimestamp();
-    var last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(common.GeneralAllocator);
-
     var blit_framebuffer_from_vram = true;
 
     if (start_immediately)
@@ -314,24 +308,6 @@ pub fn main() !void {
         d.one_frame();
 
         zglfw.pollEvents();
-
-        zgui.backend.newFrame(
-            d.gctx.swapchain_descriptor.width,
-            d.gctx.swapchain_descriptor.height,
-        );
-
-        if (!d.debug_ui.draw_debug_ui) {
-            zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
-            if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-                var sum: i128 = 0;
-                for (0..last_n_frametimes.count) |i| {
-                    sum += last_n_frametimes.peekItem(i);
-                }
-                const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(last_n_frametimes.count));
-                zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
-            }
-            zgui.end();
-        }
 
         d.pool_controllers();
 
@@ -353,12 +329,12 @@ pub fn main() !void {
             d.renderer.render_start = false;
             try d.renderer.update();
 
-            if (last_n_frametimes.count >= 60) {
-                _ = last_n_frametimes.readItem();
+            if (d.last_n_frametimes.count >= 60) {
+                _ = d.last_n_frametimes.readItem();
             }
             const now = std.time.microTimestamp();
-            try last_n_frametimes.writeItem(now - last_frame_timestamp);
-            last_frame_timestamp = now;
+            try d.last_n_frametimes.writeItem(now - d.last_frame_timestamp);
+            d.last_frame_timestamp = now;
         }
 
         const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
@@ -370,7 +346,7 @@ pub fn main() !void {
 
         d.renderer.draw(); //  Blit to screen
 
-        try d.debug_ui.draw(d);
+        try d.draw_ui();
 
         const commands = commands: {
             const encoder = d.gctx.device.createCommandEncoder(null);
