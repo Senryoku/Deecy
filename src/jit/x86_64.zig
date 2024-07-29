@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const termcolor = @import("termcolor");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
@@ -305,6 +306,8 @@ pub const InstructionType = enum {
     Div,
     Fma, // Fused Multiply Add
     Sqrt,
+    Min,
+    Max,
     And,
     Or,
     Xor,
@@ -341,6 +344,8 @@ pub const Instruction = union(InstructionType) {
     Div: struct { dst: Operand, src: Operand },
     Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
     Sqrt: struct { dst: Operand, src: Operand },
+    Min: struct { dst: Operand, src: Operand },
+    Max: struct { dst: Operand, src: Operand },
     And: struct { dst: Operand, src: Operand },
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
@@ -379,6 +384,8 @@ pub const Instruction = union(InstructionType) {
             .Div => |div| writer.print("div {any}, {any}", .{ div.dst, div.src }),
             .Fma => |fma| writer.print("fma {any} += {any} * {any}", .{ fma.dst, fma.src1, fma.src2 }),
             .Sqrt => |sqrt| writer.print("sqrt {any}, {any}", .{ sqrt.dst, sqrt.src }),
+            .Min => |min| writer.print("min {any}, {any}", .{ min.dst, min.src }),
+            .Max => |max| writer.print("max {any}, {any}", .{ max.dst, max.src }),
             .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
@@ -624,6 +631,8 @@ pub const Emitter = struct {
                 .Div => |a| try self.div(a.dst, a.src),
                 .Fma => |a| try self.fma(a.dst, a.src1, a.src2),
                 .Sqrt => |a| try self.sqrt(a.dst, a.src),
+                .Min => |a| try self.min(a.dst, a.src),
+                .Max => |a| try self.max(a.dst, a.src),
                 .And => |a| try self.and_(a.dst, a.src),
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
@@ -774,17 +783,30 @@ pub const Emitter = struct {
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
     }
 
-    // <op>ss xmm1, xmm2/m32 (mem operand not yet supported here)
-    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst: FPRegister, src: FPRegister) !void {
+    // <op>ss xmm1, xmm2/m32
+    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst: FPRegister, src: Operand) !void {
         try self.emit(u8, switch (size) {
             ._32 => 0xF3,
             ._64 => 0xF2,
             else => @compileError("Unsupported operand size"),
         });
-        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src) });
-        try self.emit(u8, 0x0F);
-        try self.emit(ScalarFPOpcodes, opcode);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+        switch (src) {
+            .freg32, .freg64 => |src_reg| {
+                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src_reg) });
+                try self.emit(u8, 0x0F);
+                try self.emit(ScalarFPOpcodes, opcode);
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
+            },
+            .mem => |src_mem| {
+                x86_64_emitter_log.warn(termcolor.yellow("Untested <{s}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{@tagName(opcode)});
+
+                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src_mem.base) });
+                try self.emit(u8, 0x0F);
+                try self.emit(ScalarFPOpcodes, opcode);
+                try self.emit_mem_addressing(encode(dst), src_mem);
+            },
+            else => return error.UnsupportedSourceForScalarFPOperation,
+        }
     }
 
     pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, lhs: FPRegister, rhs: FPRegister) !void {
@@ -959,7 +981,7 @@ pub const Emitter = struct {
             .freg32 => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| try mov_freg_reg(self, ._32, dst_reg, src_reg),
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mov, dst_reg, src_reg),
+                    .freg32 => try scalar_floating_point_operation(self, ._32, .Mov, dst_reg, src),
                     .mem => |src_mem| try mov_reg_mem(self, .MemToReg, dst, src_mem),
                     else => return error.InvalidMovSource,
                 }
@@ -967,7 +989,7 @@ pub const Emitter = struct {
             .freg64 => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| try mov_freg_reg(self, ._64, dst_reg, src_reg),
-                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mov, dst_reg, src_reg),
+                    .freg64 => try scalar_floating_point_operation(self, ._64, .Mov, dst_reg, src),
                     .mem => |src_mem| {
                         if (src_mem.size != 64) return error.InvalidMemSize;
                         try mov_reg_mem(self, .MemToReg, dst, src_mem);
@@ -1121,18 +1143,8 @@ pub const Emitter = struct {
 
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
-            .freg32 => |dst_reg| {
-                switch (src) {
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Add, dst_reg, src_reg),
-                    else => return error.InvalidAddSource,
-                }
-            },
-            .freg64 => |dst_reg| {
-                switch (src) {
-                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Add, dst_reg, src_reg),
-                    else => return error.InvalidAddSource,
-                }
-            },
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Add, dst_reg, src),
+            .freg64 => |dst_reg| try scalar_floating_point_operation(self, ._64, .Add, dst_reg, src),
             else => return opcode_81_83(self, 0x04, 0x05, 0x00, 0x01, 0x02, 0x03, .Add, dst, src),
         }
     }
@@ -1173,18 +1185,8 @@ pub const Emitter = struct {
     }
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
-            .freg32 => |dst_reg| {
-                switch (src) {
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Sub, dst_reg, src_reg),
-                    else => return error.InvalidSubSource,
-                }
-            },
-            .freg64 => |dst_reg| {
-                switch (src) {
-                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Sub, dst_reg, src_reg),
-                    else => return error.InvalidSubSource,
-                }
-            },
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Sub, dst_reg, src),
+            .freg64 => |dst_reg| try scalar_floating_point_operation(self, ._64, .Sub, dst_reg, src),
             else => return opcode_81_83(self, 0x2C, 0x2D, 0x28, 0x29, 0x2A, 0x2B, .Sub, dst, src),
         }
     }
@@ -1257,36 +1259,16 @@ pub const Emitter = struct {
                     else => return error.InvalidMulSource,
                 }
             },
-            .freg32 => |dst_reg| {
-                switch (src) {
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Mul, dst_reg, src_reg),
-                    else => return error.InvalidMulSource,
-                }
-            },
-            .freg64 => |dst_reg| {
-                switch (src) {
-                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Mul, dst_reg, src_reg),
-                    else => return error.InvalidMulSource,
-                }
-            },
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Mul, dst_reg, src),
+            .freg64 => |dst_reg| try scalar_floating_point_operation(self, ._64, .Mul, dst_reg, src),
             else => return error.InvalidMulDestination,
         }
     }
 
     pub fn div(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
-            .freg32 => |dst_reg| {
-                switch (src) {
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Div, dst_reg, src_reg),
-                    else => return error.InvalidDivSource,
-                }
-            },
-            .freg64 => |dst_reg| {
-                switch (src) {
-                    .freg64 => |src_reg| try scalar_floating_point_operation(self, ._64, .Div, dst_reg, src_reg),
-                    else => return error.InvalidDivSource,
-                }
-            },
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Div, dst_reg, src),
+            .freg64 => |dst_reg| try scalar_floating_point_operation(self, ._64, .Div, dst_reg, src),
             else => return error.InvalidDivDestination,
         }
     }
@@ -1315,13 +1297,22 @@ pub const Emitter = struct {
 
     pub fn sqrt(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
-            .freg32 => |dst_reg| {
-                switch (src) {
-                    .freg32 => |src_reg| try scalar_floating_point_operation(self, ._32, .Sqrt, dst_reg, src_reg),
-                    else => return error.InvalidSqrtSource,
-                }
-            },
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Sqrt, dst_reg, src),
             else => return error.InvalidSqrtDestination,
+        }
+    }
+
+    pub fn min(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Min, dst_reg, src),
+            else => return error.InvalidMinDestination,
+        }
+    }
+
+    pub fn max(self: *@This(), dst: Operand, src: Operand) !void {
+        switch (dst) {
+            .freg32 => |dst_reg| try scalar_floating_point_operation(self, ._32, .Max, dst_reg, src),
+            else => return error.InvalidMaxDestination,
         }
     }
 
