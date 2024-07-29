@@ -1441,23 +1441,35 @@ pub fn float_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
 }
 
 pub fn ftrc_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // FIXME: Overflow behaviour isn't accurate.
+    // NOTE: Overflow behaviour differs from x86_64.
     //        x86_64 will return the "indefinite integer value" (0x80000000 or 0x80000000_00000000 if operand size is 64 bits)
-    //        SH4 wants 0x7F800000 if positive, 0xFF800000 if negative.
-    const tmp: JIT.Operand = .{ .reg = ReturnRegister };
+    //        See interpreter implementation (ftrc_FRn_FPUL) for more details.
+    const dest_tmp: JIT.Operand = .{ .reg = ReturnRegister };
+
     switch (ctx.fpscr_pr) {
-        .Single => try block.append(.{ .Convert = .{
-            .dst = tmp,
-            .src = try load_fp_register(block, ctx, instr.nmd.n),
-        } }),
+        .Single => {
+            const FRn = try load_fp_register(block, ctx, instr.nmd.n);
+            const tmp_float: Architecture.Operand = .{ .freg32 = FPScratchRegisters[0] };
+            const tmp_max_float: Architecture.Operand = .{ .freg32 = FPScratchRegisters[1] };
+            try block.mov(tmp_float, FRn); // Copy FRn to a temporary we can manipulate.
+
+            // Clamp it. This doesn't match the interpreter implementation in edge cases (inf and NaN basically),
+            // but sounds good enough for now (literally, this fixes popping sounds in SA2 for example).
+            const max_f32: u32 = 0x4EFFFFFF; // 1.FFFFFE * 2^30
+            try block.mov(dest_tmp, .{ .imm32 = max_f32 });
+            try block.mov(tmp_max_float, dest_tmp);
+            try block.append(.{ .Min = .{ .dst = tmp_float, .src = tmp_max_float } });
+            // CVTTSS2SI will already return 0x80000000 in case of negative overflow.
+
+            try block.append(.{ .Convert = .{
+                .dst = dest_tmp,
+                .src = tmp_float,
+            } });
+        },
         .Double => return interpreter_fallback_cached(block, ctx, instr),
-        // try block.append(.{ .Convert = .{
-        //     .dst = tmp,
-        //     .src = try load_dfp_register(block, ctx, instr.nmd.n),
-        // } }),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, tmp);
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, dest_tmp);
     return false;
 }
 
