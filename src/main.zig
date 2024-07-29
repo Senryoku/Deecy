@@ -120,7 +120,22 @@ const Configuration = struct {
     per_game_vmu: bool = true,
 };
 
+const TmpDirPath = "./userdata/tmp";
+
 pub fn main() !void {
+    defer {
+        // Cleanup temprary directory, if it exists
+        const tmp_dir = std.fs.cwd().openDir(TmpDirPath, .{});
+        if (tmp_dir) |d| {
+            d.deleteTree(".") catch |err| std.log.err("Failed to delete temporary directory ('" ++ TmpDirPath ++ "'): {s}", .{@errorName(err)});
+        } else |err| {
+            switch (err) {
+                error.FileNotFound => {}, // Expected when not used, we can ignore it.
+                else => std.log.err("Failed to open temporary directory ('" ++ TmpDirPath ++ "') for deletion: {s}", .{@errorName(err)}),
+            }
+        }
+    }
+
     var d = try Deecy.create(common.GeneralAllocator);
     defer d.destroy();
     var dc = d.dc;
@@ -201,7 +216,38 @@ pub fn main() !void {
         }
     } else if (gdi_path) |path| {
         std.log.info("Loading GDI: {s}...", .{path});
-        dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
+
+        if (std.mem.endsWith(u8, path, ".zip")) {
+            var zip_file = try std.fs.cwd().openFile(path, .{});
+            defer zip_file.close();
+            var stream = zip_file.seekableStream();
+            var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
+            var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var gdi_filename: []u8 = "";
+            while (try iter.next()) |entry| {
+                const filename = filename_buf[0..entry.filename_len];
+                try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
+                std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
+                if (std.mem.endsWith(u8, filename, ".gdi")) {
+                    gdi_filename = filename;
+                    break;
+                }
+            }
+            if (gdi_filename.len == 0) {
+                std.log.err("Could not find GDI file in zip file '{s}'.", .{path});
+                return error.GDIFileNotFound;
+            }
+            var gdi_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const tmp_gdi_path = try std.fmt.bufPrint(&gdi_path_buf, TmpDirPath ++ "/{s}", .{gdi_filename});
+            std.log.info("Found GDI file: '{s}'.", .{gdi_filename});
+            std.log.info("Extracting zip to '{s}'...", .{TmpDirPath});
+            var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
+            defer tmp_dir.close();
+            try std.zip.extract(tmp_dir, stream, .{});
+            dc.gdrom.disk = try GDI.init(tmp_gdi_path, common.GeneralAllocator);
+        } else {
+            dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
+        }
 
         const region = dc.gdrom.disk.?.get_region();
         std.log.info("  Detected region: {s}", .{@tagName(region)});
