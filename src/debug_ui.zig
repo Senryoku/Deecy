@@ -199,11 +199,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
 
+            zgui.beginDisabled(.{ .disabled = d.running });
             if (zgui.button("Step", .{ .w = 200.0 })) {
-                d.stop();
                 _ = try dc.tick(1);
             }
-            zgui.beginDisabled(.{ .disabled = d.running });
             if (zgui.button("Skip", .{ .w = 200.0 })) {
                 dc.cpu.pc += 2;
             }
