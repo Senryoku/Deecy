@@ -1166,39 +1166,60 @@ const ScheduledInterrupt = struct {
 };
 
 pub const TALists = struct {
-    display_lists: [5]DisplayList = undefined,
+    opaque_list: DisplayList,
+    punchthrough_list: DisplayList,
+    translucent_list: DisplayList,
     opaque_modifier_volumes: std.ArrayList(ModifierVolume),
     translucent_modifier_volumes: std.ArrayList(ModifierVolume),
     volume_triangles: std.ArrayList(ModifierVolumeParameter),
 
     pub fn init(allocator: std.mem.Allocator) TALists {
-        var r: TALists = .{
+        return .{
+            .opaque_list = DisplayList.init(allocator),
+            .punchthrough_list = DisplayList.init(allocator),
+            .translucent_list = DisplayList.init(allocator),
             .opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
             .translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
             .volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
         };
-        for (0..r.display_lists.len) |i| {
-            r.display_lists[i] = DisplayList.init(allocator);
-        }
-        return r;
     }
 
     pub fn deinit(self: *TALists) void {
-        for (&self.display_lists) |*dl| {
-            dl.deinit();
-        }
+        self.opaque_list.deinit();
+        self.punchthrough_list.deinit();
+        self.translucent_list.deinit();
         self.opaque_modifier_volumes.deinit();
         self.translucent_modifier_volumes.deinit();
         self.volume_triangles.deinit();
     }
 
     pub fn clearRetainingCapacity(self: *TALists) void {
-        for (&self.display_lists) |*dl| {
-            dl.clearRetainingCapacity();
-        }
+        self.opaque_list.clearRetainingCapacity();
+        self.punchthrough_list.clearRetainingCapacity();
+        self.translucent_list.clearRetainingCapacity();
         self.opaque_modifier_volumes.clearRetainingCapacity();
         self.translucent_modifier_volumes.clearRetainingCapacity();
         self.volume_triangles.clearRetainingCapacity();
+    }
+
+    pub fn get_list(self: *TALists, list_type: ListType) *DisplayList {
+        return switch (list_type) {
+            .Opaque => &self.opaque_list,
+            .PunchThrough => &self.punchthrough_list,
+            .Translucent => &self.translucent_list,
+            else => @panic("Invalid List Type"),
+        };
+    }
+
+    pub fn reset(self: *TALists, list_type: ListType) void {
+        switch (list_type) {
+            .Opaque => self.opaque_list.clearRetainingCapacity(),
+            .PunchThrough => self.punchthrough_list.clearRetainingCapacity(),
+            .Translucent => self.translucent_list.clearRetainingCapacity(),
+            .OpaqueModifierVolume => self.opaque_modifier_volumes.clearRetainingCapacity(),
+            .TranslucentModifierVolume => self.translucent_modifier_volumes.clearRetainingCapacity(),
+            else => @panic("Invalid List Type"),
+        }
     }
 };
 
@@ -1404,10 +1425,8 @@ pub const Holly = struct {
         switch (@as(HollyRegister, @enumFromInt(addr))) {
             .ID, .REVISION => return, // Read-only
             .SOFTRESET => {
-                holly_log.debug("TODO SOFTRESET: {X:0>8}", .{v});
                 const sr: SOFT_RESET = @bitCast(v);
                 if (sr.TASoftReset == 1) {
-                    holly_log.debug(termcolor.yellow("  TODO: Tile Accelerator Soft Reset"), .{});
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1441,6 +1460,8 @@ pub const Holly = struct {
                     self._ta_current_polygon = null;
                     self._ta_current_volume = null;
                     self._ta_user_tile_clip = null;
+
+                    //const list_idx = (self._get_register(u32, .TA_ISP_BASE).* >> 20) & 0xF;
                 }
             },
             .TA_LIST_CONT => {
@@ -1543,7 +1564,7 @@ pub const Holly = struct {
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
+                    self._ta.reset(self._ta_list_type.?);
                 }
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
@@ -1600,7 +1621,7 @@ pub const Holly = struct {
             .SpriteList => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
+                    self._ta.reset(self._ta_list_type.?);
                 }
 
                 if (parameter_control_word.group_control.en == 1) {
@@ -1613,74 +1634,76 @@ pub const Holly = struct {
             },
             // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
-                const list_type = self._ta_list_type.?;
-                var display_list = &self._ta.display_lists[@intFromEnum(list_type)];
+                if (self._ta_list_type) |list_type| {
+                    if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
+                        if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
+                        self._ta.volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
 
-                if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
-                    if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                    self._ta.volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
-
-                    if (self._ta_volume_next_polygon_is_last) {
-                        self.check_end_of_modifier_volume();
-                    }
-                } else {
-                    if (self._ta_current_polygon) |*polygon| {
-                        const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
-                        switch (polygon.*) {
-                            .Sprite => {
-                                if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
-                                    holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {any}", .{parameter_control_word});
-                                }
-                                if (polygon_obj_control.texture == 0) {
-                                    if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
-                                    display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                } else {
-                                    if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
-                                    display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
-                                }
-                            },
-                            else => {
-                                const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                                if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
-
-                                display_list.vertex_parameters.append(switch (format) {
-                                    .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
-                                    .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
-                                    else => {
-                                        holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
-                                        @panic("Unexpected vertex parameter type");
-                                    },
-                                }) catch unreachable;
-                            },
-                        }
-
-                        if (parameter_control_word.end_of_strip == 1) {
-                            display_list.vertex_strips.append(.{
-                                .polygon = polygon.*,
-                                .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
-                                .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
-                                .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
-                            }) catch unreachable;
-
-                            display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
+                        if (self._ta_volume_next_polygon_is_last) {
+                            self.check_end_of_modifier_volume();
                         }
                     } else {
-                        holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(list_type)});
-                        @panic("No current polygon");
+                        var display_list = self._ta.get_list(list_type);
+                        if (self._ta_current_polygon) |*polygon| {
+                            const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
+                            switch (polygon.*) {
+                                .Sprite => {
+                                    if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
+                                        holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {any}", .{parameter_control_word});
+                                    }
+                                    if (polygon_obj_control.texture == 0) {
+                                        if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
+                                        display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                    } else {
+                                        if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
+                                        display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
+                                    }
+                                },
+                                else => {
+                                    const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
+                                    if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+
+                                    display_list.vertex_parameters.append(switch (format) {
+                                        .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
+                                        .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
+                                        else => {
+                                            holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
+                                            @panic("Unexpected vertex parameter type");
+                                        },
+                                    }) catch unreachable;
+                                },
+                            }
+
+                            if (parameter_control_word.end_of_strip == 1) {
+                                display_list.vertex_strips.append(.{
+                                    .polygon = polygon.*,
+                                    .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
+                                    .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
+                                    .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
+                                }) catch unreachable;
+
+                                display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
+                            }
+                        } else {
+                            holly_log.err(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(list_type)});
+                            @panic("No current polygon");
+                        }
                     }
+                } else {
+                    holly_log.err(termcolor.red("Received VertexParameter without an active list!"), .{});
                 }
             },
             _ => {
@@ -1738,9 +1761,9 @@ pub const Holly = struct {
 
         if (self._ta_list_type == null) {
             self._ta_list_type = parameter_control_word.list_type;
-            self._ta.display_lists[@intFromEnum(self._ta_list_type.?)].clearRetainingCapacity();
+            self._ta.reset(self._ta_list_type.?);
         }
-        holly_log.debug(termcolor.red("  Unimplemented ObjectListSet"), .{});
+        holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
         // FIXME: Really not sure if I need to do any thing here...
         //        Is it meant to separate objects by tiles? Are they already submitted elsewhere anyway?
         if (false) {

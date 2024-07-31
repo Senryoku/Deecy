@@ -489,7 +489,9 @@ pub const Renderer = struct {
     depth_texture_view: zgpu.TextureViewHandle = undefined,
     depth_only_texture_view: zgpu.TextureViewHandle = undefined,
 
-    passes: [5]PassMetadata = undefined,
+    opaque_pass: PassMetadata,
+    punchthrough_pass: PassMetadata,
+    translucent_pass: PassMetadata,
 
     read_framebuffer_enabled: bool = false,
     min_depth: f32 = std.math.floatMax(f32),
@@ -1108,6 +1110,10 @@ pub const Renderer = struct {
             .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
             .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
 
+            .opaque_pass = PassMetadata.init(allocator, .Opaque),
+            .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
+            .translucent_pass = PassMetadata.init(allocator, .Translucent),
+
             .ta_lists = HollyModule.TALists.init(allocator),
             .registers = try allocator.alloc(u8, HollyModule.Holly.RegistersSize),
             .vram = try allocator.alignedAlloc(u8, 32, HollyModule.Holly.VRAMSize),
@@ -1118,19 +1124,15 @@ pub const Renderer = struct {
             ._allocator = allocator,
         };
 
-        for (0..renderer.passes.len) |i| {
-            renderer.passes[i] = PassMetadata.init(allocator, @enumFromInt(i));
-        }
-
         renderer.on_inner_resolution_change();
 
         return renderer;
     }
 
     pub fn deinit(self: *Renderer) void {
-        for (&self.passes) |*pass| {
-            pass.deinit();
-        }
+        self.opaque_pass.deinit();
+        self.punchthrough_pass.deinit();
+        self.translucent_pass.deinit();
 
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
@@ -1901,9 +1903,7 @@ pub const Renderer = struct {
 
         try self.update_background();
 
-        for (&self.passes) |*pass| {
-            pass.pass_type = pass.pass_type;
-
+        for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
             // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
             //             which is okay, I think. However this might become problematic down the line.
             //             We're saving a lot of allocations this way, but there's probably a better way to do it.
@@ -1916,11 +1916,11 @@ pub const Renderer = struct {
             }
         }
 
-        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.Translucent, HollyModule.ListType.PunchThrough }) |list_type| {
+        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
             // Parameters specific to a polygon type
             var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             var face_offset_color: fARGB = undefined;
-            const display_list = self.ta_lists.display_lists[@intFromEnum(list_type)];
+            const display_list = self.ta_lists.get_list(list_type);
 
             for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(self.vertices.items.len);
@@ -2249,9 +2249,16 @@ pub const Renderer = struct {
                         .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
                     };
 
-                    var pipeline = self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key) orelse put: {
-                        try self.passes[@intFromEnum(list_type)].pipelines.put(pipeline_key, PipelineMetadata.init(self._allocator));
-                        break :put self.passes[@intFromEnum(list_type)].pipelines.getPtr(pipeline_key).?;
+                    const pass = switch (list_type) {
+                        .Opaque => &self.opaque_pass,
+                        .PunchThrough => &self.punchthrough_pass,
+                        .Translucent => &self.translucent_pass,
+                        else => @compileError("Invalid list type"),
+                    };
+
+                    var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
+                        try pass.pipelines.put(pipeline_key, PipelineMetadata.init(self._allocator));
+                        break :put pass.pipelines.getPtr(pipeline_key).?;
                     };
 
                     const draw_call_key = .{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
@@ -2280,7 +2287,7 @@ pub const Renderer = struct {
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
 
             var index = FirstIndex;
-            for (&self.passes) |*pass| {
+            for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
                 var it = pass.pipelines.iterator();
                 while (it.next()) |entry| {
                     for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
@@ -2452,8 +2459,8 @@ pub const Renderer = struct {
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
                 // Opaque and PunchThrough geometry
-                inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough }) |list_type| {
-                    var it = self.passes[@intFromEnum(list_type)].pipelines.iterator();
+                inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
+                    var it = metadata.pipelines.iterator();
                     while (it.next()) |entry| {
                         // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                         if (entry.value_ptr.*.draw_calls.count() > 0) {
@@ -2694,14 +2701,12 @@ pub const Renderer = struct {
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                     pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                    const translucent_pass = self.passes[@intFromEnum(HollyModule.ListType.Translucent)];
-
                     pass.setPipeline(gctx.lookupResource(self.translucent_pipeline).?);
 
                     pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
                     pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
-                    var it = translucent_pass.pipelines.iterator();
+                    var it = self.translucent_pass.pipelines.iterator();
                     while (it.next()) |entry| {
                         if (entry.value_ptr.*.draw_calls.count() > 0) {
                             for (entry.value_ptr.*.draw_calls.values()) |draw_call| {

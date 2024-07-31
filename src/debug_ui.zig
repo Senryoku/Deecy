@@ -557,7 +557,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
                 zgui.indent(.{});
                 inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                    const list = &d.renderer.ta_lists.display_lists[@intFromEnum(list_type)];
+                    const list = d.renderer.ta_lists.get_list(list_type);
                     const name = @tagName(@as(Holly.ListType, list_type));
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
@@ -833,9 +833,10 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     };
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        if (self.selected_strip_index < d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items.len) {
-            const parameters = d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_parameters.items;
-            const strip = &d.renderer.ta_lists.display_lists[@intFromEnum(self.selected_strip_list)].vertex_strips.items[self.selected_strip_index];
+        const list = d.renderer.ta_lists.get_list(self.selected_strip_list);
+        if (self.selected_strip_index < list.vertex_strips.items.len) {
+            const parameters = list.vertex_parameters.items;
+            const strip = &list.vertex_strips.items[self.selected_strip_index];
             switch (strip.polygon) {
                 .Sprite => |_| {
                     for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
