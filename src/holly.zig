@@ -1173,6 +1173,8 @@ pub const TALists = struct {
     translucent_modifier_volumes: std.ArrayList(ModifierVolume),
     volume_triangles: std.ArrayList(ModifierVolumeParameter),
 
+    _should_reset: bool = false,
+
     pub fn init(allocator: std.mem.Allocator) TALists {
         return .{
             .opaque_list = DisplayList.init(allocator),
@@ -1211,14 +1213,16 @@ pub const TALists = struct {
         };
     }
 
-    pub fn reset(self: *TALists, list_type: ListType) void {
-        switch (list_type) {
-            .Opaque => self.opaque_list.clearRetainingCapacity(),
-            .PunchThrough => self.punchthrough_list.clearRetainingCapacity(),
-            .Translucent => self.translucent_list.clearRetainingCapacity(),
-            .OpaqueModifierVolume => self.opaque_modifier_volumes.clearRetainingCapacity(),
-            .TranslucentModifierVolume => self.translucent_modifier_volumes.clearRetainingCapacity(),
-            else => @panic("Invalid List Type"),
+    pub fn mark_reset(self: *TALists) void {
+        // NOTE: Apparently lists are not reinitialized immediately, but on the next write.
+        // MetalliC says it matters for some games, although I haven't encountered it myself.
+        self._should_reset = true;
+    }
+
+    pub fn check_reset(self: *TALists) void {
+        if (self._should_reset) {
+            self._should_reset = false;
+            self.clearRetainingCapacity();
         }
     }
 };
@@ -1241,7 +1245,12 @@ pub const Holly = struct {
     _ta_current_volume: ?ModifierVolume = null,
     _ta_volume_next_polygon_is_last: bool = false,
 
-    _ta: TALists,
+    // When starting a render, the user can select where to get the parameters from using
+    // the PARAM_BASE register. It is specified in 1MB blocks, meaning it can take at most
+    // 16 different values (actually 8 in the case of the base DC and its 8MB of VRAM).
+    // We don't emulate the object writes to VRAM, but some games submit multiple lists concurently
+    // ("double buffering" the object lists), so we have to keep track of that.
+    _ta_lists: [16]TALists = undefined,
 
     _pixel: u32 = 0,
     _tmp_cycles: u32 = 0,
@@ -1249,17 +1258,22 @@ pub const Holly = struct {
     _vblank_signal: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
-        return .{
+        var r = Holly{
             .vram = try allocator.alignedAlloc(u8, 32, VRAMSize),
             .registers = try allocator.alloc(u8, RegistersSize), // FIXME: Huge waste of memory
             ._allocator = allocator,
             ._dc = dc,
-            ._ta = TALists.init(allocator),
         };
+        for (&r._ta_lists) |*ta_list| {
+            ta_list.* = TALists.init(allocator);
+        }
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
-        self._ta.deinit();
+        for (&self._ta_lists) |*ta_list| {
+            ta_list.deinit();
+        }
         self._allocator.free(self.registers);
         self._allocator.free(self.vram);
     }
@@ -1430,6 +1444,8 @@ pub const Holly = struct {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
+                    self._ta_current_volume = null;
+                    self._ta_user_tile_clip = null;
                 }
                 if (sr.PipelineSoftReset == 1) {
                     holly_log.debug(termcolor.yellow("  TODO: Pipeine Soft Reset"), .{});
@@ -1451,21 +1467,29 @@ pub const Holly = struct {
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
                     holly_log.debug("TA_LIST_INIT: {X:0>8}", .{v});
-                    if (self._get_register(u32, .TA_LIST_CONT).* & 0x80000000 == 0) {
-                        self._get_register(u32, .TA_NEXT_OPB).* = self._get_register(u32, .TA_NEXT_OPB_INIT).*;
-                        self._get_register(u32, .TA_ITP_CURRENT).* = self._get_register(u32, .TA_ISP_BASE).*;
-                    }
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
                     self._ta_current_volume = null;
                     self._ta_user_tile_clip = null;
+                    self._get_register(u32, .TA_NEXT_OPB).* = self.read_register(u32, .TA_NEXT_OPB_INIT);
+                    self._get_register(u32, .TA_ITP_CURRENT).* = self.read_register(u32, .TA_ISP_BASE);
 
-                    //const list_idx = (self._get_register(u32, .TA_ISP_BASE).* >> 20) & 0xF;
+                    self.ta_current_lists().mark_reset();
                 }
+                return;
             },
             .TA_LIST_CONT => {
                 holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
+                // TODO: Same thing as TA_LIST_INIT, but without reseting the list?
+                if (v == 0x80000000) {
+                    self._ta_command_buffer_index = 0;
+                    self._ta_list_type = null;
+                    self._ta_current_polygon = null;
+                    self._ta_current_volume = null;
+                    self._ta_user_tile_clip = null;
+                }
+                return;
             },
             .TA_YUV_TEX_BASE => {
                 self._get_register(u32, .TA_YUV_TEX_CNT).* = 0;
@@ -1516,6 +1540,16 @@ pub const Holly = struct {
         self.handle_command();
     }
 
+    fn ta_list_index(self: *const @This()) u4 {
+        // Should I record the value of TA_ISP_BASE on LIST_INIT?
+        // NOTE: We also assume that TA_OL_BASE is in the same 1MB range here.
+        return @truncate((self.read_register(u32, .TA_ISP_BASE) >> 20) & 0xF);
+    }
+
+    fn ta_current_lists(self: *@This()) *TALists {
+        return &self._ta_lists[self.ta_list_index()];
+    }
+
     pub fn handle_command(self: *@This()) void {
         if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 bytes long
 
@@ -1564,7 +1598,7 @@ pub const Holly = struct {
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self._ta.reset(self._ta_list_type.?);
+                    self.ta_current_lists().check_reset();
                 }
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
@@ -1584,7 +1618,7 @@ pub const Holly = struct {
                         self._ta_current_volume = .{
                             .parameter_control_word = modifier_volume.*.parameter_control_word,
                             .instructions = modifier_volume.*.instructions,
-                            .first_triangle_index = @intCast(self._ta.volume_triangles.items.len),
+                            .first_triangle_index = @intCast(self.ta_current_lists().volume_triangles.items.len),
                             .closed = modifier_volume.parameter_control_word.obj_control.volume == 1,
                         };
                     } else if (modifier_volume.instructions.volume_instruction == .InsideLastPolygon or modifier_volume.instructions.volume_instruction == .OutsideLastPolygon) {
@@ -1621,7 +1655,7 @@ pub const Holly = struct {
             .SpriteList => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
-                    self._ta.reset(self._ta_list_type.?);
+                    self.ta_current_lists().check_reset();
                 }
 
                 if (parameter_control_word.group_control.en == 1) {
@@ -1637,13 +1671,13 @@ pub const Holly = struct {
                 if (self._ta_list_type) |list_type| {
                     if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                         if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                        self._ta.volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
+                        self.ta_current_lists().volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch unreachable;
 
                         if (self._ta_volume_next_polygon_is_last) {
                             self.check_end_of_modifier_volume();
                         }
                     } else {
-                        var display_list = self._ta.get_list(list_type);
+                        var display_list = self.ta_current_lists().get_list(list_type);
                         if (self._ta_current_polygon) |*polygon| {
                             const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
                             switch (polygon.*) {
@@ -1721,9 +1755,9 @@ pub const Holly = struct {
                 if (self._ta_current_volume) |*volume| {
                     // FIXME: I should probably honor _ta_user_tile_clip here too... Given the examples in the doc, modifier volumes can also be clipped.
 
-                    std.debug.assert(volume.first_triangle_index <= self._ta.volume_triangles.items.len); // This could happen if TA_LIST_INIT isn't correctly called...
+                    std.debug.assert(volume.first_triangle_index <= self.ta_current_lists().volume_triangles.items.len); // This could happen if TA_LIST_INIT isn't correctly called...
 
-                    volume.triangle_count = @intCast(self._ta.volume_triangles.items.len - volume.first_triangle_index);
+                    volume.triangle_count = @intCast(self.ta_current_lists().volume_triangles.items.len - volume.first_triangle_index);
 
                     // NOTE: Soul Calibur will push volumes with a single triangle by starting each frame with this sequence:
                     //   Global Parameter: Modifier Volume with holly.VolumeInstruction.Normal
@@ -1735,18 +1769,18 @@ pub const Holly = struct {
                         const config = self.get_region_array_data_config();
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convience.
-                            self._ta.opaque_modifier_volumes.append(volume.*) catch unreachable;
-                            self._ta.translucent_modifier_volumes.append(volume.*) catch unreachable;
+                            self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch unreachable;
+                            self.ta_current_lists().translucent_modifier_volumes.append(volume.*) catch unreachable;
                         } else {
                             (if (list_type == .OpaqueModifierVolume)
-                                self._ta.opaque_modifier_volumes
+                                self.ta_current_lists().opaque_modifier_volumes
                             else
-                                self._ta.translucent_modifier_volumes).append(volume.*) catch unreachable;
+                                self.ta_current_lists().translucent_modifier_volumes).append(volume.*) catch unreachable;
                         }
                     }
 
                     // Soul Calibur will continue sending triangles without submitting a new Global Parameter, prepare for that.
-                    volume.first_triangle_index = @intCast(self._ta.volume_triangles.items.len);
+                    volume.first_triangle_index = @intCast(self.ta_current_lists().volume_triangles.items.len);
                     volume.triangle_count = 0;
 
                     self._ta_volume_next_polygon_is_last = false;
@@ -1761,7 +1795,7 @@ pub const Holly = struct {
 
         if (self._ta_list_type == null) {
             self._ta_list_type = parameter_control_word.list_type;
-            self._ta.reset(self._ta_list_type.?);
+            self.ta_current_lists().check_reset();
         }
         holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
         // FIXME: Really not sure if I need to do any thing here...
@@ -1889,6 +1923,10 @@ pub const Holly = struct {
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
         holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
         @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
+    }
+
+    pub inline fn read_register(self: *const @This(), comptime T: type, r: HollyRegister) T {
+        return @constCast(self)._get_register_from_addr(T, @intFromEnum(r)).*;
     }
 
     pub inline fn _get_register(self: *@This(), comptime T: type, r: HollyRegister) *T {

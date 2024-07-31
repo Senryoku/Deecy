@@ -1153,8 +1153,10 @@ pub const Renderer = struct {
         self.gpu_data_mutex.lock();
         defer self.gpu_data_mutex.unlock();
 
-        self.ta_lists.clearRetainingCapacity();
-        std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta);
+        const list_idx: u4 = @truncate(dc.gpu.read_register(u32, .PARAM_BASE) >> 20);
+
+        self.ta_lists.clearRetainingCapacity(); // We'll consume the lists. This isn't accurate, but I don't think games will actually edit lists AFTER calling a START_RENDER on it...?
+        std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta_lists[list_idx]);
         @memcpy(self.registers, dc.gpu.registers);
         @memcpy(self.vram, dc.gpu.vram);
         if (self.render_start) {
