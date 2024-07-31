@@ -493,7 +493,6 @@ pub const Renderer = struct {
     punchthrough_pass: PassMetadata,
     translucent_pass: PassMetadata,
 
-    read_framebuffer_enabled: bool = false,
     min_depth: f32 = std.math.floatMax(f32),
     max_depth: f32 = 0.0,
     pt_alpha_ref: f32 = 1.0,
@@ -1157,8 +1156,10 @@ pub const Renderer = struct {
 
         self.ta_lists.clearRetainingCapacity(); // We'll consume the lists. This isn't accurate, but I don't think games will actually edit lists AFTER calling a START_RENDER on it...?
         std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta_lists[list_idx]);
+        // Copy registers and VRAM in case they're modified before rendering is done. FIXME: This is very slow and mostly unnecessary.
         @memcpy(self.registers, dc.gpu.registers);
         @memcpy(self.vram, dc.gpu.vram);
+
         if (self.render_start) {
             renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
         }
@@ -1630,94 +1631,82 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn update_framebuffer(self: *@This()) void {
-        self.gpu_data_mutex.lock();
-        defer self.gpu_data_mutex.unlock();
+    pub fn update_framebuffer_texture(self: *@This(), holly: *const HollyModule.Holly) void {
+        const SPG_CONTROL = holly.read_register(HollyModule.SPG_CONTROL, .SPG_CONTROL);
+        const FB_R_CTRL = holly.read_register(HollyModule.FB_R_CTRL, .FB_R_CTRL);
+        const FB_R_SOF1 = holly.read_register(u32, .FB_R_SOF1);
+        const FB_R_SOF2 = holly.read_register(u32, .FB_R_SOF2);
+        const FB_R_SIZE = holly.read_register(HollyModule.FB_R_SIZE, .FB_R_SIZE);
 
-        // FIXME: Now that Holly pushes data to the renderer on render start, this won't work anymore.
+        const vram = holly.vram;
 
-        const SPG_CONTROL = self.get_register(HollyModule.SPG_CONTROL, .SPG_CONTROL).*;
-        const FB_R_CTRL = self.get_register(HollyModule.FB_R_CTRL, .FB_R_CTRL).*;
-        // const FB_C_SOF = self.get_register(u32, .FB_C_SOF).*;
-        const FB_R_SOF1 = self.get_register(u32, .FB_R_SOF1).*;
-        const FB_R_SOF2 = self.get_register(u32, .FB_R_SOF2).*;
-        const FB_R_SIZE = self.get_register(HollyModule.FB_R_SIZE, .FB_R_SIZE).*;
+        const line_size: u32 = 4 * (@as(u32, FB_R_SIZE.x_size) + 1); // From 32-bit units to bytes.
+        const field_size: u32 = @as(u32, FB_R_SIZE.y_size) + 1; // Number of lines
 
-        self.read_framebuffer_enabled = FB_R_CTRL.enable;
+        const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
+            0, 1 => 2,
+            2 => 3,
+            3 => 4,
+        };
 
-        // Enabled: We have to copy some data from VRAM.
-        if (FB_R_CTRL.enable) {
-            // TODO: Find a way to avoid unecessary uploads?
-            renderer_log.debug("Reading from framebuffer (from the PoV of the Holly Core) enabled.", .{});
+        const interlaced = SPG_CONTROL.interlace == 1;
+        const x_size = line_size / bytes_per_pixels;
+        const y_size = if (interlaced) field_size * 2 else field_size;
+        const line_padding = 4 * (@as(u32, FB_R_SIZE.modulus) - 1); // In bytes
 
-            const line_size: u32 = 4 * (@as(u32, FB_R_SIZE.x_size) + 1); // From 32-bit units to bytes.
-            const field_size: u32 = @as(u32, FB_R_SIZE.y_size) + 1; // Number of lines
+        @memset(self._scratch_pad, 0); // TODO: Fill using VO_BORDER_COL?
 
-            const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
-                0, 1 => 2,
-                2 => 3,
-                3 => 4,
-            };
-
-            const interlaced = SPG_CONTROL.interlace == 1;
-            const x_size = line_size / bytes_per_pixels;
-            const y_size = if (interlaced) field_size * 2 else field_size;
-            const line_padding = 4 * (@as(u32, FB_R_SIZE.modulus) - 1); // In bytes
-
-            @memset(self._scratch_pad, 0); // TODO: Fill using VO_BORDER_COL?
-
-            for (0..y_size) |y| {
-                const line_in_field = if (interlaced) y / 2 else y;
-                const addr = (if (interlaced and (y % 2) == 1) FB_R_SOF2 else FB_R_SOF1) + line_in_field * (line_size + line_padding);
-                for (0..x_size) |x| {
-                    const pixel_idx = x_size * y + x;
-                    const pixel_addr = addr + bytes_per_pixels * x;
-                    switch (FB_R_CTRL.format) {
-                        0x0 => { // 0555 RGB 16 bit
-                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&self.vram[pixel_addr]))).* };
-                            self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
-                            self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
-                            self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
-                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
-                        },
-                        0x1 => { // 565 RGB
-                            const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&self.vram[pixel_addr]))).* };
-                            self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
-                            self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
-                            self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
-                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
-                        },
-                        0x2 => { // 888 RGB 24 bit packed
-                            const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[pixel_addr])))[0..3].*;
-                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
-                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
-                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
-                        },
-                        0x3 => { // 0888 RGB 32 bit
-                            const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[pixel_addr])))[0..4].*;
-                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
-                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
-                            self._scratch_pad[pixel_idx * 4 + 3] = 255;
-                        },
-                    }
+        for (0..y_size) |y| {
+            const line_in_field = if (interlaced) y / 2 else y;
+            const addr = (if (interlaced and (y % 2) == 1) FB_R_SOF2 else FB_R_SOF1) + line_in_field * (line_size + line_padding);
+            for (0..x_size) |x| {
+                const pixel_idx = x_size * y + x;
+                const pixel_addr = addr + bytes_per_pixels * x;
+                switch (FB_R_CTRL.format) {
+                    0x0 => { // 0555 RGB 16 bit
+                        const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&vram[pixel_addr]))).* };
+                        self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 3] = 255;
+                    },
+                    0x1 => { // 565 RGB
+                        const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&vram[pixel_addr]))).* };
+                        self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
+                        self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 3] = 255;
+                    },
+                    0x2 => { // 888 RGB 24 bit packed
+                        const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&vram[pixel_addr])))[0..3].*;
+                        self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
+                        self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                        self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
+                        self._scratch_pad[pixel_idx * 4 + 3] = 255;
+                    },
+                    0x3 => { // 0888 RGB 32 bit
+                        const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&vram[pixel_addr])))[0..4].*;
+                        self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
+                        self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                        self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
+                        self._scratch_pad[pixel_idx * 4 + 3] = 255;
+                    },
                 }
             }
-            self._gctx.queue.writeTexture(
-                .{
-                    .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
-                    .origin = .{},
-                },
-                .{
-                    .bytes_per_row = 4 * x_size,
-                    .rows_per_image = y_size,
-                },
-                .{ .width = x_size, .height = y_size, .depth_or_array_layers = 1 },
-                u8,
-                self._scratch_pad,
-            );
         }
+        self._gctx.queue.writeTexture(
+            .{
+                .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
+                .origin = .{},
+            },
+            .{
+                .bytes_per_row = 4 * x_size,
+                .rows_per_image = y_size,
+            },
+            .{ .width = x_size, .height = y_size, .depth_or_array_layers = 1 },
+            u8,
+            self._scratch_pad,
+        );
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
@@ -2342,51 +2331,49 @@ pub const Renderer = struct {
 
     // Convert Framebuffer from native 640*480 to window resolution
     pub fn blit_framebuffer(self: *Renderer) void {
-        if (self.read_framebuffer_enabled) {
-            const gctx = self._gctx;
+        const gctx = self._gctx;
 
-            const commands = commands: {
-                const encoder = gctx.device.createCommandEncoder(null);
-                defer encoder.release();
+        const commands = commands: {
+            const encoder = gctx.device.createCommandEncoder(null);
+            defer encoder.release();
 
-                const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-                const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+            const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+            const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
 
-                const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
+            const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                    .load_op = .clear,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Blit Framebuffer",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                };
+            const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                .load_op = .clear,
+                .store_op = .store,
+            }};
+            const render_pass_info = wgpu.RenderPassDescriptor{
+                .label = "Blit Framebuffer",
+                .color_attachment_count = color_attachments.len,
+                .color_attachments = &color_attachments,
+            };
 
-                {
-                    const pass = encoder.beginRenderPass(render_pass_info);
-                    defer {
-                        pass.end();
-                        pass.release();
-                    }
-
-                    pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                    pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-
-                    pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
-
-                    pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
-                    pass.drawIndexed(4, 1, 0, 0, 0);
+            {
+                const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
                 }
 
-                break :commands encoder.finish(null);
-            };
-            defer commands.release();
+                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
-            gctx.submit(&.{commands});
-        }
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+            }
+
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+
+        gctx.submit(&.{commands});
     }
 
     pub fn render(self: *Renderer) !void {
@@ -2413,15 +2400,18 @@ pub const Renderer = struct {
             const depth_view = gctx.lookupResource(self.depth_texture_view).?;
 
             {
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{ .{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                    .load_op = if (self.read_framebuffer_enabled) .load else .clear,
-                    .store_op = .store,
-                }, .{
-                    .view = gctx.lookupResource(self.resized_framebuffer_area1_texture_view).?,
-                    .load_op = .clear,
-                    .store_op = .store,
-                } };
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                    .{
+                        .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                        .load_op = .clear, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                        .store_op = .store,
+                    },
+                    .{
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture_view).?,
+                        .load_op = .clear,
+                        .store_op = .store,
+                    },
+                };
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
                     .depth_load_op = .clear,

@@ -543,6 +543,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const FB_R_CTRL = dc.gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
             const FB_R_SOF1 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
             const FB_R_SOF2 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
+            const FB_R_SIZE = dc.gpu._get_register(Holly.FB_R_SIZE, .FB_R_SIZE).*;
             zgui.text("FB_C_SOF:  0x{X:0>8}", .{FB_C_SOF});
             zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
             zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
@@ -550,6 +551,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.text("FB_R_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_CTRL)), FB_R_CTRL });
             zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
             zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
+            zgui.text("FB_R_SOF2: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
 
             var buffer: [256]u8 = .{0} ** 256;
 

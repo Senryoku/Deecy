@@ -54,6 +54,7 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 
 ### Nice to have
 
+-   Save states
 -   Display VMU animation :^)
 -   Some (rendering) performance metrics directly in the emulator?
 

@@ -1234,6 +1234,8 @@ pub const Holly = struct {
     vram: []align(32) u8,
     registers: []u8,
 
+    dirty_framebuffer: bool = false,
+
     _allocator: std.mem.Allocator,
     _dc: *Dreamcast,
 
@@ -1845,7 +1847,7 @@ pub const Holly = struct {
     pub fn ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
         const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
         const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
-        holly_log.info("ta_fifo_yuv_converter_path: tex_base={X:0>8}, data.len={X:0>8}\n    ctrl={any}", .{ data.len, tex_base, ctrl });
+        holly_log.debug("ta_fifo_yuv_converter_path: tex_base={X:0>8}, data.len={X:0>8}\n    ctrl={any}", .{ data.len, tex_base, ctrl });
         const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
         const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
         var tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
@@ -1951,9 +1953,40 @@ pub const Holly = struct {
         };
     }
 
+    fn check_framebuffer_write(self: *@This(), addr: u32) void {
+        if (self.dirty_framebuffer) return;
+
+        const local_addr = addr & 0x007FFFFF;
+
+        const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
+        const fb1_start_addr = self.read_register(u32, .FB_R_SOF1);
+        const fb2_start_addr = self.read_register(u32, .FB_R_SOF2);
+        const fb_r_size = self.read_register(FB_R_SIZE, .FB_R_SIZE);
+        const line_size: u32 = 4 * (@as(u32, fb_r_size.x_size) + @as(u32, fb_r_size.modulus)); // From 32-bit units to bytes.
+        const line_count: u32 = @as(u32, fb_r_size.y_size) + 1; // Number of lines
+        const interlaced = spg_control.interlace == 1;
+        const fb1_end_addr = fb1_start_addr + line_count * line_size;
+        const fb2_end_addr = fb2_start_addr + line_count * line_size;
+
+        if ((local_addr >= fb1_start_addr and local_addr < fb1_end_addr) or
+            (interlaced and (local_addr >= fb2_start_addr and local_addr < fb2_end_addr)))
+        {
+            self.dirty_framebuffer = true;
+        }
+    }
+
+    pub inline fn write_vram(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        self.check_framebuffer_write(addr);
+
+        @as(*T, @alignCast(@ptrCast(
+            self._get_vram(addr),
+        ))).* = value;
+    }
+
     pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {
         // VRAM - 8MB, Mirrored at 0x06000000
         const local_addr = addr - (if (addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
+
         if (local_addr < 0x0080_0000) { // 64-bit access area
             return &self.vram[local_addr];
         } else if (local_addr < 0x0100_0000) { // Unused

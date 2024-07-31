@@ -1444,6 +1444,9 @@ pub const SH4 = struct {
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
                 return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value);
             },
+            0x04000000...0x07FFFFFF => {
+                return self._dc.?.gpu.write_vram(T, addr, value);
+            },
 
             0x10000000...0x13FFFFFF => {
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });

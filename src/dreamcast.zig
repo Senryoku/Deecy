@@ -546,7 +546,7 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_GDLEND).* = 0;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
-            dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.data_queue.count });
+            dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.

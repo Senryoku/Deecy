@@ -299,33 +299,27 @@ pub fn main() !void {
 
     dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 
-    var blit_framebuffer_from_vram = true;
-
     if (start_immediately)
         d.start();
 
     while (!d.window.shouldClose()) {
-        d.one_frame();
-
         zglfw.pollEvents();
-
         d.pool_controllers();
 
-        // FIXME: I don't how to handle this correctly, copying the framebuffer from VRAM
-        // is very expensive and generally useless outside of splash screen/homebrews.
-        // However it is actually sometimes used in games, like Namco Museum.
-        // TODO: I could start by only updating in on vblank.
-        if (blit_framebuffer_from_vram) {
-            d.renderer.update_framebuffer();
-            d.renderer.blit_framebuffer();
+        d.one_frame();
+
+        // Framebuffer has been written to by the CPU.
+        // Update the host texture and blit it to our render target.
+        if (d.dc.gpu.dirty_framebuffer) {
+            if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
+                d.renderer.update_framebuffer_texture(&d.dc.gpu);
+                d.renderer.blit_framebuffer();
+                d.dc.gpu.dirty_framebuffer = false;
+            }
         }
 
         const render_start = d.renderer.render_start;
         if (render_start) {
-            // FIXME: Remove
-            blit_framebuffer_from_vram = false;
-            d.renderer.read_framebuffer_enabled = false;
-
             d.renderer.render_start = false;
             try d.renderer.update();
 
