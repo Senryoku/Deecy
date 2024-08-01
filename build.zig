@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) void {
     });
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
-        .name = "foo",
+        .name = "DeecyCheck",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
@@ -83,6 +83,11 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("termcolor", termcolor_module);
     exe_check.root_module.addImport("arm7", arm7_module);
     exe_check.root_module.addImport("termcolor", termcolor_module);
+
+    const nfd = b.dependency("nfd", .{});
+    const nfd_mod = nfd.module("nfd");
+    exe.root_module.addImport("nfd", nfd_mod);
+    exe_check.root_module.addImport("nfd", nfd_mod);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

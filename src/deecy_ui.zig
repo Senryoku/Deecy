@@ -4,9 +4,54 @@ const zglfw = @import("zglfw");
 const zgui = @import("zgui");
 const zguiExtra = @import("zgui_extra.zig");
 
+const ui_log = std.log.scoped(.ui);
+
+const nfd = @import("nfd");
+
 const Deecy = @import("deecy.zig").Deecy;
 
-pub fn draw(d: *Deecy) !void {
+last_error: []const u8 = "",
+
+pub fn init(_: std.mem.Allocator) @This() {
+    return .{};
+}
+
+pub fn deinit(_: *@This()) void {}
+
+pub fn draw(self: *@This(), d: *Deecy) !void {
+    if (zgui.beginMainMenuBar()) {
+        if (zgui.beginMenu("File", true)) {
+            if (zgui.menuItem("Load GDI", .{})) {
+                const open_path = try nfd.openFileDialog("gdi", null);
+                if (open_path) |path| err_brk: {
+                    defer nfd.freePath(path);
+                    d.load_disk(path) catch |err| {
+                        ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
+                        self.last_error = "Failed to load GDI.";
+                        zgui.openPopup("Error", .{});
+                        break :err_brk;
+                    };
+                    d.dc.set_region(d.dc.gdrom.disk.?.get_region()) catch |err| {
+                        ui_log.err("Failed to set region: {s}", .{@errorName(err)});
+                        self.last_error = "Failed to set region. Did you put bios and flash files in 'data/region' (e.g. '/data/us/dc_boot.bin')?";
+                        zgui.openPopup("Error", .{});
+                        break :err_brk;
+                    };
+                    d.start();
+                    d.display_ui = false;
+                }
+            }
+            zgui.endMenu();
+        }
+        if (zgui.beginMenu("Settings", true)) {
+            if (zgui.menuItem("Debug Menu", .{ .selected = d.debug_ui.enable_debug_ui })) {
+                d.debug_ui.enable_debug_ui = !d.debug_ui.enable_debug_ui;
+            }
+            zgui.endMenu();
+        }
+        zgui.endMainMenuBar();
+    }
+
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
             if (zgui.beginTabItem("CPU", .{})) {
@@ -98,4 +143,12 @@ pub fn draw(d: *Deecy) !void {
         }
     }
     zgui.end();
+
+    if (zgui.beginPopupModal("Error", .{})) {
+        zgui.text("{s}", .{self.last_error});
+        if (zgui.button("OK", .{})) {
+            zgui.closeCurrentPopup();
+        }
+        zgui.endPopup();
+    }
 }

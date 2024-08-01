@@ -4,3 +4,6 @@
 [submodule "libs/zig-gamedev"]
 	path = libs/zig-gamedev
 	url = https://github.com/zig-gamedev/zig-gamedev.git
+[submodule "libs/nfd-zig"]
+	path = libs/nfd-zig
+	url = https://github.com/Senryoku/nfd-zig.git

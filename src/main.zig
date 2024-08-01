@@ -120,12 +120,10 @@ const Configuration = struct {
     per_game_vmu: bool = true,
 };
 
-const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will deleted on program exit!
-
 pub fn main() !void {
     defer {
         // Cleanup temprary directory, if it exists
-        std.fs.cwd().deleteTree(TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ TmpDirPath ++ "'): {s}", .{@errorName(err)});
+        std.fs.cwd().deleteTree(Deecy.TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ Deecy.TmpDirPath ++ "'): {s}", .{@errorName(err)});
     }
 
     var d = try Deecy.create(common.GeneralAllocator);
@@ -145,7 +143,8 @@ pub fn main() !void {
     try vmu_path.appendSlice("./userdata/vmu_default.bin");
 
     var skip_bios = false;
-    var start_immediately = true;
+    var start_immediately = false;
+    var force_stop = false;
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -184,7 +183,7 @@ pub fn main() !void {
             skip_bios = true;
         }
         if (std.mem.eql(u8, arg, "--stop")) {
-            start_immediately = false;
+            force_stop = true;
         }
     }
 
@@ -208,40 +207,11 @@ pub fn main() !void {
             // Skip IP.bin
             dc.cpu.pc = 0xAC010000;
         }
+        start_immediately = true;
     } else if (gdi_path) |path| {
         std.log.info("Loading GDI: {s}...", .{path});
 
-        if (std.mem.endsWith(u8, path, ".zip")) {
-            var zip_file = try std.fs.cwd().openFile(path, .{});
-            defer zip_file.close();
-            var stream = zip_file.seekableStream();
-            var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
-            var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-            var gdi_filename: []u8 = "";
-            while (try iter.next()) |entry| {
-                const filename = filename_buf[0..entry.filename_len];
-                try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
-                std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
-                if (std.mem.endsWith(u8, filename, ".gdi")) {
-                    gdi_filename = filename;
-                    break;
-                }
-            }
-            if (gdi_filename.len == 0) {
-                std.log.err("Could not find GDI file in zip file '{s}'.", .{path});
-                return error.GDIFileNotFound;
-            }
-            var gdi_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const tmp_gdi_path = try std.fmt.bufPrint(&gdi_path_buf, TmpDirPath ++ "/{s}", .{gdi_filename});
-            std.log.info("Found GDI file: '{s}'.", .{gdi_filename});
-            std.log.info("Extracting zip to '{s}'...", .{TmpDirPath});
-            var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
-            defer tmp_dir.close();
-            try std.zip.extract(tmp_dir, stream, .{});
-            dc.gdrom.disk = try GDI.init(tmp_gdi_path, common.GeneralAllocator);
-        } else {
-            dc.gdrom.disk = try GDI.init(path, common.GeneralAllocator);
-        }
+        try d.load_disk(path);
 
         const region = dc.gdrom.disk.?.get_region();
         std.log.info("  Detected region: {s}", .{@tagName(region)});
@@ -285,6 +255,7 @@ pub fn main() !void {
             dc.cpu.write16(0x0C018F54, 0x9);
             dc.cpu.write16(0x0C018F42, 0x9);
         }
+        start_immediately = true;
     } else {
         if (skip_bios) {
             try dc.set_region(.USA);
@@ -299,7 +270,7 @@ pub fn main() !void {
 
     dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 
-    if (start_immediately)
+    if (!force_stop and start_immediately)
         d.start();
 
     while (!d.window.shouldClose()) {
@@ -312,8 +283,13 @@ pub fn main() !void {
         // Update the host texture and blit it to our render target.
         if (d.dc.gpu.dirty_framebuffer) {
             if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
-                d.renderer.update_framebuffer_texture(&d.dc.gpu);
-                d.renderer.blit_framebuffer();
+                // FIXME: While this allows IP.bin display correctly, there are distracting artifacts in multiple games,
+                //        and it doesn't fix the cases where it actually matters (like Namco Museum for example).
+                //        Disabling it for now.
+                if (false) {
+                    d.renderer.update_framebuffer_texture(&d.dc.gpu);
+                    d.renderer.blit_framebuffer();
+                }
                 d.dc.gpu.dirty_framebuffer = false;
             }
         }

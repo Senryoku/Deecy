@@ -10,6 +10,7 @@ const termcolor = @import("termcolor");
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
+const GDI = @import("./gdi.zig").GDI;
 
 const Renderer = @import("./renderer.zig").Renderer;
 
@@ -34,7 +35,7 @@ fn glfw_key_callback(
         if (action == .press) {
             switch (key) {
                 .escape => {
-                    app.debug_ui.draw_debug_ui = !app.debug_ui.draw_debug_ui;
+                    app.display_ui = !app.display_ui;
                 },
                 .space => {
                     if (app.running) {
@@ -68,6 +69,8 @@ pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
 }
 
 pub const Deecy = struct {
+    pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will deleted on program exit!
+
     const ExperimentalThreadedDC = true;
 
     window: *zglfw.Window,
@@ -93,6 +96,8 @@ pub const Deecy = struct {
 
     controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
 
+    display_ui: bool = true,
+    ui: DeecyUI,
     debug_ui: DebugUI = undefined,
 
     _allocator: std.mem.Allocator,
@@ -114,6 +119,7 @@ pub const Deecy = struct {
             .last_frame_timestamp = std.time.microTimestamp(),
             .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
             .breakpoints = std.ArrayList(u32).init(allocator),
+            .ui = DeecyUI.init(allocator),
             ._allocator = allocator,
         };
 
@@ -287,6 +293,40 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn load_disk(self: *Deecy, path: []const u8) !void {
+        if (std.mem.endsWith(u8, path, ".zip")) {
+            var zip_file = try std.fs.cwd().openFile(path, .{});
+            defer zip_file.close();
+            var stream = zip_file.seekableStream();
+            var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
+            var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var gdi_filename: []u8 = "";
+            while (try iter.next()) |entry| {
+                const filename = filename_buf[0..entry.filename_len];
+                try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
+                std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
+                if (std.mem.endsWith(u8, filename, ".gdi")) {
+                    gdi_filename = filename;
+                    break;
+                }
+            }
+            if (gdi_filename.len == 0) {
+                std.log.err("Could not find GDI file in zip file '{s}'.", .{path});
+                return error.GDIFileNotFound;
+            }
+            var gdi_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const tmp_gdi_path = try std.fmt.bufPrint(&gdi_path_buf, TmpDirPath ++ "/{s}", .{gdi_filename});
+            std.log.info("Found GDI file: '{s}'.", .{gdi_filename});
+            std.log.info("Extracting zip to '{s}'...", .{TmpDirPath});
+            var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
+            defer tmp_dir.close();
+            try std.zip.extract(tmp_dir, stream, .{});
+            self.dc.gdrom.disk = try GDI.init(tmp_gdi_path, self._allocator);
+        } else {
+            self.dc.gdrom.disk = try GDI.init(path, self._allocator);
+        }
+    }
+
     pub fn set_throttle_method(self: *Deecy, method: CPUThrottleMethod) void {
         if (method == self._cpu_throttling_method) return;
 
@@ -355,7 +395,10 @@ pub const Deecy = struct {
             self.gctx.swapchain_descriptor.height,
         );
 
-        if (!self.debug_ui.draw_debug_ui) {
+        if (self.display_ui) {
+            try self.ui.draw(self);
+            try self.debug_ui.draw(self);
+        } else {
             zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
             if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
                 var sum: i128 = 0;
@@ -366,13 +409,6 @@ pub const Deecy = struct {
                 zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
             }
             zgui.end();
-        }
-
-        try self.debug_ui.draw(self);
-
-        // TODO:  Distiguish between standard and debug UI.
-        if (self.debug_ui.draw_debug_ui) {
-            try DeecyUI.draw(self);
         }
     }
 

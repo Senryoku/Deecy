@@ -26,7 +26,7 @@ const Deecy = @import("deecy.zig").Deecy;
 const vram_width: u32 = 640;
 const vram_height: u32 = 480;
 
-draw_debug_ui: bool = true,
+enable_debug_ui: bool = true,
 
 show_disabled_channels: bool = false,
 
@@ -153,7 +153,7 @@ fn reset_hover(self: *@This()) void {
 }
 
 pub fn draw(self: *@This(), d: *Deecy) !void {
-    if (self.draw_debug_ui) {
+    if (self.enable_debug_ui) {
         var dc = d.dc;
 
         _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
