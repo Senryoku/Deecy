@@ -76,6 +76,7 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 ## Dependencies
 
 -   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/ as a submodule.
+-   ndf-zig: https://github.com/fabioarnold/nfd-zig
 
 ## Thanks
 
