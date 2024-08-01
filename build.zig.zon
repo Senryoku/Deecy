@@ -31,5 +31,6 @@
             .hash = "1220b1f02f2f7edd98a078c64e3100907d90311d94880a3cc5927e1ac009d002667a",
         },
         .nfd = .{ .path = "libs/nfd-zig" },
+        .arm7 = .{ .path = "libs/arm7" },
     },
 }

@@ -15,8 +15,8 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // FIXME: This should be exported by the arm7 build script, probably.
-    const arm7_module = b.createModule(.{ .root_source_file = b.path("libs/arm7/src/arm7.zig") });
+    const arm7 = b.dependency("arm7", .{});
+    const arm7_module = arm7.module("arm7");
 
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
 
