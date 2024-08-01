@@ -380,6 +380,11 @@ pub const Deecy = struct {
 
     pub fn start(self: *Deecy) void {
         if (!self.running) {
+            if (self.dc.region == .Unknown) {
+                self.dc.set_region(.USA) catch {
+                    @panic("Failed to set default region");
+                };
+            }
             self.running = true;
             if (ExperimentalThreadedDC) {
                 self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {

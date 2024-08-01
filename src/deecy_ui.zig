@@ -22,11 +22,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.beginMainMenuBar()) {
         if (zgui.beginMenu("File", true)) {
             if (zgui.menuItem("Load GDI", .{})) {
+                const was_running = d.running;
+                if (was_running) d.stop();
                 const open_path = try nfd.openFileDialog("gdi", null);
                 if (open_path) |path| err_brk: {
                     defer nfd.freePath(path);
-                    const was_running = d.running;
-                    if (was_running) d.stop();
                     d.load_disk(path) catch |err| {
                         ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
                         self.last_error = "Failed to load GDI.";
@@ -52,10 +52,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     d.display_ui = false;
                 }
             }
-            if (zgui.menuItem("Swap Disk", .{ .enabled = false })) {
-                // TODO! Emulate opening the tray and inserting a new disk.
-            }
             zgui.separator();
+            if (zgui.menuItem("Exit", .{})) {
+                d.stop();
+                d.window.setShouldClose(true);
+            }
+            zgui.endMenu();
+        }
+        if (zgui.beginMenu("DC", true)) {
             if (zgui.menuItem("Reset", .{})) {
                 const was_running = d.running;
                 if (was_running) d.stop();
@@ -63,9 +67,63 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 if (was_running) d.start();
             }
             zgui.separator();
-            if (zgui.menuItem("Exit", .{})) {
-                d.stop();
-                d.window.setShouldClose(true);
+            if (zgui.beginMenu("Region", !d.running)) {
+                if (zgui.menuItem("USA", .{ .selected = d.dc.region == .USA })) {
+                    try d.dc.set_region(.USA);
+                }
+                if (zgui.menuItem("Europe", .{ .selected = d.dc.region == .Europe })) {
+                    try d.dc.set_region(.Europe);
+                }
+                if (zgui.menuItem("Japan", .{ .selected = d.dc.region == .Japan })) {
+                    try d.dc.set_region(.Japan);
+                }
+                zgui.endMenu();
+            }
+            zgui.separator();
+            if (zgui.beginMenu("Cable", true)) {
+                zgui.textColored(.{ 1.0, 1.0, 1.0, 0.5 }, "  (WIP!)", .{});
+                if (zgui.menuItem("VGA", .{ .selected = d.dc.cable_type == .VGA })) {
+                    d.dc.cable_type = .VGA;
+                }
+                if (zgui.menuItem("RGB", .{ .selected = d.dc.cable_type == .RGB })) {
+                    d.dc.cable_type = .RGB;
+                }
+                if (zgui.menuItem("Composite", .{ .selected = d.dc.cable_type == .Composite })) {
+                    d.dc.cable_type = .Composite;
+                }
+                zgui.endMenu();
+            }
+            zgui.endMenu();
+        }
+        if (zgui.beginMenu("Drive", true)) {
+            // TODO
+            if (zgui.menuItem("Swap Disk", .{})) {
+                const open_path = try nfd.openFileDialog("gdi", null);
+                const was_running = d.running;
+                if (was_running) d.stop();
+                if (open_path) |path| err_brk: {
+                    defer nfd.freePath(path);
+                    // TODO! Emulate opening the tray and inserting a new disk.
+                    d.load_disk(path) catch |err| {
+                        ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
+                        self.last_error = "Failed to load GDI.";
+                        zgui.openPopup("ErrorPopup", .{});
+                        break :err_brk;
+                    };
+                    d.dc.gdrom.state = .Open;
+                    if (was_running)
+                        d.start();
+                }
+            }
+            if (zgui.menuItem("Open Tray", .{})) {
+                d.dc.gdrom.state = .Open;
+            }
+            if (zgui.menuItem("Remove Disk", .{ .enabled = d.dc.gdrom.disk != null and d.dc.gdrom.state == .Open })) {
+                d.dc.gdrom.disk.?.deinit();
+                d.dc.gdrom.disk = null;
+            }
+            if (zgui.menuItem("Close Tray", .{})) {
+                d.dc.gdrom.state = .Standby;
             }
             zgui.endMenu();
         }
@@ -134,7 +192,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         zgui.endCombo();
                     }
                     if (d.controllers[i]) |*j| {
-                        _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.1, .max = 1.0, .flags = .{} });
+                        _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
                     }
                     if (d.dc.maple.ports[i].main) |_| {
                         for (d.dc.maple.ports[i].subperipherals) |sub| {

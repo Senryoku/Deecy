@@ -786,8 +786,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Debug", .{})) {
-        if (zgui.button("Clear SH4 JIT Cache", .{}))
+        if (zgui.button("Clear SH4 JIT Cache", .{})) {
+            const was_running = d.running;
+            if (was_running)
+                d.stop();
             try dc.sh4_jit.block_cache.reset();
+            if (was_running)
+                d.start();
+        }
 
         zgui.separator();
 

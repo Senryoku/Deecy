@@ -354,10 +354,9 @@ pub const GDROM = struct {
                 // TODO: See REQ_STAT
                 //  7  6  5  4  | 3  2  1  0
                 //  Disc Format |   Status
-                const val = if (self.disk == null)
-                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(GDROMStatus.Empty)
-                else
-                    (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(self.state);
+                var status = self.state;
+                if (status != GDROMStatus.Open and self.disk == null) status = .Empty;
+                const val = (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(status);
                 gdrom_log.debug("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
                 return val;
             },
@@ -771,7 +770,9 @@ pub const GDROM = struct {
 
         gdrom_log.warn(" GDROM PacketCommand ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
 
-        try self.data_queue.writeItem(@intFromEnum(self.state));
+        var status = self.state;
+        if (status != GDROMStatus.Open and self.disk == null) status = .Empty;
+        try self.data_queue.writeItem(@intFromEnum(status));
         try self.data_queue.writeItem(0);
         switch (session_number) {
             0 => {
