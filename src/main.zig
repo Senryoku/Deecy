@@ -104,21 +104,9 @@ pub const std_options: std.Options = .{
     },
 };
 
-fn safe_path(path: []u8) void {
-    for (path) |*c| {
-        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/')) {
-            c.* = '_';
-        }
-    }
-}
-
 fn trapa_handler(app: *anyopaque) void {
     @as(*Deecy, @alignCast(@ptrCast(app))).stop();
 }
-
-const Configuration = struct {
-    per_game_vmu: bool = true,
-};
 
 pub fn main() !void {
     defer {
@@ -129,8 +117,6 @@ pub fn main() !void {
     var d = try Deecy.create(common.GeneralAllocator);
     defer d.destroy();
     var dc = d.dc;
-
-    const config: Configuration = .{};
 
     var binary_path: ?[]const u8 = null;
     var ip_bin_path: ?[]const u8 = null;
@@ -187,6 +173,8 @@ pub fn main() !void {
         }
     }
 
+    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(common.GeneralAllocator, vmu_path.items) };
+
     if (binary_path) |path| {
         try dc.set_region(.USA);
 
@@ -221,13 +209,7 @@ pub fn main() !void {
             try dc.set_region(.USA);
         }
 
-        if (default_vmu and config.per_game_vmu) {
-            if (dc.gdrom.disk.?.get_product_id()) |product_id| {
-                vmu_path.clearRetainingCapacity();
-                try vmu_path.writer().print("./userdata/{s}/vmu_0.bin", .{product_id});
-                safe_path(vmu_path.items);
-            }
-        }
+        try d.on_game_load();
 
         if (skip_bios) {
             dc.skip_bios(true);
@@ -265,8 +247,6 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
     }
-
-    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(common.GeneralAllocator, vmu_path.items) };
 
     dc.cpu.on_trapa = .{ .callback = trapa_handler, .userdata = d };
 

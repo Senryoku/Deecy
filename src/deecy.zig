@@ -44,8 +44,11 @@ fn glfw_key_callback(
                         app.start();
                     }
                 },
+                .d => {
+                    app.config.display_debug_ui = !app.config.display_debug_ui;
+                },
                 .l => {
-                    app.set_throttle_method(switch (app._cpu_throttling_method) {
+                    app.set_throttle_method(switch (app.config.cpu_throttling_method) {
                         .None => .PerFrame,
                         .PerFrame => .None,
                     });
@@ -68,6 +71,20 @@ pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
     sem.permits = 0;
 }
 
+fn safe_path(path: []u8) void {
+    for (path) |*c| {
+        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/')) {
+            c.* = '_';
+        }
+    }
+}
+
+const Configuration = struct {
+    per_game_vmu: bool = true,
+    cpu_throttling_method: CPUThrottleMethod = .None,
+    display_debug_ui: bool = false,
+};
+
 pub const Deecy = struct {
     pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will deleted on program exit!
 
@@ -81,7 +98,7 @@ pub const Deecy = struct {
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
-    _cpu_throttling_method: CPUThrottleMethod = .None,
+    config: Configuration = .{},
 
     last_frame_timestamp: i64,
     last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
@@ -327,8 +344,27 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn on_game_load(self: *@This()) !void {
+        if (self.config.per_game_vmu) {
+            if (self.dc.gdrom.disk.?.get_product_id()) |product_id| {
+                var vmu_path = std.ArrayList(u8).init(self._allocator);
+                defer vmu_path.deinit();
+                try vmu_path.writer().print("./userdata/{s}/vmu_0.bin", .{product_id});
+                safe_path(vmu_path.items);
+
+                if (self.dc.maple.ports[0].subperipherals[0]) |*peripheral| {
+                    switch (peripheral.*) {
+                        .VMU => |*vmu| vmu.deinit(self._allocator),
+                        else => {},
+                    }
+                }
+                self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
+            }
+        }
+    }
+
     pub fn set_throttle_method(self: *Deecy, method: CPUThrottleMethod) void {
-        if (method == self._cpu_throttling_method) return;
+        if (method == self.config.cpu_throttling_method) return;
 
         switch (method) {
             .None => {
@@ -339,7 +375,7 @@ pub const Deecy = struct {
                 self.dc_last_frame = std.time.Instant.now() catch unreachable;
             },
         }
-        self._cpu_throttling_method = method;
+        self.config.cpu_throttling_method = method;
     }
 
     pub fn start(self: *Deecy) void {
@@ -395,9 +431,12 @@ pub const Deecy = struct {
             self.gctx.swapchain_descriptor.height,
         );
 
+        _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
+
         if (self.display_ui) {
             try self.ui.draw(self);
-            try self.debug_ui.draw(self);
+            if (self.config.display_debug_ui)
+                try self.debug_ui.draw(self);
         } else {
             zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
             if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
@@ -428,7 +467,7 @@ pub const Deecy = struct {
                 static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
             }
 
-            if (self.running and self._cpu_throttling_method == .PerFrame) {
+            if (self.running and self.config.cpu_throttling_method == .PerFrame) {
                 const now = std.time.Instant.now() catch unreachable;
                 if (now.since(self.dc_last_frame) >= target_frame_time) {
                     self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
@@ -471,7 +510,7 @@ pub const Deecy = struct {
         deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
 
         while (self.running) {
-            if (self._cpu_throttling_method == .PerFrame) {
+            if (self.config.cpu_throttling_method == .PerFrame) {
                 self.dc_thread_semaphore.wait();
             }
             self.run_dreamcast_until_next_frame();
