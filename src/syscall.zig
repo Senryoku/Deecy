@@ -203,7 +203,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
         3 => {
             // GDROM_INIT
             syscall_log.debug("  GDROM_INIT", .{});
-            dc.gdrom.reinit();
+            dc.gdrom.reset();
         },
         4 => {
             // GDROM_CHECK_DRIVE

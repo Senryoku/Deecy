@@ -221,27 +221,41 @@ pub const GDROM = struct {
     hle_params: [4]u32 = .{0} ** 4,
     hle_result: [4]u32 = .{0} ** 4,
 
-    _next_command_id: u32 = 1,
-    _current_command_id: u32 = 0,
+    _hle_next_command_id: u32 = 1,
+    _hle_current_command_id: u32 = 0,
 
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !GDROM {
-        var gdrom = GDROM{
+        return .{
             .data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
             .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
             .audio_state = .{ .buffer = try allocator.alloc(i16, 2352 / 2) },
             ._allocator = allocator,
         };
-        gdrom.reinit();
-        return gdrom;
     }
 
-    pub fn reinit(self: *@This()) void {
+    pub fn reset(self: *@This()) void {
         self.state = GDROMStatus.Standby;
+
+        self.status_register = .{};
+        self.control_register = .{};
+        self.error_register = .{};
+        self.interrupt_reason_register = .{};
+        self.features = .{};
+        self.byte_count = 0;
+        self.data_queue.discard(self.data_queue.count);
+        self.packet_command_idx = 0;
+        @memset(&self.packet_command, 0);
+        self.audio_state = .{ .buffer = self.audio_state.buffer };
+        while (self.scheduled_events.count() > 0)
+            _ = self.scheduled_events.remove();
+
         self.hle_command = @enumFromInt(0);
         @memset(&self.hle_params, 0);
         @memset(&self.hle_result, 0);
+        self._hle_next_command_id = 1;
+        self._hle_current_command_id = 0;
     }
 
     pub fn deinit(self: *@This()) void {

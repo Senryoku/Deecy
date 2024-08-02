@@ -482,17 +482,10 @@ pub const AICA = struct {
             .wave_memory = try allocator.alloc(u8, 0x200000),
             ._allocator = allocator,
         };
-        @memset(r.regs, 0);
-        @memset(r.wave_memory, 0);
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try ARM7JIT.init(allocator, r.arm7.memory_address_mask);
 
-        r.get_reg(u32, .MasterVolume).* = 0x10;
-
-        r.get_reg(u32, .SCIEB).* = 0x40;
-        r.get_reg(u32, .SCILV0).* = 0x18;
-        r.get_reg(u32, .SCILV1).* = 0x50;
-        r.get_reg(u32, .SCILV2).* = 0x08;
+        r.reset();
 
         return r;
     }
@@ -520,6 +513,31 @@ pub const AICA = struct {
         self.arm_jit.deinit();
         self._allocator.free(self.regs);
         self._allocator.free(self.wave_memory);
+    }
+
+    pub fn reset(self: *@This()) void {
+        @memset(self.regs, 0);
+        @memset(self.wave_memory, 0);
+
+        self.channel_states = .{.{}} ** 64;
+
+        self.sample_read_offset = 0;
+        self.sample_write_offset = 0;
+
+        self.rtc_write_enabled = false;
+
+        self._arm_cycles_counter = 0;
+        self._timer_cycles_counter = 0;
+        self._timer_counters = .{0} ** 3;
+
+        self._samples_counter = 0;
+
+        self.get_reg(u32, .MasterVolume).* = 0x10;
+
+        self.get_reg(u32, .SCIEB).* = 0x40;
+        self.get_reg(u32, .SCILV0).* = 0x18;
+        self.get_reg(u32, .SCILV1).* = 0x50;
+        self.get_reg(u32, .SCILV2).* = 0x08;
     }
 
     // Read/Write from main CPU

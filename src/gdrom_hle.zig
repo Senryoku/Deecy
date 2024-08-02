@@ -10,16 +10,16 @@ const gdrom_hle_log = std.log.scoped(.gdrom_hle);
 pub fn send_command(self: *gdrom.GDROM, command_code: u32, params: [4]u32) u32 {
     if (self.state != gdrom.GDROMStatus.Standby) return 0;
 
-    self._current_command_id = self._next_command_id;
-    self._next_command_id +%= 1;
-    if (self._next_command_id == 0) self._next_command_id = 1;
+    self._hle_current_command_id = self._hle_next_command_id;
+    self._hle_next_command_id +%= 1;
+    if (self._hle_next_command_id == 0) self._hle_next_command_id = 1;
 
     self.state = gdrom.GDROMStatus.Busy;
     self.hle_command = @enumFromInt(command_code);
     self.hle_params = params;
     @memset(&self.hle_result, 0);
 
-    return self._current_command_id;
+    return self._hle_current_command_id;
 }
 
 pub fn mainloop(self: *gdrom.GDROM, dc: *Dreamcast) void {
@@ -113,7 +113,7 @@ pub fn mainloop(self: *gdrom.GDROM, dc: *Dreamcast) void {
 }
 
 pub fn check_command(self: *gdrom.GDROM, cmd_id: u32) u32 {
-    if (cmd_id != self._current_command_id) {
+    if (cmd_id != self._hle_current_command_id) {
         @memset(&self.hle_result, 0);
         self.hle_result[0] = 0x5;
         return 0; // no such request active
@@ -121,6 +121,6 @@ pub fn check_command(self: *gdrom.GDROM, cmd_id: u32) u32 {
     if (self.state != .Standby) return 1; // request is still being processed
 
     // request has completed
-    self._current_command_id = 0;
+    self._hle_current_command_id = 0;
     return 2;
 }

@@ -196,6 +196,8 @@ pub const Dreamcast = struct {
     pub fn reset(self: *@This()) !void {
         self.cpu.reset();
         self.gpu.reset();
+        self.gdrom.reset();
+        self.aica.reset();
 
         try self.sh4_jit.block_cache.reset();
 
