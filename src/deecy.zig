@@ -59,6 +59,24 @@ fn glfw_key_callback(
     }
 }
 
+fn glfw_drop_callback(
+    window: *zglfw.Window,
+    count: i32,
+    paths: [*][*:0]const u8,
+) callconv(.C) void {
+    const maybe_app = window.getUserPointer(Deecy);
+    if (maybe_app) |app| {
+        if (count > 0) {
+            app.load_and_start(std.mem.span(paths[0])) catch |err| {
+                deecy_log.err("Failed to load disk: {}\n", .{err});
+            };
+        }
+        if (count > 1) {
+            deecy_log.warn("Drop only supports 1 file at a time :)", .{});
+        }
+    }
+}
+
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
@@ -142,6 +160,7 @@ pub const Deecy = struct {
 
         self.window.setUserPointer(self);
         _ = self.window.setKeyCallback(glfw_key_callback);
+        _ = self.window.setDropCallback(glfw_drop_callback);
 
         self.gctx = try zgpu.GraphicsContext.create(allocator, .{
             .window = self.window,
@@ -308,6 +327,21 @@ pub const Deecy = struct {
                 }
             }
         }
+    }
+
+    pub fn load_and_start(self: *Deecy, path: []const u8) !void {
+        self.stop();
+        try self.load_disk(path);
+        self.dc.set_region(self.dc.gdrom.disk.?.get_region()) catch |err| {
+            switch (err) {
+                error.FileNotFound => return error.BiosOrFlashMissing,
+                else => return err,
+            }
+        };
+        try self.on_game_load();
+        try self.dc.reset();
+        self.start();
+        self.display_ui = false;
     }
 
     pub fn load_disk(self: *Deecy, path: []const u8) !void {

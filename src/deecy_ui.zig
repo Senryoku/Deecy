@@ -18,6 +18,11 @@ pub fn init(_: std.mem.Allocator) @This() {
 
 pub fn deinit(_: *@This()) void {}
 
+pub fn error_popup(self: *@This(), text: []const u8) void {
+    self.last_error = text;
+    zgui.openPopup("ErrorPopup", .{});
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.beginMainMenuBar()) {
         if (zgui.beginMenu("File", true)) {
@@ -25,31 +30,16 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 const was_running = d.running;
                 if (was_running) d.stop();
                 const open_path = try nfd.openFileDialog("gdi", null);
-                if (open_path) |path| err_brk: {
+                if (open_path) |path| {
                     defer nfd.freePath(path);
-                    d.load_disk(path) catch |err| {
-                        ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
-                        self.last_error = "Failed to load GDI.";
-                        zgui.openPopup("ErrorPopup", .{});
-                        break :err_brk;
+                    d.load_and_start(path) catch |err| {
+                        switch (err) {
+                            error.BiosOrFlashMissing => {
+                                self.error_popup("Failed to set region. Did you put bios and flash files in 'data/[region]/' (e.g. '/data/us/dc_boot.bin')?");
+                            },
+                            else => self.error_popup("Unknown error"),
+                        }
                     };
-                    d.dc.set_region(d.dc.gdrom.disk.?.get_region()) catch |err| {
-                        ui_log.err("Failed to set region: {s}", .{@errorName(err)});
-                        self.last_error = "Failed to set region. Did you put bios and flash files in 'data/[region]/' (e.g. '/data/us/dc_boot.bin')?";
-                        zgui.openPopup("ErrorPopup", .{});
-                        break :err_brk;
-                    };
-
-                    d.on_game_load() catch |err| {
-                        ui_log.err("Error while setting up game: {s}", .{@errorName(err)});
-                        self.last_error = "Error while setting up game.";
-                        zgui.openPopup("ErrorPopup", .{});
-                        break :err_brk;
-                    };
-
-                    if (was_running) try d.dc.reset();
-                    d.start();
-                    d.display_ui = false;
                 }
             }
             zgui.separator();
