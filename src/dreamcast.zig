@@ -555,7 +555,7 @@ pub const Dreamcast = struct {
             }
 
             self.hw_register(u32, .SB_GDST).* = 1;
-            self.hw_register(u32, .SB_GDLEND).* = 0;
+            self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
             dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
@@ -586,10 +586,9 @@ pub const Dreamcast = struct {
     }
 
     fn end_gd_dma(self: *@This(), _: *Dreamcast) void {
-        const len = self.read_hw_register(u32, .SB_GDLEN);
         self.hw_register(u32, .SB_GDST).* = 0;
-        self.hw_register(u32, .SB_GDLEND).* += len;
-        self.hw_register(u32, .SB_GDSTARD).* += len;
+        self.hw_register(u32, .SB_GDSTARD).* += self.hw_register(u32, .SB_GDLEND).*;
+        self.hw_register(u32, .SB_GDLEND).* = 0;
 
         self.gdrom.on_dma_end(self);
     }
