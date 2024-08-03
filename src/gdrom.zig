@@ -278,8 +278,6 @@ pub const GDROM = struct {
                     dc.raise_external_interrupt(.{ .GDRom = 1 });
                 if (event.interrupt_reason) |reason| {
                     self.interrupt_reason_register = reason;
-                    if (reason.cod == .Data)
-                        dc.raise_normal_interrupt(.{ .EoD_GDROM = 1 });
                 }
                 _ = self.scheduled_events.remove();
             }
@@ -428,6 +426,18 @@ pub const GDROM = struct {
         });
     }
 
+    fn spi_non_data_command(self: *@This()) void {
+        // The device sets the BSY bit and executes the command.
+        self.status_register.bsy = 1;
+        // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
+        // DRQ cleared) to the "Status" register before making INTRQ valid
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
+    }
+
     pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
         switch (@as(HardwareRegister, @enumFromInt(addr))) {
@@ -553,13 +563,17 @@ pub const GDROM = struct {
                         .ReqError => self.req_error(),
                         .GetToC => self.get_toc(),
                         .ReqSes => self.req_ses(),
-                        .CDOpen => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command}),
+                        .CDOpen => {
+                            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command});
+                            self.spi_non_data_command();
+                        },
                         .CDPlay => self.cd_play(),
                         .CDSeek => self.cd_seek(),
                         .CDScan => {
                             gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
                             self.state = .Scanning;
                             self.state = .Paused; // FIXME: Do not resolve immediatly?
+                            self.spi_non_data_command();
                         },
                         .CDRead => self.cd_read(),
                         .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
@@ -600,7 +614,7 @@ pub const GDROM = struct {
         self.interrupt_reason_register.cod = .Command;
         self.interrupt_reason_register.io = .DeviceToHost;
 
-        if (self.control_register.nien == 1)
+        if (self.control_register.nien == 0)
             dc.raise_external_interrupt(.{ .GDRom = 1 });
     }
 
@@ -622,11 +636,7 @@ pub const GDROM = struct {
 
     fn test_unit(self: *@This()) void {
         gdrom_log.debug("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{},
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.spi_non_data_command();
     }
 
     fn req_stat(self: *@This()) !void {
@@ -865,11 +875,7 @@ pub const GDROM = struct {
             },
         }
 
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.spi_non_data_command();
     }
 
     fn cd_seek(self: *@This()) !void {
@@ -899,12 +905,7 @@ pub const GDROM = struct {
         }
 
         self.status_register.dsc = 1;
-
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .dsc = 1, .bsy = 0, .drq = 0, .drdy = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.spi_non_data_command();
     }
 
     fn cd_read(self: *@This()) !void {
@@ -983,7 +984,13 @@ pub const GDROM = struct {
             gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.dma_data_queue.readableSlice(0)[0..0x20]});
         }
 
-        self.status_register.drq = 1;
+        // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
+        // DRQ cleared) to the "Status" register before making INTRQ valid.
+        self.schedule_event(.{
+            .cycles = 0,
+            .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
     }
 
     fn get_subcode(self: *@This()) !void {
