@@ -108,6 +108,16 @@ const BlockCache = struct {
         try self.allocate_blocks();
     }
 
+    pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
+        inline for (0..2) |sz| {
+            inline for (0..2) |pr| {
+                for (start_addr..end_addr) |addr| {
+                    self.blocks[compute_key(@intCast(addr), sz, pr)] = null;
+                }
+            }
+        }
+    }
+
     inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
         return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
@@ -418,6 +428,10 @@ pub const SH4JIT = struct {
         self.block_cache.deinit();
     }
 
+    pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
+        self.block_cache.invalidate(start_addr, end_addr);
+    }
+
     pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         cpu.handle_interrupts();
 
@@ -444,47 +458,6 @@ pub const SH4JIT = struct {
             // FIXME: Not sure if this is a thing.
             cpu.advance_timers(8);
             return 8;
-        }
-    }
-
-    // Try to match some common division patterns and replace them with a "single" instruction.
-    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext) !void {
-        if (!Optimizations.div1_simplification) return;
-
-        _ = self;
-        // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
-        //        Tested by looking at the timer in Soulcalibur :^)
-        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0u) {
-            var index: u32 = 1;
-            var cycles: u32 = instr_lookup(ctx.instructions[ctx.index]).issue_cycles;
-            var rotcl_Rn_div1_count: u32 = 0;
-            while (true) {
-                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.rotcl_Rn) break;
-                index += 1;
-                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
-                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.div1) break;
-                index += 1;
-                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
-                rotcl_Rn_div1_count += 1;
-            }
-            if (rotcl_Rn_div1_count == 32 and (index % 2) == 0) {
-                const dividend_low = (sh4.Instr{ .value = ctx.instructions[ctx.index + 1] }).nmd.n;
-                const dividend_high = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.n;
-                const divisor = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.m;
-
-                const dl = try load_register_for_writing(b, ctx, dividend_low);
-                const dh = try load_register(b, ctx, dividend_high);
-                const div = try load_register(b, ctx, divisor);
-
-                try b.append(.{ .Div64_32 = .{ .dividend_high = dh, .dividend_low = dl, .divisor = div, .result = dl } });
-
-                ctx.skip_instructions(index);
-                ctx.cycles += cycles;
-                return;
-            }
-        }
-        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
-            // TODO: Or not. This case seems messier?
         }
     }
 
@@ -597,6 +570,47 @@ pub const SH4JIT = struct {
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
         return block;
+    }
+
+    // Try to match some common division patterns and replace them with a "single" instruction.
+    fn simplify_div(self: *@This(), b: *JITBlock, ctx: *JITContext) !void {
+        if (!Optimizations.div1_simplification) return;
+
+        _ = self;
+        // FIXME: Very experimental. Very ugly. This is also not 100% accurate as it misses a bunch of side effects of the division.
+        //        Tested by looking at the timer in Soulcalibur :^)
+        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0u) {
+            var index: u32 = 1;
+            var cycles: u32 = instr_lookup(ctx.instructions[ctx.index]).issue_cycles;
+            var rotcl_Rn_div1_count: u32 = 0;
+            while (true) {
+                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.rotcl_Rn) break;
+                index += 1;
+                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
+                if (instr_lookup(ctx.instructions[ctx.index + index]).fn_ != sh4_interpreter.div1) break;
+                index += 1;
+                cycles += instr_lookup(ctx.instructions[ctx.index + index]).issue_cycles;
+                rotcl_Rn_div1_count += 1;
+            }
+            if (rotcl_Rn_div1_count == 32 and (index % 2) == 0) {
+                const dividend_low = (sh4.Instr{ .value = ctx.instructions[ctx.index + 1] }).nmd.n;
+                const dividend_high = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.n;
+                const divisor = (sh4.Instr{ .value = ctx.instructions[ctx.index + 2] }).nmd.m;
+
+                const dl = try load_register_for_writing(b, ctx, dividend_low);
+                const dh = try load_register(b, ctx, dividend_high);
+                const div = try load_register(b, ctx, divisor);
+
+                try b.append(.{ .Div64_32 = .{ .dividend_high = dh, .dividend_low = dl, .divisor = div, .result = dl } });
+
+                ctx.skip_instructions(index);
+                ctx.cycles += cycles;
+                return;
+            }
+        }
+        if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
+            // TODO: Or not. This case seems messier?
+        }
     }
 };
 

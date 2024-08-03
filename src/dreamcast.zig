@@ -582,6 +582,8 @@ pub const Dreamcast = struct {
                 else // GDROM speed: 1.8 MB/s
                     14 * 128 * 1024 + 111 * (len - 128 * 1024),
             );
+
+            self.sh4_jit.invalidate(dst_addr, dst_addr + len);
         }
     }
 
