@@ -608,14 +608,18 @@ pub const GDROM = struct {
     }
 
     pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
-        self.status_register.drq = 0;
-        self.status_register.bsy = 0;
-        self.status_register.drdy = 1;
-        self.interrupt_reason_register.cod = .Command;
-        self.interrupt_reason_register.io = .DeviceToHost;
+        // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
+        // DRQ cleared) to the "Status" register before making INTRQ valid.
+        if (self.dma_data_queue.count == 0) {
+            self.status_register.drq = 0;
+            self.status_register.bsy = 0;
+            self.status_register.drdy = 1;
+            self.interrupt_reason_register.cod = .Command;
+            self.interrupt_reason_register.io = .DeviceToHost;
 
-        if (self.control_register.nien == 0)
-            dc.raise_external_interrupt(.{ .GDRom = 1 });
+            if (self.control_register.nien == 0)
+                dc.raise_external_interrupt(.{ .GDRom = 1 });
+        }
     }
 
     fn nop(self: *@This()) void {
@@ -983,14 +987,6 @@ pub const GDROM = struct {
 
             gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.dma_data_queue.readableSlice(0)[0..0x20]});
         }
-
-        // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
-        // DRQ cleared) to the "Status" register before making INTRQ valid.
-        self.schedule_event(.{
-            .cycles = 0,
-            .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
     }
 
     fn get_subcode(self: *@This()) !void {

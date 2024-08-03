@@ -111,6 +111,7 @@ const BlockCache = struct {
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
         inline for (0..2) |sz| {
             inline for (0..2) |pr| {
+                // FIXME: This can probably be made a lot smarter and a lot faster.
                 for (start_addr..end_addr) |addr| {
                     self.blocks[compute_key(@intCast(addr), sz, pr)] = null;
                 }
