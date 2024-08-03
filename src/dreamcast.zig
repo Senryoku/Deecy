@@ -454,6 +454,16 @@ pub const Dreamcast = struct {
         };
     }
 
+    pub fn schedule_int_event(self: *@This(), int: HardwareRegisters.SB_ISTNRM, callback: Callback, cycles: u32) void {
+        self.scheduled_interrupts.add(.{
+            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+            .callback = callback,
+            .interrupt = .{ .Normal = int },
+        }) catch |err| {
+            std.debug.panic("Failed to schedule event: {}", .{err});
+        };
+    }
+
     pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
         self.scheduled_interrupts.add(.{
             .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
@@ -548,11 +558,11 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_GDLEND).* = 0;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
-            dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.data_queue.count });
+            dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
-            const copied = self.gdrom.data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
+            const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
             // Simulate using ch0
             self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0).*.sm = 0;
@@ -564,24 +574,24 @@ pub const Dreamcast = struct {
 
             std.debug.assert(copied == len);
 
-            // TODO: Delay?
-            self.hw_register(u32, .SB_GDST).* = 0;
-            self.hw_register(u32, .SB_GDLEND).* += len;
-            self.hw_register(u32, .SB_GDSTARD).* += len;
-
-            self.gdrom.status_register.drq = 0;
-            self.gdrom.status_register.bsy = 0;
-            self.gdrom.interrupt_reason_register.cod = .Command;
-            self.gdrom.interrupt_reason_register.io = .DeviceToHost;
-
-            if (len <= 128 * 1024) {
-                // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
-                self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 14 * len);
-            } else {
-                // GDROM speed: 1.8 MB/s
-                self.schedule_interrupt(.{ .EoD_GDROM = 1 }, 14 * 128 * 1024 + 111 * (len - 128 * 1024));
-            }
+            self.schedule_int_event(
+                .{ .EoD_GDROM = 1 },
+                .{ .function = @ptrCast(&end_gd_dma), .context = self },
+                if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
+                    14 * len
+                else // GDROM speed: 1.8 MB/s
+                    14 * 128 * 1024 + 111 * (len - 128 * 1024),
+            );
         }
+    }
+
+    fn end_gd_dma(self: *@This(), _: *Dreamcast) void {
+        const len = self.read_hw_register(u32, .SB_GDLEN);
+        self.hw_register(u32, .SB_GDST).* = 0;
+        self.hw_register(u32, .SB_GDLEND).* += len;
+        self.hw_register(u32, .SB_GDSTARD).* += len;
+
+        self.gdrom.on_dma_end(self);
     }
 
     pub fn start_ch2_dma(self: *@This()) void {

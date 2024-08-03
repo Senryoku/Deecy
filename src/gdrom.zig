@@ -188,7 +188,8 @@ pub const GDROM = struct {
     features: packed struct(u8) { DMA: u1 = 1, _: u7 = 0 } = .{},
     byte_count: u16 = 0,
 
-    data_queue: std.fifo.LinearFifo(u8, .Dynamic),
+    pio_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
+    dma_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
 
     packet_command_idx: u8 = 0,
     packet_command: [12]u8 = [_]u8{0} ** 12,
@@ -228,7 +229,8 @@ pub const GDROM = struct {
 
     pub fn init(allocator: std.mem.Allocator) !GDROM {
         return .{
-            .data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
+            .pio_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
+            .dma_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
             .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
             .audio_state = .{ .buffer = try allocator.alloc(i16, 2352 / 2) },
             ._allocator = allocator,
@@ -244,7 +246,8 @@ pub const GDROM = struct {
         self.interrupt_reason_register = .{};
         self.features = .{};
         self.byte_count = 0;
-        self.data_queue.discard(self.data_queue.count);
+        self.pio_data_queue.discard(self.pio_data_queue.count);
+        self.dma_data_queue.discard(self.dma_data_queue.count);
         self.packet_command_idx = 0;
         @memset(&self.packet_command, 0);
         self.audio_state = .{ .buffer = self.audio_state.buffer };
@@ -260,7 +263,8 @@ pub const GDROM = struct {
 
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self.audio_state.buffer);
-        self.data_queue.deinit();
+        self.pio_data_queue.deinit();
+        self.dma_data_queue.deinit();
     }
 
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
@@ -339,16 +343,29 @@ pub const GDROM = struct {
                 return val;
             },
             .GD_Data => {
-                if (self.data_queue.count == 0) {
-                    gdrom_log.warn(termcolor.yellow("  Error: Read to Data while data_queue is empty (@{X:0>8})."), .{addr});
+                if (self.pio_data_queue.count == 0) {
+                    gdrom_log.warn(termcolor.yellow("  Error: Read to Data while pio_data_queue is empty (@{X:0>8})."), .{addr});
                     return 0;
                 }
                 if (T == u16) {
                     // Only accessed with 16-bit reads
-                    const low = self.data_queue.readItem().?;
-                    const high = self.data_queue.readItem().?;
+                    const low = self.pio_data_queue.readItem().?;
+                    const high = self.pio_data_queue.readItem().?;
                     const val: u16 = @as(u16, low) | (@as(u16, high) << 8);
                     // gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
+                    if (self.pio_data_queue.count == 0) {
+                        // 9. When the host has sent (sic?) entire data, the device clears the DRQ bit.
+                        self.status_register.drq = 0;
+                        // TODO: If more data are to be sent, the device sets the BSY bit and repeats the above sequence from step 7.
+                        // ...
+                        // 10. When the device is ready to send the status, it writes the final status to the "Status" register. CoD,
+                        //     IO, DRDY are set (before making INTRQ valid), and BSY and DRQ are cleared.
+                        self.schedule_event(.{
+                            .cycles = 0,
+                            .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
+                            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+                        });
+                    }
                     return val;
                 }
                 @panic("8-bit read to GD_Data");
@@ -375,12 +392,12 @@ pub const GDROM = struct {
                 return val;
             },
             .GD_ByteCountLow => {
-                const val = @as(u8, @truncate(self.data_queue.readableLength()));
+                const val = @as(u8, @truncate(self.pio_data_queue.readableLength()));
                 gdrom_log.debug("  Read Byte Count Low @{X:0>8} = 0x{X:0>8}", .{ addr, val });
                 return val;
             },
             .GD_ByteCountHigh => {
-                const val = @as(u8, @truncate(self.data_queue.readableLength() >> @intCast(8)));
+                const val = @as(u8, @truncate(self.pio_data_queue.readableLength() >> @intCast(8)));
                 gdrom_log.debug("  Read Byte Count High @{X:0>8} = 0x{X:0>8}", .{ addr, val });
                 return val;
             },
@@ -396,6 +413,21 @@ pub const GDROM = struct {
         }
     }
 
+    fn non_data_command(self: *@This()) void {
+        // The device sets the BSY bit to "1" and executes the command.
+        self.status_register.bsy = 1;
+        // If an error has occurred during execution of the command, the device sets an appropriate status
+        // and error bit that corresponds to the error condition
+        // Always report no errors.
+        self.error_register = .{};
+        // When the command execution is completed, the device asserts INTRQ after the device has cleared the BSY bit.
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0 },
+            .interrupt_reason = null,
+        });
+    }
+
     pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
         switch (@as(HardwareRegister, @enumFromInt(addr))) {
@@ -405,21 +437,13 @@ pub const GDROM = struct {
                 switch (@as(Command, @enumFromInt(value))) {
                     .SoftReset => {
                         gdrom_log.info("  Command: SoftReset", .{});
-                        self.data_queue.discard(self.data_queue.count);
-                        self.status_register = .{};
+                        self.reset();
+                        self.non_data_command();
                     },
                     .ExecuteDeviceDiagnostic => {
                         gdrom_log.info("  Command: ExecuteDeviceDiagnostic", .{});
-                        self.status_register.bsy = 1;
                         self.status_register.drq = 0;
-                        // The device clears the BSY bit and initiates an interrup
-                        self.schedule_event(.{
-                            .cycles = 100, // FIXME: Random value
-                            .status = .{ .bsy = 0, .drq = 0 },
-                            .interrupt_reason = null,
-                        });
-                        // Always report no errors.
-                        self.error_register = .{};
+                        self.non_data_command();
                     },
                     .PacketCommand => {
                         gdrom_log.debug("  Command: PacketCommand", .{});
@@ -438,30 +462,23 @@ pub const GDROM = struct {
                         self.status_register.bsy = 1;
                         self.status_register.drq = 0;
 
-                        // 0x00 Manufacturer's ID
-                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
-                        // 0x01 Model ID
-                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
-                        // 0x02 Version ID
-                        self.data_queue.write(&[_]u8{0x0}) catch unreachable;
+                        self.pio_data_queue.write(&[_]u8{
+                            0x0, // 0x00 Manufacturer's ID
+                            0x0, // 0x01 Model ID
+                            0x0, // 0x02 Version ID
+                        }) catch unreachable;
                         // 0x03 - 0x0F Reserved
-                        for (0..0x10 - 0x03) |_| {
-                            self.data_queue.write(&[_]u8{0x0}) catch unreachable;
-                        }
+                        self.pio_data_queue.write(&([1]u8{0x0} ** (0x10 - 0x03))) catch unreachable;
                         // 0x10 - 0x1F Manufacturer's name (16 ASCII characters)
-                        self.data_queue.write("            SEGA") catch unreachable;
+                        self.pio_data_queue.write("            SEGA") catch unreachable;
                         // 0x20 - 0x2F Model name (16 ASCII characters)
-                        self.data_queue.write("                ") catch unreachable;
+                        self.pio_data_queue.write("                ") catch unreachable;
                         // 0x30 - 0x3F Firmware version (16 ASCII characters)
-                        self.data_queue.write("                ") catch unreachable;
+                        self.pio_data_queue.write("                ") catch unreachable;
                         // 0x40 - 0x4F Reserved
-                        self.data_queue.write("                ") catch unreachable;
+                        self.pio_data_queue.write("                ") catch unreachable;
 
-                        self.schedule_event(.{
-                            .cycles = 0, // FIXME: Random value
-                            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-                            .status = .{ .bsy = 0, .drq = 1 },
-                        });
+                        self.pio_prep_complete();
                     },
                     .IdentifyDevice2 => {
                         // This command is issued by KallistiOS (g1_ata_scan), apparently to "check for a slave device".
@@ -471,14 +488,7 @@ pub const GDROM = struct {
                     },
                     .SetFeatures => {
                         gdrom_log.warn(termcolor.yellow("  Command: SetFeatures"), .{});
-
-                        self.error_register = .{};
-
-                        self.schedule_event(.{
-                            .cycles = 0, // FIXME: Random value
-                            .status = .{ .check = 0, .df = 0, .dsc = 0, .bsy = 0, .drq = 0, .drdy = 1 },
-                            .interrupt_reason = null,
-                        });
+                        self.non_data_command();
                     },
                     .NOP => {
                         self.nop();
@@ -568,6 +578,32 @@ pub const GDROM = struct {
         }
     }
 
+    fn pio_prep_complete(self: *@This()) void {
+        // When preparations are complete, the following steps are carried out at the device.
+        // (1) Number of bytes to be read is set in "Byte Count" register.
+        // (2) IO bit is set and CoD bit is cleared.
+        // (3) DRQ bit is set, BSY bit is cleared.
+        // (4) INTRQ is set, and a host interrupt is issued.
+
+        self.byte_count = @truncate(self.pio_data_queue.count); // Not really used.
+        self.schedule_event(.{
+            .cycles = 0, // FIXME
+            .status = .{ .drq = 1, .bsy = 0, .drdy = 1 },
+            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
+        });
+    }
+
+    pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
+        self.status_register.drq = 0;
+        self.status_register.bsy = 0;
+        self.status_register.drdy = 1;
+        self.interrupt_reason_register.cod = .Command;
+        self.interrupt_reason_register.io = .DeviceToHost;
+
+        if (self.control_register.nien == 1)
+            dc.raise_external_interrupt(.{ .GDRom = 1 });
+    }
+
     fn nop(self: *@This()) void {
         gdrom_log.info("  NOP Packet command", .{});
         //   Setting "abort" in the error register
@@ -610,23 +646,29 @@ pub const GDROM = struct {
         // 9 |  0 0 0 0 0 0 0 0
 
         if (alloc_length > 0) {
-            try self.data_queue.writeItem(if (self.status_register.drdy == 0) @intFromEnum(GDROMStatus.Busy) else @intFromEnum(GDROMStatus.Standby));
-            try self.data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE);
-            try self.data_queue.writeItem(0x04);
-            try self.data_queue.writeItem(0x02);
-            try self.data_queue.writeItem(0x00);
-            try self.data_queue.writeItem(0x00); // FAD
-            try self.data_queue.writeItem(0x00); // FAD
-            try self.data_queue.writeItem(0x00); // FAD
-            try self.data_queue.writeItem(0x00);
-            try self.data_queue.writeItem(0x00);
+            const fad: u32 = switch (self.state) {
+                .Busy => 0x00, // Undefined
+                .Paused => 0x00, // Subcode value obtained when the head has moved to the head position for pausing <PAUSE> state.
+                .Standby, .Open, .Empty, .Error => 0x96, // Home position
+                .Playing => self.audio_state.current_addr, // Head position before head travel, or the current head position
+                .Seeking => self.audio_state.current_addr, // Head position before head travel
+                .Scanning => self.audio_state.current_addr, // Head position before head travel, or current head position
+                .Retry => self.audio_state.current_addr, // Head position before head travel.
 
-            self.schedule_event(.{
-                .cycles = 0,
-                .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
-                .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-            });
+            };
+
+            try self.pio_data_queue.writeItem(if (self.disk == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state)); // 0000 | Status
+            try self.pio_data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE); // Disc Format | Repeat Count
+            try self.pio_data_queue.writeItem(0x04); // Address | Control
+            try self.pio_data_queue.writeItem(0x02); // TNO
+            try self.pio_data_queue.writeItem(0x00); // X
+            try self.pio_data_queue.writeItem(@truncate(fad >> 0)); // FAD
+            try self.pio_data_queue.writeItem(@truncate(fad >> 8)); // FAD
+            try self.pio_data_queue.writeItem(@truncate(fad >> 16)); // FAD
+            try self.pio_data_queue.writeItem(0x00); // Max Read Error Retry Times - Indicates how many read retries were necessary. This item is cleared (set to 0) when read.
+            try self.pio_data_queue.writeItem(0x00);
         }
+        self.pio_prep_complete();
     }
 
     fn req_mode(self: *@This()) !void {
@@ -650,20 +692,15 @@ pub const GDROM = struct {
         };
 
         if (alloc_length > 0) {
-            try self.data_queue.write(response[start_addr..][0..alloc_length]);
+            try self.pio_data_queue.write(response[start_addr..][0..alloc_length]);
         }
-        self.byte_count = alloc_length;
-
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.pio_prep_complete();
     }
 
     fn set_mode(self: *@This()) !void {
         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
         // TODO: Set some stuff?
+        // See "Transfer Packet Command Flow For PIO Data from Host"
 
         self.interrupt_reason_register.io = .HostToDevice;
         self.interrupt_reason_register.cod = .Command;
@@ -688,20 +725,14 @@ pub const GDROM = struct {
         };
 
         if (alloc_length > 0) {
-            try self.data_queue.write(response[0..@min(response.len, alloc_length)]);
+            try self.pio_data_queue.write(response[0..@min(response.len, alloc_length)]);
             if (alloc_length > response.len) {
                 for (0..alloc_length - response.len) |_| {
-                    try self.data_queue.writeItem(0x00);
+                    try self.pio_data_queue.writeItem(0x00);
                 }
             }
         }
-        self.byte_count = alloc_length;
-
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.pio_prep_complete();
     }
 
     pub fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
@@ -759,21 +790,16 @@ pub const GDROM = struct {
         gdrom_log.warn(" GDROM PacketCommand GetToC - {s} (alloc_length: 0x{X:0>4})", .{ if (select == 0) "Single Density" else "Double Density", alloc_length });
 
         if (alloc_length > 0) {
-            const bytes_written = self.write_toc(try self.data_queue.writableWithSize(408), if (select == 1) .DoubleDensity else .SingleDensity);
-            self.data_queue.update(@min(bytes_written, alloc_length));
+            const bytes_written = self.write_toc(try self.pio_data_queue.writableWithSize(408), if (select == 1) .DoubleDensity else .SingleDensity);
+            self.pio_data_queue.update(@min(bytes_written, alloc_length));
 
             // Debug Dump
-            const d = self.data_queue.readableSlice(0);
+            const d = self.pio_data_queue.readableSlice(0);
             for (0..d.len / 4) |i| {
                 gdrom_log.debug("[{d: >3}]  {X:0>2} {X:0>2} {X:0>2} {X:0>2}", .{ i * 4, d[4 * i + 0], d[4 * i + 1], d[4 * i + 2], d[4 * i + 3] });
             }
-
-            self.schedule_event(.{
-                .cycles = 0, // FIXME: Random value
-                .status = .{ .bsy = 0, .drq = 1 },
-                .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-            });
         }
+        self.pio_prep_complete();
     }
 
     fn req_ses(self: *@This()) !void {
@@ -786,31 +812,26 @@ pub const GDROM = struct {
 
         var status = self.state;
         if (status != GDROMStatus.Open and self.disk == null) status = .Empty;
-        try self.data_queue.writeItem(@intFromEnum(status));
-        try self.data_queue.writeItem(0);
+        try self.pio_data_queue.writeItem(@intFromEnum(status));
+        try self.pio_data_queue.writeItem(0);
         switch (session_number) {
             0 => {
-                try self.data_queue.writeItem(2); // Number of Session
-                try self.data_queue.write(&[_]u8{ 0x08, 0x61, 0xB4 }); // End FAD
+                try self.pio_data_queue.writeItem(2); // Number of Session
+                try self.pio_data_queue.write(&[_]u8{ 0x08, 0x61, 0xB4 }); // End FAD
             },
             1 => {
-                try self.data_queue.writeItem(0); // Starting Track Number
-                try self.data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // Start FAD
+                try self.pio_data_queue.writeItem(0); // Starting Track Number
+                try self.pio_data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // Start FAD
             },
             2 => {
-                try self.data_queue.writeItem(2); // Starting Track Number
-                try self.data_queue.write(&[_]u8{ 0x00, 0xB0, 0x5E }); // Start FAD
+                try self.pio_data_queue.writeItem(2); // Starting Track Number
+                try self.pio_data_queue.write(&[_]u8{ 0x00, 0xB0, 0x5E }); // Start FAD
             },
             else => {
                 gdrom_log.err(termcolor.red("  Unhandled Session Number: {d}"), .{session_number});
             },
         }
-
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-        });
+        self.pio_prep_complete();
     }
 
     fn cd_play(self: *@This()) !void {
@@ -878,11 +899,17 @@ pub const GDROM = struct {
         }
 
         self.status_register.dsc = 1;
+
+        self.schedule_event(.{
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .dsc = 1, .bsy = 0, .drq = 0, .drdy = 1 },
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+        });
     }
 
     fn cd_read(self: *@This()) !void {
         if (self.features.DMA != 1) {
-            gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM CDRead PIO mode (features == 1)"), .{});
+            gdrom_log.err(termcolor.red("  Unimplemented GDROM CDRead PIO mode (features == 1)"), .{});
         }
 
         const parameter_type = self.packet_command[1] & 0x1;
@@ -909,8 +936,8 @@ pub const GDROM = struct {
 
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)
-            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
-            self.data_queue.update(bytes_written);
+            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try self.dma_data_queue.writableWithSize(2352 * transfer_length));
+            self.dma_data_queue.update(bytes_written);
         } else {
             // FIXME: Everything else isn't implemented
             if (data_select != 0b0010) // Data (no header or subheader)
@@ -950,25 +977,21 @@ pub const GDROM = struct {
                 else => unreachable,
             }
 
-            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.data_queue.writableWithSize(2352 * transfer_length));
-            self.data_queue.update(bytes_written);
+            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.dma_data_queue.writableWithSize(2352 * transfer_length));
+            self.dma_data_queue.update(bytes_written);
 
-            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.data_queue.readableSlice(0)[0..0x20]});
+            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.dma_data_queue.readableSlice(0)[0..0x20]});
         }
 
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-        });
+        self.status_register.drq = 1;
     }
 
     fn get_subcode(self: *@This()) !void {
         const data_format = self.packet_command[1] & 0xF;
         const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
         gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
-        try self.data_queue.writeItem(0); // Reserved
-        try self.data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
+        try self.pio_data_queue.writeItem(0); // Reserved
+        try self.pio_data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
         switch (data_format) {
             0 => {
                 // All subcode information is transferred as raw data
@@ -989,7 +1012,7 @@ pub const GDROM = struct {
 
         // TODO
         for (0..alloc_length - 2) |_| {
-            try self.data_queue.writeItem(0);
+            try self.pio_data_queue.writeItem(0);
         }
 
         // Ended normally/ended abnormally is only reported once
@@ -998,11 +1021,7 @@ pub const GDROM = struct {
             else => {},
         }
 
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-        });
+        self.pio_prep_complete();
     }
 
     fn chk_secu(self: *@This()) !void {
@@ -1018,12 +1037,8 @@ pub const GDROM = struct {
         gdrom_log.info(" GDROM PacketCommand ReqSecu: {X:0>2}", .{self.packet_command});
         const parameter = self.packet_command[1];
         _ = parameter;
-        try self.data_queue.write(&GDROMCommand71Reply);
+        try self.pio_data_queue.write(&GDROMCommand71Reply);
 
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.pio_prep_complete();
     }
 };
