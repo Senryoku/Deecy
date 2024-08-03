@@ -184,6 +184,41 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (d.controllers[i]) |*j| {
                         _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
                     }
+
+                    if (d.dc.maple.ports[i].main) |peripheral| {
+                        switch (peripheral) {
+                            .Controller => |controller| {
+                                zgui.textColored(if (controller.buttons.a == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[A] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.b == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[B] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.x == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[X] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.y == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[Y] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.start == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[Start] ", .{});
+
+                                zgui.textColored(if (controller.buttons.up == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[^] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.down == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[v] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.left == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[<] ", .{});
+                                zgui.sameLine(.{});
+                                zgui.textColored(if (controller.buttons.right == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[>] ", .{});
+
+                                var buf: [64]u8 = undefined;
+                                for (0..6) |axis| {
+                                    const value = controller.axis[axis];
+                                    const overlay = try std.fmt.bufPrintZ(&buf, "{d}/255", .{value});
+                                    _ = zgui.progressBar(.{
+                                        .fraction = @as(f32, @floatFromInt(value)) / 255.0,
+                                        .overlay = overlay,
+                                    });
+                                }
+                            },
+                            else => {},
+                        }
+                    }
                     if (d.dc.maple.ports[i].main) |_| {
                         for (d.dc.maple.ports[i].subperipherals) |sub| {
                             if (sub) |*s| {

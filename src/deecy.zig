@@ -313,8 +313,8 @@ pub const Deecy = struct {
                                         // TODO: Remap with deadzone?
                                         x_axis = x_axis * 0.5 + 0.5;
                                         y_axis = y_axis * 0.5 + 0.5;
-                                        c.axis[2] = @as(u8, @intFromFloat(x_axis * 255));
-                                        c.axis[3] = @as(u8, @intFromFloat(y_axis * 255));
+                                        c.axis[2] = @as(u8, @intFromFloat(std.math.ceil(x_axis * 255)));
+                                        c.axis[3] = @as(u8, @intFromFloat(std.math.ceil(y_axis * 255)));
                                     }
                                 } else {
                                     // Not valid anymore? Disconnected?
