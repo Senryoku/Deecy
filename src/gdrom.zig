@@ -215,6 +215,17 @@ pub const GDROM = struct {
         }
     },
 
+    // Used for large PIO reads from CD (Quake 3 for example).
+    // These transfers are expected to be conducted in multiple steps, I suspect
+    // at least because of the size of the ByteCount register (16bits).
+    // Right now I'm filling the buffer sector by sector, no idea if this is accurate.
+    cd_read_state: struct {
+        fad: u32 = 0,
+        remaining_sectors: u32 = 0,
+        data_select: u4 = 0,
+        expected_data_type: u3 = 0,
+    } = .{},
+
     scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
 
     // HLE
@@ -354,15 +365,8 @@ pub const GDROM = struct {
                     if (self.pio_data_queue.count == 0) {
                         // 9. When the host has sent (sic?) entire data, the device clears the DRQ bit.
                         self.status_register.drq = 0;
-                        // TODO: If more data are to be sent, the device sets the BSY bit and repeats the above sequence from step 7.
-                        // ...
-                        // 10. When the device is ready to send the status, it writes the final status to the "Status" register. CoD,
-                        //     IO, DRDY are set (before making INTRQ valid), and BSY and DRQ are cleared.
-                        self.schedule_event(.{
-                            .cycles = 0,
-                            .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
-                            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-                        });
+                        // Check if there's more data to be sent.
+                        self.cd_read_pio_fetch() catch unreachable;
                     }
                     return val;
                 }
@@ -599,7 +603,10 @@ pub const GDROM = struct {
         // (3) DRQ bit is set, BSY bit is cleared.
         // (4) INTRQ is set, and a host interrupt is issued.
 
-        self.byte_count = @truncate(self.pio_data_queue.count); // Not really used.
+        if (self.pio_data_queue.count > std.math.maxInt(u16)) {
+            gdrom_log.warn(termcolor.yellow("PIO transfer is too large: {} bytes."), .{self.pio_data_queue.count});
+        }
+        self.byte_count = @truncate(self.pio_data_queue.count); // Not really used (reading the register returns self.pio_data_queue.count directly).
         self.schedule_event(.{
             .cycles = 0, // FIXME
             .status = .{ .drq = 1, .bsy = 0, .drdy = 1 },
@@ -912,37 +919,30 @@ pub const GDROM = struct {
         self.spi_non_data_command();
     }
 
-    fn cd_read(self: *@This()) !void {
-        if (self.features.DMA != 1) {
-            gdrom_log.err(termcolor.red("  Unimplemented GDROM CDRead PIO mode (features == 1)"), .{});
+    fn cd_read_pio_fetch(self: *@This()) !void {
+        if (self.cd_read_state.remaining_sectors > 0) {
+            // If more data are to be sent, the device sets the BSY bit and repeats the above sequence from step 7.
+            self.status_register.bsy = 1;
+            try self.cd_read_fetch(&self.pio_data_queue, self.cd_read_state.data_select, self.cd_read_state.expected_data_type, self.cd_read_state.fad, 1);
+            self.cd_read_state.fad += 1;
+            self.cd_read_state.remaining_sectors -= 1;
+            self.pio_prep_complete();
+        } else {
+            // 10. When the device is ready to send the status, it writes the final status to the "Status" register.
+            //     CoD, IO, DRDY are set (before making INTRQ valid), and BSY and DRQ are cleared.
+            self.schedule_event(.{
+                .cycles = 0,
+                .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
+                .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
+            });
         }
+    }
 
-        const parameter_type = self.packet_command[1] & 0x1;
-        const expected_data_type = (self.packet_command[1] >> 1) & 0x7;
-        const data_select = (self.packet_command[1] >> 4) & 0xF;
-
-        self.state = .Paused;
-        self.audio_state.status = .Paused;
-
-        var start_addr: u32 = if (parameter_type == 0)
-            (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
-        else
-            msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]);
-
-        const transfer_length: u32 = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
-
-        gdrom_log.debug("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
-        gdrom_log.debug("Command: {X}", .{self.packet_command});
-
-        if (start_addr < 45000) {
-            gdrom_log.warn(termcolor.yellow("  GDROM CDRead - Before Track 3 - Start Address {d} ({X:0>8})"), .{ start_addr, start_addr });
-            start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
-        }
-
+    fn cd_read_fetch(self: *@This(), data_queue: *std.fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)
-            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try self.dma_data_queue.writableWithSize(2352 * transfer_length));
-            self.dma_data_queue.update(bytes_written);
+            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
+            data_queue.update(bytes_written);
         } else {
             // FIXME: Everything else isn't implemented
             if (data_select != 0b0010) // Data (no header or subheader)
@@ -982,10 +982,49 @@ pub const GDROM = struct {
                 else => unreachable,
             }
 
-            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try self.dma_data_queue.writableWithSize(2352 * transfer_length));
-            self.dma_data_queue.update(bytes_written);
+            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
+            data_queue.update(bytes_written);
 
-            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{self.dma_data_queue.readableSlice(0)[0..0x20]});
+            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{data_queue.readableSlice(0)[0..0x20]});
+        }
+    }
+
+    fn cd_read(self: *@This()) !void {
+        const parameter_type = self.packet_command[1] & 0x1;
+        const expected_data_type: u3 = @truncate((self.packet_command[1] >> 1) & 0x7);
+        const data_select: u4 = @truncate((self.packet_command[1] >> 4) & 0xF);
+
+        self.state = .Paused;
+        self.audio_state.status = .Paused;
+
+        var start_addr: u32 = if (parameter_type == 0)
+            (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
+        else
+            msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]);
+
+        const transfer_length: u32 = (@as(u32, self.packet_command[8]) << 16) | (@as(u32, self.packet_command[9]) << 8) | self.packet_command[10]; // Number of sectors to read
+
+        gdrom_log.debug("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
+        gdrom_log.debug("Command: {X}", .{self.packet_command});
+
+        if (start_addr < 45000) {
+            gdrom_log.warn(termcolor.yellow("  GDROM CDRead - Before Track 3 - Start Address {d} ({X:0>8})"), .{ start_addr, start_addr });
+            start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
+        }
+
+        const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
+
+        if (transfer_type == .PIO) {
+            gdrom_log.warn(termcolor.yellow("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}"), .{ start_addr, transfer_length });
+            self.cd_read_state = .{
+                .fad = start_addr,
+                .remaining_sectors = transfer_length,
+                .data_select = data_select,
+                .expected_data_type = expected_data_type,
+            };
+            try self.cd_read_pio_fetch();
+        } else {
+            try self.cd_read_fetch(&self.dma_data_queue, data_select, expected_data_type, start_addr, transfer_length);
         }
     }
 
