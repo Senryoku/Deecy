@@ -666,12 +666,12 @@ pub const Polygon = union(PolygonType) {
 fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
     // NOTE: See 3.7.6.2 Parameter Combinations. Some entries are duplicated to account for the fact that the value of offset doesn't matter in these cases.
     // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset - Gouraud (Ignored) - 16bit UV
-    const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_1_0_1;
+    // NOTE: Offset is ignored and fixed at 0 when non-textured
+    const mask: u16 = if (obj_control.texture == 0) 0b00000000_0_1_11_1_0_0_1 else 0b00000000_0_1_11_1_1_0_1;
+    const masked = @as(u16, @bitCast(obj_control)) & mask;
     switch (masked) {
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0,
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: uv_16bit is supposed to be invalid in this case (Non-textured 16-bit uv doesn't make sense), but Ecco the Dolphin use such polygons? Or am I just receiving bad data?
-        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: Same thing, offset should be fixed to 0 for non-textured polygons. (Hydro Thunder does this)
-        @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .PackedColor, .shadow = 0 })) => return .PolygonType0, // FIXME: Same thing, offset should be fixed to 0 for non-textured polygons.
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .FloatingColor, .shadow = 0 })) => return .PolygonType0,
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode1, .shadow = 0 })) => return .PolygonType1,
         @as(u16, @bitCast(ObjControl{ .volume = 0, .texture = 0, .offset = 0, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType0,

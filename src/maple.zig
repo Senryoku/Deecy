@@ -199,7 +199,7 @@ const Controller = struct {
     }
 
     pub fn get_condition(self: *const @This()) [3]u32 {
-        var r = [3]u32{ 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
+        var r = [3]u32{ 0xFFFFFFFF, 0x8080FFFF, 0x80808080 };
         r[0] = @bitCast(Capabilities);
         r[1] = @as(u16, @bitCast(self.buttons));
         for (0..6) |i| {
