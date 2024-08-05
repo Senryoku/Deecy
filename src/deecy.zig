@@ -112,7 +112,7 @@ pub const Deecy = struct {
     gctx: *zgpu.GraphicsContext = undefined,
     scale_factor: f32 = 1.0,
 
-    dc: *Dreamcast,
+    dc: *Dreamcast = undefined,
     renderer: Renderer = undefined,
     audio_device: *zaudio.Device = undefined,
 
@@ -145,12 +145,12 @@ pub const Deecy = struct {
 
         try zglfw.init();
 
-        zaudio.init(allocator);
+        // TODO: Load from config.
+        const default_resolution = Renderer.Resolution{ .width = 2 * Renderer.NativeResolution.width, .height = 2 * Renderer.NativeResolution.height };
 
         const self = try allocator.create(Deecy);
         self.* = Deecy{
-            .window = try zglfw.Window.create(640 * 2 + 2 * 320, 480 * 2 + 320, "Deecy", null),
-            .dc = try Dreamcast.create(allocator),
+            .window = try zglfw.Window.create(default_resolution.width, default_resolution.height, "Deecy", null),
             .last_frame_timestamp = std.time.microTimestamp(),
             .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
             .breakpoints = std.ArrayList(u32).init(allocator),
@@ -196,11 +196,27 @@ pub const Deecy = struct {
         const scale = self.window.getContentScale();
         self.scale_factor = @max(scale[0], scale[1]);
 
+        try self.ui_init();
+
+        self.dc = Dreamcast.create(allocator) catch |err| {
+            switch (err) {
+                error.BiosNotFound => {
+                    self.unrecoverable_error_gui("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
+                },
+                else => {
+                    self.unrecoverable_error_gui("Error initializing Dreamcast");
+                },
+            }
+            return err;
+        };
+
         self.renderer = try Renderer.init(self._allocator, self.gctx);
         self.dc.on_render_start = .{
             .function = @ptrCast(&Renderer.on_render_start),
             .context = &self.renderer,
         };
+
+        zaudio.init(allocator);
 
         var audio_device_config = zaudio.Device.Config.init(.playback);
         audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
@@ -212,10 +228,8 @@ pub const Deecy = struct {
         // std.debug.print("Audio device config: {}\n", .{audio_device_config});
         self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
-        try self.audio_device.setMasterVolume(0.2);
+        try self.audio_device.setMasterVolume(0.3);
         try self.audio_device.start();
-
-        try self.ui_init();
 
         var curr_pad: usize = 0;
         for (0..zglfw.Joystick.maximum_supported) |idx| {
@@ -230,7 +244,48 @@ pub const Deecy = struct {
             }
         }
 
+        self.debug_ui = try DebugUI.init(self);
+
         return self;
+    }
+
+    // Display an error message and wait for the user to close the window.
+    fn unrecoverable_error_gui(self: *@This(), comptime msg: []const u8) void {
+        while (!self.window.shouldClose()) {
+            zglfw.pollEvents();
+
+            const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
+            defer swapchain_texv.release();
+
+            zgui.backend.newFrame(self.gctx.swapchain_descriptor.width, self.gctx.swapchain_descriptor.height);
+
+            if (!zgui.isPopupOpen("Error##Modal", .{})) {
+                zgui.openPopup("Error##Modal", .{});
+            }
+
+            if (zgui.beginPopupModal("Error##Modal", .{})) {
+                zgui.text(msg, .{});
+                if (zgui.button("OK", .{})) {
+                    self.window.setShouldClose(true);
+                }
+                zgui.endPopup();
+            }
+
+            const commands = commands: {
+                const encoder = self.gctx.device.createCommandEncoder(null);
+                defer encoder.release();
+                {
+                    const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+                    defer zgpu.endReleasePass(pass);
+                    zgui.backend.draw(pass);
+                }
+                break :commands encoder.finish(null);
+            };
+            defer commands.release();
+
+            self.gctx.submit(&.{commands});
+            _ = self.gctx.present();
+        }
     }
 
     fn ui_init(self: *Deecy) !void {
@@ -252,8 +307,6 @@ pub const Deecy = struct {
         );
 
         zgui.plot.init();
-
-        self.debug_ui = try DebugUI.init(self);
     }
 
     fn ui_deinit(self: *Deecy) void {
@@ -352,7 +405,7 @@ pub const Deecy = struct {
         try self.load_disk(path);
         self.dc.set_region(self.dc.gdrom.disk.?.get_region()) catch |err| {
             switch (err) {
-                error.FileNotFound => return error.BiosOrFlashMissing,
+                error.FileNotFound => return error.MissingFlash,
                 else => return err,
             }
         };

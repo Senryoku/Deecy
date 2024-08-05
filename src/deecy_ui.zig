@@ -18,12 +18,9 @@ pub fn init(_: std.mem.Allocator) @This() {
 
 pub fn deinit(_: *@This()) void {}
 
-pub fn error_popup(self: *@This(), text: []const u8) void {
-    self.last_error = text;
-    zgui.openPopup("ErrorPopup", .{});
-}
-
 pub fn draw(self: *@This(), d: *Deecy) !void {
+    var error_popup_to_open: [:0]const u8 = "";
+
     if (zgui.beginMainMenuBar()) {
         if (zgui.beginMenu("File", true)) {
             if (zgui.menuItem("Load GDI", .{})) {
@@ -34,10 +31,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     defer nfd.freePath(path);
                     d.load_and_start(path) catch |err| {
                         switch (err) {
-                            error.BiosOrFlashMissing => {
-                                self.error_popup("Failed to set region. Did you put bios and flash files in 'data/[region]/' (e.g. '/data/us/dc_boot.bin')?");
+                            error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
+                            else => {
+                                ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
+                                error_popup_to_open = "Unknown error";
                             },
-                            else => self.error_popup("Unknown error"),
                         }
                     };
                 }
@@ -49,6 +47,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             zgui.endMenu();
         }
+
         if (zgui.beginMenu("DC", true)) {
             if (zgui.menuItem("Reset", .{})) {
                 const was_running = d.running;
@@ -253,11 +252,26 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
-    const center = zgui.getMainViewport().getCenter();
-    zgui.setNextWindowPos(.{ .cond = .appearing, .x = center[0], .y = center[1] });
+    // NOTE: Modals have to be in the same ID stack as the openPopup call :(
+    //       Hence the weird workaround.
+    if (error_popup_to_open.len > 0) {
+        zgui.openPopup(error_popup_to_open, .{});
+    }
 
-    if (zgui.beginPopupModal("ErrorPopup", .{})) {
-        zgui.text("{s}", .{self.last_error});
+    if (zgui.beginPopupModal("Error: Missing Flash", .{ .flags = .{ .always_auto_resize = true } })) {
+        zgui.text("Failed to set region. Did you put flash files in 'data/[region]/'?", .{});
+        zgui.text("Your data folder should look like:", .{});
+        zgui.text("  data/dc_boot.bin", .{});
+        zgui.text("  data/us/dc_flash.bin", .{});
+        zgui.text("  data/eu/dc_flash.bin", .{});
+        zgui.text("  data/jp/dc_flash.bin", .{});
+        if (zgui.button("OK", .{})) {
+            zgui.closeCurrentPopup();
+        }
+        zgui.endPopup();
+    }
+    if (zgui.beginPopupModal("Unknown error", .{})) {
+        zgui.text("The console might have more information!", .{});
         if (zgui.button("OK", .{})) {
             zgui.closeCurrentPopup();
         }

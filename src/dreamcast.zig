@@ -148,6 +148,13 @@ pub const Dreamcast = struct {
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
 
+        dc.load_bios("./data/dc_boot.bin") catch |err| {
+            switch (err) {
+                error.FileNotFound => return error.BiosNotFound,
+                else => return err,
+            }
+        };
+
         try dc.reset();
 
         // FIXME: Hack to bypass some checks I'm failling to emulate.
@@ -248,8 +255,6 @@ pub const Dreamcast = struct {
 
     pub fn set_region(self: *@This(), region: Region) !void {
         self.region = region;
-        var buf = [1]u8{0} ** 128;
-        try self.load_bios(try std.fmt.bufPrint(&buf, "./data/{s}/dc_boot.bin", .{self.region_subdir()}));
         try self.load_flash();
     }
 
@@ -266,19 +271,26 @@ pub const Dreamcast = struct {
     pub fn load_flash(self: *@This()) !void {
         var buf = [1]u8{0} ** 128;
 
-        var flash_file = std.fs.cwd().openFile(try self.get_user_flash_path(&buf), .{}) catch |err| f: {
-            if (err == error.FileNotFound) {
-                dc_log.info("Loading default flash ROM.", .{});
-                const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
-                break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-                    dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
-                    return e;
-                };
-            } else {
-                dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ try self.get_user_flash_path(&buf), err });
-                return err;
-            }
+        // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
+        const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
+        var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
+            dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
+            return e;
         };
+
+        // var flash_file = std.fs.cwd().openFile(try self.get_user_flash_path(&buf), .{}) catch |err| f: {
+        //     if (err == error.FileNotFound) {
+        //         dc_log.info("Loading default flash ROM.", .{});
+        //         const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
+        //         break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
+        //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
+        //             return e;
+        //         };
+        //     } else {
+        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ try self.get_user_flash_path(&buf), err });
+        //         return err;
+        //     }
+        // };
 
         defer flash_file.close();
         const flash_bytes_read = try flash_file.readAll(self.flash.data);
