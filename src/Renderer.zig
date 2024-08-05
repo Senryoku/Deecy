@@ -1520,8 +1520,8 @@ pub const Renderer = struct {
         }
 
         if (texture_index == InvalidTextureIndex) {
-            renderer_log.err(termcolor.red("Out of textures slot (size: {d})"), .{size_index});
-            @panic("Out of textures slot");
+            renderer_log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d})"), .{ size_index, u_size, v_size });
+            return 0;
         }
 
         const end_address = if (texture_control_word.vq_compressed == 1)
