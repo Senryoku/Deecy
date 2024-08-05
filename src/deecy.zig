@@ -201,10 +201,10 @@ pub const Deecy = struct {
         self.dc = Dreamcast.create(allocator) catch |err| {
             switch (err) {
                 error.BiosNotFound => {
-                    self.unrecoverable_error_gui("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
+                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
                 },
                 else => {
-                    self.unrecoverable_error_gui("Error initializing Dreamcast");
+                    self.display_unrecoverable_error("Error initializing Dreamcast");
                 },
             }
             return err;
@@ -249,43 +249,29 @@ pub const Deecy = struct {
         return self;
     }
 
-    // Display an error message and wait for the user to close the window.
-    fn unrecoverable_error_gui(self: *@This(), comptime msg: []const u8) void {
-        while (!self.window.shouldClose()) {
-            zglfw.pollEvents();
+    pub fn destroy(self: *Deecy) void {
+        self.stop();
 
-            const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
-            defer swapchain_texv.release();
+        self.breakpoints.deinit();
 
-            zgui.backend.newFrame(self.gctx.swapchain_descriptor.width, self.gctx.swapchain_descriptor.height);
+        self.audio_device.destroy();
 
-            if (!zgui.isPopupOpen("Error##Modal", .{})) {
-                zgui.openPopup("Error##Modal", .{});
-            }
+        self.renderer.deinit();
 
-            if (zgui.beginPopupModal("Error##Modal", .{})) {
-                zgui.text(msg, .{});
-                if (zgui.button("OK", .{})) {
-                    self.window.setShouldClose(true);
-                }
-                zgui.endPopup();
-            }
+        self.dc.deinit();
+        self._allocator.destroy(self.dc);
 
-            const commands = commands: {
-                const encoder = self.gctx.device.createCommandEncoder(null);
-                defer encoder.release();
-                {
-                    const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                    defer zgpu.endReleasePass(pass);
-                    zgui.backend.draw(pass);
-                }
-                break :commands encoder.finish(null);
-            };
-            defer commands.release();
+        self.debug_ui.deinit();
+        self.ui_deinit();
 
-            self.gctx.submit(&.{commands});
-            _ = self.gctx.present();
-        }
+        zaudio.deinit();
+
+        self.gctx.destroy(self._allocator);
+
+        self.window.destroy();
+        zglfw.terminate();
+
+        self._allocator.destroy(self);
     }
 
     fn ui_init(self: *Deecy) !void {
@@ -297,7 +283,99 @@ pub const Deecy = struct {
             std.math.floor(16.0 * self.scale_factor),
         );
 
-        zgui.getStyle().scaleAllSizes(self.scale_factor);
+        var style = zgui.getStyle();
+
+        style.scaleAllSizes(self.scale_factor);
+
+        // Based on Deep Dark style by janekb04 from ImThemes
+        style.alpha = 1.0;
+        style.disabled_alpha = 0.6000000238418579;
+        style.window_padding = .{ 8.0, 8.0 };
+        style.window_rounding = 7.0;
+        style.window_border_size = 1.0;
+        style.window_min_size = .{ 32.0, 32.0 };
+        style.window_title_align = .{ 0.0, 0.5 };
+        style.window_menu_button_position = .left;
+        style.child_rounding = 4.0;
+        style.child_border_size = 1.0;
+        style.popup_rounding = 4.0;
+        style.popup_border_size = 1.0;
+        style.frame_padding = .{ 6.0, 4.0 };
+        style.frame_rounding = 3.0;
+        style.frame_border_size = 1.0;
+        style.item_spacing = .{ 6.0, 6.0 };
+        style.item_inner_spacing = .{ 6.0, 6.0 };
+        style.cell_padding = .{ 6.0, 6.0 };
+        style.indent_spacing = 25.0;
+        style.columns_min_spacing = 6.0;
+        style.scrollbar_size = 15.0;
+        style.scrollbar_rounding = 9.0;
+        style.grab_min_size = 10.0;
+        style.grab_rounding = 3.0;
+        style.tab_rounding = 4.0;
+        style.tab_border_size = 1.0;
+        style.tab_min_width_for_close_button = 0.0;
+        style.color_button_position = .right;
+        style.button_text_align = .{ 0.5, 0.5 };
+        style.selectable_text_align = .{ 0.0, 0.0 };
+
+        const EULogoColor: [4]f32 = .{ 0.231, 0.463, 0.761, 1.0 };
+        //const JPLogoColor: [4]f32 = .{ 0.929, 0.518, 0.192, 1.0 };
+        //const USLogoColor: [4]f32 = .{ 0.816, 0.2, 0.071, 1.0 };
+
+        style.setColor(.text, .{ 1.0, 1.0, 1.0, 1.0 });
+        style.setColor(.text_disabled, .{ 0.4980392158031464, 0.4980392158031464, 0.4980392158031464, 1.0 });
+        style.setColor(.window_bg, .{ 0.09803921729326248, 0.09803921729326248, 0.09803921729326248, 1.0 });
+        style.setColor(.child_bg, .{ 0.0, 0.0, 0.0, 0.0 });
+        style.setColor(.popup_bg, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.9200000166893005 });
+        style.setColor(.border, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.2899999916553497 });
+        style.setColor(.border_shadow, .{ 0.0, 0.0, 0.0, 0.239999994635582 });
+        style.setColor(.frame_bg, .{ 0.0470588244497776, 0.0470588244497776, 0.0470588244497776, 0.5400000214576721 });
+        style.setColor(.frame_bg_hovered, .{ 0.1882352977991104, 0.1882352977991104, 0.1882352977991104, 0.5400000214576721 });
+        style.setColor(.frame_bg_active, .{ 0.2000000029802322, 0.2196078449487686, 0.2274509817361832, 1.0 });
+        style.setColor(.title_bg, .{ 0.0, 0.0, 0.0, 1.0 });
+        style.setColor(.title_bg_active, .{ 0.05882352963089943, 0.05882352963089943, 0.05882352963089943, 1.0 });
+        style.setColor(.title_bg_collapsed, .{ 0.0, 0.0, 0.0, 1.0 });
+        style.setColor(.menu_bar_bg, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
+        style.setColor(.scrollbar_bg, .{ 0.0470588244497776, 0.0470588244497776, 0.0470588244497776, 0.5400000214576721 });
+        style.setColor(.scrollbar_grab, .{ 0.3372549116611481, 0.3372549116611481, 0.3372549116611481, 0.5400000214576721 });
+        style.setColor(.scrollbar_grab_hovered, .{ 0.4000000059604645, 0.4000000059604645, 0.4000000059604645, 0.5400000214576721 });
+        style.setColor(.scrollbar_grab_active, .{ 0.5568627715110779, 0.5568627715110779, 0.5568627715110779, 0.5400000214576721 });
+        style.setColor(.check_mark, EULogoColor);
+        style.setColor(.slider_grab, .{ 0.3372549116611481, 0.3372549116611481, 0.3372549116611481, 0.5400000214576721 });
+        style.setColor(.slider_grab_active, .{ 0.5568627715110779, 0.5568627715110779, 0.5568627715110779, 0.5400000214576721 });
+        style.setColor(.button, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.2 });
+        style.setColor(.button_hovered, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.35 });
+        style.setColor(.button_active, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.7 });
+        style.setColor(.header, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.header_hovered, .{ 0.0, 0.0, 0.0, 0.3600000143051147 });
+        style.setColor(.header_active, .{ 0.2000000029802322, 0.2196078449487686, 0.2274509817361832, 0.3300000131130219 });
+        style.setColor(.separator, .{ 0.2784313857555389, 0.2784313857555389, 0.2784313857555389, 0.2899999916553497 });
+        style.setColor(.separator_hovered, .{ 0.4392156898975372, 0.4392156898975372, 0.4392156898975372, 0.2899999916553497 });
+        style.setColor(.separator_active, .{ 0.4000000059604645, 0.4392156898975372, 0.4666666686534882, 1.0 });
+        style.setColor(.resize_grip, .{ 0.2784313857555389, 0.2784313857555389, 0.2784313857555389, 0.2899999916553497 });
+        style.setColor(.resize_grip_hovered, .{ 0.4392156898975372, 0.4392156898975372, 0.4392156898975372, 0.2899999916553497 });
+        style.setColor(.resize_grip_active, .{ 0.4000000059604645, 0.4392156898975372, 0.4666666686534882, 1.0 });
+        style.setColor(.tab, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.tab_hovered, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
+        style.setColor(.tab_active, .{ 0.2000000029802322, 0.2000000029802322, 0.2000000029802322, 0.3600000143051147 });
+        style.setColor(.tab_unfocused, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.tab_unfocused_active, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
+        style.setColor(.plot_lines, EULogoColor);
+        style.setColor(.plot_lines_hovered, EULogoColor);
+        style.setColor(.plot_histogram, EULogoColor);
+        style.setColor(.plot_histogram_hovered, EULogoColor);
+        style.setColor(.table_header_bg, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.table_border_strong, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.table_border_light, .{ 0.2784313857555389, 0.2784313857555389, 0.2784313857555389, 0.2899999916553497 });
+        style.setColor(.table_row_bg, .{ 0.0, 0.0, 0.0, 0.0 });
+        style.setColor(.table_row_bg_alt, .{ 1.0, 1.0, 1.0, 0.05999999865889549 });
+        style.setColor(.text_selected_bg, .{ 0.2000000029802322, 0.2196078449487686, 0.2274509817361832, 1.0 });
+        style.setColor(.drag_drop_target, .{ 0.3294117748737335, 0.6666666865348816, 0.8588235378265381, 1.0 });
+        style.setColor(.nav_highlight, EULogoColor);
+        style.setColor(.nav_windowing_highlight, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.7 });
+        style.setColor(.nav_windowing_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.2 });
+        style.setColor(.modal_window_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.35 });
 
         zgui.backend.init(
             self.window,
@@ -309,11 +387,8 @@ pub const Deecy = struct {
         zgui.plot.init();
     }
 
-    fn ui_deinit(self: *Deecy) void {
-        self.debug_ui.deinit();
-
+    fn ui_deinit(_: *Deecy) void {
         zgui.plot.deinit();
-
         zgui.backend.deinit();
         zgui.deinit();
     }
@@ -468,17 +543,17 @@ pub const Deecy = struct {
         }
     }
 
+    fn reset_per_frame_throttling(self: *Deecy) void {
+        reset_semaphore(&self.dc_thread_semaphore);
+        self.dc_last_frame = std.time.Instant.now() catch unreachable;
+    }
+
     pub fn set_throttle_method(self: *Deecy, method: CPUThrottleMethod) void {
         if (method == self.config.cpu_throttling_method) return;
 
         switch (method) {
-            .None => {
-                self.dc_thread_semaphore.post(); // Make sure to wake up.
-            },
-            .PerFrame => {
-                reset_semaphore(&self.dc_thread_semaphore);
-                self.dc_last_frame = std.time.Instant.now() catch unreachable;
-            },
+            .None => self.dc_thread_semaphore.post(), // Make sure to wake up.
+            .PerFrame => self.reset_per_frame_throttling(),
         }
         self.config.cpu_throttling_method = method;
     }
@@ -491,8 +566,7 @@ pub const Deecy = struct {
                 };
             }
             self.running = true;
-            reset_semaphore(&self.dc_thread_semaphore);
-            self.dc_last_frame = std.time.Instant.now() catch unreachable;
+            self.reset_per_frame_throttling();
             if (ExperimentalThreadedDC) {
                 self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
                     self.running = false;
@@ -511,30 +585,6 @@ pub const Deecy = struct {
                 self.dc_thread.join();
             }
         }
-    }
-
-    pub fn destroy(self: *Deecy) void {
-        self.stop();
-
-        self.breakpoints.deinit();
-
-        self.audio_device.destroy();
-
-        self.renderer.deinit();
-
-        self.dc.deinit();
-        self._allocator.destroy(self.dc);
-
-        self.ui_deinit();
-
-        zaudio.deinit();
-
-        self.gctx.destroy(self._allocator);
-
-        self.window.destroy();
-        zglfw.terminate();
-
-        self._allocator.destroy(self);
     }
 
     pub fn draw_ui(self: *@This()) !void {
@@ -561,6 +611,28 @@ pub const Deecy = struct {
             }
             zgui.end();
         }
+
+        self.submit_ui();
+    }
+
+    fn submit_ui(self: *@This()) void {
+        const swapchain_texv = self.gctx.swapchain.getCurrentTextureView();
+        defer swapchain_texv.release();
+
+        const commands = commands: {
+            const encoder = self.gctx.device.createCommandEncoder(null);
+            defer encoder.release();
+            // GUI pass
+            {
+                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
+                defer zgpu.endReleasePass(pass);
+                zgui.backend.draw(pass);
+            }
+            break :commands encoder.finish(null);
+        };
+        defer commands.release();
+
+        self.gctx.submit(&.{commands});
     }
 
     pub fn one_frame(self: *Deecy) void {
@@ -629,6 +701,31 @@ pub const Deecy = struct {
         }
 
         deecy_log.info(termcolor.red("Dreamcast thread stopped."), .{});
+    }
+
+    // Display an error message and wait for the user to close the window.
+    fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
+        while (!self.window.shouldClose()) {
+            zglfw.pollEvents();
+
+            zgui.backend.newFrame(self.gctx.swapchain_descriptor.width, self.gctx.swapchain_descriptor.height);
+
+            if (!zgui.isPopupOpen("Error##Modal", .{})) {
+                zgui.openPopup("Error##Modal", .{});
+            }
+
+            if (zgui.beginPopupModal("Error##Modal", .{})) {
+                zgui.text(msg, .{});
+                if (zgui.button("OK", .{})) {
+                    self.window.setShouldClose(true);
+                }
+                zgui.endPopup();
+            }
+
+            self.submit_ui();
+
+            _ = self.gctx.present();
+        }
     }
 
     fn audio_callback(

@@ -4,8 +4,6 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zglfw = @import("zglfw");
 
-const zguiExtra = @import("zgui_extra.zig");
-
 const P4Register = @import("./sh4.zig").P4Register;
 const HardwareRegisters = @import("./hardware_registers.zig");
 
@@ -61,13 +59,27 @@ fn printable_ascii(c: u8) u8 {
 }
 
 fn display(self: anytype) void {
+    zgui.indent(.{});
+    defer zgui.unindent(.{});
+
     const info = @typeInfo(@TypeOf(self));
     comptime var max_length = 0;
     inline for (info.Struct.fields) |field| {
         max_length = @max(max_length, field.name.len);
     }
     inline for (info.Struct.fields) |field| {
-        zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, @field(self, field.name) });
+        // Hide "private" (or hidden) fields - Meaning those starting with an underscore.
+        if (!std.mem.startsWith(u8, field.name, "_")) {
+            switch (@typeInfo(field.type)) {
+                .Enum => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {s}", .{ field.name, @tagName(@field(self, field.name)) }),
+                .Struct => {
+                    if (zgui.collapsingHeader(field.name ++ " (" ++ @typeName(field.type) ++ ")", .{})) {
+                        display(@field(self, field.name));
+                    }
+                },
+                else => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {any}", .{ field.name, @field(self, field.name) }),
+            }
+        }
     }
 }
 
@@ -150,6 +162,10 @@ fn reset_hover(self: *@This()) void {
     }
 }
 
+fn textHighlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
+    zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 
@@ -157,20 +173,36 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("CPU State", .{})) {
         _ = zgui.checkbox("JIT", .{ .v = &d.enable_jit });
-        zgui.text("PC: 0x{X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
-        zgui.text("PR: 0x{X:0>8}", .{dc.cpu.pr});
-        zgui.text("SR: T={any}, S={any}, IMASK={d}", .{ dc.cpu.sr.t, dc.cpu.sr.s, dc.cpu.sr.imask });
-        zgui.text("GBR: 0x{X:0>8}", .{dc.cpu.gbr});
-        zgui.text("VBR: 0x{X:0>8}", .{dc.cpu.vbr});
+        zgui.sameLine(.{});
+        if (zgui.button("Clear Cache", .{})) {
+            const was_running = d.running;
+            if (was_running)
+                d.stop();
+            try dc.sh4_jit.block_cache.reset();
+            if (was_running)
+                d.start();
+        }
+        zgui.text("PC: {X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
+        zgui.text("PR: {X:0>8}", .{dc.cpu.pr});
+        zgui.text("SR: ", .{});
+        zgui.sameLine(.{});
+        textHighlighted(dc.cpu.sr.t, "[T] ", .{});
+        zgui.sameLine(.{});
+        textHighlighted(dc.cpu.sr.s, "[S] ", .{});
+        zgui.sameLine(.{});
+        textHighlighted(dc.cpu.sr.bl, "[BL] ", .{});
+        zgui.text("IMASK: {d: >2} ", .{dc.cpu.sr.imask});
+        zgui.text("GBR: {X:0>8}", .{dc.cpu.gbr});
+        zgui.text("VBR: {X:0>8}", .{dc.cpu.vbr});
         zgui.beginGroup();
         for (0..8) |i| {
-            zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
+            zgui.text("R{d: <2}: {X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
         }
         zgui.endGroup();
         zgui.sameLine(.{});
         zgui.beginGroup();
         for (8..16) |i| {
-            zgui.text("R{d: <2}: 0x{X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
+            zgui.text("R{d: <2}: {X:0>8}", .{ i, dc.cpu.R(@truncate(i)).* });
         }
         zgui.endGroup();
 
@@ -234,9 +266,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         inline for (0..3) |i| {
             zgui.beginGroup();
             const control = dc.cpu.read_p4_register(sh4.P4.TCR, timers[i].control);
-            zgui.text("Timer {d:0>1}: Enabled: {any}", .{ i, ((TSTR >> i) & 1) == 1 });
-            zgui.text("  0x{X:0>8}/0x{X:0>8}", .{ dc.cpu.read_p4_register(u32, timers[i].counter), dc.cpu.read_p4_register(u32, timers[i].constant) });
-            zgui.text("  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} ICPE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.icpe, control.unf });
+            const enabled = ((TSTR >> i) & 1) == 1;
+            textHighlighted(enabled, "Timer {d:0>1}: {X:0>8} / {X:0>8}", .{
+                i,
+                dc.cpu.read_p4_register(u32, timers[i].counter),
+                dc.cpu.read_p4_register(u32, timers[i].constant),
+            });
+            if (i == 2) {
+                textHighlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1} ICPE {X:0>1} ICPF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf, control.icpe, control.icpf });
+            } else {
+                textHighlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf });
+            }
             zgui.endGroup();
         }
 
@@ -719,9 +759,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Renderer", .{})) {
-        if (zguiExtra.selectEnum("Display Mode", &d.renderer.display_mode))
-            d.renderer.update_blit_to_screen_vertex_buffer();
-
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
         zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
         zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});
@@ -785,18 +822,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
-    if (zgui.begin("Debug", .{})) {
-        if (zgui.button("Clear SH4 JIT Cache", .{})) {
-            const was_running = d.running;
-            if (was_running)
-                d.stop();
-            try dc.sh4_jit.block_cache.reset();
-            if (was_running)
-                d.start();
-        }
-
-        zgui.separator();
-
+    if (zgui.begin("Interrupts", .{})) {
         inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).Struct.fields) |field| {
             if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
                 comptime var val: HardwareRegisters.SB_ISTNRM = .{};
@@ -891,13 +917,33 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
 }
 
 fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, strip: *const Holly.VertexStrip) void {
+    zgui.pushPtrId(strip);
+    defer zgui.popId();
+
+    var buffer: [128]u8 = undefined;
+
     const control_word = strip.polygon.control_word();
     const isp_tsp = strip.polygon.isp_tsp_instruction();
     const tsp = strip.polygon.tsp_instruction();
     // TODO: Display some actually useful information :)
-    zgui.text("Control Word:    {X:0>8}", .{@as(u32, @bitCast(control_word))});
-    zgui.text("ISP TSP:         {X:0>8}", .{@as(u32, @bitCast(isp_tsp))});
-    zgui.text("TSP:             {X:0>8}", .{@as(u32, @bitCast(tsp))});
+    {
+        const header = std.fmt.bufPrintZ(&buffer, "Control Word:    {X:0>8}##ControlWord", .{@as(u32, @bitCast(control_word))}) catch unreachable;
+        if (zgui.collapsingHeader(header, .{})) {
+            display(control_word);
+        }
+    }
+    {
+        const header = std.fmt.bufPrintZ(&buffer, "ISP TSP:         {X:0>8}##ISPTSP", .{@as(u32, @bitCast(isp_tsp))}) catch unreachable;
+        if (zgui.collapsingHeader(header, .{})) {
+            display(isp_tsp);
+        }
+    }
+    {
+        const header = std.fmt.bufPrintZ(&buffer, "TSP:             {X:0>8}##TSP", .{@as(u32, @bitCast(tsp))}) catch unreachable;
+        if (zgui.collapsingHeader(header, .{})) {
+            display(tsp);
+        }
+    }
     if (control_word.obj_control.texture == 1) {
         const texture_control_word = strip.polygon.texture_control();
         zgui.text("Texture Control: {X:0>8}", .{@as(u32, @bitCast(texture_control_word))});

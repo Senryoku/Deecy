@@ -287,9 +287,6 @@ pub fn main() !void {
             d.last_frame_timestamp = now;
         }
 
-        const swapchain_texv = d.gctx.swapchain.getCurrentTextureView();
-        defer swapchain_texv.release();
-
         const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
         if (always_render or render_start)
             try d.renderer.render();
@@ -297,23 +294,6 @@ pub fn main() !void {
         d.renderer.draw(); //  Blit to screen
 
         try d.draw_ui();
-
-        const commands = commands: {
-            const encoder = d.gctx.device.createCommandEncoder(null);
-            defer encoder.release();
-
-            // GUI pass
-            {
-                const pass = zgpu.beginRenderPassSimple(encoder, .load, swapchain_texv, null, null, null);
-                defer zgpu.endReleasePass(pass);
-                zgui.backend.draw(pass);
-            }
-
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
-
-        d.gctx.submit(&.{commands});
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.renderer.on_inner_resolution_change();

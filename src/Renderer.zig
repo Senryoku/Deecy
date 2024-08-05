@@ -2735,8 +2735,6 @@ pub const Renderer = struct {
                 }
             }
 
-            // TODO: Translucent Modifier Volume
-
             break :commands encoder.finish(null);
         };
         defer commands.release();
@@ -2750,6 +2748,7 @@ pub const Renderer = struct {
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
 
+        // TODO: This does not change and could be recorded once and for all.
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();

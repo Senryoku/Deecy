@@ -2,7 +2,6 @@ const std = @import("std");
 
 const zglfw = @import("zglfw");
 const zgui = @import("zgui");
-const zguiExtra = @import("zgui_extra.zig");
 
 const ui_log = std.log.scoped(.ui);
 
@@ -127,11 +126,18 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
-            if (zgui.beginTabItem("CPU", .{})) {
+            if (zgui.beginTabItem("General", .{})) {
                 var method = d.config.cpu_throttling_method;
-                if (zguiExtra.selectEnum("CPU Throttling Method", &method)) {
+                if (zgui.comboFromEnum("CPU Throttling Method", &method)) {
                     d.set_throttle_method(method);
                 }
+                zgui.endTabItem();
+            }
+
+            if (zgui.beginTabItem("Renderer", .{})) {
+                zgui.text("Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
+                if (zgui.comboFromEnum("Display Mode", &d.renderer.display_mode))
+                    d.renderer.update_blit_to_screen_vertex_buffer();
                 zgui.endTabItem();
             }
 
