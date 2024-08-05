@@ -491,6 +491,8 @@ pub const Deecy = struct {
                 };
             }
             self.running = true;
+            reset_semaphore(&self.dc_thread_semaphore);
+            self.dc_last_frame = std.time.Instant.now() catch unreachable;
             if (ExperimentalThreadedDC) {
                 self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
                     self.running = false;
