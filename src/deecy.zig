@@ -173,7 +173,25 @@ pub const Deecy = struct {
         }, .{
             .present_mode = .mailbox,
             .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
+            .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
         });
+
+        brk_limits: {
+            var device_limits: zgpu.wgpu.SupportedLimits = .{};
+            var adapter_limits: zgpu.wgpu.SupportedLimits = .{};
+            if (!self.gctx.device.getLimits(&device_limits)) {
+                deecy_log.err("Failed to get device limits.", .{});
+                break :brk_limits;
+            }
+            if (!self.gctx.device.getAdapter().getLimits(&adapter_limits)) {
+                deecy_log.err("Failed to get adapter limits.", .{});
+                break :brk_limits;
+            }
+            deecy_log.info("WebGPU Limits (Device/Adapter):", .{});
+            inline for (std.meta.fields(zgpu.wgpu.Limits)) |field| {
+                deecy_log.info("{s: >48}: {d: >10} / {d: >10}", .{ field.name, @field(device_limits.limits, field.name), @field(adapter_limits.limits, field.name) });
+            }
+        }
 
         const scale = self.window.getContentScale();
         self.scale_factor = @max(scale[0], scale[1]);

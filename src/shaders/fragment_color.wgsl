@@ -11,7 +11,7 @@
 @group(1) @binding(0) var image_sampler: sampler;
 
 fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
-    if index > 255 { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+    if index >= 512 { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
     switch(max((control >> 4) & 7, (control >> 7) & 7))  {
         case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, duvdx, duvdy); }

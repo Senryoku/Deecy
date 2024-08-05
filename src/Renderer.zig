@@ -388,7 +388,7 @@ const modifier_volume_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
 }};
 
 pub const Renderer = struct {
-    pub const MaxTextures: [8]u16 = .{ 256, 256, 256, 256, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
+    pub const MaxTextures: [8]u16 = .{ 512, 512, 512, 512, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
     pub const DisplayMode = enum { Center, Fit, Stretch };
 
@@ -410,7 +410,7 @@ pub const Renderer = struct {
     render_start: bool = false,
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
-    texture_metadata: [8][256]TextureMetadata = [_][256]TextureMetadata{[_]TextureMetadata{.{}} ** 256} ** 8,
+    texture_metadata: [8][512]TextureMetadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8,
 
     framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
@@ -3137,12 +3137,12 @@ pub const Renderer = struct {
         return VolumePixelSize * (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices);
     }
 
-    fn get_max_storage_buffer_binding_size(_: *const @This()) u64 {
-        // FIXME: No idea why this always fails.
-        // var r: zgpu.wgpu.SupportedLimits = undefined;
-        // if (!self._gctx.device.getLimits(&r))
-        //     renderer_log.err("Failed to get device limits.", .{});
-        // return r.limits.max_storage_buffer_binding_size;
-        return 134217728; // FIXME: Hardcoded 'cause I can't be bothered to make it work correctly right now.
+    fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
+        var r: zgpu.wgpu.SupportedLimits = .{};
+        if (!self._gctx.device.getLimits(&r)) {
+            renderer_log.err("get_max_storage_buffer_binding_size: Failed to get device limits.", .{});
+            return 134217728; // Min WebGPU spec.
+        }
+        return r.limits.max_storage_buffer_binding_size;
     }
 };

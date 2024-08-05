@@ -30,7 +30,7 @@ show_disabled_channels: bool = false,
 
 vram_texture: zgpu.TextureHandle = undefined,
 vram_texture_view: zgpu.TextureViewHandle = undefined,
-renderer_texture_views: [8][256]zgpu.TextureViewHandle = undefined,
+renderer_texture_views: [8][512]zgpu.TextureViewHandle = undefined,
 
 // Strip Debug Display
 selected_strip_focus: bool = false, // Element has been clicked and remain in focus
