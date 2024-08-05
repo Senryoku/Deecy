@@ -99,7 +99,7 @@ fn safe_path(path: []u8) void {
 
 const Configuration = struct {
     per_game_vmu: bool = true,
-    cpu_throttling_method: CPUThrottleMethod = .None,
+    cpu_throttling_method: CPUThrottleMethod = .PerFrame,
     display_debug_ui: bool = false,
 };
 
