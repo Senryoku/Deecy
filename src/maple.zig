@@ -60,7 +60,7 @@ const CommandWord = packed struct(u32) {
     payload_length: u8, // In 32-bit words.
 };
 
-const InputCapabilities = packed struct(u32) {
+pub const InputCapabilities = packed struct(u32) {
     _0: u8 = 0,
 
     analogRtrigger: u1 = 0,
@@ -172,9 +172,9 @@ pub const ControllerButtons = packed struct(u16) {
     _2: u5 = 0b11111,
 };
 
-const Controller = struct {
-    const Capabilities: FunctionCodesMask = .{ .controller = 1 };
-    const Subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 };
+pub const Controller = struct {
+    pub const Capabilities: FunctionCodesMask = .{ .controller = 1 };
+    pub const Subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 };
 
     buttons: ControllerButtons = .{},
     axis: [6]u8 = .{0x80} ** 6,

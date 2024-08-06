@@ -8,6 +8,7 @@ const ui_log = std.log.scoped(.ui);
 const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig").Deecy;
+const MapleModule = @import("maple.zig");
 
 last_error: []const u8 = "",
 
@@ -164,7 +165,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
                     const number = std.fmt.comptimePrint("{d}", .{i + 1});
                     var connected: bool = d.dc.maple.ports[i].main != null;
-                    if (zgui.checkbox("Connected##" ++ number, .{ .v = &connected })) {
+                    if (zgui.checkbox("Controller #" ++ number, .{ .v = &connected })) {
                         if (d.dc.maple.ports[i].main != null) {
                             d.dc.maple.ports[i].main = null;
                         } else {
@@ -178,7 +179,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             "None")
                     else
                         "None";
-                    if (zgui.beginCombo("Controller #" ++ number, .{ .preview_value = name })) {
+                    if (zgui.beginCombo("Device" ++ number, .{ .preview_value = name })) {
                         for (available_controllers.items, 0..) |item, index| {
                             const idx = @as(u32, @intCast(index));
                             if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == available_controllers.items[idx].id }))
@@ -211,10 +212,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 zgui.sameLine(.{});
                                 zgui.textColored(if (controller.buttons.right == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[>] ", .{});
 
+                                const capabilities: MapleModule.InputCapabilities = @bitCast(MapleModule.Controller.Subcapabilities[0]);
                                 var buf: [64]u8 = undefined;
-                                for (0..6) |axis| {
+                                inline for (0..6) |axis| {
+                                    if (@field(capabilities, ([_][]const u8{ "analogRtrigger", "analogLtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[axis]) == 0) continue;
                                     const value = controller.axis[axis];
-                                    const overlay = try std.fmt.bufPrintZ(&buf, "{d}/255", .{value});
+                                    const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "R", "L", "H", "V", "H2", "V2" }[axis], value });
                                     _ = zgui.progressBar(.{
                                         .fraction = @as(f32, @floatFromInt(value)) / 255.0,
                                         .overlay = overlay,
