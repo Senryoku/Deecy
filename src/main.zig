@@ -277,7 +277,7 @@ pub fn main() !void {
         const render_start = d.renderer.render_start;
         if (render_start) {
             d.renderer.render_start = false;
-            try d.renderer.update();
+            try d.renderer.update(&d.dc.gpu);
 
             if (d.last_n_frametimes.count >= 60) {
                 _ = d.last_n_frametimes.readItem();
@@ -289,7 +289,7 @@ pub fn main() !void {
 
         const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
         if (always_render or render_start)
-            try d.renderer.render();
+            try d.renderer.render(&d.dc.gpu);
 
         d.renderer.draw(); //  Blit to screen
 
