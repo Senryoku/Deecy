@@ -111,10 +111,14 @@ const BlockCache = struct {
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
         inline for (0..2) |sz| {
             inline for (0..2) |pr| {
-                // FIXME: This can probably be made a lot smarter and a lot faster.
-                for (start_addr..end_addr) |addr| {
-                    self.blocks[compute_key(@intCast(addr), sz, pr)] = null;
+                // Addresses are used in the low bits of keys, so this should be contiguous.
+                comptime {
+                    std.debug.assert(compute_key(0, sz, pr) == compute_key(1, sz, pr)); // 16bits aligned
+                    std.debug.assert(compute_key(0, sz, pr) + 1 == compute_key(2, sz, pr)); // contiguous
                 }
+                const start = compute_key(@intCast(start_addr), sz, pr);
+                const end = compute_key(@intCast(end_addr), sz, pr);
+                @memset(self.blocks[start..end], null);
             }
         }
     }
