@@ -20,9 +20,13 @@ pub fn build(b: *std.Build) void {
 
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
 
-    const dc_module = b.createModule(.{ .root_source_file = b.path("src/dreamcast.zig") });
-    dc_module.addImport("arm7", arm7_module);
-    dc_module.addImport("termcolor", termcolor_module);
+    const dc_module = b.createModule(.{
+        .root_source_file = b.path("src/dreamcast.zig"),
+        .imports = &.{
+            .{ .name = "arm7", .module = arm7_module },
+            .{ .name = "termcolor", .module = termcolor_module },
+        },
+    });
 
     const exe = b.addExecutable(.{
         .name = "Deecy",
