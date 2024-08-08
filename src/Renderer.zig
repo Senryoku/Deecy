@@ -408,6 +408,7 @@ pub const Renderer = struct {
     const DepthCompareFunction: wgpu.CompareFunction = .greater;
 
     render_start: bool = false,
+    on_render_start_param_base: u32 = 0,
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][512]TextureMetadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8,
@@ -505,11 +506,6 @@ pub const Renderer = struct {
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
-
-    gpu_data_mutex: std.Thread.Mutex = .{},
-    ta_lists: HollyModule.TALists,
-    registers: []u8,
-    vram: []u8 align(32),
 
     _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
@@ -1113,10 +1109,6 @@ pub const Renderer = struct {
             .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
             .translucent_pass = PassMetadata.init(allocator, .Translucent),
 
-            .ta_lists = HollyModule.TALists.init(allocator),
-            .registers = try allocator.alloc(u8, HollyModule.Holly.RegistersSize),
-            .vram = try allocator.alignedAlloc(u8, 32, HollyModule.Holly.VRAMSize),
-
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
@@ -1133,10 +1125,6 @@ pub const Renderer = struct {
         self.punchthrough_pass.deinit();
         self.translucent_pass.deinit();
 
-        self._allocator.free(self.registers);
-        self._allocator.free(self.vram);
-        self.ta_lists.deinit();
-
         self.vertices.deinit();
         self.modifier_volume_vertices.deinit();
         self._allocator.free(self._scratch_pad);
@@ -1149,36 +1137,20 @@ pub const Renderer = struct {
     }
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
-        self.gpu_data_mutex.lock();
-        defer self.gpu_data_mutex.unlock();
-
-        const list_idx: u4 = @truncate(dc.gpu.read_register(u32, .PARAM_BASE) >> 20);
-
-        self.ta_lists.clearRetainingCapacity(); // We'll consume the lists. This isn't accurate, but I don't think games will actually edit lists AFTER calling a START_RENDER on it...?
-        std.mem.swap(HollyModule.TALists, &self.ta_lists, &dc.gpu._ta_lists[list_idx]);
-        // Copy registers and VRAM in case they're modified before rendering is done. FIXME: This is very slow and mostly unnecessary.
-        @memcpy(self.registers, dc.gpu.registers);
-        @memcpy(self.vram, dc.gpu.vram);
-
         if (self.render_start) {
             renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
         }
+        self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
         self.render_start = true;
     }
 
-    pub inline fn get_palette_data(self: *const @This()) []u8 {
-        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyModule.HollyRegister.PALETTE_RAM_START) - HollyModule.HollyRegisterStart]))[0 .. 4 * 1024];
+    pub fn get_list_idx(self: *const Renderer) u4 {
+        return @truncate(self.on_render_start_param_base >> 20);
     }
-    pub inline fn get_register(self: *@This(), comptime T: type, r: HollyModule.HollyRegister) *T {
-        return self.get_register_from_addr(T, @intFromEnum(r));
-    }
-    pub inline fn get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
-        std.debug.assert(addr >= HollyModule.HollyRegisterStart and addr < HollyModule.HollyRegisterStart + self.registers.len);
-        return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyModule.HollyRegisterStart])));
-    }
+
     // FIXME: This is way too slow.
-    fn texture_hash(self: *const @This(), start: u32, end: u32) u64 {
-        return std.hash.CityHash64.hash(self.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
+    fn texture_hash(gpu: *const HollyModule.Holly, start: u32, end: u32) u64 {
+        return std.hash.CityHash64.hash(gpu.vram[start & 0xFFFFFFC .. end & 0xFFFFFFC]);
     }
 
     // For external use only (e.g. Debug UI)
@@ -1194,7 +1166,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn get_texture_index(self: *Renderer, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
+    fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
             if (entry.status != .Invalid and
                 // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
@@ -1205,8 +1177,8 @@ pub const Renderer = struct {
                 if (entry.usage == 0) {
                     const is_palette_texture = entry.control_word.pixel_format == .Palette4BPP or entry.control_word.pixel_format == .Palette8BPP;
                     // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
-                    if ((is_palette_texture and self.palette_hash(entry.control_word) != entry.palette_hash) or
-                        self.texture_hash(entry.start_address, entry.end_address) != entry.hash)
+                    if ((is_palette_texture and palette_hash(gpu, entry.control_word) != entry.palette_hash) or
+                        texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash)
                     {
                         entry.status = .Outdated;
                         entry.usage = 0xFFFFFFFF; // Do not check it again.
@@ -1221,10 +1193,10 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn palette_hash(self: *const @This(), texture_control_word: HollyModule.TextureControlWord) u32 {
+    fn palette_hash(gpu: *const HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
         switch (texture_control_word.pixel_format) {
             .Palette4BPP, .Palette8BPP => |format| {
-                const palette_ram = self.get_palette_data();
+                const palette_ram = gpu.get_palette_data();
                 const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
                 const size: u16 = if (format == .Palette4BPP) 16 else 256;
                 return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
@@ -1314,11 +1286,11 @@ pub const Renderer = struct {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
 
-    fn upload_texture(self: *Renderer, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
+    fn upload_texture(self: *Renderer, gpu: *const HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
 
-        const texture_control_register = self.get_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL).*;
+        const texture_control_register = gpu.read_register(HollyModule.TEXT_CONTROL, .TEXT_CONTROL);
 
         const is_paletted = texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP;
 
@@ -1395,8 +1367,8 @@ pub const Renderer = struct {
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
-            const code_book = @as([*]u64, @alignCast(@ptrCast(&self.vram[addr])))[0..256];
-            const indices = self.vram[vq_index_addr..];
+            const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
+            const indices = gpu.vram[vq_index_addr..];
             // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
             for (0..v_size / 2) |v| {
                 for (0..u_size / 2) |u| {
@@ -1424,13 +1396,13 @@ pub const Renderer = struct {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&self.vram[addr + 2 * texel_idx]))).*, twiddled);
+                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
                         }
                     }
                 },
                 .Palette4BPP, .Palette8BPP => |format| {
-                    const palette_ram = @as([*]const u32, @ptrCast(self.get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                    const palette_ctrl_ram: u2 = @truncate(self.get_register(u32, .PAL_RAM_CTRL).* & 0b11);
+                    const palette_ram = @as([*]const u32, @ptrCast(@constCast(gpu)._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+                    const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
                     const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
                     for (0..v_size) |v| {
@@ -1438,7 +1410,7 @@ pub const Renderer = struct {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
                             const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
-                            const pixel_palette: u8 = self.vram[addr + ram_addr];
+                            const pixel_palette: u8 = gpu.vram[addr + ram_addr];
                             const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
                             switch (palette_ctrl_ram) {
                                 0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
@@ -1457,7 +1429,7 @@ pub const Renderer = struct {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = 2 * v * u_size + 2 * u;
                                 const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&self.vram[addr + 8 * texel_idx])))[0..4];
+                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx])))[0..4];
                                 const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
                                 const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
                                 const colors_0 = Colors.yuv_to_rgba(texels_0_1);
@@ -1473,7 +1445,7 @@ pub const Renderer = struct {
                             for (0..u_size / 2) |u| {
                                 const pixel_idx = v * u_size + 2 * u;
                                 const texel_idx = 2 * pixel_idx;
-                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&self.vram[addr + texel_idx]))).*);
+                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
                                 const colors = Colors.yuv_to_rgba(texel);
                                 self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
                                 self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
@@ -1487,7 +1459,7 @@ pub const Renderer = struct {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = 2 * pixel_idx;
-                            const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&self.vram[addr + texel_idx])))[0..2].*;
+                            const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx])))[0..2].*;
                             self.bgra_scratch_pad()[pixel_idx] = .{ texels[0], texels[1], 0, 0 };
                         }
                     }
@@ -1544,8 +1516,8 @@ pub const Renderer = struct {
             .size = .{ alloc_u_size, alloc_v_size },
             .start_address = addr,
             .end_address = end_address,
-            .hash = self.texture_hash(addr, end_address),
-            .palette_hash = self.palette_hash(texture_control_word),
+            .hash = texture_hash(gpu, addr, end_address),
+            .palette_hash = palette_hash(gpu, texture_control_word),
         };
 
         // Fill with repeating texture data when v_size != u_size to avoid wrapping artifacts.
@@ -1710,24 +1682,23 @@ pub const Renderer = struct {
     }
 
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
-    // NOTE: Caller should hold gpu_data_mutex.
-    pub fn update_background(self: *@This()) !void {
-        const tags = self.get_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T).*;
-        const param_base = self.get_register(u32, .PARAM_BASE).*;
+    pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
+        const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
+        const param_base = self.on_render_start_param_base;
         const addr = param_base + 4 * tags.tag_address;
-        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&self.vram[addr]))).*;
-        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&self.vram[addr + 4]))).*;
-        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&self.vram[addr + 8]))).*;
+        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
+        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
+        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
         //        which doesn't make sense. The vertices z position looks more inline with what
         //        I understand of the render pipeline.
-        const depth = self.get_register(f32, .ISP_BACKGND_D).*;
+        const depth = gpu.read_register(f32, .ISP_BACKGND_D);
         _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
-        const parameter_volume_mode = (self.get_register(u32, .FPU_SHAD_SCALE).* >> 8) & 1 == 1 and tags.shadow == 1;
+        const parameter_volume_mode = (gpu.read_register(u32, .FPU_SHAD_SCALE) >> 8) & 1 == 1 and tags.shadow == 1;
         const skipped_vertex_byte_size: u32 = @as(u32, 4) * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
@@ -1738,7 +1709,7 @@ pub const Renderer = struct {
 
         // The unused fields seems to be absent.
         if (isp_tsp_instruction.texture == 1) {
-            tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(tsp_instruction, texture_control);
+            tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
             self.texture_metadata[texture_size_index][tex_idx].usage += 1;
 
             if (isp_tsp_instruction.uv_16bit == 1) {
@@ -1771,7 +1742,7 @@ pub const Renderer = struct {
         };
 
         for (0..3) |i| {
-            const vp = @as([*]const u32, @alignCast(@ptrCast(&self.vram[start + i * vertex_byte_size])));
+            const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
             var u: f32 = 0;
             var v: f32 = 0;
             var base_color: PackedColor = @bitCast(vp[3]);
@@ -1861,9 +1832,9 @@ pub const Renderer = struct {
         std.debug.assert(FirstIndex == indices.len);
     }
 
-    pub fn update(self: *Renderer) !void {
-        self.gpu_data_mutex.lock();
-        defer self.gpu_data_mutex.unlock();
+    pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
+        const list_idx: u4 = self.get_list_idx();
+        const ta_lists = gpu._ta_lists[list_idx];
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -1874,25 +1845,25 @@ pub const Renderer = struct {
         self.min_depth = std.math.floatMax(f32);
         self.max_depth = 0.0;
 
-        self.pt_alpha_ref = @as(f32, @floatFromInt(self.get_register(u8, .PT_ALPHA_REF).*)) / 255.0;
+        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
 
-        const fpu_shad_scale = self.get_register(u32, .FPU_SHAD_SCALE).*;
+        const fpu_shad_scale = gpu.read_register(u32, .FPU_SHAD_SCALE);
         self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
 
-        const col_pal = self.get_register(PackedColor, .FOG_COL_RAM).*;
-        const col_vert = self.get_register(PackedColor, .FOG_COL_VERT).*;
+        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
+        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
 
         self.fog_col_pal = fRGBA.from_packed(col_pal, true);
         self.fog_col_vert = fRGBA.from_packed(col_vert, true);
-        const fog_density = self.get_register(u16, .FOG_DENSITY).*;
+        const fog_density = gpu.read_register(u16, .FOG_DENSITY);
         const fog_density_mantissa = (fog_density >> 8) & 0xFF;
         const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
         self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
         for (0..0x80) |i| {
-            self.fog_lut[i] = @as([*]u32, @ptrCast(self.get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
+            self.fog_lut[i] = @as([*]u32, @ptrCast(@constCast(gpu)._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
         }
 
-        try self.update_background();
+        try self.update_background(gpu);
 
         for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
             // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
@@ -1911,7 +1882,7 @@ pub const Renderer = struct {
             // Parameters specific to a polygon type
             var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             var face_offset_color: fARGB = undefined;
-            const display_list = self.ta_lists.get_list(list_type);
+            const display_list: *const HollyModule.DisplayList = @constCast(&ta_lists).get_list(list_type);
 
             for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(self.vertices.items.len);
@@ -1979,12 +1950,12 @@ pub const Renderer = struct {
                 const textured = parameter_control_word.obj_control.texture == 1;
                 if (textured) {
                     const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx = self.get_texture_index(texture_size_index, texture_control) orelse self.upload_texture(tsp_instruction, texture_control);
+                    tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
                     self.texture_metadata[texture_size_index][tex_idx].usage += 1;
                 }
                 if (area1_texture_control) |tc| {
                     const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx_area_1 = self.get_texture_index(texture_size_index, tc) orelse self.upload_texture(area1_tsp_instruction.?, tc);
+                    tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
                     self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
                 }
 
@@ -2296,7 +2267,7 @@ pub const Renderer = struct {
         // Modifier volumes
         self.modifier_volume_vertices.clearRetainingCapacity();
 
-        for (self.ta_lists.volume_triangles.items) |triangle| {
+        for (ta_lists.volume_triangles.items) |triangle| {
             try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
             try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
@@ -2376,8 +2347,11 @@ pub const Renderer = struct {
         gctx.submit(&.{commands});
     }
 
-    pub fn render(self: *Renderer) !void {
+    pub fn render(self: *Renderer, gpu: *const HollyModule.Holly) !void {
         const gctx = self._gctx;
+
+        const list_idx: u4 = self.get_list_idx();
+        const ta_lists = gpu._ta_lists[list_idx];
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
@@ -2480,7 +2454,7 @@ pub const Renderer = struct {
                 .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
-            if (self.ta_lists.opaque_modifier_volumes.items.len > 0) {
+            if (ta_lists.opaque_modifier_volumes.items.len > 0) {
                 //  - Write to stencil buffer
                 {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -2519,7 +2493,7 @@ pub const Renderer = struct {
 
                     // Close volume pass.
                     // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                    for (self.ta_lists.opaque_modifier_volumes.items) |volume| {
+                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (volume.closed) {
                             pass.setStencilReference(0x00);
                             pass.setPipeline(gctx.lookupResource(self.closed_modifier_volume_pipeline).?);
@@ -2536,7 +2510,7 @@ pub const Renderer = struct {
                     // Triangle passing the depth test immediately set the stencil buffer.
                     pass.setStencilReference(0x02);
                     pass.setPipeline(gctx.lookupResource(self.open_modifier_volume_pipeline).?);
-                    for (self.ta_lists.opaque_modifier_volumes.items) |volume| {
+                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (!volume.closed)
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                     }
@@ -2622,7 +2596,7 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].start_y = start_y;
 
                 // Render Modifier Volumes
-                if (self.ta_lists.translucent_modifier_volumes.items.len > 0) {
+                if (ta_lists.translucent_modifier_volumes.items.len > 0) {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                     const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
                     const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
@@ -2645,7 +2619,7 @@ pub const Renderer = struct {
                     };
 
                     // Close volume pass.
-                    for (self.ta_lists.translucent_modifier_volumes.items) |volume| {
+                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
                         if (volume.closed) {
                             {
                                 const pass = encoder.beginRenderPass(render_pass_info);

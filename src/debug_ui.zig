@@ -9,6 +9,7 @@ const HardwareRegisters = @import("./hardware_registers.zig");
 
 const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
+const BasicBlock = @import("jit/basic_block.zig");
 const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
 const AICAModule = @import("./aica.zig");
@@ -166,6 +167,13 @@ fn textHighlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
     zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
 }
 
+fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
+    return std.math.order(a.time_spent, b.time_spent);
+}
+fn compare_blocks_desc(_: void, a: BasicBlock, b: BasicBlock) bool {
+    return a.time_spent > b.time_spent;
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 
@@ -294,6 +302,66 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
         display(dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC));
         zgui.endGroup();
+    }
+    zgui.end();
+
+    if (zgui.begin("CPU JIT", .{})) {
+        zgui.text("Block statistics", .{});
+        if (BasicBlock.EnableInstrumentation) {
+            const static = struct {
+                var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+                var sorted: [10]usize = .{0} ** 10;
+                var initialized: bool = false;
+            };
+            zgui.beginDisabled(.{ .disabled = d.running });
+            if (zgui.button("Refresh", .{})) {
+                if (!static.initialized) {
+                    static.top10 =
+                        std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
+                    static.initialized = true;
+                } else {
+                    while (static.top10.count() > 0) _ = static.top10.remove();
+                }
+                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                    if (dc.sh4_jit.block_cache.blocks[i]) |block| {
+                        if (block.call_count > 0 and (static.top10.count() < 10 or static.top10.peek().?.time_spent < block.time_spent)) {
+                            static.top10.add(block) catch unreachable;
+                        }
+                        if (static.top10.count() > 10) {
+                            _ = static.top10.remove();
+                        }
+                    }
+                }
+                std.mem.sort(BasicBlock, static.top10.items, {}, comptime compare_blocks_desc);
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Reset", .{})) {
+                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                    if (dc.sh4_jit.block_cache.blocks[i]) |*block| {
+                        block.time_spent = 0;
+                        block.call_count = 0;
+                    }
+                }
+            }
+            zgui.endDisabled();
+
+            for (static.top10.items) |block| {
+                zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
+                    block.start_addr,
+                    block.len,
+                    block.cycles,
+                    @divTrunc(block.time_spent, 1_000_000),
+                    @divTrunc(block.time_spent, block.call_count),
+                    block.call_count,
+                });
+                for (0..block.len) |i| {
+                    const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
+                    zgui.text("  {X:0>6}: {s}", .{ addr, try sh4_disassembly.disassemble(@bitCast(dc.cpu.read16(addr)), dc._allocator) });
+                }
+            }
+        } else {
+            zgui.text("JIT Instrumentation was disabled for this build.", .{});
+        }
     }
     zgui.end();
 
@@ -589,11 +657,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         var buffer: [256]u8 = .{0} ** 256;
 
-        // NOTE: We're actually looking at the data shipped to the renderer.
+        // NOTE: We're looking at the last list used during a START_RENDER.
         if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
             zgui.indent(.{});
             inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                const list = d.renderer.ta_lists.get_list(list_type);
+                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].get_list(list_type);
                 const name = @tagName(@as(Holly.ListType, list_type));
                 const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
@@ -642,9 +710,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.indent(.{});
             // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
             {
-                const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{d.renderer.ta_lists.opaque_modifier_volumes.items.len});
+                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].opaque_modifier_volumes;
+                const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
                 if (zgui.collapsingHeader(header, .{})) {
-                    for (d.renderer.ta_lists.opaque_modifier_volumes.items, 0..) |vol, idx| {
+                    for (list.items, 0..) |vol, idx| {
                         zgui.text("  {any}", .{vol});
                         if (zgui.isItemClicked(.left)) {
                             self.selected_volume_focus = true;
@@ -662,9 +731,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
             {
-                const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{d.renderer.ta_lists.translucent_modifier_volumes.items.len});
+                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].translucent_modifier_volumes;
+                const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
                 if (zgui.collapsingHeader(header, .{})) {
-                    for (d.renderer.ta_lists.translucent_modifier_volumes.items, 0..) |vol, idx| {
+                    for (list.items, 0..) |vol, idx| {
                         zgui.text("  {any}", .{vol});
                         if (zgui.isItemClicked(.left)) {
                             self.selected_volume_focus = true;
@@ -860,7 +930,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     };
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        const list = d.renderer.ta_lists.get_list(self.selected_strip_list);
+        const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].get_list(self.selected_strip_list);
         if (self.selected_strip_index < list.vertex_strips.items.len) {
             const parameters = list.vertex_parameters.items;
             const strip = &list.vertex_strips.items[self.selected_strip_index];
@@ -900,8 +970,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
     if (self.selected_volume_index) |idx| {
         const list = switch (self.selected_volume_list) {
-            .OpaqueModifierVolume => d.renderer.ta_lists.opaque_modifier_volumes.items,
-            .TranslucentModifierVolume => d.renderer.ta_lists.translucent_modifier_volumes.items,
+            .OpaqueModifierVolume => d.dc.gpu._ta_lists[d.renderer.get_list_idx()].opaque_modifier_volumes.items,
+            .TranslucentModifierVolume => d.dc.gpu._ta_lists[d.renderer.get_list_idx()].translucent_modifier_volumes.items,
             else => unreachable,
         };
         if (idx < list.len) {

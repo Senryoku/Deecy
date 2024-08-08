@@ -1464,7 +1464,7 @@ pub const Holly = struct {
 
                 self._dc.schedule_interrupt(.{ .RenderDoneTSP = 1 }, 200);
                 self._dc.schedule_interrupt(.{ .RenderDoneISP = 1 }, 400);
-                self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 600);
+                self._dc.schedule_interrupt(.{ .RenderDoneVideo = 1 }, 600); // FIXME: Raise an interrupt when the render is actually done?
             },
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
@@ -1938,6 +1938,10 @@ pub const Holly = struct {
     pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= HollyRegisterStart and addr < HollyRegisterStart + self.registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
+    }
+
+    pub inline fn get_palette_data(self: *const @This()) []u8 {
+        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart]))[0 .. 4 * 1024];
     }
 
     pub inline fn get_region_array_data_config(self: *const @This()) RegionArrayDataConfiguration {

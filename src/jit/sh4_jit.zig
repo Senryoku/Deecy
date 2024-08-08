@@ -25,13 +25,14 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
-const MaxCyclesPerBlock = 16;
+const MaxCyclesPerBlock = 32;
 
 // Enable or Disable some optimizations
 const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = true,
+    .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
 };
 
 const BlockCache = struct {
@@ -127,8 +128,8 @@ const BlockCache = struct {
         return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
-    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
-        return self.blocks[compute_key(address, sz, pr)];
+    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *?BasicBlock {
+        return &self.blocks[compute_key(address, sz, pr)];
     }
 
     pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) void {
@@ -443,7 +444,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
-            if (block == null) {
+            if (block.* == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
                     if (err == error.JITCacheFull) {
@@ -453,9 +454,14 @@ pub const SH4JIT = struct {
                     } else break :retry err;
                 });
             }
-            block.?.execute(cpu);
-
-            const cycles = block.?.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
+            const block_cycles = block.*.?.cycles;
+            const start = std.time.nanoTimestamp();
+            block.*.?.execute(cpu);
+            if (BasicBlock.EnableInstrumentation and block.* != null) { // Might have been invalidated.
+                block.*.?.time_spent += std.time.nanoTimestamp() - start;
+                block.*.?.call_count += 1;
+            }
+            const cycles = block_cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
             cpu.advance_timers(cycles);
             return cycles;
@@ -466,7 +472,7 @@ pub const SH4JIT = struct {
         }
     }
 
-    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !BasicBlock {
+    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*?BasicBlock {
         var ctx = start_ctx;
 
         var b = &self._working_block;
@@ -567,14 +573,20 @@ pub const SH4JIT = struct {
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
+        try self.idle_speedup(&ctx);
+
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        if (BasicBlock.EnableInstrumentation) {
+            block.start_addr = ctx.start_address;
+            block.len = ctx.index;
+        }
         self.block_cache.cursor += block.buffer.len;
         block.cycles = ctx.cycles;
 
         sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
-        return block;
+        return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
     }
 
     // Try to match some common division patterns and replace them with a "single" instruction.
@@ -615,6 +627,46 @@ pub const SH4JIT = struct {
         }
         if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
             // TODO: Or not. This case seems messier?
+        }
+    }
+
+    fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
+        if (!Optimizations.idle_speedup) return;
+
+        const AddedCycles = 512;
+
+        _ = self;
+
+        const Blocks = [_][]const u16{
+            // Boot ROM (Same instructions as Soul Calibur, but using other addresses/registers)
+            &[_]u16{
+                0xD223, 0x6322, 0x430B, 0x5421,
+                0xD022, 0x6302, 0xD222, 0x6122,
+                0x313C, 0xD21D, 0x7101, 0x6322,
+                0x3316, 0x8B01, 0xA004, 0xEE01,
+                0xD31E, 0x6232, 0x2228, 0x8BEB,
+            },
+            // Soul Calibur (it will actually end up split into multiple basic blocks, I included it all to be sure not to have false positives)
+            &[_]u16{
+                0xD321, 0x6232, 0x420B, 0x5431,
+                0xD120, 0x6312, 0xD020, 0x6202,
+                0xD11B, 0x323C, 0x7201, 0x6312,
+                0x3326, 0x8B01, 0xA004, 0x6CE3,
+                0xD318, 0x6232, 0x2228, 0x8BEB,
+            },
+        };
+
+        for (Blocks) |block| next_block: {
+            var i: u32 = 0;
+            for (block) |instr| {
+                if (instr != ctx.instructions[i]) {
+                    break :next_block;
+                }
+                i += 1;
+            }
+            sh4_jit_log.debug("Detected Idle Block at 0x{X:0>8}", .{ctx.address});
+            ctx.cycles += AddedCycles; // Add an arbritrary number of cycles.
+            return;
         }
     }
 };
@@ -2050,7 +2102,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
 
     if (Optimizations.inline_small_forward_jumps) {
         // Optimize small forward jumps if possible
-        const max_instructions = 4;
+        const max_instructions = 6;
         const first_instr = if (delay_slot) 2 else 1;
         if (dest > ctx.address and (dest - ctx.address) / 2 < max_instructions + first_instr) {
             const instr_count = (dest - ctx.address) / 2 - first_instr;
