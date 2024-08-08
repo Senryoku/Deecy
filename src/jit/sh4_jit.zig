@@ -25,7 +25,7 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
-const MaxCyclesPerBlock = 16;
+const MaxCyclesPerBlock = 32;
 
 // Enable or Disable some optimizations
 const Optimizations = .{
@@ -633,7 +633,15 @@ pub const SH4JIT = struct {
     fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
         if (!Optimizations.idle_speedup) return;
 
+        const AddedCycles = 512;
+
         _ = self;
+
+        // Boot ROM
+        if (ctx.start_address == 0x0C0BA506) {
+            ctx.cycles += AddedCycles;
+            return;
+        }
 
         const Blocks = [_][]const u16{
             // Soul Calibur (it will actually end up split into multiple basic blocks, I included it all to be sure not to have false positives)
@@ -655,7 +663,7 @@ pub const SH4JIT = struct {
                 i += 1;
             }
             sh4_jit_log.debug("Detected Idle Block at 0x{X:0>8}", .{ctx.address});
-            ctx.cycles += 512; // Add an arbritrary number of cycles.
+            ctx.cycles += AddedCycles; // Add an arbritrary number of cycles.
             return;
         }
     }
