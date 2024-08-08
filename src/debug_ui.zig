@@ -170,6 +170,9 @@ fn textHighlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
 fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
     return std.math.order(a.time_spent, b.time_spent);
 }
+fn compare_blocks_desc(_: void, a: BasicBlock, b: BasicBlock) bool {
+    return a.time_spent > b.time_spent;
+}
 
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
@@ -303,8 +306,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("CPU JIT", .{})) {
+        zgui.text("Block statistics", .{});
         const static = struct {
             var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+            var sorted: [10]usize = .{0} ** 10;
             var initialized: bool = false;
         };
         zgui.beginDisabled(.{ .disabled = d.running });
@@ -326,6 +331,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     }
                 }
             }
+            std.mem.sort(BasicBlock, static.top10.items, {}, comptime compare_blocks_desc);
         }
         zgui.sameLine(.{});
         if (zgui.button("Reset", .{})) {
