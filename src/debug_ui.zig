@@ -9,6 +9,7 @@ const HardwareRegisters = @import("./hardware_registers.zig");
 
 const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
+const BasicBlock = @import("jit/basic_block.zig");
 const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
 const AICAModule = @import("./aica.zig");
@@ -166,6 +167,10 @@ fn textHighlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
     zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
 }
 
+fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
+    return std.math.order(a.time_spent, b.time_spent);
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 
@@ -294,6 +299,47 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
         display(dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC));
         zgui.endGroup();
+    }
+    zgui.end();
+
+    if (zgui.begin("CPU JIT", .{})) {
+        const static = struct {
+            var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+            var initialized: bool = false;
+        };
+        if (zgui.button("Refresh", .{})) {
+            if (!static.initialized) {
+                static.top10 =
+                    std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
+                static.initialized = true;
+            } else {
+                while (static.top10.count() > 0) _ = static.top10.remove();
+            }
+            for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                if (dc.sh4_jit.block_cache.blocks[i]) |block| {
+                    if (block.call_count > 0 and (static.top10.count() < 10 or static.top10.peek().?.time_spent < block.time_spent)) {
+                        static.top10.add(block) catch unreachable;
+                    }
+                    if (static.top10.count() > 10) {
+                        _ = static.top10.remove();
+                    }
+                }
+            }
+        }
+        for (static.top10.items) |block| {
+            zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
+                block.start_addr,
+                block.len,
+                block.cycles,
+                block.time_spent / 1000 / 1000,
+                @divTrunc(block.time_spent, block.call_count),
+                block.call_count,
+            });
+            for (0..block.len) |i| {
+                const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
+                zgui.text("  {X:0>6}: {s}", .{ addr, try sh4_disassembly.disassemble(@bitCast(dc.cpu.read16(addr)), dc._allocator) });
+            }
+        }
     }
     zgui.end();
 

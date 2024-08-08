@@ -127,8 +127,8 @@ const BlockCache = struct {
         return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
-    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) ?BasicBlock {
-        return self.blocks[compute_key(address, sz, pr)];
+    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *?BasicBlock {
+        return &self.blocks[compute_key(address, sz, pr)];
     }
 
     pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) void {
@@ -244,6 +244,8 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 }
 
 pub const JITContext = struct {
+    pub const ExperimentalStatistics = true;
+
     cpu: *sh4.SH4,
     address: u32,
 
@@ -443,7 +445,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
-            if (block == null) {
+            if (block.* == null) {
                 sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
                 block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
                     if (err == error.JITCacheFull) {
@@ -453,9 +455,14 @@ pub const SH4JIT = struct {
                     } else break :retry err;
                 });
             }
-            block.?.execute(cpu);
-
-            const cycles = block.?.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
+            const block_cycles = block.*.?.cycles;
+            const start = std.time.nanoTimestamp();
+            block.*.?.execute(cpu);
+            if (block.* != null) { // Might have been invalidated.
+                block.*.?.time_spent += std.time.nanoTimestamp() - start;
+                block.*.?.call_count += 1;
+            }
+            const cycles = block_cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
             cpu.advance_timers(cycles);
             return cycles;
@@ -466,7 +473,7 @@ pub const SH4JIT = struct {
         }
     }
 
-    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !BasicBlock {
+    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*?BasicBlock {
         var ctx = start_ctx;
 
         var b = &self._working_block;
@@ -568,13 +575,15 @@ pub const SH4JIT = struct {
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        block.start_addr = ctx.start_address;
+        block.len = ctx.index;
         self.block_cache.cursor += block.buffer.len;
         block.cycles = ctx.cycles;
 
         sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
-        return block;
+        return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
     }
 
     // Try to match some common division patterns and replace them with a "single" instruction.
