@@ -331,7 +331,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 block.start_addr,
                 block.len,
                 block.cycles,
-                block.time_spent / 1000 / 1000,
+                @divTrunc(block.time_spent, 1_000_000),
                 @divTrunc(block.time_spent, block.call_count),
                 block.call_count,
             });

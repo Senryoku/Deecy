@@ -2059,7 +2059,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
 
     if (Optimizations.inline_small_forward_jumps) {
         // Optimize small forward jumps if possible
-        const max_instructions = 4;
+        const max_instructions = 6;
         const first_instr = if (delay_slot) 2 else 1;
         if (dest > ctx.address and (dest - ctx.address) / 2 < max_instructions + first_instr) {
             const instr_count = (dest - ctx.address) / 2 - first_instr;
