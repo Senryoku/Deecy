@@ -12,31 +12,31 @@ struct Heads {
 @group(0) @binding(4) var output_texture: texture_storage_2d<bgra8unorm, write>;
 @group(0) @binding(5) var<storage, read_write> modvols: array<VolumesInterfaces>;
 
-fn get_blend_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
-    switch(factor) {
-    case 0: { return vec4<f32>(0); }
-    case 1: { return vec4<f32>(1); }
-    case 4: { return vec4<f32>(src.a); }
-    case 5: { return vec4<f32>(1.0 - src.a); }
-    case 6: { return vec4<f32>(dst.a); }
-    case 7: { return vec4<f32>(1.0 - dst.a); }
-    default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+fn get_blend_factor(factor: u32, src_a: f32, dst_a: f32) -> f32 {
+    switch(factor & 7) {
+    case 0: { return 0; }
+    case 1: { return 1; }
+    case 4: { return src_a; }
+    case 5: { return 1.0 - src_a; }
+    case 6: { return dst_a; }
+    case 7: { return 1.0 - dst_a; }
+    default: { return 1.0; }
   }
 }
 
 fn get_src_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
-    switch(factor) {
+    switch(factor & 7) {
     case 2: { return dst; }
     case 3: { return (1.0 - dst); }
-    default: { return get_blend_factor(factor, src, dst); }
+    default: { return vec4<f32>(get_blend_factor(factor, src.a, dst.a)); }
   }
 } 
 
 fn get_dst_factor(factor: u32, src: vec4<f32>, dst: vec4<f32>) -> vec4<f32> {
-    switch(factor) {
+    switch(factor & 7) {
     case 2: { return src; }
     case 3: { return (1.0 - src); }
-    default: { return get_blend_factor(factor, src, dst); }
+    default: { return vec4<f32>(get_blend_factor(factor, src.a, dst.a)); }
   }
 } 
 
