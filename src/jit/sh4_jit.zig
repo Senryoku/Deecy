@@ -637,13 +637,15 @@ pub const SH4JIT = struct {
 
         _ = self;
 
-        // Boot ROM
-        if (ctx.start_address == 0x0C0BA506) {
-            ctx.cycles += AddedCycles;
-            return;
-        }
-
         const Blocks = [_][]const u16{
+            // Boot ROM (Same instructions as Soul Calibur, but using other addresses/registers)
+            &[_]u16{
+                0xD223, 0x6322, 0x430B, 0x5421,
+                0xD022, 0x6302, 0xD222, 0x6122,
+                0x313C, 0xD21D, 0x7101, 0x6322,
+                0x3316, 0x8B01, 0xA004, 0xEE01,
+                0xD31E, 0x6232, 0x2228, 0x8BEB,
+            },
             // Soul Calibur (it will actually end up split into multiple basic blocks, I included it all to be sure not to have false positives)
             &[_]u16{
                 0xD321, 0x6232, 0x420B, 0x5431,
