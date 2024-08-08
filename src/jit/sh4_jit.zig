@@ -245,8 +245,6 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 }
 
 pub const JITContext = struct {
-    pub const ExperimentalStatistics = true;
-
     cpu: *sh4.SH4,
     address: u32,
 
@@ -459,7 +457,7 @@ pub const SH4JIT = struct {
             const block_cycles = block.*.?.cycles;
             const start = std.time.nanoTimestamp();
             block.*.?.execute(cpu);
-            if (block.* != null) { // Might have been invalidated.
+            if (BasicBlock.EnableInstrumentation and block.* != null) { // Might have been invalidated.
                 block.*.?.time_spent += std.time.nanoTimestamp() - start;
                 block.*.?.call_count += 1;
             }
@@ -578,8 +576,10 @@ pub const SH4JIT = struct {
         try self.idle_speedup(&ctx);
 
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-        block.start_addr = ctx.start_address;
-        block.len = ctx.index;
+        if (BasicBlock.EnableInstrumentation) {
+            block.start_addr = ctx.start_address;
+            block.len = ctx.index;
+        }
         self.block_cache.cursor += block.buffer.len;
         block.cycles = ctx.cycles;
 

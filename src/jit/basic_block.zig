@@ -1,10 +1,12 @@
+pub const EnableInstrumentation = true;
+
 buffer: []u8,
 cycles: u32 = 0,
 
-time_spent: i128 = 0,
-call_count: u64 = 0,
-start_addr: u32 = 0,
-len: u32 = 0,
+time_spent: if (EnableInstrumentation) i128 else void = if (EnableInstrumentation) 0 else {},
+call_count: if (EnableInstrumentation) u64 else void = if (EnableInstrumentation) 0 else {},
+start_addr: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
+len: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
 
 pub fn init(buffer: []u8) @This() {
     return .{

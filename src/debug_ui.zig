@@ -307,56 +307,60 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("CPU JIT", .{})) {
         zgui.text("Block statistics", .{});
-        const static = struct {
-            var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
-            var sorted: [10]usize = .{0} ** 10;
-            var initialized: bool = false;
-        };
-        zgui.beginDisabled(.{ .disabled = d.running });
-        if (zgui.button("Refresh", .{})) {
-            if (!static.initialized) {
-                static.top10 =
-                    std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
-                static.initialized = true;
-            } else {
-                while (static.top10.count() > 0) _ = static.top10.remove();
-            }
-            for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                if (dc.sh4_jit.block_cache.blocks[i]) |block| {
-                    if (block.call_count > 0 and (static.top10.count() < 10 or static.top10.peek().?.time_spent < block.time_spent)) {
-                        static.top10.add(block) catch unreachable;
+        if (BasicBlock.EnableInstrumentation) {
+            const static = struct {
+                var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+                var sorted: [10]usize = .{0} ** 10;
+                var initialized: bool = false;
+            };
+            zgui.beginDisabled(.{ .disabled = d.running });
+            if (zgui.button("Refresh", .{})) {
+                if (!static.initialized) {
+                    static.top10 =
+                        std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
+                    static.initialized = true;
+                } else {
+                    while (static.top10.count() > 0) _ = static.top10.remove();
+                }
+                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                    if (dc.sh4_jit.block_cache.blocks[i]) |block| {
+                        if (block.call_count > 0 and (static.top10.count() < 10 or static.top10.peek().?.time_spent < block.time_spent)) {
+                            static.top10.add(block) catch unreachable;
+                        }
+                        if (static.top10.count() > 10) {
+                            _ = static.top10.remove();
+                        }
                     }
-                    if (static.top10.count() > 10) {
-                        _ = static.top10.remove();
+                }
+                std.mem.sort(BasicBlock, static.top10.items, {}, comptime compare_blocks_desc);
+            }
+            zgui.sameLine(.{});
+            if (zgui.button("Reset", .{})) {
+                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                    if (dc.sh4_jit.block_cache.blocks[i]) |*block| {
+                        block.time_spent = 0;
+                        block.call_count = 0;
                     }
                 }
             }
-            std.mem.sort(BasicBlock, static.top10.items, {}, comptime compare_blocks_desc);
-        }
-        zgui.sameLine(.{});
-        if (zgui.button("Reset", .{})) {
-            for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                if (dc.sh4_jit.block_cache.blocks[i]) |*block| {
-                    block.time_spent = 0;
-                    block.call_count = 0;
-                }
-            }
-        }
-        zgui.endDisabled();
+            zgui.endDisabled();
 
-        for (static.top10.items) |block| {
-            zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
-                block.start_addr,
-                block.len,
-                block.cycles,
-                @divTrunc(block.time_spent, 1_000_000),
-                @divTrunc(block.time_spent, block.call_count),
-                block.call_count,
-            });
-            for (0..block.len) |i| {
-                const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
-                zgui.text("  {X:0>6}: {s}", .{ addr, try sh4_disassembly.disassemble(@bitCast(dc.cpu.read16(addr)), dc._allocator) });
+            for (static.top10.items) |block| {
+                zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
+                    block.start_addr,
+                    block.len,
+                    block.cycles,
+                    @divTrunc(block.time_spent, 1_000_000),
+                    @divTrunc(block.time_spent, block.call_count),
+                    block.call_count,
+                });
+                for (0..block.len) |i| {
+                    const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
+                    zgui.text("  {X:0>6}: {s}", .{ addr, try sh4_disassembly.disassemble(@bitCast(dc.cpu.read16(addr)), dc._allocator) });
+                }
             }
+        } else {
+            zgui.text("JIT Instrumentation was disabled for this build.", .{});
         }
     }
     zgui.end();
