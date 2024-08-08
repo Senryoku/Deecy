@@ -32,6 +32,7 @@ const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = true,
+    .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
 };
 
 const BlockCache = struct {
@@ -574,6 +575,8 @@ pub const SH4JIT = struct {
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
+        try self.idle_speedup(&ctx);
+
         var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         block.start_addr = ctx.start_address;
         block.len = ctx.index;
@@ -624,6 +627,36 @@ pub const SH4JIT = struct {
         }
         if (instr_lookup(ctx.instructions[ctx.index]).fn_ == sh4_interpreter.div0s_Rm_Rn) {
             // TODO: Or not. This case seems messier?
+        }
+    }
+
+    fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
+        if (!Optimizations.idle_speedup) return;
+
+        _ = self;
+
+        const Blocks = [_][]const u16{
+            // Soul Calibur (it will actually end up split into multiple basic blocks, I included it all to be sure not to have false positives)
+            &[_]u16{
+                0xD321, 0x6232, 0x420B, 0x5431,
+                0xD120, 0x6312, 0xD020, 0x6202,
+                0xD11B, 0x323C, 0x7201, 0x6312,
+                0x3326, 0x8B01, 0xA004, 0x6CE3,
+                0xD318, 0x6232, 0x2228, 0x8BEB,
+            },
+        };
+
+        for (Blocks) |block| next_block: {
+            var i: u32 = 0;
+            for (block) |instr| {
+                if (instr != ctx.instructions[i]) {
+                    break :next_block;
+                }
+                i += 1;
+            }
+            sh4_jit_log.debug("Detected Idle Block at 0x{X:0>8}", .{ctx.address});
+            ctx.cycles += 512; // Add an arbritrary number of cycles.
+            return;
         }
     }
 };

@@ -307,6 +307,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
             var initialized: bool = false;
         };
+        zgui.beginDisabled(.{ .disabled = d.running });
         if (zgui.button("Refresh", .{})) {
             if (!static.initialized) {
                 static.top10 =
@@ -326,6 +327,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
         }
+        zgui.sameLine(.{});
+        if (zgui.button("Reset", .{})) {
+            for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                if (dc.sh4_jit.block_cache.blocks[i]) |*block| {
+                    block.time_spent = 0;
+                    block.call_count = 0;
+                }
+            }
+        }
+        zgui.endDisabled();
+
         for (static.top10.items) |block| {
             zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
                 block.start_addr,
