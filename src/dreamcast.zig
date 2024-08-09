@@ -56,11 +56,12 @@ const CableType = enum(u16) {
 };
 
 const Callback = struct {
-    function: *const fn (*anyopaque, *Dreamcast) void,
+    function: ?*const fn (*anyopaque, *Dreamcast) void,
     context: *anyopaque,
 
     pub fn call(self: Callback, dc: *Dreamcast) void {
-        self.function(self.context, dc);
+        if (self.function != null)
+            self.function.?(self.context, dc);
     }
 };
 
@@ -508,7 +509,7 @@ pub const Dreamcast = struct {
                         }
                     }
                     if (event.callback) |callback| {
-                        callback.function(callback.context, self);
+                        callback.call(self);
                     }
                     _ = self.scheduled_interrupts.remove();
                 } else break;
