@@ -994,7 +994,13 @@ pub const SH4 = struct {
                 return self.p4_register_addr(u8, addr);
             },
             else => {
-                self.panic_debug("Invalid _get_memory @{X:0>8}", .{addr});
+                // FIXME: This space should be Unassigned/Reserved.
+                //        Returns a dummy value instead of panicking.
+                //        Metropolis Street Racer and Legacy of the Kain - Soul Reaver write to 0xBCXXXXXX,
+                //        and I have no idea if this is an issue with the emulator... See #51.
+                //        Ignoring the writes allow these games to progress a bit, but this might become an issue.
+                sh4_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
+                return @ptrCast(&self._dc.?._dummy);
             },
         }
     }
