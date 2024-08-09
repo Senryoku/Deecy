@@ -1486,10 +1486,9 @@ pub fn stsl_PR_atRnDec(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) void {
-    // Hijack this instruction for debugging purposes.
     sh4_log.debug("TRAPA #0x{X}\n", .{opcode.nd8.d});
-
-    if (cpu.on_trapa) |c|
+    // Hijack this instruction for debugging purposes.
+    if (SH4.EnableTRAPACallback) if (cpu.on_trapa) |c|
         c.callback(c.userdata);
 }
 

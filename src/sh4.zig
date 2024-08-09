@@ -135,6 +135,8 @@ comptime {
 }
 
 pub const SH4 = struct {
+    pub const EnableTRAPACallback = false;
+
     // General Registers
     r: [16]u32 = undefined, // R0-R15
     r_bank: [8]u32 = undefined, // R0-R7_BANK
@@ -172,10 +174,10 @@ pub const SH4 = struct {
 
     execution_state: ExecutionState = .Running,
 
-    on_trapa: ?struct {
+    on_trapa: if (EnableTRAPACallback) ?struct {
         callback: *const fn (userdata: *anyopaque) void, // Debugging callback
         userdata: *anyopaque,
-    } = null,
+    } else void = if (EnableTRAPACallback) null else {},
     debug_trace: bool = false,
 
     _allocator: std.mem.Allocator,
@@ -1481,6 +1483,12 @@ pub const SH4 = struct {
 
     pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
         self.write(u64, virtual_addr, value);
+    }
+
+    pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
+        if (EnableTRAPACallback) {
+            self.dc.on_trapa = .{ .callback = callback, .userdata = userdata };
+        }
     }
 
     // MMU Stub functions
