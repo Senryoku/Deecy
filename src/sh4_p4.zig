@@ -235,6 +235,17 @@ pub const CHCR = packed struct(u32) {
     dsa: u3 = 0, // Destination Address Space Attribute Specification
     stc: u1 = 0, // Source Address Wait Control Select
     ssa: u3 = 0, // Source Address Space Attribute Specification
+
+    pub fn transfer_size(self: @This()) u32 {
+        return switch (self.ts) {
+            0 => 8, // Quadword size
+            1 => 1, // Byte
+            2 => 2, // Word
+            3 => 4, // Longword
+            4 => 32, // 32-bytes block
+            else => @panic("Invalid transfer size"),
+        };
+    }
 };
 
 pub const DMAOR = packed struct(u32) {

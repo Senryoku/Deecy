@@ -773,14 +773,7 @@ pub const SH4 = struct {
 
         const src_addr = self.read_p4_register(u32, c.sar) & 0x1FFFFFFF;
         const dst_addr = self.read_p4_register(u32, c.dar) & 0x1FFFFFFF;
-        const transfer_size: u32 = switch (chcr.ts) {
-            0 => 8, // Quadword size
-            1 => 1, // Byte
-            2 => 2, // Word
-            3 => 4, // Longword
-            4 => 32, // 32-bytes block
-            else => @panic("Invalid transfer size"),
-        };
+        const transfer_size = chcr.transfer_size();
         const len = self.read_p4_register(u32, c.dmatcr);
         const byte_len = transfer_size * len;
 
@@ -850,7 +843,7 @@ pub const SH4 = struct {
         const c = DMACChannels[channel];
         const chcr = self.read_p4_register(P4.CHCR, c.chcr);
 
-        const len = self.read_p4_register(u32, c.dmatcr);
+        const len = chcr.transfer_size() * self.read_p4_register(u32, c.dmatcr);
         if (chcr.ie == 1)
             self.request_interrupt(c.dmte);
         if (chcr.sm != 0)

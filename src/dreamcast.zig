@@ -579,15 +579,16 @@ pub const Dreamcast = struct {
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
-            // Simulate using ch0
-            self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0).*.sm = 0;
-            self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0).*.dm = 1;
-            self.cpu.p4_register(u32, .DAR0).* = dst_addr;
-            self.cpu.end_dmac(0);
-
             dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
-
             std.debug.assert(copied == len);
+
+            // Simulate using ch0
+            const chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
+            chcr.*.sm = 0;
+            chcr.*.dm = 1;
+            chcr.*.ts = 4;
+            self.cpu.p4_register(u32, .DAR0).* = dst_addr;
+            self.cpu.p4_register(u32, .DMATCR0).* = @divExact(len, 32);
 
             self.schedule_int_event(
                 .{ .EoD_GDROM = 1 },
@@ -606,6 +607,7 @@ pub const Dreamcast = struct {
 
     fn end_gd_dma(self: *@This(), _: *Dreamcast) void {
         const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
+        self.cpu.end_dmac(0);
         self.hw_register(u32, .SB_GDST).* = 0;
         self.hw_register(u32, .SB_GDLEND).* = len;
         self.hw_register(u32, .SB_GDSTARD).* += len;
