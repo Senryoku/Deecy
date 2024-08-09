@@ -593,7 +593,9 @@ pub const Dreamcast = struct {
                 if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
                     14 * len
                 else // GDROM speed: 1.8 MB/s
-                    14 * 128 * 1024 + 111 * (len - 128 * 1024),
+                    // FIXME: Added a maximum amount of cycles here, as very large DMA were causing visible freezes in Soul Calibur.
+                    //        The proper fix is probably to have the GDROM send data in multiple DMA instead of a single, huge one.
+                    @as(u32, 14) * 128 * 1024 + @as(u32, 111) * (@min(len, 0x40000) - 128 * 1024),
             );
 
             self.sh4_jit.invalidate(dst_addr, dst_addr + len);
