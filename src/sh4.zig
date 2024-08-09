@@ -1435,6 +1435,14 @@ pub const SH4 = struct {
                 return;
             },
             0x005F8000...0x005F9FFF => {
+                if (T == u64) {
+                    // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
+                    if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
+                        sh4_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
+                        self._dc.?.gpu._get_register_from_addr(u64, addr).* = value;
+                        return;
+                    }
+                }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.gpu.write_register(addr, value);
             },
