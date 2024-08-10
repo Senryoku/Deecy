@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
@@ -262,20 +263,24 @@ pub const JITContext = struct {
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
 
-    gpr_cache: RegisterCache(JIT.Register, 5) = .{
+    gpr_cache: RegisterCache(JIT.Register, if (builtin.os.tag == .windows) 5 else 3) = .{
         .highest_saved_register_used = 0,
-        .entries = .{
+        .entries = if (builtin.os.tag == .windows) .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
             .{ .host = SavedRegisters[3] },
             .{ .host = SavedRegisters[4] },
             .{ .host = SavedRegisters[5] },
+        } else .{
+            .{ .host = SavedRegisters[1] },
+            .{ .host = SavedRegisters[2] },
+            .{ .host = SavedRegisters[3] },
         },
     },
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
-        .entries = .{
+        .entries = if (builtin.os.tag == .windows) .{
             .{ .host = FPSavedRegisters[0] },
             .{ .host = FPSavedRegisters[1] },
             .{ .host = FPSavedRegisters[2] },
@@ -284,6 +289,15 @@ pub const JITContext = struct {
             .{ .host = FPSavedRegisters[5] },
             .{ .host = FPSavedRegisters[6] },
             .{ .host = FPSavedRegisters[7] },
+        } else .{
+            .{ .host = .xmm6 },
+            .{ .host = .xmm7 },
+            .{ .host = .xmm8 },
+            .{ .host = .xmm9 },
+            .{ .host = .xmm10 },
+            .{ .host = .xmm11 },
+            .{ .host = .xmm12 },
+            .{ .host = .xmm13 },
         },
     },
 
@@ -487,8 +501,10 @@ pub const SH4JIT = struct {
         // We'll turn those into NOP if they're not used.
         try b.push(.{ .reg = SavedRegisters[2] });
         try b.push(.{ .reg = SavedRegisters[3] });
-        try b.push(.{ .reg = SavedRegisters[4] });
-        try b.push(.{ .reg = SavedRegisters[5] });
+        if (SavedRegisters.len >= 6) {
+            try b.push(.{ .reg = SavedRegisters[4] });
+            try b.push(.{ .reg = SavedRegisters[5] });
+        }
 
         // Save some space for potential callee-saved FP registers
         const optional_saved_fp_register_offset = b.instructions.items.len;
@@ -552,12 +568,14 @@ pub const SH4JIT = struct {
 
         // Restore callee saved registers.
         const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (highest_saved_gpr_used >= 3) {
-            try b.pop(.{ .reg = SavedRegisters[5] });
-            try b.pop(.{ .reg = SavedRegisters[4] });
-        } else {
-            b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-            b.instructions.items[optional_saved_register_offset + 3] = .Nop;
+        if (SavedRegisters.len >= 6) {
+            if (highest_saved_gpr_used >= 3) {
+                try b.pop(.{ .reg = SavedRegisters[5] });
+                try b.pop(.{ .reg = SavedRegisters[4] });
+            } else {
+                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
+                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
+            }
         }
         if (highest_saved_gpr_used >= 1) {
             try b.pop(.{ .reg = SavedRegisters[3] });

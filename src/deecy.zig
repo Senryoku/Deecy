@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -643,12 +644,17 @@ pub const Deecy = struct {
             // FIXME: This is not ideal... It is unknown at compile tile, on Windows at least. But it should be constant for the duration of the program, I hope.
             const static = struct {
                 var frame_time: u64 = 0; // In nanoseconds
-                var timestamp_diff: u64 = undefined; // In platform-dependent units
+                var timestamp_diff: if (builtin.os.tag == .windows) u64 else std.posix.timespec = undefined; // In platform-dependent units
             };
             if (static.frame_time != target_frame_time) {
                 static.frame_time = target_frame_time;
-                const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
-                static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+                if (builtin.os.tag == .windows) {
+                    const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
+                    static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+                } else {
+                    static.timestamp_diff.tv_sec = 0;
+                    static.timestamp_diff.tv_nsec = target_frame_time;
+                }
             }
 
             if (self.running and self.config.cpu_throttling_method == .PerFrame) {
@@ -656,7 +662,12 @@ pub const Deecy = struct {
                 if (now.since(self.dc_last_frame) >= target_frame_time) {
                     self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
                     // Adding to the previous timestamp rather that using 'now' will compensate the latency between calls to one_frame().
-                    self.dc_last_frame.timestamp += static.timestamp_diff;
+                    if (builtin.os.tag == .windows) {
+                        self.dc_last_frame.timestamp += static.timestamp_diff;
+                    } else {
+                        self.dc_last_frame.timestamp.tv_sec += static.timestamp_diff.tv_sec;
+                        self.dc_last_frame.timestamp.tv_nsec += static.timestamp_diff.tv_nsec;
+                    }
                 }
             }
         } else {
