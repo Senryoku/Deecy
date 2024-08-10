@@ -359,9 +359,9 @@ pub const Deecy = struct {
         style.setColor(.resize_grip_active, .{ 0.4000000059604645, 0.4392156898975372, 0.4666666686534882, 1.0 });
         style.setColor(.tab, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
         style.setColor(.tab_hovered, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
-        style.setColor(.tab_active, .{ 0.2000000029802322, 0.2000000029802322, 0.2000000029802322, 0.3600000143051147 });
-        style.setColor(.tab_unfocused, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
-        style.setColor(.tab_unfocused_active, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
+        style.setColor(.tab_selected, .{ 0.2000000029802322, 0.2000000029802322, 0.2000000029802322, 0.3600000143051147 });
+        style.setColor(.tab_dimmed, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.tab_dimmed_selected, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
         style.setColor(.plot_lines, EULogoColor);
         style.setColor(.plot_lines_hovered, EULogoColor);
         style.setColor(.plot_histogram, EULogoColor);
@@ -594,7 +594,7 @@ pub const Deecy = struct {
             self.gctx.swapchain_descriptor.height,
         );
 
-        _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
+        _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
         if (self.display_ui) {
             try self.ui.draw(self);
