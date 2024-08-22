@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
@@ -149,7 +150,7 @@ const FPPrecision = enum(u2) {
 
 fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
     return struct {
-        highest_saved_register_used: ?u32 = null,
+        highest_saved_register_used: ?u8 = null,
         entries: [entries]struct {
             host: reg_type,
             size: u8 = 32,
@@ -262,20 +263,24 @@ pub const JITContext = struct {
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
 
-    gpr_cache: RegisterCache(JIT.Register, 5) = .{
+    gpr_cache: RegisterCache(JIT.Register, if (builtin.os.tag == .windows) 5 else 3) = .{
         .highest_saved_register_used = 0,
-        .entries = .{
+        .entries = if (builtin.os.tag == .windows) .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
             .{ .host = SavedRegisters[3] },
             .{ .host = SavedRegisters[4] },
             .{ .host = SavedRegisters[5] },
+        } else .{
+            .{ .host = SavedRegisters[1] },
+            .{ .host = SavedRegisters[2] },
+            .{ .host = SavedRegisters[3] }, // FIXME/TODO: Improve logic to use SavedRegisters[4] (NOTE: Be mindful  of stack alignment :))
         },
     },
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
-        .entries = .{
+        .entries = if (builtin.os.tag == .windows) .{
             .{ .host = FPSavedRegisters[0] },
             .{ .host = FPSavedRegisters[1] },
             .{ .host = FPSavedRegisters[2] },
@@ -284,6 +289,15 @@ pub const JITContext = struct {
             .{ .host = FPSavedRegisters[5] },
             .{ .host = FPSavedRegisters[6] },
             .{ .host = FPSavedRegisters[7] },
+        } else .{
+            .{ .host = .xmm6 },
+            .{ .host = .xmm7 },
+            .{ .host = .xmm8 },
+            .{ .host = .xmm9 },
+            .{ .host = .xmm10 },
+            .{ .host = .xmm11 },
+            .{ .host = .xmm12 },
+            .{ .host = .xmm13 },
         },
     },
 
@@ -487,8 +501,10 @@ pub const SH4JIT = struct {
         // We'll turn those into NOP if they're not used.
         try b.push(.{ .reg = SavedRegisters[2] });
         try b.push(.{ .reg = SavedRegisters[3] });
-        try b.push(.{ .reg = SavedRegisters[4] });
-        try b.push(.{ .reg = SavedRegisters[5] });
+        if (SavedRegisters.len >= 6) {
+            try b.push(.{ .reg = SavedRegisters[4] });
+            try b.push(.{ .reg = SavedRegisters[5] });
+        }
 
         // Save some space for potential callee-saved FP registers
         const optional_saved_fp_register_offset = b.instructions.items.len;
@@ -552,12 +568,14 @@ pub const SH4JIT = struct {
 
         // Restore callee saved registers.
         const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (highest_saved_gpr_used >= 3) {
-            try b.pop(.{ .reg = SavedRegisters[5] });
-            try b.pop(.{ .reg = SavedRegisters[4] });
-        } else {
-            b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-            b.instructions.items[optional_saved_register_offset + 3] = .Nop;
+        if (SavedRegisters.len >= 6) {
+            if (highest_saved_gpr_used >= 3) {
+                try b.pop(.{ .reg = SavedRegisters[5] });
+                try b.pop(.{ .reg = SavedRegisters[4] });
+            } else {
+                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
+                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
+            }
         }
         if (highest_saved_gpr_used >= 1) {
             try b.pop(.{ .reg = SavedRegisters[3] });
@@ -671,10 +689,30 @@ pub const SH4JIT = struct {
     }
 };
 
-inline fn call_interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !void {
+pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
+    if (builtin.os.tag != .windows) {
+        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .SaveFPRegisters = .{
+                .count = highest_saved_register_used + 1,
+            } });
+        }
+    }
+
+    try block.call(func);
+
+    if (builtin.os.tag != .windows) {
+        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .RestoreFPRegisters = .{
+                .count = highest_saved_register_used + 1,
+            } });
+        }
+    }
+}
+
+inline fn call_interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-    try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+    try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
 }
 
 // We need pointers to all of these functions, can't really refactor that mess sadly.
@@ -728,14 +766,14 @@ pub fn interpreter_fallback_cached(block: *JITBlock, ctx: *JITContext, instr: sh
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // FIXME: Hopefully we'll be able to remove this soon!
 
-    try call_interpreter_fallback(block, instr);
+    try call_interpreter_fallback(block, ctx, instr);
     return false;
 }
 
 pub fn interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
-    try call_interpreter_fallback(block, instr);
+    try call_interpreter_fallback(block, ctx, instr);
     return false;
 }
 
@@ -870,13 +908,13 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
     if (size == 8) {
-        try block.call(&_out_of_line_read8);
+        try call(block, ctx, &_out_of_line_read8);
     } else if (size == 16) {
-        try block.call(&_out_of_line_read16);
+        try call(block, ctx, &_out_of_line_read16);
     } else if (size == 32) {
-        try block.call(&_out_of_line_read32);
+        try call(block, ctx, &_out_of_line_read32);
     } else if (size == 64) {
-        try block.call(&_out_of_line_read64);
+        try call(block, ctx, &_out_of_line_read64);
     } else @compileError("load_mem: Unsupported size.");
 
     if (dest != ReturnRegister)
@@ -916,13 +954,13 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     if (value.tag() != .reg or value.reg != ArgRegisters[2])
         try block.mov(.{ .reg = ArgRegisters[2] }, value);
     if (size == 8) {
-        try block.call(&_out_of_line_write8);
+        try call(block, ctx, &_out_of_line_write8);
     } else if (size == 16) {
-        try block.call(&_out_of_line_write16);
+        try call(block, ctx, &_out_of_line_write16);
     } else if (size == 32) {
-        try block.call(&_out_of_line_write32);
+        try call(block, ctx, &_out_of_line_write32);
     } else if (size == 64) {
-        try block.call(&_out_of_line_write64);
+        try call(block, ctx, &_out_of_line_write64);
     } else @compileError("store_mem: Unsupported size.");
 
     to_end.patch();
@@ -1578,7 +1616,7 @@ pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rn });
-    try block.call(sh4.SH4.set_fpscr);
+    try call(block, ctx, sh4.SH4.set_fpscr);
 
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
@@ -1591,7 +1629,7 @@ pub fn ldsl_atRnInc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 
     try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, .Reg, 0, 32);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.call(sh4.SH4.set_fpscr);
+    try call(block, ctx, sh4.SH4.set_fpscr);
 
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -1731,10 +1769,12 @@ pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
+    try block.pop(.{ .reg = ReturnRegister });
     try block.pop(.{ .reg = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
@@ -1757,10 +1797,12 @@ pub fn macw_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 16);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
 
+    try block.pop(.{ .reg = ReturnRegister });
     try block.pop(.{ .reg = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
@@ -1987,7 +2029,7 @@ pub fn shld_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = try load_register(block, ctx, instr.nmd.m);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = rn });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rm });
-    try block.call(shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
+    try call(block, ctx, shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
     try block.mov(.{ .reg = rn }, .{ .reg = ReturnRegister });
     return false;
 }
@@ -2118,6 +2160,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 // Delay slot might change the T bit, push it.
                 try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
                 try block.push(.{ .reg = ReturnRegister });
+                try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
                 try ctx.compile_delay_slot(block);
                 ctx.index += 1;
                 ctx.address += 2;
@@ -2129,6 +2172,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
             try ctx.fpr_cache.commit_and_invalidate_all(block);
 
             if (delay_slot) {
+                try block.pop(.{ .reg = ReturnRegister });
                 try block.pop(.{ .reg = ReturnRegister });
             } else {
                 try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
@@ -2277,7 +2321,7 @@ fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     // call set_sr
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, sr_value);
-    try block.call(sh4.SH4.set_sr);
+    try call(block, ctx, sh4.SH4.set_sr);
 }
 
 pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {

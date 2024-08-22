@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -144,6 +145,9 @@ pub const Deecy = struct {
         };
 
         try zglfw.init();
+
+        // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
+        zglfw.windowHintTyped(.client_api, .no_api);
 
         // TODO: Load from config.
         const default_resolution = Renderer.Resolution{ .width = 2 * Renderer.NativeResolution.width, .height = 2 * Renderer.NativeResolution.height };
@@ -358,9 +362,9 @@ pub const Deecy = struct {
         style.setColor(.resize_grip_active, .{ 0.4000000059604645, 0.4392156898975372, 0.4666666686534882, 1.0 });
         style.setColor(.tab, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
         style.setColor(.tab_hovered, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
-        style.setColor(.tab_active, .{ 0.2000000029802322, 0.2000000029802322, 0.2000000029802322, 0.3600000143051147 });
-        style.setColor(.tab_unfocused, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
-        style.setColor(.tab_unfocused_active, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
+        style.setColor(.tab_selected, .{ 0.2000000029802322, 0.2000000029802322, 0.2000000029802322, 0.3600000143051147 });
+        style.setColor(.tab_dimmed, .{ 0.0, 0.0, 0.0, 0.5199999809265137 });
+        style.setColor(.tab_dimmed_selected, .{ 0.1372549086809158, 0.1372549086809158, 0.1372549086809158, 1.0 });
         style.setColor(.plot_lines, EULogoColor);
         style.setColor(.plot_lines_hovered, EULogoColor);
         style.setColor(.plot_histogram, EULogoColor);
@@ -593,7 +597,7 @@ pub const Deecy = struct {
             self.gctx.swapchain_descriptor.height,
         );
 
-        _ = zgui.DockSpaceOverViewport(zgui.getMainViewport(), .{ .passthru_central_node = true });
+        _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
         if (self.display_ui) {
             try self.ui.draw(self);
@@ -643,20 +647,40 @@ pub const Deecy = struct {
             // FIXME: This is not ideal... It is unknown at compile tile, on Windows at least. But it should be constant for the duration of the program, I hope.
             const static = struct {
                 var frame_time: u64 = 0; // In nanoseconds
-                var timestamp_diff: u64 = undefined; // In platform-dependent units
+                var timestamp_diff: if (builtin.os.tag == .windows) u64 else std.posix.timespec = undefined; // In platform-dependent units
             };
             if (static.frame_time != target_frame_time) {
                 static.frame_time = target_frame_time;
-                const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
-                static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+                if (builtin.os.tag == .windows) {
+                    const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
+                    static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
+                } else {
+                    static.timestamp_diff.tv_sec = 0;
+                    static.timestamp_diff.tv_nsec = target_frame_time;
+                }
             }
 
             if (self.running and self.config.cpu_throttling_method == .PerFrame) {
                 const now = std.time.Instant.now() catch unreachable;
-                if (now.since(self.dc_last_frame) >= target_frame_time) {
-                    self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
-                    // Adding to the previous timestamp rather that using 'now' will compensate the latency between calls to one_frame().
-                    self.dc_last_frame.timestamp += static.timestamp_diff;
+                const since = now.since(self.dc_last_frame);
+                if (since >= target_frame_time) {
+                    self.dc_thread_semaphore.post(); // Schedule a new frame
+
+                    // Update last frame timestamp
+                    if (since < 1_000_000 + target_frame_time) {
+                        // Adding to the previous timestamp rather than using 'now' will compensate the latency between calls to one_frame().
+                        if (builtin.os.tag == .windows) {
+                            self.dc_last_frame.timestamp += static.timestamp_diff;
+                        } else {
+                            self.dc_last_frame.timestamp.tv_sec += static.timestamp_diff.tv_sec;
+                            self.dc_last_frame.timestamp.tv_nsec += static.timestamp_diff.tv_nsec;
+                            self.dc_last_frame.timestamp.tv_sec += @divTrunc(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
+                            self.dc_last_frame.timestamp.tv_nsec = @rem(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
+                        }
+                    } else {
+                        // We're way too slow, don't try to compensate.
+                        self.dc_last_frame = now;
+                    }
                 }
             }
         } else {

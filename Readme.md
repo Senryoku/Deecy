@@ -23,6 +23,14 @@ zig build run -Doptimize=ReleaseFast -- -g game/game.gdi             # Build and
 
 You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `bin/` directory.
 
+### Linux 
+
+nfd-zig needs these additional dependencies on Linux:
+```sh
+sudo apt-get install librust-atk-dev
+sudo apt install libgtk-3-dev
+```
+
 ## Things I know I have to do
 
 -   Debug, debug, debug.

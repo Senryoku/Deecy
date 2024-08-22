@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const Architecture = @import("x86_64.zig");
 pub const Register = Architecture.Register;
