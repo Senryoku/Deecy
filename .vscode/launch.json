@@ -5,7 +5,7 @@
 			"name": "Debug (LLDB)",
 			"type": "lldb",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [],
 			"cwd": "${workspaceFolder}",
 			"preLaunchTask": "build"
@@ -14,7 +14,7 @@
 			"name": "Debug",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
 				"./bin/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi",
@@ -28,7 +28,7 @@
 			"name": "Debug (Release)",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
 				"./bin/[GDI] Crazy Taxi (US)[10S 51035]/Crazy Taxi v1.004 (1999)(Sega)(NTSC)(US)[!][10S 51035].gdi",
@@ -42,7 +42,7 @@
 			"name": "Debug (Release Safe)",
 			"type": "cppvsdbg",
 			"request": "launch",
-			"program": "${workspaceFolder}/zig-out/bin/Deecy.exe",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
 				"D:\\DC Games\\[GDI] Speed Devils (US)\\Speed Devils v1.004 (1999)(Ubi Soft)(NTSC)(US)[!].gdi"
