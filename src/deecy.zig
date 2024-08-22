@@ -146,6 +146,9 @@ pub const Deecy = struct {
 
         try zglfw.init();
 
+        // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
+        zglfw.windowHintTyped(.client_api, .no_api);
+
         // TODO: Load from config.
         const default_resolution = Renderer.Resolution{ .width = 2 * Renderer.NativeResolution.width, .height = 2 * Renderer.NativeResolution.height };
 
