@@ -274,7 +274,7 @@ pub const JITContext = struct {
         } else .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
-            .{ .host = SavedRegisters[3] },
+            .{ .host = SavedRegisters[3] }, // FIXME/TODO: Improve logic to use SavedRegisters[4] (NOTE: Be mindful  of stack alignment :))
         },
     },
 
