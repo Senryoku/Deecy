@@ -1749,10 +1749,12 @@ pub fn macl_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
+    try block.pop(.{ .reg = ReturnRegister });
     try block.pop(.{ .reg = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
@@ -1775,10 +1777,12 @@ pub fn macw_atRmInc_atRnInc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 16);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
 
+    try block.pop(.{ .reg = ReturnRegister });
     try block.pop(.{ .reg = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
@@ -2136,6 +2140,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 // Delay slot might change the T bit, push it.
                 try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
                 try block.push(.{ .reg = ReturnRegister });
+                try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
                 try ctx.compile_delay_slot(block);
                 ctx.index += 1;
                 ctx.address += 2;
@@ -2147,6 +2152,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
             try ctx.fpr_cache.commit_and_invalidate_all(block);
 
             if (delay_slot) {
+                try block.pop(.{ .reg = ReturnRegister });
                 try block.pop(.{ .reg = ReturnRegister });
             } else {
                 try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
