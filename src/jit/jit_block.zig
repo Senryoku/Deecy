@@ -55,21 +55,7 @@ pub const JITBlock = struct {
     }
 
     pub fn call(self: *@This(), func: *const anyopaque) !void {
-        if (builtin.os.tag != .windows) {
-            // FIXME: This is too much.
-            try self.instructions.append(.{ .SaveFPRegisters = .{
-                .count = 8,
-            } });
-        }
-
         try self.instructions.append(.{ .FunctionCall = func });
-
-        if (builtin.os.tag != .windows) {
-            // FIXME: This is too much.
-            try self.instructions.append(.{ .RestoreFPRegisters = .{
-                .count = 8,
-            } });
-        }
     }
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {

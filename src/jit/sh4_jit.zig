@@ -150,7 +150,7 @@ const FPPrecision = enum(u2) {
 
 fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
     return struct {
-        highest_saved_register_used: ?u32 = null,
+        highest_saved_register_used: ?u8 = null,
         entries: [entries]struct {
             host: reg_type,
             size: u8 = 32,
@@ -689,10 +689,30 @@ pub const SH4JIT = struct {
     }
 };
 
-inline fn call_interpreter_fallback(block: *JITBlock, instr: sh4.Instr) !void {
+pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
+    if (builtin.os.tag != .windows) {
+        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .SaveFPRegisters = .{
+                .count = highest_saved_register_used + 1,
+            } });
+        }
+    }
+
+    try block.call(func);
+
+    if (builtin.os.tag != .windows) {
+        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+            try block.append(.{ .RestoreFPRegisters = .{
+                .count = highest_saved_register_used + 1,
+            } });
+        }
+    }
+}
+
+inline fn call_interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-    try block.call(sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+    try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
 }
 
 // We need pointers to all of these functions, can't really refactor that mess sadly.
@@ -746,14 +766,14 @@ pub fn interpreter_fallback_cached(block: *JITBlock, ctx: *JITContext, instr: sh
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // FIXME: Hopefully we'll be able to remove this soon!
 
-    try call_interpreter_fallback(block, instr);
+    try call_interpreter_fallback(block, ctx, instr);
     return false;
 }
 
 pub fn interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
-    try call_interpreter_fallback(block, instr);
+    try call_interpreter_fallback(block, ctx, instr);
     return false;
 }
 
@@ -888,13 +908,13 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
     if (size == 8) {
-        try block.call(&_out_of_line_read8);
+        try call(block, ctx, &_out_of_line_read8);
     } else if (size == 16) {
-        try block.call(&_out_of_line_read16);
+        try call(block, ctx, &_out_of_line_read16);
     } else if (size == 32) {
-        try block.call(&_out_of_line_read32);
+        try call(block, ctx, &_out_of_line_read32);
     } else if (size == 64) {
-        try block.call(&_out_of_line_read64);
+        try call(block, ctx, &_out_of_line_read64);
     } else @compileError("load_mem: Unsupported size.");
 
     if (dest != ReturnRegister)
@@ -934,13 +954,13 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     if (value.tag() != .reg or value.reg != ArgRegisters[2])
         try block.mov(.{ .reg = ArgRegisters[2] }, value);
     if (size == 8) {
-        try block.call(&_out_of_line_write8);
+        try call(block, ctx, &_out_of_line_write8);
     } else if (size == 16) {
-        try block.call(&_out_of_line_write16);
+        try call(block, ctx, &_out_of_line_write16);
     } else if (size == 32) {
-        try block.call(&_out_of_line_write32);
+        try call(block, ctx, &_out_of_line_write32);
     } else if (size == 64) {
-        try block.call(&_out_of_line_write64);
+        try call(block, ctx, &_out_of_line_write64);
     } else @compileError("store_mem: Unsupported size.");
 
     to_end.patch();
@@ -1596,7 +1616,7 @@ pub fn lds_rn_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rn });
-    try block.call(sh4.SH4.set_fpscr);
+    try call(block, ctx, sh4.SH4.set_fpscr);
 
     ctx.fpscr_sz = .Unknown;
     ctx.fpscr_pr = .Unknown;
@@ -1609,7 +1629,7 @@ pub fn ldsl_atRnInc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 
     try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, .Reg, 0, 32);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.call(sh4.SH4.set_fpscr);
+    try call(block, ctx, sh4.SH4.set_fpscr);
 
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -2009,7 +2029,7 @@ pub fn shld_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rm = try load_register(block, ctx, instr.nmd.m);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = rn });
     try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rm });
-    try block.call(shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
+    try call(block, ctx, shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
     try block.mov(.{ .reg = rn }, .{ .reg = ReturnRegister });
     return false;
 }
@@ -2301,7 +2321,7 @@ fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     // call set_sr
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, sr_value);
-    try block.call(sh4.SH4.set_sr);
+    try call(block, ctx, sh4.SH4.set_sr);
 }
 
 pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
