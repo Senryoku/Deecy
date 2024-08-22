@@ -295,7 +295,9 @@ pub fn main() !void {
 
         try d.draw_ui();
 
-        if (d.gctx.present() == .swap_chain_resized) {}
+        if (d.gctx.present() == .swap_chain_resized) {
+            d.renderer.update_blit_to_screen_vertex_buffer();
+        }
     }
 }
 
