@@ -662,14 +662,24 @@ pub const Deecy = struct {
 
             if (self.running and self.config.cpu_throttling_method == .PerFrame) {
                 const now = std.time.Instant.now() catch unreachable;
-                if (now.since(self.dc_last_frame) >= target_frame_time) {
-                    self.dc_thread_semaphore.post(); // FIXME: This will eventually overflow if the DC thread can't keep up (e.g. using the interpreter).
-                    // Adding to the previous timestamp rather that using 'now' will compensate the latency between calls to one_frame().
-                    if (builtin.os.tag == .windows) {
-                        self.dc_last_frame.timestamp += static.timestamp_diff;
+                const since = now.since(self.dc_last_frame);
+                if (since >= target_frame_time) {
+                    self.dc_thread_semaphore.post(); // Schedule a new frame
+
+                    // Update last frame timestamp
+                    if (since < 1_000_000 + target_frame_time) {
+                        // Adding to the previous timestamp rather than using 'now' will compensate the latency between calls to one_frame().
+                        if (builtin.os.tag == .windows) {
+                            self.dc_last_frame.timestamp += static.timestamp_diff;
+                        } else {
+                            self.dc_last_frame.timestamp.tv_sec += static.timestamp_diff.tv_sec;
+                            self.dc_last_frame.timestamp.tv_nsec += static.timestamp_diff.tv_nsec;
+                            self.dc_last_frame.timestamp.tv_sec += @divTrunc(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
+                            self.dc_last_frame.timestamp.tv_nsec = @rem(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
+                        }
                     } else {
-                        self.dc_last_frame.timestamp.tv_sec += static.timestamp_diff.tv_sec;
-                        self.dc_last_frame.timestamp.tv_nsec += static.timestamp_diff.tv_nsec;
+                        // We're way too slow, don't try to compensate.
+                        self.dc_last_frame = now;
                     }
                 }
             }
