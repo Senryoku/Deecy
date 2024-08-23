@@ -2,9 +2,9 @@
 
 Deecy is a very experimental Dreamcast emulator written in Zig.
 
-[Video of Soul Calibur running in Deecy](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024)
+Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), [Grandia II](https://www.youtube.com/watch?v=YQG3SSVfeis) (July 2024)
 
-![image](https://github.com/Senryoku/Deecy/assets/1338143/5818d263-8f62-4f33-a799-5682f1fa94aa)
+![image](https://github.com/user-attachments/assets/cf0027bb-b136-45d3-bec9-623c407660fa)
 
 ## Build and Run
 
@@ -25,9 +25,10 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 
 ### Linux 
 
-nfd-zig needs these additional dependencies on Linux:
+Linux isn't fully supported yet.
+nfd-zig (native file dialog) needs these additional dependencies on Linux:
 ```sh
-sudo apt-get install librust-atk-dev
+sudo apt install librust-atk-dev
 sudo apt install libgtk-3-dev
 ```
 
