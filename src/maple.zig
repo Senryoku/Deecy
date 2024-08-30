@@ -3,6 +3,7 @@ const termcolor = @import("termcolor");
 const common = @import("common.zig");
 
 const maple_log = std.log.scoped(.maple);
+const vmu_log = std.log.scoped(.vmu);
 
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
@@ -299,14 +300,14 @@ pub const VMU = struct {
         var new_file = std.fs.cwd().createFile(self.backing_file_path, .{ .exclusive = true }) catch |e| {
             switch (e) {
                 error.PathAlreadyExists => {
-                    maple_log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
+                    vmu_log.info("Loading VMU from file '{s}'.", .{self.backing_file_path});
                     var file = try std.fs.cwd().openFile(self.backing_file_path, .{});
                     defer file.close();
                     _ = try file.readAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]);
                     return;
                 },
                 else => {
-                    maple_log.err("Failed to create VMU file '{s}': {any}", .{ self.backing_file_path, e });
+                    vmu_log.err("Failed to create VMU file '{s}': {any}", .{ self.backing_file_path, e });
                     return e;
                 },
             }
@@ -375,12 +376,12 @@ pub const VMU = struct {
     pub fn save(self: *@This()) void {
         self.save_backup();
         var file = std.fs.cwd().openFile(self.backing_file_path, .{ .mode = .write_only }) catch |err| {
-            maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file_path, err });
+            vmu_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file_path, err });
             return;
         };
         defer file.close();
         file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch |err| {
-            maple_log.err("Failed to save VMU: {any}", .{err});
+            vmu_log.err("Failed to save VMU: {any}", .{err});
         };
         maple_log.info("Saved VMU to file '{s}'.", .{self.backing_file_path});
         self.last_unsaved_change = null;
@@ -390,17 +391,17 @@ pub const VMU = struct {
         const filename = std.fs.path.basename(self.backing_file_path);
         const dir_path = std.fs.path.dirname(self.backing_file_path) orelse ".";
         var dest_dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
-            maple_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
+            vmu_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
             return;
         };
         var buf: [256]u8 = .{0} ** 256;
         const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
-            maple_log.err("Failed to format backup filename: {any}", .{err});
+            vmu_log.err("Failed to format backup filename: {any}", .{err});
             return;
         };
         defer dest_dir.close();
         std.fs.cwd().copyFile(self.backing_file_path, dest_dir, backup_filename, .{}) catch |err| {
-            maple_log.err("Failed to backup VMU file '{s}': {any}", .{ backup_filename, err });
+            vmu_log.err("Failed to backup VMU file '{s}': {any}", .{ backup_filename, err });
         };
     }
 
@@ -415,6 +416,7 @@ pub const VMU = struct {
             .StandbyConsumption = 0x007C,
             .MaximumConsumption = 0x0082,
         };
+        vmu_log.info("Get Identity: {any}", .{r});
         return r;
     }
 
@@ -422,6 +424,7 @@ pub const VMU = struct {
     pub fn get_media_info(self: *const @This(), dest: [*]u8, function: u32, partition_number: u8) u8 {
         _ = self;
         _ = partition_number;
+        vmu_log.info("Get Media Info: Function={X}", .{function});
 
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
@@ -438,10 +441,12 @@ pub const VMU = struct {
                     .number_of_save_area_blocks = 0x00C8,
                 };
                 @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], @as([*]const u8, @ptrCast(&value))[0..@sizeOf(GetMediaInformationResponse)]);
+                vmu_log.info("Get Media Info: {any}", .{value});
+                vmu_log.info("Get Media Info: {any}", .{dest[0..@sizeOf(GetMediaInformationResponse)]});
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
             else => {
-                maple_log.err(termcolor.red("Unimplemented VMU::GetMediaInformation for function: {any}"), .{function});
+                vmu_log.err(termcolor.red("Unimplemented VMU.GetMediaInformation for function: {any}"), .{function});
             },
         }
         return 0;
@@ -449,10 +454,11 @@ pub const VMU = struct {
 
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
         std.debug.assert(partition == 0);
+        vmu_log.info("BlockRead: Function={X}, Partition={X}, BlockNum={X}, Phase={X}", .{ function, partition, block_num, phase });
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
                 if (block_num >= BlockCount) {
-                    maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
+                    vmu_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
                 }
                 const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
                 const len = BlockSize / ReadAccessPerBlock;
@@ -460,7 +466,7 @@ pub const VMU = struct {
                 return len / 4;
             },
             else => {
-                maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function});
+                vmu_log.err("Unimplemented VMU.block_read for function: {any}", .{function});
             },
         }
         return 0;
