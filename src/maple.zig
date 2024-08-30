@@ -434,7 +434,7 @@ pub const VMU = struct {
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
             else => {
-                maple_log.err("Unimplemented VMU::GetMediaInformation for function: {any}", .{function});
+                maple_log.err(termcolor.red("Unimplemented VMU::GetMediaInformation for function: {any}"), .{function});
             },
         }
         return 0;
