@@ -130,6 +130,10 @@ const DeviceInfoPayload = extern struct {
     // Possible extension
 };
 
+comptime {
+    std.debug.assert(@sizeOf(DeviceInfoPayload) == 22 + 30 + 60);
+}
+
 const StandardControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
@@ -209,23 +213,26 @@ pub const Controller = struct {
     }
 };
 
-const GetMediaInformationResponse = packed struct {
-    total_size: u16,
-    partition_number: u16,
-    system_area_block_number: u16,
-    fat_area_block_number: u16,
+const GetMediaInformationResponse = extern struct {
+    total_size: u16 align(1),
+    partition_number: u16 align(1),
+    system_area_block_number: u16 align(1),
+    fat_area_block_number: u16 align(1),
 
-    number_of_fat_area_blocks: u16,
-    file_information_block_number: u16,
-    number_of_file_information_blocks: u16,
-    volume_icon: u8,
-    _reserved: u8 = 0,
+    number_of_fat_area_blocks: u16 align(1),
+    file_information_block_number: u16 align(1),
+    number_of_file_information_blocks: u16 align(1),
+    volume_icon: u8 align(1),
+    _reserved: u8 align(1) = 0,
 
-    save_area_block_number: u16,
-    number_of_save_area_blocks: u16,
-    _reserved_for_execution_file: u32 = 0,
-    _reserved2: u16 = 0,
+    save_area_block_number: u16 align(1),
+    number_of_save_area_blocks: u16 align(1),
+    _reserved_for_execution_file: u32 align(1) = 0,
 };
+
+comptime {
+    std.debug.assert(@sizeOf(GetMediaInformationResponse) == 24);
+}
 
 const StorageFunctionDefinition = packed struct(u32) {
     pt: u8, // Number of partitions - 1, probably 0
