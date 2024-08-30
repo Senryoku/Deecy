@@ -263,7 +263,7 @@ pub const VMU = struct {
     const BlockSize: u32 = 512;
     const BlockCount = 256;
     const ReadAccessPerBlock = 1;
-    const WriteAccessPerBlock = 1;
+    const WriteAccessPerBlock = 4;
     const FATBlock = 0x00FE;
     const SystemBlock = BlockCount - 1;
 
