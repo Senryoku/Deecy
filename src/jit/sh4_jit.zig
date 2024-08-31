@@ -44,6 +44,9 @@ const BlockCache = struct {
     cursor: usize = 0,
     blocks: []?BasicBlock = undefined,
 
+    min_address: u32 = 0xFFFFFFFF,
+    max_address: u32 = 0,
+
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
@@ -105,12 +108,16 @@ const BlockCache = struct {
 
     pub fn reset(self: *@This()) !void {
         self.cursor = 0;
+        self.min_address = 0xFFFFFFFF;
+        self.max_address = 0;
 
         self.deallocate_blocks();
         try self.allocate_blocks();
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
+        if (start_addr > self.max_address or end_addr < self.min_address) return;
+
         inline for (0..2) |sz| {
             inline for (0..2) |pr| {
                 // Addresses are used in the low bits of keys, so this should be contiguous.
@@ -134,6 +141,8 @@ const BlockCache = struct {
     }
 
     pub fn put(self: *@This(), address: u32, sz: u1, pr: u1, block: BasicBlock) void {
+        self.min_address = @min(self.min_address, address);
+        self.max_address = @max(self.max_address, address);
         self.blocks[compute_key(address, sz, pr)] = block;
     }
 };
