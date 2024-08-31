@@ -1132,31 +1132,35 @@ pub const AICA = struct {
                 const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
                 // Direct send to the DAC
                 if (disdl != 0) { // 0 means full attenuation, not send.
+                    var left_att: u8 = 0xF ^ disdl;
+                    var right_att: u8 = 0xF ^ disdl;
                     // DIPAN == 0x00 and 0x10 means center (no attenuation)
                     const pan_att = dipan & 0xF;
-                    var left_att: i32 = 0xF - disdl;
-                    var right_att: i32 = 0xF - disdl;
                     // 5th bit selects the side to attenuate
                     if (dipan & 0x10 == 0x10) {
                         right_att += pan_att;
                     } else {
                         left_att += pan_att;
                     }
+                    const left_att_multiplier = 4 - (left_att & 1);
+                    const right_att_multiplier = 4 - (right_att & 1);
+                    const left_att_shift = 2 + (left_att >> 1);
+                    const right_att_shift = 2 + (right_att >> 1);
 
-                    const left = if (left_att <= 0xF) @divTrunc(sample, std.math.pow(i32, 2, left_att)) else 0;
-                    const right = if (right_att <= 0xF) @divTrunc(sample, std.math.pow(i32, 2, right_att)) else 0;
-
-                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= left;
-                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= right;
+                    if (left_att_shift < 16)
+                        self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= (sample * left_att_multiplier) >> @truncate(left_att_shift);
+                    if (right_att_shift < 16)
+                        self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= (sample * right_att_multiplier) >> @truncate(right_att_shift);
                 }
                 // TODO: DSP!
                 if (registers.dps_channel_send.level != 0) {
                     const channel = registers.dps_channel_send.channel;
                     _ = channel;
                     // TEMP: Bypassing the DSP and outputting directly. Some sound without DSP effects is better that nothing for now.
-                    const attenuated = @divTrunc(sample, std.math.pow(i32, 2, 0xF - registers.dps_channel_send.level));
-                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= attenuated;
-                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= attenuated;
+                    const att_multiplier = 4 - (registers.dps_channel_send.level & 1);
+                    const att_shift = 2 + (registers.dps_channel_send.level >> 1);
+                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
+                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
                 }
             }
 
