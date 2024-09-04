@@ -219,6 +219,19 @@ pub const AICARegister = enum(u32) {
     _,
 };
 
+fn bitfield_format(self: anytype, writer: anytype) !void {
+    var first = true;
+    try writer.writeAll("(");
+    inline for (@typeInfo(InterruptBits).Struct.fields) |field| {
+        if (@field(self, field.name) == 1) {
+            if (!first) try writer.writeAll(" | ");
+            try writer.writeAll(field.name);
+            first = false;
+        }
+    }
+    try writer.writeAll(")");
+}
+
 pub const InterruptBits = packed struct(u32) {
     ext: u1 = 0,
     _0: u2 = 0,
@@ -231,6 +244,10 @@ pub const InterruptBits = packed struct(u32) {
     MIDI_output: u1 = 0,
     one_sample_interval: u1 = 0,
     _1: u21 = 0,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try bitfield_format(self, writer);
+    }
 };
 
 pub const SB_ADSUSP = packed struct(u32) {
