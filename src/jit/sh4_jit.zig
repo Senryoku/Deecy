@@ -846,15 +846,13 @@ fn load_t(block: *JITBlock, _: *JITContext) !void {
 // Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
 // TODO: We'll want to cache the T bit at some point too!
 fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
-    var set = try block.jmp(condition);
-    // Clear T
-    // NOTE: We could use the sign extended version with an immediate of 0xFE here for a shorter encoding, but the emitter doesn't support it yet.
-    try block.append(.{ .And = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
-    var end = try block.jmp(.Always);
-    // Set T
-    set.patch();
-    try block.append(.{ .Or = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "t") } } });
-    end.patch();
+    std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
+    try block.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
+    try block.append(.{ .SetByteCondition = .{ .condition = condition, .dst = .{ .reg8 = ReturnRegister } } });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = 0xFFFFFFFE } } });
+    try block.append(.{ .Or = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .reg = ReturnRegister } } });
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ArgRegisters[0] });
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {

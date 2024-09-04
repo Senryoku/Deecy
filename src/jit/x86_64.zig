@@ -312,6 +312,7 @@ pub const InstructionType = enum {
     Or,
     Xor,
     Cmp,
+    SetByteCondition,
     BitTest,
     Rol,
     Ror,
@@ -332,7 +333,7 @@ pub const Instruction = union(InstructionType) {
     Nop, // Usefull to patch out instructions without having to rewrite the entire block.
     Break,
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
-    Mov: struct { dst: Operand, src: Operand },
+    Mov: struct { dst: Operand, src: Operand, preserve_flags: bool = false },
     Movsx: struct { dst: Operand, src: Operand },
     Push: Operand,
     Pop: Operand,
@@ -350,6 +351,7 @@ pub const Instruction = union(InstructionType) {
     Or: struct { dst: Operand, src: Operand },
     Xor: struct { dst: Operand, src: Operand },
     Cmp: struct { lhs: Operand, rhs: Operand },
+    SetByteCondition: struct { condition: Condition, dst: Operand },
     BitTest: struct { reg: Register, offset: Operand },
     Rol: struct { dst: Operand, amount: Operand },
     Ror: struct { dst: Operand, amount: Operand },
@@ -390,6 +392,7 @@ pub const Instruction = union(InstructionType) {
             .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
             .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
             .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
+            .SetByteCondition => |set| writer.print("set{any} {any}", .{ set.condition, set.dst }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
             .Rol => |rol| writer.print("rol {any}, {any}", .{ rol.dst, rol.amount }),
@@ -605,7 +608,7 @@ pub const Emitter = struct {
                     try self.emit_byte(0xCC);
                 },
                 .FunctionCall => |function| try self.native_call(function),
-                .Mov => |m| try self.mov(m.dst, m.src),
+                .Mov => |m| try self.mov(m.dst, m.src, m.preserve_flags),
                 .Movsx => |m| try self.movsx(m.dst, m.src),
                 .Push => |reg_or_imm| {
                     switch (reg_or_imm) {
@@ -637,6 +640,7 @@ pub const Emitter = struct {
                 .Or => |a| try self.or_(a.dst, a.src),
                 .Xor => |a| try self.xor_(a.dst, a.src),
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
+                .SetByteCondition => |a| try self.set_byte_condition(a.condition, a.dst),
                 .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst.rel),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
@@ -909,7 +913,8 @@ pub const Emitter = struct {
         try self.emit_mem_addressing(encode(reg), mem);
     }
 
-    pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
+    // If preserve_flags is false, mov reg, 0 will be replaced by xor reg, reg.
+    pub fn mov(self: *@This(), dst: Operand, src: Operand, preserve_flags: bool) !void {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
@@ -953,7 +958,7 @@ pub const Emitter = struct {
                     },
                     .reg => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
-                        if (imm == 0) {
+                        if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
                         } else {
                             // movabs <reg>,<imm64>
@@ -963,7 +968,7 @@ pub const Emitter = struct {
                         }
                     },
                     .imm32 => |imm| {
-                        if (imm == 0) {
+                        if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
                         } else {
                             // mov    <reg>,<imm32>
@@ -1234,6 +1239,53 @@ pub const Emitter = struct {
         }
     }
 
+    pub fn set_byte_condition(self: *@This(), condition: Condition, dst: Operand) !void {
+        // NOTE: In 64-bit mode, r/m8 can not be encoded to access the following byte registers if a REX prefix is used: AH, BH, CH, DH.
+        switch (dst) {
+            .reg8 => |dst_reg| {
+                // Always emit a REX prefix for these registers.
+                if (dst_reg == .rsp or dst_reg == .rbp or dst_reg == .rsi or dst_reg == .rdi) {
+                    try self.emit(REX, .{ .w = false, .b = need_rex(dst_reg) });
+                } else {
+                    try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(dst_reg) });
+                }
+                try self.emit(u8, 0x0F);
+                try self.emit(u8, switch (condition) {
+                    .Above => 0x97,
+                    .AboveEqual => 0x93,
+                    .Below => 0x92,
+                    .BelowEqual => 0x96,
+                    .Carry => 0x92,
+                    .Equal => 0x94,
+                    .NotEqual => 0x95,
+                    .Greater => 0x9F,
+                    .GreaterEqual => 0x9D,
+                    .Less => 0x9C,
+                    .LessEqual => 0x9E,
+                    .NotAbove => 0x96,
+                    .NotBelow => 0x93,
+                    .NotBelowEqual => 0x97,
+                    .NotCarry => 0x93,
+                    .NotGreater => 0x9E,
+                    .NotGreaterEqual => 0x9C,
+                    .NotLess => 0x9D,
+                    .NotLessEqual => 0x9F,
+                    .NotOverflow => 0x91,
+                    .NotSign => 0x99,
+                    .NotZero => 0x95,
+                    .Overflow => 0x90,
+                    .ParityEven => 0x9A,
+                    .ParityOdd => 0x9B,
+                    .Sign => 0x98,
+                    .Zero => 0x94,
+                    .Always => return error.InvalidSetByteCondition,
+                });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 0, .r_m = encode(dst_reg) });
+            },
+            else => return error.InvalidSetByteConditionDestination,
+        }
+    }
+
     pub fn mul(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             .reg, .reg64 => |dst_reg| {
@@ -1425,19 +1477,19 @@ pub const Emitter = struct {
     fn div64_32(self: *@This(), dividend_high: Register, dividend_low: Register, divisor: Register, result: Register) !void {
         // Some register shuffling
         if (dividend_high == .rax) {
-            try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }); // Avoid overwriting it before copying it.
-            try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low });
+            try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }, false); // Avoid overwriting it before copying it.
+            try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low }, false);
         } else {
             if (dividend_low != .rax)
-                try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low });
+                try self.mov(.{ .reg = .rax }, .{ .reg = dividend_low }, false);
             if (dividend_high != .rdx)
-                try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high });
+                try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }, false);
         }
         // Actual div instruction
         try self.emit_rex_if_needed(.{ .b = need_rex(divisor) });
         try self.emit(u8, 0xF7);
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 6, .r_m = encode(divisor) });
-        try self.mov(.{ .reg = result }, .{ .reg = .rax });
+        try self.mov(.{ .reg = result }, .{ .reg = .rax }, false);
     }
 
     pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
