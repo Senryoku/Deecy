@@ -362,7 +362,7 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     return r;
 }
 
-const vertex_attributes = [_]wgpu.VertexAttribute{
+const VertexAttributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
     .{ .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index"), .shader_location = 1 },
     .{ .format = .uint32, .offset = @offsetOf(Vertex, "base_color"), .shader_location = 2 },
@@ -372,19 +372,19 @@ const vertex_attributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "u"), .shader_location = 6 },
     .{ .format = .float32x2, .offset = @offsetOf(Vertex, "area1_u"), .shader_location = 7 },
 };
-const vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+const VertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
     .array_stride = @sizeOf(Vertex),
-    .attribute_count = vertex_attributes.len,
-    .attributes = &vertex_attributes,
+    .attribute_count = VertexAttributes.len,
+    .attributes = &VertexAttributes,
 }};
 
-const modifier_volume_vertex_attributes = [_]wgpu.VertexAttribute{
+const ModifierVolumeVertexAttributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x4, .offset = 0, .shader_location = 0 },
 };
-const modifier_volume_vertex_buffers = [_]wgpu.VertexBufferLayout{.{
+const ModifierVolumeVertexBufferLayout = [_]wgpu.VertexBufferLayout{.{
     .array_stride = 4 * @sizeOf(f32),
-    .attribute_count = modifier_volume_vertex_attributes.len,
-    .attributes = &modifier_volume_vertex_attributes,
+    .attribute_count = ModifierVolumeVertexAttributes.len,
+    .attributes = &ModifierVolumeVertexAttributes,
 }};
 
 pub const Renderer = struct {
@@ -753,8 +753,8 @@ pub const Renderer = struct {
                 .vertex = wgpu.VertexState{
                     .module = modifier_volume_vertex_shader_module,
                     .entry_point = "main",
-                    .buffer_count = modifier_volume_vertex_buffers.len,
-                    .buffers = &modifier_volume_vertex_buffers,
+                    .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                    .buffers = &ModifierVolumeVertexBufferLayout,
                 },
                 .primitive = wgpu.PrimitiveState{
                     .front_face = .ccw,
@@ -821,8 +821,8 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = opaque_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = vertex_buffers.len,
-                .buffers = &vertex_buffers,
+                .buffer_count = VertexBufferLayout.len,
+                .buffers = &VertexBufferLayout,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
@@ -876,8 +876,8 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = modifier_volume_vertex_buffers.len,
-                .buffers = &modifier_volume_vertex_buffers,
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
@@ -916,8 +916,8 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = modifier_volume_vertex_buffers.len,
-                .buffers = &modifier_volume_vertex_buffers,
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
@@ -956,8 +956,8 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = modifier_volume_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = modifier_volume_vertex_buffers.len,
-                .buffers = &modifier_volume_vertex_buffers,
+                .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                .buffers = &ModifierVolumeVertexBufferLayout,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
@@ -1121,19 +1121,71 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
-        self.opaque_pass.deinit();
-        self.punchthrough_pass.deinit();
-        self.translucent_pass.deinit();
-
-        self.vertices.deinit();
-        self.modifier_volume_vertices.deinit();
-        self._allocator.free(self._scratch_pad);
-        // FIXME: I have a lot more resources to destroy.
         self.deinit_screen_textures();
+
+        self._allocator.free(self._scratch_pad);
+
+        self.translucent_pass.deinit();
+        self.punchthrough_pass.deinit();
+        self.opaque_pass.deinit();
+
+        self.modifier_volume_vertices.deinit();
+        self.strips_metadata.deinit();
+        self.vertices.deinit();
+
+        for (self.samplers) |sampler| {
+            self._gctx.releaseResource(sampler);
+        }
+        for (self.texture_array_views) |view| {
+            self._gctx.releaseResource(view);
+        }
+        for (self.texture_arrays) |array| {
+            self._gctx.releaseResource(array);
+        }
+
+        self._gctx.releaseResource(self.modifier_volume_vertex_buffer);
+        self._gctx.releaseResource(self.strips_metadata_buffer);
+        self._gctx.releaseResource(self.index_buffer);
+        self._gctx.releaseResource(self.vertex_buffer);
+        for (self.sampler_bind_groups) |sampler_bind_group| {
+            self._gctx.releaseResource(sampler_bind_group);
+        }
+        self._gctx.releaseResource(self.sampler_bind_group_layout);
+        self._gctx.releaseResource(self.bind_group_layout);
+
         self.opaque_vertex_shader_module.release();
         self.opaque_fragment_shader_module.release();
-        self._gctx.releaseResource(self.bind_group_layout);
+        self.blit_vertex_shader_module.release();
         self._gctx.releaseResource(self.pipeline_layout);
+        self._gctx.releaseResource(self.sampler_bind_group_layout);
+        self._gctx.releaseResource(self.bind_group_layout);
+
+        self._gctx.releaseResource(self.blend_bind_group_layout);
+        self._gctx.releaseResource(self.blend_pipeline);
+
+        self._gctx.releaseResource(self.translucent_modvol_merge_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_modvol_merge_pipeline);
+        self._gctx.releaseResource(self.translucent_modvol_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_modvol_pipeline);
+        self._gctx.releaseResource(self.translucent_bind_group_layout);
+        self._gctx.releaseResource(self.translucent_pipeline);
+
+        self._gctx.releaseResource(self.modifier_volume_apply_pipeline);
+        self._gctx.releaseResource(self.open_modifier_volume_pipeline);
+        self._gctx.releaseResource(self.shift_stencil_buffer_modifier_volume_pipeline);
+        self._gctx.releaseResource(self.closed_modifier_volume_pipeline);
+
+        self.opaque_pipelines.deinit();
+
+        self._gctx.releaseResource(self.framebuffer_texture_view);
+        self._gctx.releaseResource(self.framebuffer_texture);
+
+        self._gctx.releaseResource(self.framebuffer_resize_bind_group);
+
+        self._gctx.releaseResource(self.blit_to_window_vertex_buffer);
+        self._gctx.releaseResource(self.blit_index_buffer);
+        self._gctx.releaseResource(self.blit_vertex_buffer);
+        // self._gctx.releaseResource(self.blit_pipeline);
     }
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
@@ -1327,7 +1379,7 @@ pub const Renderer = struct {
                     1024 => 0x15556,
                     else => {
                         renderer_log.err(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{});
-                        @panic("Invalid u_size for mip mapped texture");
+                        @panic("Invalid u_size for vq_compressed mip mapped texture");
                     },
                 };
             } else if (texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP) {
@@ -1342,7 +1394,7 @@ pub const Renderer = struct {
                     1024 => 0x55558,
                     else => {
                         renderer_log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
-                        @panic("Invalid u_size for mip mapped texture");
+                        @panic("Invalid u_size for paletted mip mapped texture");
                     },
                 };
                 addr += if (texture_control_word.pixel_format == .Palette4BPP) val / 2 else val;
@@ -2023,7 +2075,6 @@ pub const Renderer = struct {
                 });
 
                 for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
-                    // std.debug.print("Vertex: {any}\n", .{vertex});
                     switch (vertex) {
                         // Packed Color, Non-Textured
                         .Type0 => |v| {
@@ -2455,7 +2506,7 @@ pub const Renderer = struct {
             );
 
             if (ta_lists.opaque_modifier_volumes.items.len > 0) {
-                //  - Write to stencil buffer
+                // Write to stencil buffer
                 {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                     const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
@@ -2800,8 +2851,8 @@ pub const Renderer = struct {
             .vertex = wgpu.VertexState{
                 .module = self.opaque_vertex_shader_module,
                 .entry_point = "main",
-                .buffer_count = vertex_buffers.len,
-                .buffers = &vertex_buffers,
+                .buffer_count = VertexBufferLayout.len,
+                .buffers = &VertexBufferLayout,
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,

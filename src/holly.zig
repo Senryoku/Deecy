@@ -1407,6 +1407,7 @@ pub const Holly = struct {
                 // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
                 // FIXME: This has nothing to do here.
                 if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
+                    // NOTE: Registers SB_MSYS and SB_MSHTCL control some behaviours here and aren't emulated.
                     dc.start_maple_dma();
                 }
 
