@@ -661,7 +661,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
             zgui.indent(.{});
             inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].get_list(list_type);
+                const list = d.renderer.ta_lists.get_list(list_type);
                 const name = @tagName(@as(Holly.ListType, list_type));
                 const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
@@ -713,7 +713,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.indent(.{});
             // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
             {
-                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].opaque_modifier_volumes;
+                const list = d.renderer.ta_lists.opaque_modifier_volumes;
                 const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
                 if (zgui.collapsingHeader(header, .{})) {
                     for (list.items, 0..) |vol, idx| {
@@ -734,7 +734,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
             {
-                const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].translucent_modifier_volumes;
+                const list = d.renderer.ta_lists.translucent_modifier_volumes;
                 const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
                 if (zgui.collapsingHeader(header, .{})) {
                     for (list.items, 0..) |vol, idx| {
@@ -933,7 +933,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     };
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        const list = d.dc.gpu._ta_lists[d.renderer.get_list_idx()].get_list(self.selected_strip_list);
+        const list = d.renderer.ta_lists.get_list(self.selected_strip_list);
         if (self.selected_strip_index < list.vertex_strips.items.len) {
             const parameters = list.vertex_parameters.items;
             const strip = &list.vertex_strips.items[self.selected_strip_index];
@@ -973,8 +973,8 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
     }
     if (self.selected_volume_index) |idx| {
         const list = switch (self.selected_volume_list) {
-            .OpaqueModifierVolume => d.dc.gpu._ta_lists[d.renderer.get_list_idx()].opaque_modifier_volumes.items,
-            .TranslucentModifierVolume => d.dc.gpu._ta_lists[d.renderer.get_list_idx()].translucent_modifier_volumes.items,
+            .OpaqueModifierVolume => d.renderer.ta_lists.opaque_modifier_volumes.items,
+            .TranslucentModifierVolume => d.renderer.ta_lists.translucent_modifier_volumes.items,
             else => unreachable,
         };
         if (idx < list.len) {

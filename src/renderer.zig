@@ -414,6 +414,7 @@ pub const Renderer = struct {
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
+    ta_lists: HollyModule.TALists,
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][512]TextureMetadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8,
@@ -1114,6 +1115,8 @@ pub const Renderer = struct {
             .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
             .translucent_pass = PassMetadata.init(allocator, .Translucent),
 
+            .ta_lists = HollyModule.TALists.init(allocator),
+
             ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
 
             ._gctx = gctx,
@@ -1198,12 +1201,20 @@ pub const Renderer = struct {
         if (self.render_start) {
             renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
         }
-        self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
-        self.render_start = true;
-    }
 
-    pub fn get_list_idx(self: *const Renderer) u4 {
-        return @truncate(self.on_render_start_param_base >> 20);
+        self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
+
+        // Clear the previous used TA lists and swap it with the one submitted by the game.
+        // NOTE: Clearing the lists here means the game cannot render lists more than once (e.i. starting a render without
+        //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
+        self.ta_lists.clearRetainingCapacity();
+        const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
+        std.mem.swap(HollyModule.TALists, &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+        if (self.ta_lists.opaque_list.vertex_strips.items.len == 0 and self.ta_lists.punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.translucent_list.vertex_strips.items.len == 0) {
+            renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
+        }
+
+        self.render_start = true;
     }
 
     // FIXME: This is way too slow.
@@ -1891,8 +1902,7 @@ pub const Renderer = struct {
     }
 
     pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
-        const list_idx: u4 = self.get_list_idx();
-        const ta_lists = gpu._ta_lists[list_idx];
+        const ta_lists = self.ta_lists;
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -2404,11 +2414,10 @@ pub const Renderer = struct {
         gctx.submit(&.{commands});
     }
 
-    pub fn render(self: *Renderer, gpu: *const HollyModule.Holly) !void {
+    pub fn render(self: *Renderer, _: *const HollyModule.Holly) !void {
         const gctx = self._gctx;
 
-        const list_idx: u4 = self.get_list_idx();
-        const ta_lists = gpu._ta_lists[list_idx];
+        const ta_lists = self.ta_lists;
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
