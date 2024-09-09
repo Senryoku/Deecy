@@ -686,9 +686,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                                 self.selected_strip_index = @intCast(idx);
                             }
                             if (node_open) {
-                                self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
-                                for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
-                                    self.display_vertex_data(&list.vertex_parameters.items[i]);
+                                if (idx < list.vertex_strips.items.len) {
+                                    self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
+                                    for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
+                                        if (i < list.vertex_parameters.items.len)
+                                            self.display_vertex_data(&list.vertex_parameters.items[i]);
+                                    }
                                 }
                                 zgui.treePop();
                             }
