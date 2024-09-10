@@ -1057,19 +1057,21 @@ pub fn movl_atRmInc_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     return false;
 }
 
-// FIXME: mov_Rm_atDecRn are broken in the JIT. See #58.
 pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 1
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
     return movb_Rm_atRn(block, ctx, instr);
 }
+
 pub fn movw_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 2
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
     return movw_Rm_atRn(block, ctx, instr);
 }
+
+// FIXME: This doesn't work properly. See #58.
 pub fn movl_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 4
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
