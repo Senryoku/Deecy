@@ -914,15 +914,13 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     // Address is already loaded into ArgRegisters[1]
-    if (size == 8) {
-        try call(block, ctx, &_out_of_line_read8);
-    } else if (size == 16) {
-        try call(block, ctx, &_out_of_line_read16);
-    } else if (size == 32) {
-        try call(block, ctx, &_out_of_line_read32);
-    } else if (size == 64) {
-        try call(block, ctx, &_out_of_line_read64);
-    } else @compileError("load_mem: Unsupported size.");
+    switch (size) {
+        8 => try call(block, ctx, &_out_of_line_read8),
+        16 => try call(block, ctx, &_out_of_line_read16),
+        32 => try call(block, ctx, &_out_of_line_read32),
+        64 => try call(block, ctx, &_out_of_line_read64),
+        else => @compileError("load_mem: Unsupported size."),
+    }
 
     if (dest != ReturnRegister)
         try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
@@ -960,16 +958,13 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     // Address is already loaded into ArgRegisters[1]
     if (value.tag() != .reg or value.reg != ArgRegisters[2])
         try block.mov(.{ .reg = ArgRegisters[2] }, value);
-    if (size == 8) {
-        try call(block, ctx, &_out_of_line_write8);
-    } else if (size == 16) {
-        try call(block, ctx, &_out_of_line_write16);
-    } else if (size == 32) {
-        try call(block, ctx, &_out_of_line_write32);
-    } else if (size == 64) {
-        try call(block, ctx, &_out_of_line_write64);
-    } else @compileError("store_mem: Unsupported size.");
-
+    switch (size) {
+        8 => try call(block, ctx, &_out_of_line_write8),
+        16 => try call(block, ctx, &_out_of_line_write16),
+        32 => try call(block, ctx, &_out_of_line_write32),
+        64 => try call(block, ctx, &_out_of_line_write64),
+        else => @compileError("store_mem: Unsupported size."),
+    }
     to_end.patch();
 }
 
@@ -1058,21 +1053,21 @@ pub fn movl_atRmInc_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rm -= 1
+    // Rn -= 1
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
     return movb_Rm_atRn(block, ctx, instr);
 }
 
 pub fn movw_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rm -= 2
+    // Rn -= 2
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
     return movw_Rm_atRn(block, ctx, instr);
 }
 
 pub fn movl_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rm -= 4
+    // Rn -= 4
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
     return movl_Rm_atRn(block, ctx, instr);
