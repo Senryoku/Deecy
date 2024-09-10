@@ -608,6 +608,11 @@ pub const SH4JIT = struct {
             block.len = ctx.index;
         }
         self.block_cache.cursor += block.buffer.len;
+        // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
+        if (self.block_cache.cursor & 0xF != 0) {
+            self.block_cache.cursor += 0x10;
+            self.block_cache.cursor &= ~@as(usize, 0xF);
+        }
         block.cycles = ctx.cycles;
 
         sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
@@ -1052,20 +1057,19 @@ pub fn movl_atRmInc_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     return false;
 }
 
+// FIXME: mov_Rm_atDecRn are broken in the JIT. See #58.
 pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 1
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
     return movb_Rm_atRn(block, ctx, instr);
 }
-
 pub fn movw_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 2
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
     return movw_Rm_atRn(block, ctx, instr);
 }
-
 pub fn movl_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Rn -= 4
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
