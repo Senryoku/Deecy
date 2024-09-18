@@ -726,11 +726,8 @@ pub const Emitter = struct {
             Register => @truncate(@intFromEnum(reg)),
             FPRegister => @truncate(@intFromEnum(reg)),
             Operand => switch (reg) {
-                .reg8 => |r| @truncate(@intFromEnum(r)),
-                .reg16 => |r| @truncate(@intFromEnum(r)),
-                .reg => |r| @truncate(@intFromEnum(r)),
-                .freg32 => |r| @truncate(@intFromEnum(r)),
-                .freg64 => |r| @truncate(@intFromEnum(r)),
+                .reg8, .reg16, .reg, .reg64 => |r| encode(r),
+                .freg32, .freg64 => |r| encode(r),
                 else => @panic("Operand must be a register"),
             },
             else => @compileError("Unsupported register type"),
@@ -742,11 +739,8 @@ pub const Emitter = struct {
             Register => @intFromEnum(reg) >= 8,
             FPRegister => @intFromEnum(reg) >= 8,
             Operand => switch (reg) {
-                .reg8 => |r| @intFromEnum(r) >= 8,
-                .reg16 => |r| @intFromEnum(r) >= 8,
-                .reg => |r| @intFromEnum(r) >= 8,
-                .freg32 => |r| @intFromEnum(r) >= 8,
-                .freg64 => |r| @intFromEnum(r) >= 8,
+                .reg8, .reg16, .reg, .reg64 => |r| need_rex(r),
+                .freg32, .freg64 => |r| need_rex(r),
                 else => @panic("Operand must be a register"),
             },
             else => @compileError("Unsupported register type"),
@@ -1475,6 +1469,7 @@ pub const Emitter = struct {
     }
 
     fn div64_32(self: *@This(), dividend_high: Register, dividend_low: Register, divisor: Register, result: Register) !void {
+        if (divisor == .rax or divisor == .rdx) return error.InvalidDivisorRegister;
         // Some register shuffling
         if (dividend_high == .rax) {
             try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }, false); // Avoid overwriting it before copying it.
@@ -1489,7 +1484,8 @@ pub const Emitter = struct {
         try self.emit_rex_if_needed(.{ .b = need_rex(divisor) });
         try self.emit(u8, 0xF7);
         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 6, .r_m = encode(divisor) });
-        try self.mov(.{ .reg = result }, .{ .reg = .rax }, false);
+        if (result != .rax)
+            try self.mov(.{ .reg = result }, .{ .reg = .rax }, false);
     }
 
     pub fn bit_test(self: *@This(), reg: Register, offset: Operand) !void {
