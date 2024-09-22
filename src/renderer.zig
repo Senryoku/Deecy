@@ -1373,8 +1373,19 @@ pub const Renderer = struct {
         const alloc_u_size = (@as(u16, 8) << tsp_instruction.texture_u_size);
         const alloc_v_size = (@as(u16, 8) << tsp_instruction.texture_v_size);
 
-        const u_size: u32 = if (scan_order == 1 and stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
+        var u_size: u32 = if (scan_order == 1 and stride_select == 1) @as(u16, 32) * texture_control_register.stride else alloc_u_size;
         const v_size: u32 = if (scan_order == 0 and texture_control_word.mip_mapped == 1) u_size else alloc_v_size;
+
+        if (u_size > alloc_u_size) {
+            // FIXME: This can happen with stride textures. The documentation seems to contradict itself:
+            //        - Texture Control Word, Stride Select: "When this bit is 1, the U size of the texture is specified by the TEXT_CONTROL register (i.e., the U Size bit is ignored).""
+            //        - TSP Instruction Word, U Size:        "The value that is specified here must be greater than the U size of the stride texture.""
+            //   I don't know if the U Size "must be greater" or if it is "ignored". Virtua Tennis 2 runs into this issue.
+            //   Ignoring the U Size is more problematic for us as we use it to select the correct texture array, so I'll clamp the stride size for now.
+            renderer_log.err(termcolor.red("Texture U size ({d}) is greater than the allocated size ({d})\n") ++ termcolor.grey("  TEXT_CONTROL:    {any}\n  TSP Instruction: {any}\n  Texture Control: {any})"), .{ u_size, alloc_u_size, texture_control_register, tsp_instruction, texture_control_word });
+            u_size = alloc_u_size;
+            // Virtua Tennis 2 uses a stride value of 640 (texture_control_register.stride = 20) when the issue occurs. I suspect it tries to sample the framebuffer.
+        }
 
         var addr: u32 = 8 * @as(u32, texture_control_word.address); // given in units of 64-bits.
         var vq_index_addr = addr + 8 * 256;
@@ -1615,6 +1626,9 @@ pub const Renderer = struct {
                     @memcpy(tex_source[1][4 * u_size * v ..][0 .. 4 * u_size], tex_source[0][4 * u_size * (v_size - v - 1) ..][0 .. 4 * u_size]);
                 }
             }
+        }
+        if (texture_index == 10) {
+            std.debug.print("size_index:{d} u_size:{d} v_size:{d} clamp_u:{any} clamp_v:{any} flip_u:{any} flip_v:{any}\n", .{ size_index, u_size, v_size, clamp_u, clamp_v, flip_u, flip_v });
         }
         for (0..copies) |part| {
             self._gctx.queue.writeTexture(
