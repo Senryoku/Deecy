@@ -48,9 +48,8 @@ sudo apt install libgtk-3-dev
         -   Somehow detect writes to framebuffer and display it.
         -   Write back for games that need it.
     -   Modifier Volumes.
-        -   Implemented: Inclusion volumes and shadow bit over opaque geometry.
-        -   TODO: Exclusion volumes.
-        -   Test polygons with 'Two Volumes' (another way to use the modifier volumes).
+        -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
+        -   Missing: Exclusion volumes.
         -   "Region Array Data Configuration" (written by the CPU directly to VRAM) are completely ignored. I don't know if it's actually used much.
     -   Fog LUT Mode 2.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
