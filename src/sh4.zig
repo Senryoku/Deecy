@@ -167,6 +167,7 @@ pub const SH4 = struct {
     store_queues: [2][8]u32 align(4) = undefined,
     _operand_cache: []u8 align(4) = undefined,
     p4_registers: []u8 align(4) = undefined,
+    utlb: []mmu.UTLBEntry = undefined,
 
     interrupt_requests: u64 = 0,
 
@@ -208,14 +209,17 @@ pub const SH4 = struct {
         sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
         @memset(sh4.p4_registers, 0);
 
+        sh4.utlb = try sh4._allocator.alloc(mmu.UTLBEntry, 64);
+
         sh4.reset();
 
         return sh4;
     }
 
     pub fn deinit(self: *@This()) void {
-        self._allocator.free(self._operand_cache);
+        self._allocator.free(self.utlb);
         self._allocator.free(self.p4_registers);
+        self._allocator.free(self._operand_cache);
     }
 
     pub fn reset(self: *@This()) void {
@@ -296,6 +300,10 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCFTDR2).* = 0x0000;
         self.p4_register(u16, .SCSPTR2).* = 0x0000;
         self.p4_register(u16, .SCLSR2).* = 0x0000;
+
+        for (0..self.utlb.len) |i| {
+            self.utlb[i].v = 0;
+        }
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -1040,9 +1048,36 @@ pub const SH4 = struct {
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array
+                if (T == u32) {
+                    const entry_index: u6 = @truncate(virtual_addr >> 8);
+                    const entry = self.utlb[entry_index];
+                    const val: mmu.UTLBAddressData = .{
+                        .asid = entry.asid,
+                        .d = entry.d,
+                        .v = entry.v,
+                        .vpn = entry.vpn,
+                    };
+                    return @bitCast(val);
+                }
             },
             0xF7000000...0xF7FFFFFF => {
                 // Unified TLB data arrays 1 and 2
+                if (T == u32) {
+                    const entry_index: u6 = @truncate(virtual_addr >> 8);
+                    const entry = self.utlb[entry_index];
+                    const val: mmu.UTLBArrayData1 = .{
+                        .wt = entry.wt,
+                        .sh = entry.sh,
+                        .d = entry.d,
+                        .c = entry.c,
+                        .sz0 = @truncate(entry.sz),
+                        .pr = entry.pr,
+                        .sz1 = @truncate(entry.sz >> 1),
+                        .v = entry.v,
+                        .ppn = entry.ppn,
+                    };
+                    return @bitCast(val);
+                }
             },
             0xF8000000...0xFBFFFFFF => {
                 // Reserved
@@ -1151,6 +1186,10 @@ pub const SH4 = struct {
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
                     const val: mmu.UTLBAddressData = @bitCast(value);
                     sh4_log.warn(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+                    self.utlb[entry].asid = val.asid;
+                    self.utlb[entry].v = val.v;
+                    self.utlb[entry].d = val.d;
+                    self.utlb[entry].vpn = val.vpn;
                 }
             },
             0xF7000000...0xF7FFFFFF => {
@@ -1160,6 +1199,14 @@ pub const SH4 = struct {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
                     sh4_log.warn(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    self.utlb[entry].wt = val.wt;
+                    self.utlb[entry].sh = val.sh;
+                    self.utlb[entry].d = val.d;
+                    self.utlb[entry].c = val.c;
+                    self.utlb[entry].sz = (@as(u2, val.sz1) << 1) | val.sz0;
+                    self.utlb[entry].pr = val.pr;
+                    self.utlb[entry].v = val.v;
+                    self.utlb[entry].ppn = val.ppn;
                 }
             },
             0xF8000000...0xFBFFFFFF => {

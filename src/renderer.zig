@@ -1627,9 +1627,7 @@ pub const Renderer = struct {
                 }
             }
         }
-        if (texture_index == 10) {
-            std.debug.print("size_index:{d} u_size:{d} v_size:{d} clamp_u:{any} clamp_v:{any} flip_u:{any} flip_v:{any}\n", .{ size_index, u_size, v_size, clamp_u, clamp_v, flip_u, flip_v });
-        }
+
         for (0..copies) |part| {
             self._gctx.queue.writeTexture(
                 .{

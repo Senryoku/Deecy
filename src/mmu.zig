@@ -55,18 +55,20 @@ pub const MMU = packed struct {
 };
 
 pub const UTLBEntry = packed struct {
-    vpn: u22 = undefined,
+    asid: u8 = undefined, // Address space identifier
+    vpn: u22 = undefined, // Virtual page number
     v: u1 = 0, // Validity bit
-    sh: u1 = undefined, // Share status bit, 1 => Shared
-    asid: u8 = undefined, //
-    ppn: u22 = undefined, // Physical page number
-    sz: u2 = undefined, // Page size
-    c: u1 = undefined, // Cacheability bit
-    pr: u2 = undefined, // Protection key data
-    d: u1 = undefined, // Dirty bit
-    wt: u1 = undefined, // Write-through bit
-    sa: u2 = undefined, // Space attribute bits
+
     tc: u1 = undefined, // Timing control bit
+    sa: u2 = undefined, // Space attribute bits
+    wt: u1 = undefined, // Write-through bit
+    d: u1 = undefined, // Dirty bit
+    pr: u2 = undefined, // Protection key data
+    c: u1 = undefined, // Cacheability bit
+    sh: u1 = undefined, // Share status bit, 1 => Shared
+    sz: u2 = undefined, // Page size
+    ppn: u19 = undefined, // Physical page number
+    _: u3 = 0,
 };
 
 pub const UTLBAddressData = packed struct(u32) {
@@ -85,9 +87,9 @@ pub const UTLBArrayData1 = packed struct(u32) {
     pr: u2,
     sz1: u1,
     v: u1,
-    _0: u1,
+    _0: u1 = 0,
     ppn: u19,
-    _1: u3,
+    _1: u3 = 0,
 };
 
 pub fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
