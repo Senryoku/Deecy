@@ -45,7 +45,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
-				"D:\\DC Games\\[GDI] Speed Devils (US)\\Speed Devils v1.004 (1999)(Ubi Soft)(NTSC)(US)[!].gdi"
+				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

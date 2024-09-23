@@ -1365,4 +1365,27 @@ pub const AICA = struct {
 
         dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
     }
+
+    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.arm7.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.wave_memory[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
+        bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
+        bytes += try writer.write(std.mem.sliceAsBytes(self._timer_counters[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self._samples_counter));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *const @This(), reader: anytype) !void {
+        try self.arm7.deserialize(reader);
+        try reader.read(self.regs);
+        try reader.read(self.wave_memory);
+        try reader.read(self.channel_states);
+        try reader.read(self._arm_cycles_counter);
+        try reader.read(self._timer_cycle_counter);
+        try reader.read(self._timer_counters);
+    }
 };

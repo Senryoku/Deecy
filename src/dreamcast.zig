@@ -647,6 +647,16 @@ pub const Dreamcast = struct {
 
         // TODO: Actually cancel the DMA, right now they're instantaneous.
     }
+
+    pub fn serialize(self: *@This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.cpu.serialize(writer);
+        bytes += try self.gpu.serialize(writer);
+        bytes += try self.aica.serialize(writer);
+        bytes += try self.maple.serialize(writer);
+        bytes += try self.gdrom.serialize(writer);
+        return bytes;
+    }
 };
 
 test "boot" {

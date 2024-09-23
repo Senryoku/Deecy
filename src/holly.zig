@@ -2004,4 +2004,23 @@ pub const Holly = struct {
             @panic("Out of bounds access to Area 1 (VRAM)");
         }
     }
+
+    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.sliceAsBytes(self.vram[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.registers[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self.dirty_framebuffer));
+        bytes += try writer.write(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_command_buffer_index));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_list_type));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_current_polygon));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_user_tile_clip));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_current_volume));
+        bytes += try writer.write(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
+        bytes += try writer.write(std.mem.sliceAsBytes(self._ta_lists[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self._pixel));
+        bytes += try writer.write(std.mem.asBytes(&self._tmp_cycles));
+        bytes += try writer.write(std.mem.asBytes(&self._vblank_signal));
+        return bytes;
+    }
 };
