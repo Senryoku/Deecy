@@ -1765,8 +1765,8 @@ pub const Renderer = struct {
     // Pulls 3 vertices from the address pointed by ISP_BACKGND_T and places them at the front of the vertex buffer.
     pub fn update_background(self: *@This(), gpu: *const HollyModule.Holly) !void {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
-        const param_base = self.on_render_start_param_base;
-        const addr = param_base + 4 * tags.tag_address;
+        const param_base: u32 = self.on_render_start_param_base;
+        const addr = param_base + 4 * @as(u32, tags.tag_address);
         const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
         const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
         const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
