@@ -1317,30 +1317,21 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
-            if (comptime true) {
-                if (comptime false) {
-                    // Ikaruga Hack, hardcoded translation from looking at the writes to UTBL it performs
-                    // (1MB pages, VPN 0x380000 => PPN 0x30000, 0x380400 => 0x30400... and some for VRAM).
-                    const vpn: u32 = ((addr >> 20) & 0x3F);
-                    const ppn: u32 = if (vpn >= 0x10) (0x10000000 + 0x00100000 * (vpn - 0x10)) else ((0x30000 + 0x400 * vpn) << 10);
-                    const translated = ppn | (addr & 0xFFFE0);
-                    ext_addr = translated;
-                } else {
-                    const vpn: u22 = @truncate(addr >> 10);
-                    for (0..cpu.utlb.len) |i| {
-                        if (cpu.utlb[i].v == 1) {
-                            if (sh4.mmu.vpn_match(cpu.utlb[i].vpn, vpn, cpu.utlb[i].sz)) {
-                                const ppn: u32 = cpu.utlb[i].ppn;
-                                const translated = (ppn << 10) | (addr & 0xFFFE0);
-                                ext_addr = translated;
-                                break;
-                            }
-                        }
+            if (comptime false) {
+                // Ikaruga Hack, hardcoded translation from looking at the writes to UTBL it performs
+                // (1MB pages, VPN 0x380000 => PPN 0x30000, 0x380400 => 0x30400... and some for VRAM).
+                const vpn: u32 = ((addr >> 20) & 0x3F);
+                const ppn: u32 = if (vpn >= 0x10) (0x10000000 + 0x00100000 * (vpn - 0x10)) else ((0x30000 + 0x400 * vpn) << 10);
+                const translated = ppn | (addr & 0xFFFE0);
+                ext_addr = translated;
+            } else {
+                const vpn: u22 = @truncate(addr >> 10);
+                for (cpu.utlb) |entry| {
+                    if (entry.match(vpn)) {
+                        ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
+                        break;
                     }
                 }
-            } else {
-                sh4_log.err("pref @{X:0>8} with MMU ON not implemented", .{addr});
-                @panic("pref with MMU ON not implemented");
             }
         }
         sh4_log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });

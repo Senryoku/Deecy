@@ -69,6 +69,14 @@ pub const UTLBEntry = packed struct {
     sz: u2 = undefined, // Page size
     ppn: u19 = undefined, // Physical page number
     _: u3 = 0,
+
+    pub inline fn valid(self: @This()) bool {
+        return self.v == 1;
+    }
+
+    pub inline fn match(self: @This(), vpn: u22) bool {
+        return self.valid() and vpn_match(self.vpn, vpn, self.sz);
+    }
 };
 
 pub const UTLBAddressData = packed struct(u32) {
