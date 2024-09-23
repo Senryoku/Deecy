@@ -225,12 +225,19 @@ pub const GDROM = struct {
         }
 
         pub fn deserialize(self: *@This(), reader: anytype) !usize {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
             var bytes: usize = 0;
             bytes += try reader.read(std.mem.asBytes(&self.status));
             bytes += try reader.read(std.mem.asBytes(&self.start_addr));
             bytes += try reader.read(std.mem.asBytes(&self.end_addr));
             bytes += try reader.read(std.mem.asBytes(&self.current_addr));
             bytes += try reader.read(std.mem.asBytes(&self.repetitions));
+
+            self.current_position = 0;
+            self.samples_in_buffer = 0;
+
             return bytes;
         }
     },
@@ -244,15 +251,6 @@ pub const GDROM = struct {
         remaining_sectors: u32 = 0,
         data_select: u4 = 0,
         expected_data_type: u3 = 0,
-
-        pub fn serialize(self: @This(), writer: anytype) !usize {
-            var bytes: usize = 0;
-            bytes += try writer.write(std.mem.asBytes(&self.fad));
-            bytes += try writer.write(std.mem.asBytes(&self.remaining_sectors));
-            bytes += try writer.write(std.mem.asBytes(&self.data_select));
-            bytes += try writer.write(std.mem.asBytes(&self.expected_data_type));
-            return bytes;
-        }
     } = .{},
 
     scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
@@ -1118,16 +1116,17 @@ pub const GDROM = struct {
         bytes += try writer.write(std.mem.asBytes(&self.state));
         bytes += try writer.write(std.mem.asBytes(&self.status_register));
         bytes += try writer.write(std.mem.asBytes(&self.control_register));
+        bytes += try writer.write(std.mem.asBytes(&self.error_register));
         bytes += try writer.write(std.mem.asBytes(&self.interrupt_reason_register));
         bytes += try writer.write(std.mem.asBytes(&self.features));
         bytes += try writer.write(std.mem.asBytes(&self.byte_count));
 
-        std.debug.print("self.pio_data_queue.count: {}\n", .{self.pio_data_queue.count});
+        std.debug.print("GDROM.serialize: self.pio_data_queue.count: {}\n", .{self.pio_data_queue.count});
         bytes += try writer.write(std.mem.asBytes(&self.pio_data_queue.count));
         if (self.pio_data_queue.count > 0) {
             bytes += try writer.write(std.mem.sliceAsBytes(self.pio_data_queue.buf[0..self.pio_data_queue.count]));
         }
-        std.debug.print("self.dma_data_queue.count: {}\n", .{self.dma_data_queue.count});
+        std.debug.print("GDROM.serialize: self.dma_data_queue.count: {}\n", .{self.dma_data_queue.count});
         bytes += try writer.write(std.mem.asBytes(&self.dma_data_queue.count));
         if (self.dma_data_queue.count > 0) {
             bytes += try writer.write(std.mem.sliceAsBytes(self.dma_data_queue.buf[0..self.dma_data_queue.count]));
@@ -1138,8 +1137,15 @@ pub const GDROM = struct {
 
         bytes += try self.audio_state.serialize(writer);
 
-        bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.items.len));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.scheduled_events.items));
+        bytes += try writer.write(std.mem.asBytes(&self.cd_read_state));
+
+        std.debug.print("GDROM.serialize: self.scheduled_events.count(): {}\n", .{self.scheduled_events.count()});
+        bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
+        for (0..self.scheduled_events.count()) |i| {
+            bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.items[i]));
+        }
+
+        // NOTE: HLE state isn't serialized
 
         return bytes;
     }
@@ -1149,6 +1155,7 @@ pub const GDROM = struct {
         bytes += try reader.read(std.mem.asBytes(&self.state));
         bytes += try reader.read(std.mem.asBytes(&self.status_register));
         bytes += try reader.read(std.mem.asBytes(&self.control_register));
+        bytes += try reader.read(std.mem.asBytes(&self.error_register));
         bytes += try reader.read(std.mem.asBytes(&self.interrupt_reason_register));
         bytes += try reader.read(std.mem.asBytes(&self.features));
         bytes += try reader.read(std.mem.asBytes(&self.byte_count));
@@ -1156,7 +1163,7 @@ pub const GDROM = struct {
         self.pio_data_queue.discard(self.pio_data_queue.count);
         var pio_data_queue_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
-        std.debug.print("pio_data_queue_count: {}\n", .{pio_data_queue_count});
+        std.debug.print("GDROM.deserialize: pio_data_queue_count: {}\n", .{pio_data_queue_count});
         if (pio_data_queue_count > 0) {
             bytes += try reader.read(try self.pio_data_queue.writableWithSize(pio_data_queue_count));
             self.dma_data_queue.update(pio_data_queue_count);
@@ -1165,7 +1172,7 @@ pub const GDROM = struct {
         self.dma_data_queue.discard(self.dma_data_queue.count);
         var dma_data_queue_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
-        std.debug.print("dma_data_queue_count: {}\n", .{dma_data_queue_count});
+        std.debug.print("GDROM.deserialize: dma_data_queue_count: {}\n", .{dma_data_queue_count});
         if (dma_data_queue_count > 0) {
             bytes += try reader.read(try self.dma_data_queue.writableWithSize(dma_data_queue_count));
             self.dma_data_queue.update(dma_data_queue_count);
@@ -1176,8 +1183,16 @@ pub const GDROM = struct {
 
         bytes += try self.audio_state.deserialize(reader);
 
-        bytes += try reader.read(std.mem.asBytes(&self.scheduled_events.items.len));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.scheduled_events.items));
+        bytes += try reader.read(std.mem.asBytes(&self.cd_read_state));
+
+        var event_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&event_count));
+        std.debug.print("GDROM.deserialize: event_count: {}\n", .{event_count});
+        for (0..event_count) |_| {
+            var event: ScheduledEvent = undefined;
+            bytes += try reader.read(std.mem.asBytes(&event));
+            try self.scheduled_events.add(event);
+        }
 
         return bytes;
     }

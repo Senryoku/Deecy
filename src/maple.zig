@@ -688,7 +688,7 @@ const MaplePort = struct {
 
     pub fn serialize(self: @This(), writer: anytype) !usize {
         // Nothing for now.
-        if (true) {
+        if (comptime true) {
             return 0;
         } else {
             var bytes: usize = 0;

@@ -55,11 +55,19 @@ fn glfw_key_callback(
                     });
                 },
                 .F1 => {
+                    const was_running = app.running;
+                    if (was_running) app.stop();
+                    defer {
+                        if (was_running) app.start();
+                    }
+
                     app.save_state.clearRetainingCapacity();
                     _ = app.dc.serialize(app.save_state.writer()) catch |err| {
                         deecy_log.err("Failed to save state: {}\n", .{err});
                         return;
                     };
+                    // TODO: Zip it
+                    // TODO: Save to disk under the current game folder
                     deecy_log.info("Saved State 1", .{});
                 },
                 .F5 => {
@@ -69,11 +77,13 @@ fn glfw_key_callback(
                         if (was_running) app.start();
                     }
 
-                    app.dc.reset() catch |err| {
+                    app.reset() catch |err| {
                         deecy_log.err("Failed to reset DC: {}\n", .{err});
                         return;
                     };
-                    app.renderer.reset();
+
+                    // TODO: Load from disk
+                    // TODO: Unzip it
 
                     var reader = std.io.fixedBufferStream(app.save_state.items);
                     _ = app.dc.deserialize(&reader) catch |err| {
@@ -429,6 +439,13 @@ pub const Deecy = struct {
         zgui.plot.deinit();
         zgui.backend.deinit();
         zgui.deinit();
+    }
+
+    fn reset(self: *Deecy) !void {
+        try self.dc.reset();
+        self.renderer.reset();
+        self.last_frame_timestamp = std.time.microTimestamp();
+        self.last_n_frametimes.discard(self.last_n_frametimes.count);
     }
 
     pub fn pool_controllers(self: *Deecy) void {
