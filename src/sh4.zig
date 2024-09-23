@@ -1636,4 +1636,33 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.asBytes(&self._pending_cycles));
         return bytes;
     }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.sliceAsBytes(self.r[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.r_bank[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self.sr));
+        bytes += try reader.read(std.mem.asBytes(&self.gbr));
+        bytes += try reader.read(std.mem.asBytes(&self.ssr));
+        bytes += try reader.read(std.mem.asBytes(&self.spc));
+        bytes += try reader.read(std.mem.asBytes(&self.sgr));
+        bytes += try reader.read(std.mem.asBytes(&self.dbr));
+        bytes += try reader.read(std.mem.asBytes(&self.vbr));
+        bytes += try reader.read(std.mem.asBytes(&self.pc));
+        bytes += try reader.read(std.mem.asBytes(&self.macl));
+        bytes += try reader.read(std.mem.asBytes(&self.mach));
+        bytes += try reader.read(std.mem.asBytes(&self.pr));
+        bytes += try reader.read(std.mem.asBytes(&self.fpscr));
+        bytes += try reader.read(std.mem.asBytes(&self.fpul));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.fp_banks[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.store_queues[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self._operand_cache[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.p4_registers[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.utlb[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self.interrupt_requests));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self.execution_state));
+        bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
+        return bytes;
+    }
 };

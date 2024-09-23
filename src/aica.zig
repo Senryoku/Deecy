@@ -1379,13 +1379,16 @@ pub const AICA = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *const @This(), reader: anytype) !void {
-        try self.arm7.deserialize(reader);
-        try reader.read(self.regs);
-        try reader.read(self.wave_memory);
-        try reader.read(self.channel_states);
-        try reader.read(self._arm_cycles_counter);
-        try reader.read(self._timer_cycle_counter);
-        try reader.read(self._timer_counters);
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.arm7.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.wave_memory[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));
+        bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));
+        bytes += try reader.read(std.mem.sliceAsBytes(self._timer_counters[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self._samples_counter));
+        return bytes;
     }
 };

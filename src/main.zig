@@ -132,10 +132,6 @@ pub fn main() !void {
     var start_immediately = false;
     var force_stop = false;
 
-    var save_state = std.ArrayList(u8).init(common.GeneralAllocator);
-    defer save_state.deinit();
-    _ = try d.dc.serialize(save_state.writer());
-
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
     while (args.next()) |arg| {

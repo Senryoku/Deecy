@@ -54,6 +54,34 @@ fn glfw_key_callback(
                         .PerFrame => .None,
                     });
                 },
+                .F1 => {
+                    app.save_state.clearRetainingCapacity();
+                    _ = app.dc.serialize(app.save_state.writer()) catch |err| {
+                        deecy_log.err("Failed to save state: {}\n", .{err});
+                        return;
+                    };
+                    deecy_log.info("Saved State 1", .{});
+                },
+                .F5 => {
+                    const was_running = app.running;
+                    if (was_running) app.stop();
+                    defer {
+                        if (was_running) app.start();
+                    }
+
+                    app.dc.reset() catch |err| {
+                        deecy_log.err("Failed to reset DC: {}\n", .{err});
+                        return;
+                    };
+                    app.renderer.reset();
+
+                    var reader = std.io.fixedBufferStream(app.save_state.items);
+                    _ = app.dc.deserialize(&reader) catch |err| {
+                        deecy_log.err("Failed to load state: {}\n", .{err});
+                        return;
+                    };
+                    deecy_log.info("Loaded State 1", .{});
+                },
                 else => {},
             }
         }
@@ -135,6 +163,8 @@ pub const Deecy = struct {
     display_ui: bool = true,
     ui: DeecyUI,
     debug_ui: DebugUI = undefined,
+
+    save_state: std.ArrayList(u8) = undefined,
 
     _allocator: std.mem.Allocator,
 
@@ -250,11 +280,15 @@ pub const Deecy = struct {
 
         self.debug_ui = try DebugUI.init(self);
 
+        self.save_state = std.ArrayList(u8).init(allocator);
+
         return self;
     }
 
     pub fn destroy(self: *Deecy) void {
         self.stop();
+
+        self.save_state.deinit();
 
         self.breakpoints.deinit();
 

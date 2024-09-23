@@ -1225,6 +1225,16 @@ pub const TALists = struct {
             self.clearRetainingCapacity();
         }
     }
+
+    // TODO? Or safe to ignore?
+    pub fn serialize(_: @This(), writer: anytype) !usize {
+        _ = writer;
+        return 0;
+    }
+    pub fn deserialize(_: @This(), reader: anytype) !usize {
+        _ = reader;
+        return 0;
+    }
 };
 
 pub const Holly = struct {
@@ -1283,6 +1293,10 @@ pub const Holly = struct {
     pub fn reset(self: *@This()) void {
         @memset(self.vram, 0);
         @memset(self.registers, 0);
+
+        for (&self._ta_lists) |*ta_list| {
+            ta_list.clearRetainingCapacity();
+        }
 
         self._get_register(u32, .ID).* = 0x17FD11DB;
         self._get_register(u32, .REVISION).* = 0x0011;
@@ -2017,10 +2031,33 @@ pub const Holly = struct {
         bytes += try writer.write(std.mem.asBytes(&self._ta_user_tile_clip));
         bytes += try writer.write(std.mem.asBytes(&self._ta_current_volume));
         bytes += try writer.write(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
-        bytes += try writer.write(std.mem.sliceAsBytes(self._ta_lists[0..]));
+        for (self._ta_lists) |list| {
+            bytes += try list.serialize(writer);
+        }
         bytes += try writer.write(std.mem.asBytes(&self._pixel));
         bytes += try writer.write(std.mem.asBytes(&self._tmp_cycles));
         bytes += try writer.write(std.mem.asBytes(&self._vblank_signal));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.sliceAsBytes(self.vram[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.registers[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self.dirty_framebuffer));
+        bytes += try reader.read(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_command_buffer_index));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_list_type));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_current_polygon));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_user_tile_clip));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_current_volume));
+        bytes += try reader.read(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
+        for (&self._ta_lists) |*list| {
+            bytes += try list.deserialize(reader);
+        }
+        bytes += try reader.read(std.mem.asBytes(&self._pixel));
+        bytes += try reader.read(std.mem.asBytes(&self._tmp_cycles));
+        bytes += try reader.read(std.mem.asBytes(&self._vblank_signal));
         return bytes;
     }
 };
