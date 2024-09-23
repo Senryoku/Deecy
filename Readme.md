@@ -57,8 +57,7 @@ sudo apt install libgtk-3-dev
     -   Handle and generate Mipmaps.
     -   Sort-DMA?
     -   User Tile Clip, only the simplest version is supported.
--   Ikaruga need some sort of MMU support :(
-    Apparently only around the Store Queue, but I'm still unsure how much of the MMU I need to implement to circumvent this (and the interpreter is already painfully slow).
+-   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)  
 
 ### Nice to have
 
