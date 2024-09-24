@@ -903,6 +903,39 @@ pub const Deecy = struct {
         var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
         defer compressed.deinit();
 
+        std.debug.print("packed data: {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ compressed.arr.items[0], compressed.arr.items[1], compressed.arr.items[2], compressed.arr.items[3] });
+        std.debug.print(" ...         {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ compressed.arr.items[compressed.arr.items.len - 4], compressed.arr.items[compressed.arr.items.len - 3], compressed.arr.items[compressed.arr.items.len - 2], compressed.arr.items[compressed.arr.items.len - 1] });
+
+        // Stupid test
+        {
+            const unpacked_data = try compressed.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
+            defer self._allocator.free(unpacked_data);
+            std.debug.print("tokens={d} {d} {d} {d} {d} {d} {d} {d}\n", .{ unpacked_data[0], unpacked_data[1], unpacked_data[2], unpacked_data[3], unpacked_data[4], unpacked_data[5], unpacked_data[6], unpacked_data[7] });
+            std.debug.print("  ...  {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
+                unpacked_data[unpacked_data.len - 8],
+                unpacked_data[unpacked_data.len - 7],
+                unpacked_data[unpacked_data.len - 6],
+                unpacked_data[unpacked_data.len - 5],
+                unpacked_data[unpacked_data.len - 4],
+                unpacked_data[unpacked_data.len - 3],
+                unpacked_data[unpacked_data.len - 2],
+                unpacked_data[unpacked_data.len - 1],
+            });
+            const decompressed = try lzw.decompress(lzw.BitPacker.ValueType, 0, std.math.maxInt(lzw.BitPacker.ValueType), unpacked_data, uncompressed_array.items.len, self._allocator);
+            defer decompressed.deinit();
+
+            if (decompressed.items.len != uncompressed_array.items.len) {
+                std.debug.print("ERROR! expected_size={d}, decompressed.items.len={d}\n", .{ uncompressed_array.items.len, decompressed.items.len });
+            } else {
+                for (0..decompressed.items.len) |i| {
+                    if (decompressed.items[i] != uncompressed_array.items[i]) {
+                        std.debug.print("ERROR! [{d}] {d} != {d}\n", .{ i, decompressed.items[i], uncompressed_array.items[i] });
+                        break;
+                    }
+                }
+            }
+        }
+
         var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
         var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
@@ -951,10 +984,23 @@ pub const Deecy = struct {
         std.debug.print("  compressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ compressed[0], compressed[1], compressed[2], compressed[3] });
 
         const packed_data = try lzw.BitPacker.fromSlice(self._allocator, @as([*]lzw.BitPacker.UnderlyingType, @alignCast(@ptrCast(compressed.ptr)))[0 .. compressed.len / @sizeOf(lzw.BitPacker.UnderlyingType)], token_count);
+        std.debug.print("packed data: {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ packed_data.arr.items[0], packed_data.arr.items[1], packed_data.arr.items[2], packed_data.arr.items[3] });
+        std.debug.print(" ...         {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ packed_data.arr.items[packed_data.arr.items.len - 4], packed_data.arr.items[packed_data.arr.items.len - 3], packed_data.arr.items[packed_data.arr.items.len - 2], packed_data.arr.items[packed_data.arr.items.len - 1] });
         const unpacked_data = try packed_data.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
         defer self._allocator.free(unpacked_data);
 
         std.debug.print("unpacked {d} tokens\n", .{unpacked_data.len});
+        std.debug.print("tokens={d} {d} {d} {d} {d} {d} {d} {d}\n", .{ unpacked_data[0], unpacked_data[1], unpacked_data[2], unpacked_data[3], unpacked_data[4], unpacked_data[5], unpacked_data[6], unpacked_data[7] });
+        std.debug.print("  ...  {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
+            unpacked_data[unpacked_data.len - 8],
+            unpacked_data[unpacked_data.len - 7],
+            unpacked_data[unpacked_data.len - 6],
+            unpacked_data[unpacked_data.len - 5],
+            unpacked_data[unpacked_data.len - 4],
+            unpacked_data[unpacked_data.len - 3],
+            unpacked_data[unpacked_data.len - 2],
+            unpacked_data[unpacked_data.len - 1],
+        });
 
         if (unpacked_data.len != token_count)
             return error.UnexpectedTokenCount;

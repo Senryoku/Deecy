@@ -167,7 +167,7 @@ test "fuzzing" {
     const seed = std.crypto.random.int(u64);
     errdefer std.debug.print("\nFuzzing Test FAILED\n\tSeed: {d}\n", .{seed});
     var rng = std.rand.DefaultPrng.init(seed);
-    for (0..0) |_| {
+    for (0..1) |_| {
         const length = rng.random().intRangeAtMost(usize, 0, 10_000_000); // Up to ~10MB
         const str = try std.testing.allocator.alloc(u8, length);
         defer std.testing.allocator.free(str);
