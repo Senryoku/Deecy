@@ -2,6 +2,7 @@ const std = @import("std");
 
 const zglfw = @import("zglfw");
 const zgui = @import("zgui");
+const zgpu = @import("zgpu");
 
 const ui_log = std.log.scoped(.ui);
 
@@ -12,11 +13,114 @@ const MapleModule = @import("maple.zig");
 
 last_error: []const u8 = "",
 
-pub fn init(_: std.mem.Allocator) @This() {
-    return .{};
+display_vmus: bool = true,
+vmu_displays: [4][2]?struct {
+    texture: zgpu.TextureHandle,
+    view: zgpu.TextureViewHandle,
+    dirty: bool = false,
+    data: [48 * 32 / 8]u8 = .{255} ** (48 * 32 / 8),
+} = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
+
+gctx: *zgpu.GraphicsContext,
+
+pub fn init(_: std.mem.Allocator, gctx: *zgpu.GraphicsContext) @This() {
+    var r: @This() = .{ .gctx = gctx };
+    r.create_vmu_texture(0, 0);
+    return r;
 }
 
-pub fn deinit(_: *@This()) void {}
+pub fn deinit(self: *@This()) void {
+    for (self.vmu_displays) |*vmu_texture| {
+        if (vmu_texture[0]) |texture| {
+            self.gctx.releaseResource(texture.texture);
+            self.gctx.releaseResource(texture.view);
+            vmu_texture[0] = null;
+        }
+        if (vmu_texture[1]) |texture| {
+            self.gctx.releaseResource(texture.texture);
+            self.gctx.releaseResource(texture.view);
+            vmu_texture[1] = null;
+        }
+    }
+}
+
+fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
+    const tex = self.gctx.createTexture(.{
+        .usage = .{ .texture_binding = true, .copy_dst = true },
+        .size = .{
+            .width = 48,
+            .height = 32,
+            .depth_or_array_layers = 1,
+        },
+        .format = .bgra8_unorm,
+        .mip_level_count = 1,
+    });
+    const view = self.gctx.createTextureView(tex, .{});
+    self.vmu_displays[controller][index] = .{ .texture = tex, .view = view };
+    self.upload_vmu_texture(controller, index);
+}
+
+pub fn update_vmu_screen(self: *@This(), data: [*]const u8, controller: u8, index: u8) void {
+    if (self.vmu_displays[controller][index] == null) return;
+    @memcpy(&self.vmu_displays[controller][index].?.data, data[0 .. 48 * 32 / 8]);
+    self.vmu_displays[controller][index].?.dirty = true;
+}
+
+pub fn update_vmu_screen_0_0(self: *@This(), data: [*]const u8) void {
+    self.update_vmu_screen(data, 0, 0);
+}
+
+pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
+    var tex = &self.vmu_displays[controller][index].?;
+    var pixels: [4 * 48 * 32]u8 = undefined;
+    for (0..32) |r| {
+        for (0..48 / 8) |c| {
+            var byte = tex.data[48 / 8 * r + c];
+            for (0..8) |b| {
+                const val: u8 = if (byte & 0x80 == 0x80) 255 else 0;
+                const idx = 4 * (48 * (32 - r - 1) + 48 - 1 - (8 * c + b));
+                pixels[idx + 0] = val;
+                pixels[idx + 1] = val;
+                pixels[idx + 2] = val;
+                pixels[idx + 3] = 255;
+                byte <<= 1;
+            }
+        }
+    }
+    self.gctx.queue.writeTexture(
+        .{ .texture = self.gctx.lookupResource(tex.texture).? },
+        .{ .bytes_per_row = 4 * 48, .rows_per_image = 32 },
+        .{ .width = 48, .height = 32 },
+        u8,
+        &pixels,
+    );
+    tex.dirty = false;
+}
+
+pub fn draw_vmus(self: *@This(), editable: bool) void {
+    if (!editable and !self.display_vmus) return;
+
+    zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
+
+    zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
+
+    if (zgui.begin("VMUs", .{ .flags = .{ .no_resize = !editable, .no_move = !editable, .no_title_bar = !editable, .no_mouse_inputs = !editable, .no_nav_inputs = !editable, .no_nav_focus = !editable, .no_background = !editable } })) {
+        const win_width = zgui.getWindowSize()[0];
+        for (0..self.vmu_displays.len) |controller| {
+            for (0..2) |index| {
+                if (self.vmu_displays[controller][index] != null) {
+                    const tex = &self.vmu_displays[controller][index].?;
+                    if (tex.dirty)
+                        self.upload_vmu_texture(@intCast(controller), @intCast(index));
+                    zgui.image(self.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                }
+            }
+        }
+    }
+    zgui.end();
+
+    zgui.popStyleVar(.{});
+}
 
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var error_popup_to_open: [:0]const u8 = "";
@@ -136,6 +240,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Settings", true)) {
+            if (zgui.menuItem("Display VMUs", .{ .selected = self.display_vmus })) {
+                self.display_vmus = !self.display_vmus;
+            }
+            zgui.separator();
             if (zgui.menuItem("Debug Menu", .{ .selected = d.config.display_debug_ui })) {
                 d.config.display_debug_ui = !d.config.display_debug_ui;
             }

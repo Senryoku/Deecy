@@ -286,6 +286,8 @@ pub const VMU = struct {
     backing_file_path: []const u8,
     last_unsaved_change: ?i64 = null,
 
+    on_screen_update: ?struct { function: *const fn (usedata: ?*anyopaque, data: [*]const u8) void, userdata: ?*anyopaque } = null,
+
     pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
         var vmu: @This() = .{
             .backing_file_path = try allocator.dupe(u8, backing_file_path),
@@ -467,41 +469,16 @@ pub const VMU = struct {
         return 0;
     }
 
-    fn bw_ascii(val: u1) []const u8 {
-        return switch (val) {
-            0 => "  ",
-            1 => "@@",
-        };
-    }
-
     pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
         switch (function) {
             @as(u32, @bitCast(FunctionCodesMask{ .screen = 1 })) => {
-                // TODO: Do something with this frame for the LCD.
-                //        - Partition is the screen number, should always be zero.
-                //        - Phase is used if a frame doesn't fit in one message.
-                //        - Block number specify the plane.
-                //       Since the standard VMU is only 48*32 black and white, we can probably ignore both Phase and Block number.
+                //  - Partition is the screen number, should always be zero.
+                //  - Phase is used if a frame doesn't fit in one message.
+                //  - Block number specify the plane.
+                // Since the standard VMU is only 48*32 black and white, we can probably ignore both Phase and Block number.
 
-                // Enable for a cute animation in the terminal, and to destroy your framerate :^)
-                if (false) {
-                    std.debug.print("\u{01B}[2J\u{01B}[H  Phase: {any} Block: {any} Data: \n", .{ phase, block_num });
-                    const bytes: [*]const u8 = @ptrCast(data.ptr);
-                    for (0..data.len * 4) |i| {
-                        std.debug.print("{s}{s}{s}{s}{s}{s}{s}{s}", .{
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 0)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 1)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 2)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 3)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 4)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 5)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 6)),
-                            bw_ascii(@truncate(bytes[data.len * 4 - 1 - i] >> 7)),
-                        });
-                        if ((i + 1) % 6 == 0) {
-                            std.debug.print("\n", .{});
-                        }
-                    }
+                if (self.on_screen_update) |callback| {
+                    callback.function(callback.userdata, @ptrCast(data.ptr));
                 }
             },
             @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {

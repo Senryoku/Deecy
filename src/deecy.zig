@@ -167,7 +167,7 @@ pub const Deecy = struct {
     controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
 
     display_ui: bool = true,
-    ui: DeecyUI,
+    ui: DeecyUI = undefined,
     debug_ui: DebugUI = undefined,
 
     save_state_slots: [4]bool = .{ false, false, false, false },
@@ -194,7 +194,6 @@ pub const Deecy = struct {
             .last_frame_timestamp = std.time.microTimestamp(),
             .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
             .breakpoints = std.ArrayList(u32).init(allocator),
-            .ui = DeecyUI.init(allocator),
             ._allocator = allocator,
         };
 
@@ -236,6 +235,7 @@ pub const Deecy = struct {
         const scale = self.window.getContentScale();
         self.scale_factor = @max(scale[0], scale[1]);
 
+        self.ui = DeecyUI.init(allocator, self.gctx);
         try self.ui_init();
 
         self.dc = Dreamcast.create(allocator) catch |err| {
@@ -427,6 +427,8 @@ pub const Deecy = struct {
         );
 
         zgui.plot.init();
+
+        self.ui.gctx = self.gctx;
     }
 
     fn ui_deinit(_: *Deecy) void {
@@ -597,6 +599,7 @@ pub const Deecy = struct {
                     }
                 }
                 self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
+                self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&DeecyUI.update_vmu_screen_0_0), .userdata = &self.ui };
             }
         }
         try self.check_save_state_slots();
@@ -614,7 +617,7 @@ pub const Deecy = struct {
             }
         }
         try title.append(0);
-        self.window.setTitle(title.items[0..title.items.len :0]);
+        self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
     }
 
     // Caller owns the returned ArrayList
@@ -685,6 +688,8 @@ pub const Deecy = struct {
         );
 
         _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
+
+        self.ui.draw_vmus(self.display_ui);
 
         if (self.display_ui) {
             try self.ui.draw(self);
