@@ -54,14 +54,30 @@ fn glfw_key_callback(
                         .PerFrame => .None,
                     });
                 },
-                .F1 => app.save_state(0),
-                .F2 => app.save_state(1),
-                .F3 => app.save_state(2),
-                .F4 => app.save_state(3),
-                .F5 => app.load_state(0),
-                .F6 => app.load_state(1),
-                .F7 => app.load_state(2),
-                .F8 => app.load_state(3),
+                .F1, .F2, .F3, .F4 => {
+                    const idx: usize = switch (key) {
+                        .F1 => 0,
+                        .F2 => 1,
+                        .F3 => 2,
+                        .F4 => 3,
+                        else => unreachable,
+                    };
+                    app.save_state(idx) catch |err| {
+                        deecy_log.err("Failed to save state #{d}: {}\n", .{ idx, err });
+                    };
+                },
+                .F5, .F6, .F7, .F8 => {
+                    const idx: usize = switch (key) {
+                        .F5 => 0,
+                        .F6 => 1,
+                        .F7 => 2,
+                        .F8 => 3,
+                        else => unreachable,
+                    };
+                    app.load_state(idx) catch |err| {
+                        deecy_log.err("Failed to load state #{d}: {}\n", .{ idx, err });
+                    };
+                },
                 else => {},
             }
         }
@@ -558,6 +574,10 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn get_product_name(self: *const @This()) ?[]const u8 {
+        return if (self.dc.gdrom.disk) |disk| disk.get_product_name() else null;
+    }
+
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
         return if (self.dc.gdrom.disk) |disk| disk.get_product_id() else null;
     }
@@ -580,6 +600,21 @@ pub const Deecy = struct {
             }
         }
         try self.check_save_state_slots();
+
+        var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
+        defer title.deinit();
+        try title.appendSlice("Deecy");
+        if (self.get_product_name()) |name| {
+            try title.appendSlice(" - ");
+            try title.appendSlice(name);
+            if (self.get_product_id()) |id| {
+                try title.appendSlice(" (");
+                try title.appendSlice(id);
+                try title.append(')');
+            }
+        }
+        try title.append(0);
+        self.window.setTitle(title.items[0..title.items.len :0]);
     }
 
     // Caller owns the returned ArrayList
@@ -837,7 +872,7 @@ pub const Deecy = struct {
         }
     }
 
-    pub fn save_state(self: *Deecy, index: usize) void {
+    pub fn save_state(self: *Deecy, index: usize) !void {
         const was_running = self.running;
         if (was_running) self.stop();
         defer {
@@ -848,85 +883,55 @@ pub const Deecy = struct {
 
         const start_time = std.time.milliTimestamp();
 
-        var uncompressed_array = std.ArrayList(u8).init(self._allocator);
+        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
         defer uncompressed_array.deinit();
-        _ = self.dc.serialize(uncompressed_array.writer()) catch |err| {
-            deecy_log.err("Failed to save state: {}", .{err});
-            return;
-        };
+        _ = try self.dc.serialize(uncompressed_array.writer());
 
-        var compressed_array = std.ArrayList(u8).init(self._allocator);
-        defer compressed_array.deinit();
+        deecy_log.info("Compressing {} bytes...", .{uncompressed_array.items.len});
 
         var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
-        const uncompressed_stream_reader = uncompressed_stream.reader();
 
-        var save_slot_path = self.save_state_path(index) catch |err| {
-            deecy_log.err("Failed to create save state path: {}", .{err});
-            return;
-        };
+        var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
-        var file = std.fs.cwd().createFile(save_slot_path.items, .{}) catch |err| {
-            deecy_log.err("Failed to create save state file '{s}': {}", .{ save_slot_path.items, err });
-            return;
-        };
+        var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
         defer file.close();
 
         // TODO: Compress on a separate thread?
-        std.compress.flate.compress(uncompressed_stream_reader, file.writer(), .{}) catch |err| {
-            deecy_log.err("Failed to compress save state: {}", .{err});
-            return;
-        };
+        try std.compress.flate.compress(uncompressed_stream.reader(), file.writer(), .{});
 
         self.save_state_slots[index] = true;
 
         deecy_log.info("Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
     }
 
-    pub fn load_state(self: *Deecy, index: usize) void {
+    pub fn load_state(self: *Deecy, index: usize) !void {
         const was_running = self.running;
         if (was_running) self.stop();
         defer {
             if (was_running) self.start();
         }
 
-        var save_slot_path = self.save_state_path(index) catch |err| {
-            deecy_log.err("Failed to create save state path: {}", .{err});
-            return;
-        };
+        var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
 
         deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path.items });
 
         const start_time = std.time.milliTimestamp();
 
-        var file = std.fs.cwd().openFile(save_slot_path.items, .{}) catch |err| {
-            deecy_log.err("Failed to open save state file '{s}': {}", .{ save_slot_path.items, err });
-            return;
-        };
+        var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
         defer file.close();
 
-        var uncompressed_array = std.ArrayList(u8).init(self._allocator);
+        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
         defer uncompressed_array.deinit();
 
-        const compressed_reader = file.reader();
-        std.compress.flate.decompress(compressed_reader, uncompressed_array.writer()) catch |err| {
-            deecy_log.err("Failed to decompress save state: {}", .{err});
-            return;
-        };
+        try std.compress.flate.decompress(file.reader(), uncompressed_array.writer());
 
         var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
         var reader = uncompressed_stream.reader();
 
-        self.reset() catch |err| {
-            deecy_log.err("Failed to reset DC: {}", .{err});
-            return;
-        };
+        try self.reset();
 
-        _ = self.dc.deserialize(&reader) catch |err| {
-            deecy_log.err("Failed to load state: {}", .{err});
-            return;
-        };
+        _ = try self.dc.deserialize(&reader);
         deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
     }
 };
