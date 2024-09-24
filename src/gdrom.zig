@@ -1121,12 +1121,10 @@ pub const GDROM = struct {
         bytes += try writer.write(std.mem.asBytes(&self.features));
         bytes += try writer.write(std.mem.asBytes(&self.byte_count));
 
-        std.debug.print("GDROM.serialize: self.pio_data_queue.count: {}\n", .{self.pio_data_queue.count});
         bytes += try writer.write(std.mem.asBytes(&self.pio_data_queue.count));
         if (self.pio_data_queue.count > 0) {
             bytes += try writer.write(std.mem.sliceAsBytes(self.pio_data_queue.buf[0..self.pio_data_queue.count]));
         }
-        std.debug.print("GDROM.serialize: self.dma_data_queue.count: {}\n", .{self.dma_data_queue.count});
         bytes += try writer.write(std.mem.asBytes(&self.dma_data_queue.count));
         if (self.dma_data_queue.count > 0) {
             bytes += try writer.write(std.mem.sliceAsBytes(self.dma_data_queue.buf[0..self.dma_data_queue.count]));
@@ -1139,7 +1137,6 @@ pub const GDROM = struct {
 
         bytes += try writer.write(std.mem.asBytes(&self.cd_read_state));
 
-        std.debug.print("GDROM.serialize: self.scheduled_events.count(): {}\n", .{self.scheduled_events.count()});
         bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
         for (0..self.scheduled_events.count()) |i| {
             bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.items[i]));
@@ -1163,7 +1160,6 @@ pub const GDROM = struct {
         self.pio_data_queue.discard(self.pio_data_queue.count);
         var pio_data_queue_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
-        std.debug.print("GDROM.deserialize: pio_data_queue_count: {}\n", .{pio_data_queue_count});
         if (pio_data_queue_count > 0) {
             bytes += try reader.read(try self.pio_data_queue.writableWithSize(pio_data_queue_count));
             self.dma_data_queue.update(pio_data_queue_count);
@@ -1172,7 +1168,6 @@ pub const GDROM = struct {
         self.dma_data_queue.discard(self.dma_data_queue.count);
         var dma_data_queue_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
-        std.debug.print("GDROM.deserialize: dma_data_queue_count: {}\n", .{dma_data_queue_count});
         if (dma_data_queue_count > 0) {
             bytes += try reader.read(try self.dma_data_queue.writableWithSize(dma_data_queue_count));
             self.dma_data_queue.update(dma_data_queue_count);
@@ -1187,7 +1182,6 @@ pub const GDROM = struct {
 
         var event_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&event_count));
-        std.debug.print("GDROM.deserialize: event_count: {}\n", .{event_count});
         for (0..event_count) |_| {
             var event: ScheduledEvent = undefined;
             bytes += try reader.read(std.mem.asBytes(&event));
