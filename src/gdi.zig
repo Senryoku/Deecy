@@ -278,6 +278,15 @@ pub const GDI = struct {
         return self.tracks.items[2].data[0x50..0x60];
     }
 
+    pub fn get_product_name(self: *const @This()) ?[]const u8 {
+        if (self.tracks.items.len < 3) return null;
+        const name = self.tracks.items[2].data[0x90..0x100];
+        // Trim spaces
+        var end = name.len - 1;
+        while (end > 0 and name[end] == ' ') end -= 1;
+        return name[0 .. end + 1];
+    }
+
     pub fn get_primary_volume_descriptor(self: *const @This()) *const PVD {
         const offset = 0x10 * self.tracks.items[2].format + self.tracks.items[2].header_size(); // 16th sector + skip sector header
         return @ptrCast(@alignCast(self.tracks.items[2].data.ptr + offset));

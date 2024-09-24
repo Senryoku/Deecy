@@ -207,6 +207,14 @@ pub const Controller = struct {
         }
         return r;
     }
+
+    pub fn serialize(_: @This(), _: anytype) !usize {
+        return 0;
+    }
+
+    pub fn deserialize(_: anytype) !@This() {
+        return .{};
+    }
 };
 
 const GetMediaInformationResponse = packed struct {
@@ -510,6 +518,10 @@ pub const VMU = struct {
             },
         }
     }
+
+    pub fn serialize(_: @This(), _: anytype) !usize {
+        return 0;
+    }
 };
 
 const PeripheralType = enum {
@@ -520,6 +532,24 @@ const PeripheralType = enum {
 const Peripheral = union(PeripheralType) {
     Controller: Controller,
     VMU: VMU,
+
+    pub fn serialize(self: @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+
+        switch (self) {
+            .Controller => |controller| {
+                const tag: u32 = @intFromEnum(PeripheralType.Controller);
+                bytes += try writer.write(std.mem.asBytes(&tag));
+                bytes += try controller.serialize(writer);
+            },
+            .VMU => |vmu| {
+                const tag: u32 = @intFromEnum(PeripheralType.VMU);
+                bytes += try writer.write(std.mem.asBytes(&tag));
+                bytes += try vmu.serialize(writer);
+            },
+        }
+        return bytes;
+    }
 };
 
 const MaplePort = struct {
@@ -655,6 +685,34 @@ const MaplePort = struct {
 
         return 2 + command.payload_length;
     }
+
+    pub fn serialize(self: @This(), writer: anytype) !usize {
+        // Nothing for now.
+        if (comptime true) {
+            return 0;
+        } else {
+            var bytes: usize = 0;
+            if (self.main) |main| {
+                bytes += try main.serialize(writer);
+            } else {
+                const tag: u32 = 0xFFFFFFFF;
+                bytes += try writer.write(std.mem.asBytes(&tag));
+            }
+
+            for (self.subperipherals) |sub| {
+                if (sub) |s| {
+                    bytes += try s.serialize(writer);
+                } else {
+                    const tag: u32 = 0xFFFFFFFF;
+                    bytes += try writer.write(std.mem.asBytes(&tag));
+                }
+            }
+
+            return bytes;
+        }
+    }
+
+    pub fn deserialize(_: @This(), _: anytype) !void {}
 };
 
 pub const MapleHost = struct {
@@ -744,6 +802,20 @@ pub const MapleHost = struct {
                     }
                 }
             }
+        }
+    }
+
+    pub fn serialize(self: @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        for (&self.ports) |port| {
+            bytes += try port.serialize(writer);
+        }
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !void {
+        for (&self.ports) |*port| {
+            try port.deserialize(reader);
         }
     }
 };

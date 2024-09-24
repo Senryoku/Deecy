@@ -1344,7 +1344,7 @@ pub const AICA = struct {
         dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 4 * len_in_bytes);
     }
 
-    fn end_dma(_: *AICA, dc: *Dreamcast) void {
+    pub fn end_dma(_: *AICA, dc: *Dreamcast) void {
         const len_reg = dc.read_hw_register(u32, .SB_ADLEN);
         const dma_end = (len_reg & 0x80000000) != 0; // DMA Transfer End/Restart
         const len = len_reg & 0x7FFFFFFF;
@@ -1364,5 +1364,36 @@ pub const AICA = struct {
         adsusp.dma_suspend_or_dma_stop = 1;
 
         dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
+    }
+
+    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.arm7.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.wave_memory[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
+        bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
+        bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
+        bytes += try writer.write(std.mem.sliceAsBytes(self._timer_counters[0..]));
+        bytes += try writer.write(std.mem.asBytes(&self._samples_counter));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        self.sample_mutex.lock();
+        defer self.sample_mutex.unlock();
+
+        var bytes: usize = 0;
+        bytes += try self.arm7.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.wave_memory[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));
+        bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));
+        bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));
+        bytes += try reader.read(std.mem.sliceAsBytes(self._timer_counters[0..]));
+        bytes += try reader.read(std.mem.asBytes(&self._samples_counter));
+        return bytes;
     }
 };

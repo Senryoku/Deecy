@@ -213,6 +213,33 @@ pub const GDROM = struct {
             self.current_addr = self.start_addr;
             self.samples_in_buffer = 0;
         }
+
+        pub fn serialize(self: @This(), writer: anytype) !usize {
+            var bytes: usize = 0;
+            bytes += try writer.write(std.mem.asBytes(&self.status));
+            bytes += try writer.write(std.mem.asBytes(&self.start_addr));
+            bytes += try writer.write(std.mem.asBytes(&self.end_addr));
+            bytes += try writer.write(std.mem.asBytes(&self.current_addr));
+            bytes += try writer.write(std.mem.asBytes(&self.repetitions));
+            return bytes;
+        }
+
+        pub fn deserialize(self: *@This(), reader: anytype) !usize {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            var bytes: usize = 0;
+            bytes += try reader.read(std.mem.asBytes(&self.status));
+            bytes += try reader.read(std.mem.asBytes(&self.start_addr));
+            bytes += try reader.read(std.mem.asBytes(&self.end_addr));
+            bytes += try reader.read(std.mem.asBytes(&self.current_addr));
+            bytes += try reader.read(std.mem.asBytes(&self.repetitions));
+
+            self.current_position = 0;
+            self.samples_in_buffer = 0;
+
+            return bytes;
+        }
     },
 
     // Used for large PIO reads from CD (Quake 3 for example).
@@ -1082,5 +1109,85 @@ pub const GDROM = struct {
         try self.pio_data_queue.write(&GDROMCommand71Reply);
 
         self.pio_prep_complete();
+    }
+
+    pub fn serialize(self: *@This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.asBytes(&self.state));
+        bytes += try writer.write(std.mem.asBytes(&self.status_register));
+        bytes += try writer.write(std.mem.asBytes(&self.control_register));
+        bytes += try writer.write(std.mem.asBytes(&self.error_register));
+        bytes += try writer.write(std.mem.asBytes(&self.interrupt_reason_register));
+        bytes += try writer.write(std.mem.asBytes(&self.features));
+        bytes += try writer.write(std.mem.asBytes(&self.byte_count));
+
+        bytes += try writer.write(std.mem.asBytes(&self.pio_data_queue.count));
+        if (self.pio_data_queue.count > 0) {
+            bytes += try writer.write(std.mem.sliceAsBytes(self.pio_data_queue.buf[0..self.pio_data_queue.count]));
+        }
+        bytes += try writer.write(std.mem.asBytes(&self.dma_data_queue.count));
+        if (self.dma_data_queue.count > 0) {
+            bytes += try writer.write(std.mem.sliceAsBytes(self.dma_data_queue.buf[0..self.dma_data_queue.count]));
+        }
+
+        bytes += try writer.write(std.mem.asBytes(&self.packet_command_idx));
+        bytes += try writer.write(std.mem.sliceAsBytes(&self.packet_command));
+
+        bytes += try self.audio_state.serialize(writer);
+
+        bytes += try writer.write(std.mem.asBytes(&self.cd_read_state));
+
+        bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
+        for (0..self.scheduled_events.count()) |i| {
+            bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.items[i]));
+        }
+
+        // NOTE: HLE state isn't serialized
+
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&self.state));
+        bytes += try reader.read(std.mem.asBytes(&self.status_register));
+        bytes += try reader.read(std.mem.asBytes(&self.control_register));
+        bytes += try reader.read(std.mem.asBytes(&self.error_register));
+        bytes += try reader.read(std.mem.asBytes(&self.interrupt_reason_register));
+        bytes += try reader.read(std.mem.asBytes(&self.features));
+        bytes += try reader.read(std.mem.asBytes(&self.byte_count));
+
+        self.pio_data_queue.discard(self.pio_data_queue.count);
+        var pio_data_queue_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
+        if (pio_data_queue_count > 0) {
+            bytes += try reader.read(try self.pio_data_queue.writableWithSize(pio_data_queue_count));
+            self.dma_data_queue.update(pio_data_queue_count);
+        }
+
+        self.dma_data_queue.discard(self.dma_data_queue.count);
+        var dma_data_queue_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
+        if (dma_data_queue_count > 0) {
+            bytes += try reader.read(try self.dma_data_queue.writableWithSize(dma_data_queue_count));
+            self.dma_data_queue.update(dma_data_queue_count);
+        }
+
+        bytes += try reader.read(std.mem.asBytes(&self.packet_command_idx));
+        bytes += try reader.read(std.mem.sliceAsBytes(&self.packet_command));
+
+        bytes += try self.audio_state.deserialize(reader);
+
+        bytes += try reader.read(std.mem.asBytes(&self.cd_read_state));
+
+        var event_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&event_count));
+        for (0..event_count) |_| {
+            var event: ScheduledEvent = undefined;
+            bytes += try reader.read(std.mem.asBytes(&event));
+            try self.scheduled_events.add(event);
+        }
+
+        return bytes;
     }
 };

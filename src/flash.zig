@@ -171,4 +171,18 @@ pub const Flash = struct {
         self.write_cycle = 0;
         self.mode = .Normal;
     }
+
+    pub fn serialize(self: @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.asBytes(&self.write_cycle));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.data[0..]));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&self.write_cycle));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.data[0..]));
+        return bytes;
+    }
 };

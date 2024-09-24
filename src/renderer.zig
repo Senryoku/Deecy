@@ -275,6 +275,10 @@ const PassMetadata = struct {
         }
         self.pipelines.deinit();
     }
+
+    pub fn reset(self: *@This()) void {
+        self.pipelines.clearRetainingCapacity();
+    }
 };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
@@ -1195,6 +1199,21 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blit_index_buffer);
         self._gctx.releaseResource(self.blit_vertex_buffer);
         // self._gctx.releaseResource(self.blit_pipeline);
+    }
+
+    pub fn reset(self: *@This()) void {
+        self.render_start = false;
+        self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
+
+        self.ta_lists.clearRetainingCapacity();
+
+        self.translucent_pass.reset();
+        self.punchthrough_pass.reset();
+        self.opaque_pass.reset();
+
+        self.modifier_volume_vertices.clearRetainingCapacity();
+        self.strips_metadata.clearRetainingCapacity();
+        self.vertices.clearRetainingCapacity();
     }
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {

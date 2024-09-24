@@ -82,6 +82,25 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
                 zgui.endMenu();
             }
+            zgui.separator();
+            if (zgui.beginMenu("Save States", true)) {
+                inline for (0..4) |i| {
+                    if (zgui.menuItem("Save Slot " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .shortcut = std.fmt.comptimePrint("F{d}", .{i + 1}) })) {
+                        d.save_state(i) catch |err| {
+                            ui_log.err("Failed to save state: {}", .{err});
+                        };
+                    }
+                }
+                zgui.separator();
+                inline for (0..4) |i| {
+                    if (zgui.menuItem("Load Slot " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .enabled = d.save_state_slots[i], .shortcut = std.fmt.comptimePrint("F{d}", .{i + 5}) })) {
+                        d.load_state(i) catch |err| {
+                            ui_log.err("Failed to load state: {}", .{err});
+                        };
+                    }
+                }
+                zgui.endMenu();
+            }
             zgui.endMenu();
         }
         if (zgui.beginMenu("Drive", true)) {

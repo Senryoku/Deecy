@@ -206,6 +206,7 @@ pub const Dreamcast = struct {
         self.gpu.reset();
         self.gdrom.reset();
         self.aica.reset();
+        while (self.scheduled_interrupts.removeOrNull() != null) {}
 
         try self.sh4_jit.block_cache.reset();
 
@@ -646,6 +647,77 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DST).* = 0;
 
         // TODO: Actually cancel the DMA, right now they're instantaneous.
+    }
+
+    const SerializedCallbacks = enum {
+        None,
+        EndGDDMA,
+        EndAICADMA,
+    };
+
+    pub fn serialize(self: *@This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.cpu.serialize(writer);
+        bytes += try self.gpu.serialize(writer);
+        bytes += try self.aica.serialize(writer);
+        bytes += try self.maple.serialize(writer);
+        bytes += try self.gdrom.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
+        bytes += try self.flash.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.hardware_registers));
+
+        // Yes, this is pretty stupid.
+        bytes += try writer.write(std.mem.asBytes(&self.scheduled_interrupts.count()));
+        if (self.scheduled_interrupts.count() > 0) {
+            var it = self.scheduled_interrupts.iterator();
+            while (it.next()) |entry| {
+                bytes += try writer.write(std.mem.asBytes(&entry.trigger_cycle));
+                bytes += try writer.write(std.mem.asBytes(&entry.interrupt));
+                const cb: SerializedCallbacks = if (entry.callback) |callback|
+                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) .EndGDDMA else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) .EndAICADMA else @panic("Serialization: Unhandled callback function")
+                else
+                    .None;
+                bytes += try writer.write(std.mem.asBytes(&cb));
+            }
+        }
+        bytes += try writer.write(std.mem.asBytes(&self._scheduled_interrupts_cycles));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try self.cpu.deserialize(reader);
+        bytes += try self.gpu.deserialize(reader);
+        bytes += try self.aica.deserialize(reader);
+        try self.maple.deserialize(reader);
+        bytes += try self.gdrom.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
+        bytes += try self.flash.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
+
+        var event_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&event_count));
+        if (event_count > 0) {
+            var event: ScheduledInterrupt = undefined;
+            bytes += try reader.read(std.mem.asBytes(&event.trigger_cycle));
+            bytes += try reader.read(std.mem.asBytes(&event.interrupt));
+            var callback: SerializedCallbacks = undefined;
+            bytes += try reader.read(std.mem.asBytes(&callback));
+            event.callback = switch (callback) {
+                .EndGDDMA => .{
+                    .context = self,
+                    .function = @ptrCast(&end_gd_dma),
+                },
+                .EndAICADMA => .{
+                    .context = &self.aica,
+                    .function = @ptrCast(&AICAModule.AICA.end_dma),
+                },
+                else => null,
+            };
+            try self.scheduled_interrupts.add(event);
+        }
+        bytes += try reader.read(std.mem.asBytes(&self._scheduled_interrupts_cycles));
+        return bytes;
     }
 };
 

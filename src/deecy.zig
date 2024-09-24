@@ -54,6 +54,30 @@ fn glfw_key_callback(
                         .PerFrame => .None,
                     });
                 },
+                .F1, .F2, .F3, .F4 => {
+                    const idx: usize = switch (key) {
+                        .F1 => 0,
+                        .F2 => 1,
+                        .F3 => 2,
+                        .F4 => 3,
+                        else => unreachable,
+                    };
+                    app.save_state(idx) catch |err| {
+                        deecy_log.err("Failed to save state #{d}: {}\n", .{ idx, err });
+                    };
+                },
+                .F5, .F6, .F7, .F8 => {
+                    const idx: usize = switch (key) {
+                        .F5 => 0,
+                        .F6 => 1,
+                        .F7 => 2,
+                        .F8 => 3,
+                        else => unreachable,
+                    };
+                    app.load_state(idx) catch |err| {
+                        deecy_log.err("Failed to load state #{d}: {}\n", .{ idx, err });
+                    };
+                },
                 else => {},
             }
         }
@@ -90,12 +114,22 @@ pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
     sem.permits = 0;
 }
 
+// Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
     for (path) |*c| {
         if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/')) {
             c.* = '_';
         }
     }
+}
+
+fn file_exists(path: []const u8) !bool {
+    const file = std.fs.cwd().openFile(path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    file.close();
+    return true;
 }
 
 const Configuration = struct {
@@ -135,6 +169,8 @@ pub const Deecy = struct {
     display_ui: bool = true,
     ui: DeecyUI,
     debug_ui: DebugUI = undefined,
+
+    save_state_slots: [4]bool = .{ false, false, false, false },
 
     _allocator: std.mem.Allocator,
 
@@ -249,6 +285,8 @@ pub const Deecy = struct {
         }
 
         self.debug_ui = try DebugUI.init(self);
+
+        try self.check_save_state_slots();
 
         return self;
     }
@@ -397,6 +435,14 @@ pub const Deecy = struct {
         zgui.deinit();
     }
 
+    fn reset(self: *Deecy) !void {
+        try self.dc.reset();
+        self.renderer.reset();
+        self.last_frame_timestamp = std.time.microTimestamp();
+        self.last_n_frametimes.discard(self.last_n_frametimes.count);
+        try self.check_save_state_slots();
+    }
+
     pub fn pool_controllers(self: *Deecy) void {
         for (0..4) |controller_idx| {
             if (self.dc.maple.ports[controller_idx].main) |*guest_controller| {
@@ -528,9 +574,17 @@ pub const Deecy = struct {
         }
     }
 
+    pub fn get_product_name(self: *const @This()) ?[]const u8 {
+        return if (self.dc.gdrom.disk) |disk| disk.get_product_name() else null;
+    }
+
+    pub fn get_product_id(self: *const @This()) ?[]const u8 {
+        return if (self.dc.gdrom.disk) |disk| disk.get_product_id() else null;
+    }
+
     pub fn on_game_load(self: *@This()) !void {
         if (self.config.per_game_vmu) {
-            if (self.dc.gdrom.disk.?.get_product_id()) |product_id| {
+            if (self.get_product_id()) |product_id| {
                 var vmu_path = std.ArrayList(u8).init(self._allocator);
                 defer vmu_path.deinit();
                 try vmu_path.writer().print("./userdata/{s}/vmu_0.bin", .{product_id});
@@ -544,6 +598,39 @@ pub const Deecy = struct {
                 }
                 self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
             }
+        }
+        try self.check_save_state_slots();
+
+        var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
+        defer title.deinit();
+        try title.appendSlice("Deecy");
+        if (self.get_product_name()) |name| {
+            try title.appendSlice(" - ");
+            try title.appendSlice(name);
+            if (self.get_product_id()) |id| {
+                try title.appendSlice(" (");
+                try title.appendSlice(id);
+                try title.append(')');
+            }
+        }
+        try title.append(0);
+        self.window.setTitle(title.items[0..title.items.len :0]);
+    }
+
+    // Caller owns the returned ArrayList
+    fn save_state_path(self: *const @This(), index: usize) !std.ArrayList(u8) {
+        const product_id = self.get_product_id() orelse "default";
+        var save_slot_path = std.ArrayList(u8).init(self._allocator);
+        try save_slot_path.writer().print("./userdata/{s}/save_{d}.sav", .{ product_id, index });
+        safe_path(save_slot_path.items);
+        return save_slot_path;
+    }
+
+    fn check_save_state_slots(self: *@This()) !void {
+        for (0..self.save_state_slots.len) |i| {
+            var save_slot_path = try self.save_state_path(i);
+            defer save_slot_path.deinit();
+            self.save_state_slots[i] = try file_exists(save_slot_path.items);
         }
     }
 
@@ -783,5 +870,68 @@ pub const Deecy = struct {
             out[i] = 30000 *| aica.sample_buffer[aica.sample_read_offset];
             aica.sample_read_offset = (aica.sample_read_offset + 1) % aica.sample_buffer.len;
         }
+    }
+
+    pub fn save_state(self: *Deecy, index: usize) !void {
+        const was_running = self.running;
+        if (was_running) self.stop();
+        defer {
+            if (was_running) self.start();
+        }
+
+        deecy_log.info("Saving State #{d}...", .{index});
+
+        const start_time = std.time.milliTimestamp();
+
+        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+        defer uncompressed_array.deinit();
+        _ = try self.dc.serialize(uncompressed_array.writer());
+
+        deecy_log.info("Compressing {} bytes...", .{uncompressed_array.items.len});
+
+        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+
+        var save_slot_path = try self.save_state_path(index);
+        defer save_slot_path.deinit();
+        var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
+        defer file.close();
+
+        // TODO: Compress on a separate thread?
+        try std.compress.flate.compress(uncompressed_stream.reader(), file.writer(), .{});
+
+        self.save_state_slots[index] = true;
+
+        deecy_log.info("Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+    }
+
+    pub fn load_state(self: *Deecy, index: usize) !void {
+        const was_running = self.running;
+        if (was_running) self.stop();
+        defer {
+            if (was_running) self.start();
+        }
+
+        var save_slot_path = try self.save_state_path(index);
+        defer save_slot_path.deinit();
+
+        deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path.items });
+
+        const start_time = std.time.milliTimestamp();
+
+        var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
+        defer file.close();
+
+        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+        defer uncompressed_array.deinit();
+
+        try std.compress.flate.decompress(file.reader(), uncompressed_array.writer());
+
+        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+        var reader = uncompressed_stream.reader();
+
+        try self.reset();
+
+        _ = try self.dc.deserialize(&reader);
+        deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
     }
 };
