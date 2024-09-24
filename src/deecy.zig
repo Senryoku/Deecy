@@ -18,6 +18,8 @@ const Renderer = @import("./renderer.zig").Renderer;
 const DeecyUI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 
+const lzw = @import("./compress/lzw.zig");
+
 const deecy_log = std.log.scoped(.deecy);
 
 fn glfw_key_callback(
@@ -894,15 +896,26 @@ pub const Deecy = struct {
 
         deecy_log.info("Compressing {} bytes...", .{uncompressed_array.items.len});
 
-        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+        var test_file = try std.fs.cwd().createFile("logs/test_save_uncompressed.bin", .{});
+        defer test_file.close();
+        try test_file.writeAll(std.mem.sliceAsBytes(uncompressed_array.items));
+
+        var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
+        defer compressed.deinit();
 
         var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
         var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
         defer file.close();
+        _ = try file.write(std.mem.asBytes(&compressed.arr.items.len));
+        _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
+        std.debug.print("token_count={d}, expected_size={d}\n", .{ compressed.arr.items.len, uncompressed_array.items.len });
+        try file.writeAll(std.mem.sliceAsBytes(compressed.arr.items));
 
-        // TODO: Compress on a separate thread?
-        try std.compress.flate.compress(uncompressed_stream.reader(), file.writer(), .{});
+        std.debug.print("bytes_written={d}\n", .{std.mem.sliceAsBytes(compressed.arr.items).len});
+
+        std.debug.print("uncompressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ uncompressed_array.items[0], uncompressed_array.items[1], uncompressed_array.items[2], uncompressed_array.items[3] });
+        std.debug.print("  compressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ std.mem.sliceAsBytes(compressed.arr.items)[0], std.mem.sliceAsBytes(compressed.arr.items)[1], std.mem.sliceAsBytes(compressed.arr.items)[2], std.mem.sliceAsBytes(compressed.arr.items)[3] });
 
         self.save_state_slots[index] = true;
 
@@ -926,12 +939,36 @@ pub const Deecy = struct {
         var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
         defer file.close();
 
-        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-        defer uncompressed_array.deinit();
+        var token_count: usize = 0;
+        var expected_size: usize = 0;
+        _ = try file.read(std.mem.asBytes(&token_count));
+        _ = try file.read(std.mem.asBytes(&expected_size));
+        std.debug.print("token_count={d}, expected_size={d}\n", .{ token_count, expected_size });
+        const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
+        defer self._allocator.free(compressed);
 
-        try std.compress.flate.decompress(file.reader(), uncompressed_array.writer());
+        std.debug.print("loaded {d} bytes\n", .{compressed.len});
+        std.debug.print("  compressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ compressed[0], compressed[1], compressed[2], compressed[3] });
 
-        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+        const packed_data = try lzw.BitPacker.fromSlice(self._allocator, @as([*]lzw.BitPacker.UnderlyingType, @alignCast(@ptrCast(compressed.ptr)))[0 .. compressed.len / @sizeOf(lzw.BitPacker.UnderlyingType)], token_count);
+        const unpacked_data = try packed_data.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
+        defer self._allocator.free(unpacked_data);
+
+        std.debug.print("unpacked {d} tokens\n", .{unpacked_data.len});
+
+        if (unpacked_data.len != token_count)
+            return error.UnexpectedTokenCount;
+
+        const decompressed = try lzw.decompress(lzw.BitPacker.ValueType, 0, std.math.maxInt(lzw.BitPacker.ValueType), unpacked_data, expected_size, self._allocator);
+        defer decompressed.deinit();
+
+        std.debug.print("decompressed len {d} / {d}\n", .{ decompressed.items.len, expected_size });
+        std.debug.print("decompressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ decompressed.items[0], decompressed.items[1], decompressed.items[2], decompressed.items[3] });
+
+        if (decompressed.items.len != expected_size)
+            return error.UnexpectedDecompressedSize;
+
+        var uncompressed_stream = std.io.fixedBufferStream(decompressed.items);
         var reader = uncompressed_stream.reader();
 
         try self.reset();
