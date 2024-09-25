@@ -894,47 +894,8 @@ pub const Deecy = struct {
         defer uncompressed_array.deinit();
         _ = try self.dc.serialize(uncompressed_array.writer());
 
-        deecy_log.info("Compressing {} bytes...", .{uncompressed_array.items.len});
-
-        var test_file = try std.fs.cwd().createFile("logs/test_save_uncompressed.bin", .{});
-        defer test_file.close();
-        try test_file.writeAll(std.mem.sliceAsBytes(uncompressed_array.items));
-
         var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
         defer compressed.deinit();
-
-        std.debug.print("packed data: {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ compressed.arr.items[0], compressed.arr.items[1], compressed.arr.items[2], compressed.arr.items[3] });
-        std.debug.print(" ...         {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ compressed.arr.items[compressed.arr.items.len - 4], compressed.arr.items[compressed.arr.items.len - 3], compressed.arr.items[compressed.arr.items.len - 2], compressed.arr.items[compressed.arr.items.len - 1] });
-
-        // Stupid test
-        {
-            const unpacked_data = try compressed.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
-            defer self._allocator.free(unpacked_data);
-            std.debug.print("tokens={d} {d} {d} {d} {d} {d} {d} {d}\n", .{ unpacked_data[0], unpacked_data[1], unpacked_data[2], unpacked_data[3], unpacked_data[4], unpacked_data[5], unpacked_data[6], unpacked_data[7] });
-            std.debug.print("  ...  {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
-                unpacked_data[unpacked_data.len - 8],
-                unpacked_data[unpacked_data.len - 7],
-                unpacked_data[unpacked_data.len - 6],
-                unpacked_data[unpacked_data.len - 5],
-                unpacked_data[unpacked_data.len - 4],
-                unpacked_data[unpacked_data.len - 3],
-                unpacked_data[unpacked_data.len - 2],
-                unpacked_data[unpacked_data.len - 1],
-            });
-            const decompressed = try lzw.decompress(lzw.BitPacker.ValueType, 0, std.math.maxInt(lzw.BitPacker.ValueType), unpacked_data, uncompressed_array.items.len, self._allocator);
-            defer decompressed.deinit();
-
-            if (decompressed.items.len != uncompressed_array.items.len) {
-                std.debug.print("ERROR! expected_size={d}, decompressed.items.len={d}\n", .{ uncompressed_array.items.len, decompressed.items.len });
-            } else {
-                for (0..decompressed.items.len) |i| {
-                    if (decompressed.items[i] != uncompressed_array.items[i]) {
-                        std.debug.print("ERROR! [{d}] {d} != {d}\n", .{ i, decompressed.items[i], uncompressed_array.items[i] });
-                        break;
-                    }
-                }
-            }
-        }
 
         var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
@@ -942,13 +903,7 @@ pub const Deecy = struct {
         defer file.close();
         _ = try file.write(std.mem.asBytes(&compressed.size));
         _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
-        std.debug.print("token_count={d}, expected_size={d}\n", .{ compressed.arr.items.len, uncompressed_array.items.len });
-        try file.writeAll(std.mem.sliceAsBytes(compressed.arr.items));
-
-        std.debug.print("bytes_written={d}\n", .{std.mem.sliceAsBytes(compressed.arr.items).len});
-
-        std.debug.print("uncompressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ uncompressed_array.items[0], uncompressed_array.items[1], uncompressed_array.items[2], uncompressed_array.items[3] });
-        std.debug.print("  compressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ std.mem.sliceAsBytes(compressed.arr.items)[0], std.mem.sliceAsBytes(compressed.arr.items)[1], std.mem.sliceAsBytes(compressed.arr.items)[2], std.mem.sliceAsBytes(compressed.arr.items)[3] });
+        _ = try file.write(std.mem.sliceAsBytes(compressed.arr.items));
 
         self.save_state_slots[index] = true;
 
@@ -976,40 +931,20 @@ pub const Deecy = struct {
         var expected_size: usize = 0;
         _ = try file.read(std.mem.asBytes(&token_count));
         _ = try file.read(std.mem.asBytes(&expected_size));
-        std.debug.print("token_count={d}, expected_size={d}\n", .{ token_count, expected_size });
+
         const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
         defer self._allocator.free(compressed);
 
-        std.debug.print("loaded {d} bytes\n", .{compressed.len});
-        std.debug.print("  compressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ compressed[0], compressed[1], compressed[2], compressed[3] });
-
         const packed_data = try lzw.BitPacker.fromSlice(self._allocator, @as([*]lzw.BitPacker.UnderlyingType, @alignCast(@ptrCast(compressed.ptr)))[0 .. compressed.len / @sizeOf(lzw.BitPacker.UnderlyingType)], token_count);
-        std.debug.print("packed data: {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ packed_data.arr.items[0], packed_data.arr.items[1], packed_data.arr.items[2], packed_data.arr.items[3] });
-        std.debug.print(" ...         {X:0>16} {X:0>16} {X:0>16} {X:0>16}\n", .{ packed_data.arr.items[packed_data.arr.items.len - 4], packed_data.arr.items[packed_data.arr.items.len - 3], packed_data.arr.items[packed_data.arr.items.len - 2], packed_data.arr.items[packed_data.arr.items.len - 1] });
+
         const unpacked_data = try packed_data.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
         defer self._allocator.free(unpacked_data);
-
-        std.debug.print("unpacked {d} tokens\n", .{unpacked_data.len});
-        std.debug.print("tokens={d} {d} {d} {d} {d} {d} {d} {d}\n", .{ unpacked_data[0], unpacked_data[1], unpacked_data[2], unpacked_data[3], unpacked_data[4], unpacked_data[5], unpacked_data[6], unpacked_data[7] });
-        std.debug.print("  ...  {d} {d} {d} {d} {d} {d} {d} {d}\n", .{
-            unpacked_data[unpacked_data.len - 8],
-            unpacked_data[unpacked_data.len - 7],
-            unpacked_data[unpacked_data.len - 6],
-            unpacked_data[unpacked_data.len - 5],
-            unpacked_data[unpacked_data.len - 4],
-            unpacked_data[unpacked_data.len - 3],
-            unpacked_data[unpacked_data.len - 2],
-            unpacked_data[unpacked_data.len - 1],
-        });
 
         if (unpacked_data.len != token_count)
             return error.UnexpectedTokenCount;
 
         const decompressed = try lzw.decompress(lzw.BitPacker.ValueType, 0, std.math.maxInt(lzw.BitPacker.ValueType), unpacked_data, expected_size, self._allocator);
         defer decompressed.deinit();
-
-        std.debug.print("decompressed len {d} / {d}\n", .{ decompressed.items.len, expected_size });
-        std.debug.print("decompressed: {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ decompressed.items[0], decompressed.items[1], decompressed.items[2], decompressed.items[3] });
 
         if (decompressed.items.len != expected_size)
             return error.UnexpectedDecompressedSize;

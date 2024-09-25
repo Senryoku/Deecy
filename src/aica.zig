@@ -1394,6 +1394,10 @@ pub const AICA = struct {
         bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));
         bytes += try reader.read(std.mem.sliceAsBytes(self._timer_counters[0..]));
         bytes += try reader.read(std.mem.asBytes(&self._samples_counter));
+
+        self.sample_read_offset = 0;
+        self.sample_write_offset = 0;
+
         return bytes;
     }
 };
