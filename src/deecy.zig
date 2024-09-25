@@ -18,6 +18,8 @@ const Renderer = @import("./renderer.zig").Renderer;
 const DeecyUI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 
+const lzw = @import("./compress/lzw.zig");
+
 const deecy_log = std.log.scoped(.deecy);
 
 fn glfw_key_callback(
@@ -892,17 +894,16 @@ pub const Deecy = struct {
         defer uncompressed_array.deinit();
         _ = try self.dc.serialize(uncompressed_array.writer());
 
-        deecy_log.info("Compressing {} bytes...", .{uncompressed_array.items.len});
-
-        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+        var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
+        defer compressed.deinit();
 
         var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
         var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
         defer file.close();
-
-        // TODO: Compress on a separate thread?
-        try std.compress.flate.compress(uncompressed_stream.reader(), file.writer(), .{});
+        _ = try file.write(std.mem.asBytes(&compressed.size));
+        _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
+        _ = try file.write(std.mem.sliceAsBytes(compressed.arr.items));
 
         self.save_state_slots[index] = true;
 
@@ -926,12 +927,18 @@ pub const Deecy = struct {
         var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
         defer file.close();
 
-        var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-        defer uncompressed_array.deinit();
+        var token_count: usize = 0;
+        var expected_size: usize = 0;
+        _ = try file.read(std.mem.asBytes(&token_count));
+        _ = try file.read(std.mem.asBytes(&expected_size));
 
-        try std.compress.flate.decompress(file.reader(), uncompressed_array.writer());
+        const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
+        defer self._allocator.free(compressed);
 
-        var uncompressed_stream = std.io.fixedBufferStream(uncompressed_array.items);
+        const decompressed = try lzw.decompress(compressed, token_count, expected_size, self._allocator);
+        defer decompressed.deinit();
+
+        var uncompressed_stream = std.io.fixedBufferStream(decompressed.items);
         var reader = uncompressed_stream.reader();
 
         try self.reset();

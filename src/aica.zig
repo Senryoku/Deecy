@@ -1377,6 +1377,16 @@ pub const AICA = struct {
         bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
         bytes += try writer.write(std.mem.sliceAsBytes(self._timer_counters[0..]));
         bytes += try writer.write(std.mem.asBytes(&self._samples_counter));
+
+        bytes += try writer.write(std.mem.asBytes(&self.sample_read_offset));
+        bytes += try writer.write(std.mem.asBytes(&self.sample_write_offset));
+        if (self.sample_read_offset > self.sample_write_offset) {
+            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
+            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+        } else {
+            bytes += try writer.write(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
+        }
+
         return bytes;
     }
 
@@ -1394,6 +1404,16 @@ pub const AICA = struct {
         bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));
         bytes += try reader.read(std.mem.sliceAsBytes(self._timer_counters[0..]));
         bytes += try reader.read(std.mem.asBytes(&self._samples_counter));
+
+        bytes += try reader.read(std.mem.asBytes(&self.sample_read_offset));
+        bytes += try reader.read(std.mem.asBytes(&self.sample_write_offset));
+        if (self.sample_read_offset > self.sample_write_offset) {
+            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
+            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+        } else {
+            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
+        }
+
         return bytes;
     }
 };
