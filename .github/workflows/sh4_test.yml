@@ -21,7 +21,7 @@ jobs:
               run: python ./transcode_json.py
             - name: Move JSON test files to final location
               run: mv /home/runner/dev/sh4_json/ ../SingleStepTests_sh4/
-            - uses: goto-bus-stop/setup-zig@v2
+            - uses: mlugg/setup-zig@v1
               with:
                 version: 0.13.0-dev.351+64ef45eb0
             - uses: actions/checkout@v4
