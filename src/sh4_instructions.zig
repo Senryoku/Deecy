@@ -49,6 +49,7 @@ const CacheAccess = struct {
     r0: bool = false,
     rn: bool = false,
     rm: bool = false,
+    pc: bool = false,
 };
 
 pub const OpcodeDescription = struct {
@@ -83,11 +84,11 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000001010000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_unknown, .name = "Syscall", .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
     .{ .code = 0b0000000001100000, .mask = 0b0000000000000000, .fn_ = interpreter.syscall_misc, .name = "Syscall Misc.", .issue_cycles = 0, .latency_cycles = 0, .jit_emit_fn = sh4_jit.interpreter_fallback_branch },
 
-    .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.mov_Rm_Rn, .name = "mov Rm,Rn", .jit_emit_fn = sh4_jit.mov_Rm_Rn },
-    .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.mov_imm_Rn, .name = "mov #imm,Rn", .jit_emit_fn = sh4_jit.mov_imm_Rn },
-    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = interpreter.mova_atDispPC_R0, .name = "mova @(d:8,PC),R0", .jit_emit_fn = sh4_jit.mova_atDispPC_R0 },
-    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movw_atDispPC_Rn, .name = "mov.w @(d:8,PC),Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atDispPC_Rn },
-    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_atDispPC_Rn, .name = "mov.l @(d:8,PC),Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atDispPC_Rn },
+    .{ .code = 0b0110000000000011, .mask = 0b0000111111110000, .fn_ = interpreter.mov_Rm_Rn, .name = "mov Rm,Rn", .jit_emit_fn = sh4_jit.mov_Rm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b1110000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.mov_imm_Rn, .name = "mov #imm,Rn", .jit_emit_fn = sh4_jit.mov_imm_Rn, .access = .{ .r = .{}, .w = .{ .rn = true } } },
+    .{ .code = 0b1100011100000000, .mask = 0b0000000011111111, .fn_ = interpreter.mova_atDispPC_R0, .name = "mova @(d:8,PC),R0", .jit_emit_fn = sh4_jit.mova_atDispPC_R0, .access = .{ .r = .{ .pc = true }, .w = .{ .r0 = true } } },
+    .{ .code = 0b1001000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movw_atDispPC_Rn, .name = "mov.w @(d:8,PC),Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atDispPC_Rn, .access = .{ .r = .{ .pc = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b1101000000000000, .mask = 0b0000111111111111, .fn_ = interpreter.movl_atDispPC_Rn, .name = "mov.l @(d:8,PC),Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atDispPC_Rn, .access = .{ .r = .{ .pc = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000000000, .mask = 0b0000111111110000, .fn_ = interpreter.movb_atRm_Rn, .name = "mov.b @Rm,Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movb_atRm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000000001, .mask = 0b0000111111110000, .fn_ = interpreter.movw_atRm_Rn, .name = "mov.w @Rm,Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movw_atRm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000000010, .mask = 0b0000111111110000, .fn_ = interpreter.movl_atRm_Rn, .name = "mov.l @Rm,Rn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.movl_atRm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },

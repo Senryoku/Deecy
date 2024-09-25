@@ -778,6 +778,10 @@ pub fn interpreter_fallback_cached(block: *JITBlock, ctx: *JITContext, instr: sh
         }
     }
 
+    if (cache_access.r.pc) {
+        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
+    }
+
     try ctx.fpr_cache.commit_and_invalidate_all(block); // FIXME: Hopefully we'll be able to remove this soon!
 
     try call_interpreter_fallback(block, ctx, instr);

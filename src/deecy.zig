@@ -188,7 +188,7 @@ pub const Deecy = struct {
         zglfw.windowHintTyped(.client_api, .no_api);
 
         // TODO: Load from config.
-        const default_resolution = Renderer.Resolution{ .width = 2 * Renderer.NativeResolution.width, .height = 2 * Renderer.NativeResolution.height };
+        const default_resolution = Renderer.Resolution{ .width = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), .height = 2 * Renderer.NativeResolution.height };
 
         const self = try allocator.create(Deecy);
         self.* = Deecy{

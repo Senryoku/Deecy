@@ -74,16 +74,17 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
     var tex = &self.vmu_displays[controller][index].?;
     var pixels: [4 * 48 * 32]u8 = undefined;
     for (0..32) |r| {
-        for (0..48 / 8) |c| {
-            var byte = tex.data[48 / 8 * r + c];
+        const row = tex.data[6 * (31 - r) .. 6 * ((31 - r) + 1)];
+        for (0..6) |c| {
+            var byte = row[5 - c];
             for (0..8) |b| {
-                const val: u8 = if (byte & 0x80 == 0x80) 255 else 0;
-                const idx = 4 * (48 * (32 - r - 1) + 48 - 1 - (8 * c + b));
+                const val: u8 = if (byte & 0x1 == 0x1) 0xFF else 0;
+                const idx = 4 * (48 * r + (8 * c + b));
                 pixels[idx + 0] = val;
                 pixels[idx + 1] = val;
                 pixels[idx + 2] = val;
                 pixels[idx + 3] = 255;
-                byte <<= 1;
+                byte >>= 1;
             }
         }
     }
