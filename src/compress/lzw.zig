@@ -76,7 +76,25 @@ pub fn compress(data: []const u8, allocator: std.mem.Allocator) !BitPacker {
     return output;
 }
 
-pub fn decompress(comptime TokenType: type, comptime reserved_codepoints: TokenType, comptime sentinel_token: TokenType, data: []const TokenType, expected_output_size: usize, allocator: std.mem.Allocator) !std.ArrayList(u8) {
+// Caller owns the returned ArrayList
+pub fn decompress(data: []const u8, token_count: usize, expected_size: usize, allocator: std.mem.Allocator) !std.ArrayList(u8) {
+    const packed_data = try BitPacker.fromSlice(allocator, @as([*]const BitPacker.UnderlyingType, @alignCast(@ptrCast(data.ptr)))[0 .. data.len / @sizeOf(BitPacker.UnderlyingType)], token_count);
+
+    const unpacked_data = try packed_data.unpackWithReset(allocator, std.math.maxInt(BitPacker.ValueType));
+    defer allocator.free(unpacked_data);
+
+    if (unpacked_data.len != token_count)
+        return error.UnexpectedTokenCount;
+
+    const decompressed = try decompressImpl(BitPacker.ValueType, 0, std.math.maxInt(BitPacker.ValueType), unpacked_data, expected_size, allocator);
+
+    if (decompressed.items.len != expected_size)
+        return error.UnexpectedDecompressedSize;
+
+    return decompressed;
+}
+
+pub fn decompressImpl(comptime TokenType: type, comptime reserved_codepoints: TokenType, comptime sentinel_token: TokenType, data: []const TokenType, expected_output_size: usize, allocator: std.mem.Allocator) !std.ArrayList(u8) {
     if (data.len == 0) return std.ArrayList(u8).init(allocator);
 
     const first_allocated_token: TokenType = comptime std.math.maxInt(u8) + 1 + reserved_codepoints;
@@ -135,9 +153,7 @@ pub fn decompress(comptime TokenType: type, comptime reserved_codepoints: TokenT
 fn testRound(str: []const u8) !void {
     var compressed = try compress(str, std.testing.allocator);
     defer compressed.deinit();
-    const unpacked_data = try compressed.unpackWithReset(std.testing.allocator, std.math.maxInt(BitPacker.ValueType));
-    defer std.testing.allocator.free(unpacked_data);
-    const decompressed = try decompress(BitPacker.ValueType, 0, std.math.maxInt(BitPacker.ValueType), unpacked_data, str.len, std.testing.allocator);
+    const decompressed = try decompress(std.mem.sliceAsBytes(compressed.arr.items), compressed.size, str.len, std.testing.allocator);
     defer decompressed.deinit();
     try std.testing.expectEqualSlices(u8, str, decompressed.items);
 }

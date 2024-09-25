@@ -935,19 +935,8 @@ pub const Deecy = struct {
         const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
         defer self._allocator.free(compressed);
 
-        const packed_data = try lzw.BitPacker.fromSlice(self._allocator, @as([*]lzw.BitPacker.UnderlyingType, @alignCast(@ptrCast(compressed.ptr)))[0 .. compressed.len / @sizeOf(lzw.BitPacker.UnderlyingType)], token_count);
-
-        const unpacked_data = try packed_data.unpackWithReset(self._allocator, std.math.maxInt(lzw.BitPacker.ValueType));
-        defer self._allocator.free(unpacked_data);
-
-        if (unpacked_data.len != token_count)
-            return error.UnexpectedTokenCount;
-
-        const decompressed = try lzw.decompress(lzw.BitPacker.ValueType, 0, std.math.maxInt(lzw.BitPacker.ValueType), unpacked_data, expected_size, self._allocator);
+        const decompressed = try lzw.decompress(compressed, token_count, expected_size, self._allocator);
         defer decompressed.deinit();
-
-        if (decompressed.items.len != expected_size)
-            return error.UnexpectedDecompressedSize;
 
         var uncompressed_stream = std.io.fixedBufferStream(decompressed.items);
         var reader = uncompressed_stream.reader();

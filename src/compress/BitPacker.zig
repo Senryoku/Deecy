@@ -24,6 +24,8 @@ pub fn BitPacker(comptime _UnderlyingType: type, comptime _ValueType: type, comp
         const Self = @This();
         pub const UnderlyingType = _UnderlyingType;
         pub const ValueType = _ValueType;
+        pub const InitialBitSize = initial_bit_size;
+        pub const ReservedBits = reserved_bits;
 
         pub fn bitsPerItem() u8 {
             return @bitSizeOf(UnderlyingType) - reserved_bits;
@@ -49,9 +51,9 @@ pub fn BitPacker(comptime _UnderlyingType: type, comptime _ValueType: type, comp
         }
 
         // FIXME: This should return a const version of @This()
-        pub fn fromSlice(allocator: std.mem.Allocator, data: []UnderlyingType, size: usize) !@This() {
+        pub fn fromSlice(allocator: std.mem.Allocator, data: []const UnderlyingType, size: usize) !@This() {
             return @This(){
-                .arr = std.ArrayList(UnderlyingType).fromOwnedSlice(allocator, data),
+                .arr = std.ArrayList(UnderlyingType).fromOwnedSlice(allocator, @constCast(data)),
                 .size = size,
                 .size_since_reset = 0,
                 .value_size = 0, // FIXME: This is intended to be read-only. Passing a wrong value on purpose here.
