@@ -940,7 +940,7 @@ pub const Deecy = struct {
         defer save_slot_path.deinit();
         var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
         defer file.close();
-        _ = try file.write(std.mem.asBytes(&compressed.arr.items.len));
+        _ = try file.write(std.mem.asBytes(&compressed.size));
         _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
         std.debug.print("token_count={d}, expected_size={d}\n", .{ compressed.arr.items.len, uncompressed_array.items.len });
         try file.writeAll(std.mem.sliceAsBytes(compressed.arr.items));
