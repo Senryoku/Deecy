@@ -886,13 +886,24 @@ pub const Deecy = struct {
             if (was_running) self.start();
         }
 
+        const start_time = std.time.milliTimestamp();
         deecy_log.info("Saving State #{d}...", .{index});
 
-        const start_time = std.time.milliTimestamp();
-
         var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-        defer uncompressed_array.deinit();
         _ = try self.dc.serialize(uncompressed_array.writer());
+
+        deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
+
+        // FIXME: Not exactly the safest way of parallelizing this...
+        var thread = try std.Thread.spawn(.{ .allocator = self._allocator }, compress_and_dump_save_state, .{
+            self, index, uncompressed_array,
+        });
+        thread.detach();
+    }
+
+    fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: std.ArrayList(u8)) !void {
+        const start_time = std.time.milliTimestamp();
+        defer uncompressed_array.deinit();
 
         var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
         defer compressed.deinit();
@@ -907,7 +918,7 @@ pub const Deecy = struct {
 
         self.save_state_slots[index] = true;
 
-        deecy_log.info("Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+        deecy_log.info("  Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
     }
 
     pub fn load_state(self: *Deecy, index: usize) !void {

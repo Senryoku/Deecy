@@ -151,7 +151,9 @@ pub fn decompressImpl(comptime TokenType: type, comptime reserved_codepoints: To
 }
 
 fn testRound(str: []const u8) !void {
+    const start = std.time.milliTimestamp();
     var compressed = try compress(str, std.testing.allocator);
+    std.debug.print("Compressed in {d}ms\n", .{std.time.milliTimestamp() - start});
     defer compressed.deinit();
     const decompressed = try decompress(std.mem.sliceAsBytes(compressed.arr.items), compressed.size, str.len, std.testing.allocator);
     defer decompressed.deinit();

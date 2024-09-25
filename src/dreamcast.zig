@@ -574,7 +574,7 @@ pub const Dreamcast = struct {
             self.hw_register(u32, .SB_GDLEND).* = len; // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...). This is clearly not a proper fix, I just don't know what the actual cause is, and how to properly fix it.
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
-            dc_log.info("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
+            dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.

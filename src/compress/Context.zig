@@ -52,7 +52,7 @@ pub fn Context(comptime V: type) type {
 
         fn eql(a: []const u8, b: []const u8) bool {
             if (a.len != b.len) return false;
-            const vec_size = 4;
+            const vec_size = 16;
             for (0..a.len / vec_size) |i| {
                 const l: @Vector(vec_size, u8) = a[i * vec_size ..][0..vec_size].*;
                 const r: @Vector(vec_size, u8) = b[i * vec_size ..][0..vec_size].*;
