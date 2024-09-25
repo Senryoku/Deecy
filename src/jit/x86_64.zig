@@ -977,6 +977,17 @@ pub const Emitter = struct {
                     else => return error.InvalidMovSource,
                 }
             },
+            .reg64 => |dst_reg| {
+                _ = dst_reg;
+                switch (src) {
+                    .imm64 => |imm| {
+                        if (imm == 0 and !preserve_flags) {
+                            try self.xor_(dst, dst);
+                        } else return error.Unimplemented;
+                    },
+                    else => return error.Unimplemented,
+                }
+            },
             .freg32 => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| try mov_freg_reg(self, ._32, dst_reg, src_reg),
@@ -1114,6 +1125,16 @@ pub const Emitter = struct {
                     },
                     .imm8 => |imm8| {
                         try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm8);
+                    },
+                    else => return error.InvalidSource,
+                }
+            },
+            .reg64 => |dst_reg| {
+                switch (src) {
+                    .reg64 => |src_reg| {
+                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
+                        try self.emit(u8, mr_opcode);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
                     else => return error.InvalidSource,
                 }
