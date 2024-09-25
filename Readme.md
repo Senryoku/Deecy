@@ -81,8 +81,9 @@ sudo apt install libgtk-3-dev
 
 ## Dependencies
 
--   Multiple libraries from https://github.com/michal-z/zig-gamedev, included in libs/ as a submodule.
--   ndf-zig: https://github.com/fabioarnold/nfd-zig
+-   Multiple libraries from https://github.com/michal-z/zig-gamedev (MIT), included in libs/ as a submodule.
+-   ndf-zig: https://github.com/fabioarnold/nfd-zig (MIT)
+-   zig-lz4: https://github.com/SnorlaxAssist/zig-lz4 (MIT), bindings for LZ4 https://github.com/lz4/lz4 (BSD 2-Clause)
 
 ## Thanks
 

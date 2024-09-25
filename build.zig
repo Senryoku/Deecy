@@ -83,6 +83,12 @@ pub fn build(b: *std.Build) void {
         exe_check.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
+    const ziglz4 = b.dependency("zig-lz4", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
+
     exe.root_module.addImport("arm7", arm7_module);
     exe.root_module.addImport("termcolor", termcolor_module);
     exe_check.root_module.addImport("arm7", arm7_module);

@@ -18,7 +18,7 @@ const Renderer = @import("./renderer.zig").Renderer;
 const DeecyUI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 
-const lzw = @import("./compress/lzw.zig");
+const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
 
@@ -905,16 +905,15 @@ pub const Deecy = struct {
         const start_time = std.time.milliTimestamp();
         defer uncompressed_array.deinit();
 
-        var compressed = try lzw.compress(uncompressed_array.items, self._allocator);
-        defer compressed.deinit();
+        const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array.items);
+        defer self._allocator.free(compressed);
 
         var save_slot_path = try self.save_state_path(index);
         defer save_slot_path.deinit();
         var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
         defer file.close();
-        _ = try file.write(std.mem.asBytes(&compressed.size));
         _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
-        _ = try file.write(std.mem.sliceAsBytes(compressed.arr.items));
+        _ = try file.write(compressed);
 
         self.save_state_slots[index] = true;
 
@@ -938,18 +937,16 @@ pub const Deecy = struct {
         var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
         defer file.close();
 
-        var token_count: usize = 0;
         var expected_size: usize = 0;
-        _ = try file.read(std.mem.asBytes(&token_count));
         _ = try file.read(std.mem.asBytes(&expected_size));
 
         const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
         defer self._allocator.free(compressed);
 
-        const decompressed = try lzw.decompress(compressed, token_count, expected_size, self._allocator);
-        defer decompressed.deinit();
+        const decompressed = try lz4.Standard.decompress(self._allocator, compressed, expected_size);
+        defer self._allocator.free(decompressed);
 
-        var uncompressed_stream = std.io.fixedBufferStream(decompressed.items);
+        var uncompressed_stream = std.io.fixedBufferStream(decompressed);
         var reader = uncompressed_stream.reader();
 
         try self.reset();
