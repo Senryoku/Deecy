@@ -234,7 +234,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0000000010100011, .mask = 0b0000111100000000, .fn_ = interpreter.ocbp_atRn, .name = "ocbp @Rn", .jit_emit_fn = sh4_jit.nop, .access = .{ .r = .{ .rn = true } } },
     .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = interpreter.ocbwb_atRn, .name = "ocbwb @Rn", .jit_emit_fn = sh4_jit.nop, .access = .{ .r = .{ .rn = true } } },
     .{ .code = 0b0000000010000011, .mask = 0b0000111100000000, .fn_ = interpreter.pref_atRn, .name = "pref @Rn", .access = .{ .r = .{ .rn = true } } },
-    .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = interpreter.rte, .name = "rte", .privileged = true, .issue_cycles = 5, .latency_cycles = 5, .jit_emit_fn = sh4_jit.rte },
+    .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = interpreter.rte, .name = "rte", .is_branch = true, .privileged = true, .issue_cycles = 5, .latency_cycles = 5, .jit_emit_fn = sh4_jit.rte },
     .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = interpreter.sets, .name = "sets", .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = interpreter.sett, .name = "sett", .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = interpreter.sleep, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
