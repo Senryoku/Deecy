@@ -2119,7 +2119,13 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
 
     // Jump back at the start of this block
     if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.start_address) {
-        if (delay_slot) try ctx.compile_delay_slot(block);
+        if (delay_slot) {
+            // Delay slot might change the T bit, push it.
+            try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+            try block.push(.{ .reg = ReturnRegister });
+            try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
+            try ctx.compile_delay_slot(block);
+        }
 
         const loop_cycles = ctx.cycles + instr_lookup(@bitCast(instr)).issue_cycles;
 
@@ -2127,7 +2133,13 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         try ctx.gpr_cache.commit_and_invalidate_all(block);
         try ctx.fpr_cache.commit_and_invalidate_all(block);
 
-        try load_t(block, ctx);
+        if (delay_slot) {
+            try block.pop(.{ .reg = ReturnRegister });
+            try block.pop(.{ .reg = ReturnRegister });
+        } else {
+            try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+        }
+        try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
         var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
         // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
