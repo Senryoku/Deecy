@@ -1061,7 +1061,17 @@ pub fn movl_atRmInc_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     return false;
 }
 
+// mov.x Rm,@-Rn when Rn == Rm
+fn mov_Rn_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime size: u8) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn }); // The value stored is the value of Rn before decrement.
+    try block.sub(.{ .reg = rn }, .{ .imm32 = size / 8 });
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = ReturnRegister }, size);
+    return false;
+}
+
 pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 8);
     // Rn -= 1
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
@@ -1069,14 +1079,15 @@ pub fn movb_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movw_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 16);
     // Rn -= 2
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
     return movw_Rm_atRn(block, ctx, instr);
 }
 
-// FIXME: This doesn't work properly. See #58.
 pub fn movl_Rm_atDecRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 32);
     // Rn -= 4
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
