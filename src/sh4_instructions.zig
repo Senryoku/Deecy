@@ -176,7 +176,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b0100000000000100, .mask = 0b0000111100000000, .fn_ = interpreter.rotl_Rn, .name = "rotl Rn", .jit_emit_fn = sh4_jit.rotl_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000000101, .mask = 0b0000111100000000, .fn_ = interpreter.rotr_Rn, .name = "rotr Rn", .jit_emit_fn = sh4_jit.rotr_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.shad_Rm_Rn, .name = "shad Rm,Rn", .jit_emit_fn = sh4_jit.shad_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
-    .{ .code = 0b0100000000100000, .mask = 0b0000111100000000, .fn_ = interpreter.shal_Rn, .name = "shal Rn", .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0100000000100000, .mask = 0b0000111100000000, .fn_ = interpreter.shal_Rn, .name = "shal Rn", .jit_emit_fn = sh4_jit.shal_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000100001, .mask = 0b0000111100000000, .fn_ = interpreter.shar_Rn, .name = "shar Rn", .jit_emit_fn = sh4_jit.shar_Rn, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000001101, .mask = 0b0000111111110000, .fn_ = interpreter.shld_Rm_Rn, .name = "shld Rm,Rn", .jit_emit_fn = sh4_jit.shld_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0100000000000000, .mask = 0b0000111100000000, .fn_ = interpreter.shll, .name = "shll Rn", .jit_emit_fn = sh4_jit.shll, .access = .{ .r = .{ .rn = true }, .w = .{ .rn = true } } },

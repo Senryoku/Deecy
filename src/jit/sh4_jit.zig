@@ -2030,6 +2030,14 @@ pub fn shad_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn shal_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    sh4_jit_log.warn("Emitting untested instruction: shal_Rn", .{});
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    try block.append(.{ .Shl = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
+    try set_t(block, ctx, .Carry);
+    return false;
+}
+
 pub fn shar_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.append(.{ .Sar = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 1 } } });
