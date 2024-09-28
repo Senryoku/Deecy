@@ -330,9 +330,31 @@ test "add imm rn" {
 }
 
 pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    const sum, const overflow = @addWithOverflow(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
-    cpu.R(opcode.nmd.n).*, const carry_overflow = @addWithOverflow(sum, (if (cpu.sr.t) @as(u32, @intCast(1)) else 0));
-    cpu.sr.t = overflow == 1 or carry_overflow == 1;
+    if (comptime false) {
+        // Pure zig version, keeping it around just in case.
+        const sum, const overflow = @addWithOverflow(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+        cpu.R(opcode.nmd.n).*, const carry_overflow = @addWithOverflow(sum, (if (cpu.sr.t) @as(u32, @intCast(1)) else 0));
+        cpu.sr.t = overflow == 1 or carry_overflow == 1;
+    } else {
+        const rn = cpu.R(opcode.nmd.n);
+        const rm = cpu.R(opcode.nmd.m);
+
+        rn.* = asm volatile (
+            \\ bt $0, %edx
+            \\ adc %ecx, %eax
+            : [ret] "={eax}" (-> u32),
+            : [_] "{edx}" (cpu.sr.t),
+              [_] "{eax}" (rn.*),
+              [_] "{ecx}" (rm.*),
+            : "edx", "eax"
+        );
+        cpu.sr.t = asm volatile (
+            \\ setb %dl
+            : [ret] "={dl}" (-> bool),
+            :
+            : "dl"
+        );
+    }
 }
 
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
