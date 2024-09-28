@@ -379,7 +379,12 @@ pub fn cmppz_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn cmpstr_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     const l = cpu.R(opcode.nmd.n).*;
     const r = cpu.R(opcode.nmd.m).*;
-    cpu.sr.t = (l & 0xFF000000 == r & 0xFF000000) or (l & 0x00FF0000 == r & 0x00FF0000) or (l & 0x0000FF00 == r & 0x0000FF00) or (l & 0x000000FF == r & 0x000000FF);
+
+    // cpu.sr.t = (l & 0xFF000000 == r & 0xFF000000) or (l & 0x00FF0000 == r & 0x00FF0000) or (l & 0x0000FF00 == r & 0x0000FF00) or (l & 0x000000FF == r & 0x000000FF);
+
+    const vl: @Vector(4, u8) = std.mem.asBytes(&l).*;
+    const vr: @Vector(4, u8) = std.mem.asBytes(&r).*;
+    cpu.sr.t = @reduce(.Or, vl == vr);
 }
 
 // Performs initial settings for signed division.
