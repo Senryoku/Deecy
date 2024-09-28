@@ -330,12 +330,9 @@ test "add imm rn" {
 }
 
 pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    const prev_Rn = cpu.R(opcode.nmd.n).*;
-    const sum = prev_Rn +% cpu.R(opcode.nmd.m).*;
-    cpu.R(opcode.nmd.n).* = sum +% (if (cpu.sr.t) @as(u32, @intCast(1)) else 0);
-    cpu.sr.t = (prev_Rn > sum);
-    if (sum > cpu.R(opcode.nmd.n).*)
-        cpu.sr.t = true;
+    const sum, const overflow = @addWithOverflow(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).*, const carry_overflow = @addWithOverflow(sum, (if (cpu.sr.t) @as(u32, @intCast(1)) else 0));
+    cpu.sr.t = overflow == 1 or carry_overflow == 1;
 }
 
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
