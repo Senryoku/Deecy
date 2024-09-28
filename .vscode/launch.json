@@ -17,8 +17,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
-				"./bin/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi",
-				"--skip-bios"
+				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
@@ -31,8 +30,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
-				"./bin/[GDI] Crazy Taxi (US)[10S 51035]/Crazy Taxi v1.004 (1999)(Sega)(NTSC)(US)[!][10S 51035].gdi",
-				"--skip-bios"
+				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

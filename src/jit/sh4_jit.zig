@@ -1180,6 +1180,14 @@ pub fn movt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn swapb_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try block.mov(rn, .{ .reg = rm });
+    try block.append(.{ .Ror = .{ .dst = .{ .reg16 = rn.reg }, .amount = .{ .imm8 = 8 } } });
+    return false;
+}
+
 pub fn swapw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);

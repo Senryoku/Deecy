@@ -1385,15 +1385,26 @@ pub const Emitter = struct {
 
     fn shift_instruction(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Operand, amount: Operand) !void {
         switch (dst) {
-            .reg => |dst_reg| {
+            .reg8, .reg16, .reg, .reg64 => |dst_reg| {
+                var is_64 = false;
+                var opcode_offset: u8 = 1;
+
+                switch (dst) {
+                    .reg8 => opcode_offset = 0,
+                    .reg16 => try self.emit(u8, 0x66),
+                    .reg64 => is_64 = true,
+                    else => {},
+                }
+
+                try self.emit_rex_if_needed(.{ .w = is_64, .b = need_rex(dst_reg) });
+
                 switch (amount) {
                     .imm8 => |imm8| {
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
                         if (imm8 == 1) {
-                            try self.emit(u8, 0xD1);
+                            try self.emit(u8, 0xD0 + opcode_offset);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                         } else {
-                            try self.emit(u8, 0xC1);
+                            try self.emit(u8, 0xC0 + opcode_offset);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                             try self.emit(u8, imm8);
                         }
@@ -1402,8 +1413,7 @@ pub const Emitter = struct {
                         if (src_reg != .rcx) {
                             return error.InvalidShiftRegister; // Only rcx is supported as a source for the shift amount in x86!
                         }
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0xD3);
+                        try self.emit(u8, 0xD2 + opcode_offset);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                     },
                     else => return error.InvalidShiftAmount,

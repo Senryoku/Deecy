@@ -120,7 +120,7 @@ pub const Opcodes: [217]OpcodeDescription = .{
     .{ .code = 0b1100000100000000, .mask = 0b0000000011111111, .fn_ = interpreter.movw_R0_atDispGBR, .name = "mov.w R0,@(d:8,GBR)", .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b1100001000000000, .mask = 0b0000000011111111, .fn_ = interpreter.movl_R0_atDispGBR, .name = "mov.l R0,@(d:8,GBR)", .access = .{ .r = .{ .r0 = true }, .w = .{} } },
     .{ .code = 0b0000000000101001, .mask = 0b0000111100000000, .fn_ = interpreter.movt_Rn, .name = "movt Rn", .jit_emit_fn = sh4_jit.movt_Rn, .access = .{ .r = .{}, .w = .{ .rn = true } } },
-    .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.swapb, .name = "swap.b Rm,Rn", .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
+    .{ .code = 0b0110000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.swapb, .name = "swap.b Rm,Rn", .jit_emit_fn = sh4_jit.swapb_Rm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0110000000001001, .mask = 0b0000111111110000, .fn_ = interpreter.swapw, .name = "swap.w Rm,Rn", .jit_emit_fn = sh4_jit.swapw_Rm_Rn, .access = .{ .r = .{ .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0010000000001101, .mask = 0b0000111111110000, .fn_ = interpreter.xtrct_Rm_Rn, .name = "xtrct Rm,Rn", .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
     .{ .code = 0b0011000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.add_Rm_Rn, .name = "add Rm,Rn", .jit_emit_fn = sh4_jit.add_Rm_Rn, .access = .{ .r = .{ .rn = true, .rm = true }, .w = .{ .rn = true } } },
