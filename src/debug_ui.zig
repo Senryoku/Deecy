@@ -308,31 +308,32 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.begin("CPU JIT", .{})) {
         zgui.text("Block statistics", .{});
         if (BasicBlock.EnableInstrumentation) {
+            const max = 50;
             const static = struct {
-                var top10: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
-                var sorted: [10]usize = .{0} ** 10;
+                var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+                var sorted: [max]usize = .{0} ** max;
                 var initialized: bool = false;
             };
             zgui.beginDisabled(.{ .disabled = d.running });
             if (zgui.button("Refresh", .{})) {
                 if (!static.initialized) {
-                    static.top10 =
+                    static.top =
                         std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
                     static.initialized = true;
                 } else {
-                    while (static.top10.count() > 0) _ = static.top10.remove();
+                    while (static.top.count() > 0) _ = static.top.remove();
                 }
                 for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
                     if (dc.sh4_jit.block_cache.blocks[i]) |block| {
-                        if (block.call_count > 0 and (static.top10.count() < 10 or static.top10.peek().?.time_spent < block.time_spent)) {
-                            static.top10.add(block) catch unreachable;
+                        if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
+                            static.top.add(block) catch unreachable;
                         }
-                        if (static.top10.count() > 10) {
-                            _ = static.top10.remove();
+                        if (static.top.count() > max) {
+                            _ = static.top.remove();
                         }
                     }
                 }
-                std.mem.sort(BasicBlock, static.top10.items, {}, comptime compare_blocks_desc);
+                std.mem.sort(BasicBlock, static.top.items, {}, comptime compare_blocks_desc);
             }
             zgui.sameLine(.{});
             if (zgui.button("Reset", .{})) {
@@ -345,7 +346,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             zgui.endDisabled();
 
-            for (static.top10.items) |block| {
+            for (static.top.items) |block| {
                 zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
                     block.start_addr,
                     block.len,

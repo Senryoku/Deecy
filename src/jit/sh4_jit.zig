@@ -2445,3 +2445,11 @@ pub fn ldcl_atRnInc_SR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     return false;
 }
+
+pub fn movcal_R0_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // Stores the contents of general register R0 in the memory location indicated by effective address Rn. This instruction differs from other store instructions as follows.
+    // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
+    const r0 = try load_register(block, ctx, 0);
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = r0 }, 32);
+    return false;
+}
