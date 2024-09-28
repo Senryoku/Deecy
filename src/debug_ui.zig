@@ -356,7 +356,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 });
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
-                    zgui.text("  {X:0>6}: {s}", .{ addr, try sh4_disassembly.disassemble(@bitCast(dc.cpu.read16(addr)), dc._allocator) });
+                    const instr = dc.cpu.read16(addr);
+                    const op = sh4.sh4_instructions.Opcodes[sh4.sh4_instructions.JumpTable[instr]];
+                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
             }
         } else {

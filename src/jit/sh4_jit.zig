@@ -1209,6 +1209,15 @@ pub fn add_imm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn addc_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+    const rm = try load_register(block, ctx, instr.nmd.m);
+    try load_t(block, ctx); // t is also the carry flag
+    try block.append(.{ .Adc = .{ .dst = .{ .reg = rn }, .src = .{ .reg = rm } } });
+    try set_t(block, ctx, .Carry);
+    return false;
+}
+
 pub fn cmpeq_imm_R0(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg = r0 }, .rhs = .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) } } });
