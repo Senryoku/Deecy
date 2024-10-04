@@ -1181,18 +1181,28 @@ pub fn movt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn swapb_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
-    const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.mov(rn, .{ .reg = rm });
-    try block.append(.{ .Ror = .{ .dst = .{ .reg16 = rn.reg }, .amount = .{ .imm8 = 8 } } });
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.append(.{ .Ror = .{ .dst = .{ .reg16 = rn }, .amount = .{ .imm8 = 8 } } });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.mov(rn, .{ .reg = rm });
+        try block.append(.{ .Ror = .{ .dst = .{ .reg16 = rn.reg }, .amount = .{ .imm8 = 8 } } });
+    }
     return false;
 }
 
 pub fn swapw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
-    const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.mov(rn, .{ .reg = rm });
-    try block.append(.{ .Ror = .{ .dst = rn, .amount = .{ .imm8 = 16 } } });
+    if (instr.nmd.n == instr.nmd.m) {
+        const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+        try block.append(.{ .Ror = .{ .dst = .{ .reg = rn }, .amount = .{ .imm8 = 16 } } });
+    } else {
+        const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
+        const rm = try load_register(block, ctx, instr.nmd.m);
+        try block.mov(rn, .{ .reg = rm });
+        try block.append(.{ .Ror = .{ .dst = rn, .amount = .{ .imm8 = 16 } } });
+    }
     return false;
 }
 
