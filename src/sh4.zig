@@ -1099,31 +1099,34 @@ pub const SH4 = struct {
                         },
                         P4Register.PDTRA => {
                             check_type(&[_]type{u16}, T, "Invalid P4 Read({any}) to PDTRA\n", .{T});
-                            // Note: I have absolutely no idea what's going on here.
-                            //       This is directly taken from Flycast, which already got it from Chankast.
+                            // Port data register A (PDTRA) is a 16-bit readable/writable register used as a data latch for each
+                            // bit in the 16-bit port. When a bit is set as an output, the value written to the PDTRA register is
+                            // output from the external pin. When a value is read from the PDTRA register while a bit is set as
+                            // an input, the external pin value sampled on the external bus clock is read. When a bit is set as an
+                            // output, the value written to the PDTRA register is read.
+
+                            var out: u16 = @as(u16, @intFromEnum(self._dc.?.cable_type)) << 8;
+
+                            const ctrl: u32 = self.read_p4_register(u32, .PCTRA) & 0xF;
+                            const data: u16 = self.read_p4_register(u16, .PDTRA) & 0xF;
+
+                            // NOTE: The following hack accounts for the fact that pins A0 and A1 (GPIO Port A 0 and 1) are shorted together on the DC.
+                            //       It only directly responds to the specific BIOS checks. A proper fix would be to fully emulate the GPIO pins.
+                            //
+                            //       MetalliC: "SH7091 reuses A0 and A1 for GPIO port A bits 0 and 1"
+                            //                 "DC have 2 of SH4's GPIO pins connected together, and boot ROM code does quite nasty checks if they really are shorted.
+                            //                  One of checks include: configure both pins for input, enable pullup for one of them
+                            //                  (which will effectively pull up both of them), then check if other pin will become 1"
+                            //
+                            //       This is adapted from Flycast, which already got it from Chankast.
                             //       This is needed for the bios to work properly, without it, it will
                             //       go to sleep mode with all interrupts disabled early on.
-                            const tpctra: u32 = self.read_p4_register(u32, .PCTRA);
-                            const tpdtra: u32 = self.read_p4_register(u32, .PDTRA);
 
-                            var tfinal: u16 = 0;
-                            if ((tpctra & 0xf) == 0x8) {
-                                tfinal = 3;
-                            } else if ((tpctra & 0xf) == 0xB) {
-                                tfinal = 3;
-                            } else {
-                                tfinal = 0;
+                            if (ctrl == 0x8 or (ctrl == 0xB and data != 0x2) or (ctrl == 0xC and data == 0x2)) {
+                                out |= 3;
                             }
 
-                            if ((tpctra & 0xf) == 0xB and (tpdtra & 0xf) == 2) {
-                                tfinal = 0;
-                            } else if ((tpctra & 0xf) == 0xC and (tpdtra & 0xf) == 2) {
-                                tfinal = 3;
-                            }
-
-                            tfinal |= @intFromEnum(self._dc.?.cable_type) << 8;
-
-                            return tfinal;
+                            return out;
                         },
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
                         P4Register.PMCR1 => return 0,
