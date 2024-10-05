@@ -482,6 +482,7 @@ pub const Renderer = struct {
     // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
     framebuffer_texture_view: zgpu.TextureViewHandle,
+    framebuffer_copy_buffer: zgpu.BufferHandle,
     // Framebuffer at window resolution to draw on
     resized_framebuffer_texture: zgpu.TextureHandle = undefined,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle = undefined,
@@ -542,6 +543,11 @@ pub const Renderer = struct {
             .mip_level_count = 1,
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
+
+        const framebuffer_copy_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .map_read = true },
+            .size = 4 * NativeResolution.width * NativeResolution.height,
+        });
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
@@ -1075,6 +1081,7 @@ pub const Renderer = struct {
 
             .framebuffer_texture = framebuffer_texture,
             .framebuffer_texture_view = framebuffer_texture_view,
+            .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
             .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
 
@@ -1192,6 +1199,7 @@ pub const Renderer = struct {
 
         self._gctx.releaseResource(self.framebuffer_texture_view);
         self._gctx.releaseResource(self.framebuffer_texture);
+        self._gctx.releaseResource(self.framebuffer_copy_buffer);
 
         self._gctx.releaseResource(self.framebuffer_resize_bind_group);
 

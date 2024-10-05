@@ -192,11 +192,20 @@ pub const ISP_BACKGND_T = packed struct(u32) {
 };
 
 pub const FB_W_CTRL = packed struct(u32) {
-    fb_packmode: u3,
-    fb_dither: u1,
+    fb_packmode: enum(u3) {
+        KRGB0555 = 0, // Bit 15 is the value of fb_kval[7].
+        RGB565 = 1,
+        ARGB4444 = 2,
+        ARGB1555 = 3, // The alpha value is determined by comparison with the value of fb_alpha_threshold.
+        RGB888 = 4,
+        KRGB0888 = 5,
+        ARGB8888 = 6,
+        Reserved = 7,
+    },
+    fb_dither: bool, // Dithering enable
     _0: u4,
-    fb_kval: u8,
-    fb_alpha_threshold: u8,
+    fb_kval: u8, // This field sets the K value for writing to the frame buffer. (default = 0x00)
+    fb_alpha_threshold: u8, // This field sets the comparison value that is used to determine the alpha value when the data that is written to the frame buffer is ARGB1555 format data. (default = 0x00) When pixel alpha ≥ fb_alpha_threshold, a "1" is written in the alpha value.
     _1: u8,
 };
 
