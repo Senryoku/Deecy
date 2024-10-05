@@ -13,7 +13,7 @@ const Interrupt = Interrupts.Interrupt;
 pub const SH4Module = @import("sh4.zig");
 const SH4 = SH4Module.SH4;
 const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
-const Flash = @import("flash.zig").Flash;
+const Flash = @import("flash.zig");
 pub const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
 pub const AICAModule = @import("aica.zig");
@@ -31,7 +31,7 @@ pub const Region = enum(u8) {
     Unknown = 3,
 };
 
-const Language = enum(u8) {
+pub const Language = enum(u8) {
     Japanese = 0,
     English = 1,
     German = 2,
@@ -109,8 +109,7 @@ pub const Dreamcast = struct {
 
     sh4_jit: SH4JIT,
 
-    // Pluged in video cable reported to the CPU.
-    cable_type: CableType = .VGA,
+    cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
 
     boot: []u8 align(4),
@@ -170,11 +169,7 @@ pub const Dreamcast = struct {
     pub fn deinit(self: *@This()) void {
         // Write flash to disk
         if (!@import("builtin").is_test) {
-            var buf = [1]u8{0} ** 128;
-            const filename = self.get_user_flash_path(&buf) catch |err| {
-                dc_log.err("Failed to get user flash path: {any}", .{err});
-                @panic("Failed to get user flash path");
-            };
+            const filename = get_user_flash_path();
             std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
                 dc_log.err("Failed to create user flash directory: {any}", .{err});
             };
@@ -251,8 +246,8 @@ pub const Dreamcast = struct {
         };
     }
 
-    pub fn get_user_flash_path(self: *@This(), buf: []u8) ![]const u8 {
-        return try std.fmt.bufPrint(buf, user_data_directory ++ "{s}/flash.bin", .{self.region_subdir()});
+    pub fn get_user_flash_path() []const u8 {
+        return user_data_directory ++ "/flash.bin";
     }
 
     pub fn set_region(self: *@This(), region: Region) !void {
@@ -271,16 +266,14 @@ pub const Dreamcast = struct {
     }
 
     pub fn load_flash(self: *@This()) !void {
-        var buf = [1]u8{0} ** 128;
-
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
+        const default_flash_path = "./data/dc_flash.bin";
         var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
             return e;
         };
 
-        // var flash_file = std.fs.cwd().openFile(try self.get_user_flash_path(&buf), .{}) catch |err| f: {
+        // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
         //     if (err == error.FileNotFound) {
         //         dc_log.info("Loading default flash ROM.", .{});
         //         const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
@@ -289,7 +282,7 @@ pub const Dreamcast = struct {
         //             return e;
         //         };
         //     } else {
-        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ try self.get_user_flash_path(&buf), err });
+        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ get_user_flash_path(), err });
         //         return err;
         //     }
         // };
@@ -297,6 +290,22 @@ pub const Dreamcast = struct {
         defer flash_file.close();
         const flash_bytes_read = try flash_file.readAll(self.flash.data);
         std.debug.assert(flash_bytes_read == 0x20000);
+
+        // Adjust region.
+        self.flash.data[0x1A002] = @intFromEnum(self.region);
+
+        // Get current system config, update it with user preference and fix block crc.
+        const system_bitmap = @as(*u512, @alignCast(@ptrCast(self.flash.data[0x1FFC0..0x20000].ptr)));
+        const last_entry = @ctz(system_bitmap.*);
+        if (last_entry == 0) return error.InvalidFlash;
+        var system_block = self.flash.get_system_block(last_entry - 1);
+
+        // Update saved time to avoid manual time adjustement screen on startup.
+        const dc_timestamp = AICA.timestamp();
+        system_block.user_payload.time_low = @truncate(dc_timestamp);
+        system_block.user_payload.time_high = @truncate(dc_timestamp >> 16);
+
+        system_block.update_crc();
     }
 
     pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {

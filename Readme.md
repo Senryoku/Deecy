@@ -21,7 +21,7 @@ zig build run                                                        # Build and
 zig build run -Doptimize=ReleaseFast -- -g game/game.gdi             # Build and run in release mode and loads a gdi
 ```
 
-You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `bin/` directory.
+You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `data/` directory.
 
 ### Linux 
 

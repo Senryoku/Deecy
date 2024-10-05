@@ -791,12 +791,16 @@ pub const AICA = struct {
         }
     }
 
+    pub fn timestamp() u32 {
+        const utc = std.time.timestamp();
+        // TODO: Handle timezone?
+        return @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
+    }
+
     pub fn read_rtc_register(self: *const AICA, addr: u32) u32 {
         _ = self;
         std.debug.assert(addr >= 0x00710000);
-        const utc = std.time.timestamp();
-        const dc_timestamp: u32 = @intCast(utc + (20 * 365 + 5) * 24 * 60 * 60); // Dreamcast epoch is January 1, 1950 00:00
-        // TODO: Handle timezone.
+        const dc_timestamp: u32 = timestamp();
         return switch (addr - 0x00710000) {
             0x00 => (dc_timestamp >> 16) & 0x0000FFFFF,
             0x04 => dc_timestamp & 0x0000FFFFF,

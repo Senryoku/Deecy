@@ -154,6 +154,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
 
         if (zgui.beginMenu("DC", true)) {
+            if (!d.running) {
+                if (zgui.menuItem("Start", .{}))
+                    d.start();
+            } else {
+                if (zgui.menuItem("Stop", .{}))
+                    d.stop();
+            }
             if (zgui.menuItem("Reset", .{})) {
                 const was_running = d.running;
                 if (was_running) d.stop();
