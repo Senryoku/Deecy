@@ -262,16 +262,9 @@ pub fn main() !void {
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
         if (d.dc.gpu.dirty_framebuffer) {
-            if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
-                // FIXME: While this allows IP.bin display correctly, there are distracting artifacts in multiple games,
-                //        and it doesn't fix the cases where it actually matters (like Namco Museum for example).
-                //        Disabling it for now.
-                if (false) {
-                    d.renderer.update_framebuffer_texture(&d.dc.gpu);
-                    d.renderer.blit_framebuffer();
-                }
-                d.dc.gpu.dirty_framebuffer = false;
-            }
+            d.renderer.update_framebuffer_texture(&d.dc.gpu);
+            d.renderer.blit_framebuffer();
+            d.dc.gpu.dirty_framebuffer = false;
         }
 
         const render_start = d.renderer.render_start;
@@ -287,8 +280,8 @@ pub fn main() !void {
             d.last_frame_timestamp = now;
         }
 
-        const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
-        if (always_render or render_start)
+        const always_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
+        if (always_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
 
         d.renderer.draw(); //  Blit to screen

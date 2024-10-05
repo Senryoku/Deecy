@@ -532,7 +532,7 @@ pub const Renderer = struct {
         }
 
         const framebuffer_texture = gctx.createTexture(.{
-            .usage = .{ .texture_binding = true, .copy_dst = true },
+            .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
             .size = .{
                 .width = NativeResolution.width,
                 .height = NativeResolution.height,
@@ -2474,7 +2474,7 @@ pub const Renderer = struct {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                        .load_op = .clear, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                        .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
                         .store_op = .store,
                     },
                     .{
@@ -2806,6 +2806,60 @@ pub const Renderer = struct {
                 }
             }
 
+            // Blit to framebuffer texture
+            {
+                const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
+
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.framebuffer_texture_view),
+                    .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .label = "Framebuffer Blit",
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
+
+                const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+
+                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+
+                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+
+                pass.setBindGroup(0, blit_bind_group, &.{});
+                pass.drawIndexed(4, 1, 0, 0, 0);
+            }
+
+            encoder.copyTextureToBuffer(
+                .{
+                    .texture = gctx.lookupResource(self.framebuffer_texture).?,
+                    .mip_level = 0,
+                    .origin = .{},
+                    .aspect = .all,
+                },
+                .{
+                    .layout = .{
+                        .offset = 0,
+                        .bytes_per_row = 4 * NativeResolution.width,
+                        .rows_per_image = NativeResolution.height,
+                    },
+                    .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
+                },
+                .{
+                    .width = NativeResolution.width,
+                    .height = NativeResolution.height,
+                    .depth_or_array_layers = 1,
+                },
+            );
+
             break :commands encoder.finish(null);
         };
         defer commands.release();
@@ -2819,7 +2873,7 @@ pub const Renderer = struct {
         const back_buffer_view = gctx.swapchain.getCurrentTextureView();
         defer back_buffer_view.release();
 
-        // TODO: This does not change and could be recorded once and for all.
+        // NOTE: This does not change - expect for the back_buffer_view - and could be recorded once and for all.
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
