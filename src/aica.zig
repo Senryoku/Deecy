@@ -489,12 +489,13 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
 pub const AICA = struct {
-    pub const ExperimentalExternalSampleGeneration = true;
+    pub const ExperimentalExternalSampleGeneration = true; // Runs sample generation in a separate thread.
+    pub const ExperimentalThreadedARM = ExperimentalExternalSampleGeneration and true; // Runs the ARM core in the same thread used to generate samples, synched with sample generation, rather than with the SH4.
 
     pub const SampleRate = 44100;
 
-    const ARM7CycleRatio = 66;
-    const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
+    pub const ARM7CycleRatio = 66;
+    pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = false,
@@ -1008,7 +1009,6 @@ pub const AICA = struct {
     pub fn update_timers(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
         if (sample_count == 0) return;
 
-        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
         const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
         for (0..3) |i| {
             var timer = self.get_reg(TimerControl, timer_registers[i]);
@@ -1032,17 +1032,23 @@ pub const AICA = struct {
     }
 
     pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
-        self._timer_cycles_counter += @intCast(sh4_cycles);
-        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+        if (!ExperimentalExternalSampleGeneration or !ExperimentalThreadedARM) {
+            self.sample_mutex.lock();
+            defer self.sample_mutex.unlock();
 
-        self.sample_mutex.lock();
-        defer self.sample_mutex.unlock();
+            if (!ExperimentalExternalSampleGeneration) {
+                self._timer_cycles_counter += @intCast(sh4_cycles);
+                const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+                self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+                self.generate_samples(dc, sample_count);
+                self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
+            }
 
-        if (!ExperimentalExternalSampleGeneration) {
-            self.generate_samples(dc, sample_count);
-            self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
+            try self.run_arm(sh4_cycles);
         }
+    }
 
+    pub fn run_arm(self: *AICA, sh4_cycles: u32) !void {
         if (self.arm7.running) {
             self._arm_cycles_counter += @intCast(sh4_cycles);
             if (self.enable_arm_jit) {

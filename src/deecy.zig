@@ -863,6 +863,13 @@ pub const Deecy = struct {
         if (AICA.ExperimentalExternalSampleGeneration) {
             aica.generate_samples(self.dc, frame_count);
             aica.update_timers(self.dc, frame_count);
+
+            const sh4_cycles = (AICA.SH4CyclesPerSample + 1) * frame_count;
+            if (AICA.ExperimentalThreadedARM) {
+                aica.run_arm(sh4_cycles) catch |err| {
+                    deecy_log.err("Failed to run AICA ARM core: {}\n", .{err});
+                };
+            }
         }
 
         var out: [*]i32 = @ptrCast(@alignCast(output));
