@@ -1178,8 +1178,9 @@ pub const AICA = struct {
                     const channel = registers.dps_channel_send.channel;
                     _ = channel;
                     // TEMP: Bypassing the DSP and outputting directly. Some sound without DSP effects is better that nothing for now.
-                    const att_multiplier = 4 - (registers.dps_channel_send.level & 1);
-                    const att_shift = 2 + (registers.dps_channel_send.level >> 1);
+                    const att: u4 = 0xF ^ registers.dps_channel_send.level;
+                    const att_multiplier = 4 - (att & 1);
+                    const att_shift = 2 + (att >> 1);
                     self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
                     self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
                 }
