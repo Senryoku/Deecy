@@ -191,13 +191,40 @@ pub const ISP_BACKGND_T = packed struct(u32) {
     _: u3,
 };
 
+pub const SCALER_CTL = packed struct(u32) {
+    vertical_scale_factor: u16, // This field specifies the scale factor in the vertical direction. (default = 0x0400)
+    // This value consists of a 6-bit integer portion and a 10-bit decimal portion, and
+    // expands or reduces the screen in the vertical direction by "1/scale factor." When
+    // using flicker-free interlace mode type B, specify 0x0800.
+    horizontal_scaling_enable: bool, // This field specifies whether or not to use the horizontal direction 1/2 scaler.
+    interlace: bool, // This register specifies whether or not to use flicker-free interlace mode type B.
+    field_select: u1, // This register specifies the field that is to be stored in the frame buffer in flicker-free interlace mode type B.
+    _reserved: u13,
+};
+
 pub const FB_W_CTRL = packed struct(u32) {
-    fb_packmode: u3,
-    fb_dither: u1,
+    fb_packmode: enum(u3) {
+        KRGB0555 = 0, // Bit 15 is the value of fb_kval[7].
+        RGB565 = 1,
+        ARGB4444 = 2,
+        ARGB1555 = 3, // The alpha value is determined by comparison with the value of fb_alpha_threshold.
+        RGB888 = 4,
+        KRGB0888 = 5, // K is the value of fk_kval
+        ARGB8888 = 6,
+        Reserved = 7,
+    },
+    fb_dither: bool, // Dithering enable
     _0: u4,
-    fb_kval: u8,
-    fb_alpha_threshold: u8,
+    fb_kval: u8, // This field sets the K value for writing to the frame buffer. (default = 0x00)
+    fb_alpha_threshold: u8, // This field sets the comparison value that is used to determine the alpha value when the data that is written to the frame buffer is ARGB1555 format data. (default = 0x00) When pixel alpha ≥ fb_alpha_threshold, a "1" is written in the alpha value.
     _1: u8,
+};
+
+pub const FB_CLIP = packed struct(u32) {
+    min: u11 = 0,
+    _0: u5 = 0,
+    max: u11 = 0,
+    _1: u5 = 0,
 };
 
 pub const FB_R_CTRL = packed struct(u32) {
@@ -228,6 +255,29 @@ pub const TEXT_CONTROL = packed struct(u32) {
     index_endian_reg: u1 = 0, // 0 = Little Endian, 1 = Big Endian
     code_book_endian_reg: u1 = 0,
     _r2: u14,
+};
+
+pub const VO_CONTROL = packed struct(u32) {
+    hsync_pool: u1, // Polarity of HSYNC (0 = active low, 1 = active high)
+    vsync_pool: u1, // Polarity of VSYNC (0 = active low, 1 = active high)
+    blank_pool: u1, // Polarity of BLANK (0 = active low, 1 = active high)
+    blank_video: u1, // This field specifies whether to display the screen or not. 0: Display the screen, 1: Do not display the screen. (Display the border color.) (default)
+    field_mode: enum(u4) {
+        SPG = 0, // Use field flag from SPG. (default)
+        InverseSPG = 1, // Use inverse of field flag from SPG.
+        Field1 = 2, // Field 1 fixed.
+        Field2 = 3, // Field 2 fixed.
+        Field1Sync = 4, // Field 1 when the active edges of HSYNC and VSYNC match.
+        Field2Sync = 5, // Field 2 when the active edges of HSYNC and VSYNC match.
+        Field1Async = 6, // Field 1 when HSYNC becomes active in the middle of the VSYNC active edge.
+        Field2Async = 7, // Field 2 when HSYNC becomes active in the middle of the VSYNC active edge.
+        VsyncInverted = 8, // Inverted at the active edge of VSYNC
+        _, // Reserved
+    },
+    pixel_double: bool, // This field specifies whether to output the same pixel or not for two pixels in the horizontal direction. 0: not pixel double, 1: pixel double (default)
+    _r0: u7,
+    pclk_delay: u6, // This field specifies the delay for the PCLK signal to the DAC.
+    _r1: u10,
 };
 
 pub const TA_ALLOC_CTRL = packed struct(u32) {
@@ -2000,6 +2050,58 @@ pub const Holly = struct {
         @as(*T, @alignCast(@ptrCast(
             self._get_vram(addr),
         ))).* = value;
+    }
+
+    pub fn write_framebuffer(self: *@This(), pixels: []const u8) void {
+        // TODO: Absolutely not done.
+        const scaler_ctl = self._get_register(SCALER_CTL, .SCALER_CTL).*;
+        const w_ctrl = self._get_register(FB_W_CTRL, .FB_W_CTRL).*;
+        const x_clip = self._get_register(FB_CLIP, .FB_X_CLIP).*;
+        const y_clip = self._get_register(FB_CLIP, .FB_Y_CLIP).*;
+        const video_out_ctrl = self._get_register(VO_CONTROL, .VO_CONTROL).*;
+
+        _ = scaler_ctl;
+        _ = video_out_ctrl;
+
+        const interlaced = false; // TODO: Support interlacing?
+        const field = if (interlaced and false) 1 else 0; // TODO
+        const FB_W_SOF = self._get_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2).*; // TODO: Support interlacing?
+        if (FB_W_SOF & 0x1000000 != 0) {
+            std.log.warn(termcolor.yellow("TODO: Write to texture! FB_W_SOF:{X:0>8}"), .{FB_W_SOF});
+            return;
+        }
+
+        const resolution = struct {
+            const width = 640;
+            const height = 480;
+        };
+
+        const FB_W_LINESTRIDE = 8 * (self._get_register(u32, .FB_W_LINESTRIDE).* & 0x1FF);
+        const line_offset = field; // TODO: Support interlacing?
+        const height = resolution.height / 2; // When?
+        for (y_clip.min..@min(height, y_clip.max)) |y| {
+            for (x_clip.min..@min(resolution.width, x_clip.max)) |x| {
+                const idx = ((2 * y + line_offset) * resolution.width + x) * 4;
+                switch (w_ctrl.fb_packmode) {
+                    .RGB565 => {
+                        const addr = FB_W_SOF + y * FB_W_LINESTRIDE + 2 * x;
+                        var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
+                        pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
+                        pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
+                        pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
+                    },
+                    .RGB888 => {
+                        const addr = FB_W_SOF + y * FB_W_LINESTRIDE + 3 * x;
+                        self.vram[addr + 0] = pixels[idx + 2];
+                        self.vram[addr + 1] = pixels[idx + 1];
+                        self.vram[addr + 2] = pixels[idx + 0];
+                    },
+                    else => {
+                        std.log.warn("TODO: {}", .{w_ctrl.fb_packmode});
+                    },
+                }
+            }
+        }
     }
 
     pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {

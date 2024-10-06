@@ -12,6 +12,7 @@ const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const GDI = @import("./gdi.zig").GDI;
 const Holly = @import("./holly.zig");
+const Colors = @import("./colors.zig");
 const MapleModule = @import("./maple.zig");
 
 const zgui = @import("zgui");
@@ -106,6 +107,27 @@ pub const std_options: std.Options = .{
 
 fn trapa_handler(app: *anyopaque) void {
     @as(*Deecy, @alignCast(@ptrCast(app))).stop();
+}
+
+// FIXME: Temp PoC, do better.
+var fb_mapping_available: bool = false;
+fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
+    switch (status) {
+        .success => {},
+        else => std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)}),
+    }
+    fb_mapping_available = true;
+}
+fn write_back_fb(d: *Deecy) void {
+    defer d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.unmap();
+    const mapped_pixels = d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.getConstMappedRange(
+        u8,
+        0,
+        4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
+    );
+    if (mapped_pixels) |pixels| {
+        d.dc.gpu.write_framebuffer(pixels);
+    } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
 }
 
 pub fn main() !void {
@@ -262,16 +284,9 @@ pub fn main() !void {
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
         if (d.dc.gpu.dirty_framebuffer) {
-            if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
-                // FIXME: While this allows IP.bin display correctly, there are distracting artifacts in multiple games,
-                //        and it doesn't fix the cases where it actually matters (like Namco Museum for example).
-                //        Disabling it for now.
-                if (false) {
-                    d.renderer.update_framebuffer_texture(&d.dc.gpu);
-                    d.renderer.blit_framebuffer();
-                }
-                d.dc.gpu.dirty_framebuffer = false;
-            }
+            d.renderer.update_framebuffer_texture(&d.dc.gpu);
+            d.renderer.blit_framebuffer();
+            d.dc.gpu.dirty_framebuffer = false;
         }
 
         const render_start = d.renderer.render_start;
@@ -287,11 +302,32 @@ pub fn main() !void {
             d.last_frame_timestamp = now;
         }
 
-        const always_render = builtin.mode != .ReleaseFast; // Enable to re-render every time and help capturing with RenderDoc.
-        if (always_render or render_start)
+        const always_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
+        if (always_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
 
-        d.renderer.draw(); //  Blit to screen
+            if (RendererModule.ExperimentalFBWriteBack) {
+                d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.mapAsync(
+                    .{ .read = true },
+                    0,
+                    4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
+                    @ptrCast(&signal_fb_mapped),
+                    null,
+                );
+                // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
+                // It needs to be unmapped before the next frame.
+                while (!fb_mapping_available) {
+                    d.gctx.device.tick();
+                }
+                fb_mapping_available = false;
+
+                write_back_fb(d);
+            }
+        }
+
+        if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
+            d.renderer.draw(); //  Blit to screen
+        }
 
         try d.draw_ui();
 
