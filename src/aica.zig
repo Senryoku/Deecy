@@ -134,6 +134,14 @@ pub const LPFRates2 = packed struct(u32) {
     pub const Mask: u32 = 0x1F1F;
 };
 
+pub const DSPOutputMixer = packed struct(u32) {
+    efpan: u5, // Effect output pan. This works the same as the direct output pan register.
+    _0: u3,
+    efsdl: u4, // Effect output level. 0xF is no attenuation (full volume), and each value below that increases the attenuation by 3dB.
+    _1: u4,
+    _2: u16,
+};
+
 // NOTE: Only the lower 16bits of each registers are actually used.
 pub const AICAChannel = packed struct(u576) {
     play_control: PlayControl, //             0x00
@@ -450,6 +458,28 @@ const EnvelopeDecayValue = [_][4]u4{
     .{ 8, 8, 8, 8 },
 };
 
+fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, right: i32 } {
+    const att = 0xF - level;
+    var left_att: u8 = att;
+    var right_att: u8 = att;
+    // PAN == 0x00 and 0x10 means center (no attenuation)
+    const pan_att = pan & 0xF;
+    // 5th bit selects the side to attenuate
+    if (pan & 0x10 == 0x10) {
+        right_att += pan_att;
+    } else {
+        left_att += pan_att;
+    }
+
+    var left: i32 = 0;
+    var right: i32 = 0;
+    if (left_att < 0xF)
+        left = @divTrunc(sample, std.math.pow(i32, 2, left_att));
+    if (right_att < 0xF)
+        right = @divTrunc(sample, std.math.pow(i32, 2, right_att));
+    return .{ .left = left, .right = right };
+}
+
 // Memory Map
 // SH4 Side             Internal
 // 00800000 - 00FFFFFF  00000000 - 007FFFFF  DRAM_AREA*
@@ -580,8 +610,12 @@ pub const AICA = struct {
         return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
 
-    fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
+    pub fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
+    }
+
+    fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
+        return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * channel) / 4])));
     }
 
     pub fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
@@ -927,7 +961,6 @@ pub const AICA = struct {
             //        0xD       |   -6dB
             //        0xE       |   -3dB
             //        0xF       |    0dB
-            const attenuation = std.math.pow(i32, 2, 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F));
             {
                 @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2 * sample_count, self.sample_buffer.len)], 0);
                 if (self.sample_write_offset + 2 * sample_count > self.sample_buffer.len)
@@ -938,22 +971,31 @@ pub const AICA = struct {
                 }
 
                 // Stream from GD-ROM
+                const left_out = self.get_reg(DSPOutputMixer, .CDDAOutputLeft).*;
+                const right_out = self.get_reg(DSPOutputMixer, .CDDAOutputRight).*;
                 for (0..sample_count) |i| {
                     const samples = dc.gdrom.get_cdda_samples();
-                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= samples[0];
-                    self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= samples[1];
+                    // I guess each channel can be independently redirected. That's a little weird, but mmh, ok.
+                    const left_sample = apply_pan_attenuation(samples[0], left_out.efsdl, left_out.efpan);
+                    const right_sample = apply_pan_attenuation(samples[1], right_out.efsdl, right_out.efpan);
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= left_sample.left;
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= right_sample.left;
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= left_sample.right;
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= right_sample.right;
                 }
 
-                if (attenuation == 0) {
+                const attenuation = 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F);
+                if (attenuation == 0xF) {
                     for (0..sample_count) |i| {
                         self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] = 0;
                         self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] = 0;
                     }
-                } else if (attenuation > 1) {
+                } else {
+                    const factor = std.math.pow(i32, 2, attenuation);
                     for (0..sample_count) |i| {
                         // zig doesn't have a arithmetic shift right :(
-                        self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len], attenuation);
-                        self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len], attenuation);
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len], factor);
+                        self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len], factor);
                     }
                 }
 
@@ -1153,36 +1195,22 @@ pub const AICA = struct {
                 const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
                 // Direct send to the DAC
                 if (disdl != 0) { // 0 means full attenuation, not send.
-                    var left_att: u8 = 0xF ^ disdl;
-                    var right_att: u8 = 0xF ^ disdl;
-                    // DIPAN == 0x00 and 0x10 means center (no attenuation)
-                    const pan_att = dipan & 0xF;
-                    // 5th bit selects the side to attenuate
-                    if (dipan & 0x10 == 0x10) {
-                        right_att += pan_att;
-                    } else {
-                        left_att += pan_att;
-                    }
-                    const left_att_multiplier = 4 - (left_att & 1);
-                    const right_att_multiplier = 4 - (right_att & 1);
-                    const left_att_shift = 2 + (left_att >> 1);
-                    const right_att_shift = 2 + (right_att >> 1);
-
-                    if (left_att_shift < 16)
-                        self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= (sample * left_att_multiplier) >> @truncate(left_att_shift);
-                    if (right_att_shift < 16)
-                        self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= (sample * right_att_multiplier) >> @truncate(right_att_shift);
+                    const s = apply_pan_attenuation(sample, disdl, dipan);
+                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
+                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
                 }
                 // TODO: DSP!
                 if (registers.dps_channel_send.level != 0) {
                     const channel = registers.dps_channel_send.channel;
-                    _ = channel;
+                    const channel_mix = self.get_dsp_mix_register(channel);
                     // TEMP: Bypassing the DSP and outputting directly. Some sound without DSP effects is better that nothing for now.
-                    const att: u4 = 0xF ^ registers.dps_channel_send.level;
-                    const att_multiplier = 4 - (att & 1);
-                    const att_shift = 2 + (att >> 1);
-                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
-                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= (sample * att_multiplier) >> att_shift;
+                    const att: u4 = 0xF - registers.dps_channel_send.level;
+                    const attenuated = @divTrunc(sample, std.math.pow(i32, 2, att));
+
+                    const s = apply_pan_attenuation(attenuated, channel_mix.efsdl, channel_mix.efpan);
+
+                    self.sample_buffer[(2 * i + 0) % self.sample_buffer.len] +|= s.left;
+                    self.sample_buffer[(2 * i + 1) % self.sample_buffer.len] +|= s.right;
                 }
             }
 

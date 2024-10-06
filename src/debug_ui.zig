@@ -437,6 +437,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("AICA", .{})) {
         zgui.text("Master Volume: {X}", .{dc.aica.debug_read_reg(u32, .MasterVolume) & 0xF});
+        const cdda_out_left = dc.aica.get_reg(AICAModule.DSPOutputMixer, .CDDAOutputLeft).*;
+        zgui.text("CDDA Left:  Level: {X}, Pan: {X}", .{ cdda_out_left.efsdl, cdda_out_left.efpan });
+        const cdda_out_right = dc.aica.get_reg(AICAModule.DSPOutputMixer, .CDDAOutputRight).*;
+        zgui.text("CDDA Right: Level: {X}, Pan: {X}", .{ cdda_out_right.efsdl, cdda_out_right.efpan });
         zgui.text("Ring buffer address: 0x{X:0>8}", .{dc.aica.debug_read_reg(u32, .RingBufferAddress)});
         const channel_info_req = dc.aica.debug_read_reg(AICAModule.ChannelInfoReq, .ChannelInfoReq);
         zgui.text("Channel Select: {d: >2} ({s})", .{ channel_info_req.monitor_select, if (channel_info_req.amplitude_or_filter_select == 1) "filter" else "amplitude" });
