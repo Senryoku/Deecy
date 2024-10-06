@@ -23,7 +23,7 @@ jobs:
               run: mv /home/runner/dev/sh4_json/ ../SingleStepTests_sh4/
             - uses: mlugg/setup-zig@v1
               with:
-                version: 0.13.0-dev.351+64ef45eb0
+                version: 0.14.0-dev.1710+8ee52f99c
             - uses: actions/checkout@v4
               with:
                 submodules: 'true'
