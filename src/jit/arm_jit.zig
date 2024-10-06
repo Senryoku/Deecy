@@ -169,7 +169,7 @@ pub const ARM7JIT = struct {
                     if (err == error.JITCacheFull) {
                         try self.block_cache.reset();
                         arm_jit_log.info("JIT cache purged.", .{});
-                        break :retry self.compile(.{ .address = pc, .cpu = cpu }, instructions);
+                        break :retry try self.compile(.{ .address = pc, .cpu = cpu }, instructions);
                     } else break :retry err;
                 });
             }

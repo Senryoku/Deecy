@@ -11,7 +11,7 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions.
 
 ```sh
-zigup 0.13.0-dev.351+64ef45eb0
+zigup 0.14.0-dev.1710+8ee52f99c
 ```
 
 ```sh

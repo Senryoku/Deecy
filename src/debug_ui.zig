@@ -65,15 +65,15 @@ fn display(self: anytype) void {
 
     const info = @typeInfo(@TypeOf(self));
     comptime var max_length = 0;
-    inline for (info.Struct.fields) |field| {
+    inline for (info.@"struct".fields) |field| {
         max_length = @max(max_length, field.name.len);
     }
-    inline for (info.Struct.fields) |field| {
+    inline for (info.@"struct".fields) |field| {
         // Hide "private" (or hidden) fields - Meaning those starting with an underscore.
         if (!std.mem.startsWith(u8, field.name, "_")) {
             switch (@typeInfo(field.type)) {
-                .Enum => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {s}", .{ field.name, @tagName(@field(self, field.name)) }),
-                .Struct => {
+                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {s}", .{ field.name, @tagName(@field(self, field.name)) }),
+                .@"struct" => {
                     if (zgui.collapsingHeader(field.name ++ " (" ++ @typeName(field.type) ++ ")", .{})) {
                         display(@field(self, field.name));
                     }
@@ -840,6 +840,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Renderer", .{})) {
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
+        zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
         zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
         zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});
         zgui.text("FPU_SHAD_SCALE: {d: >4.2}", .{d.renderer.fpu_shad_scale});
@@ -903,7 +904,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Interrupts", .{})) {
-        inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).Struct.fields) |field| {
+        inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".fields) |field| {
             if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
                 comptime var val: HardwareRegisters.SB_ISTNRM = .{};
                 @field(val, field.name) = 1;
@@ -913,7 +914,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         zgui.separator();
 
-        inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).Struct.fields) |field| {
+        inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".fields) |field| {
             if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
                 comptime var val: HardwareRegisters.SB_ISTEXT = .{};
                 @field(val, field.name) = 1;

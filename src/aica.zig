@@ -230,7 +230,7 @@ pub const AICARegister = enum(u32) {
 fn bitfield_format(self: anytype, writer: anytype) !void {
     var first = true;
     try writer.writeAll("(");
-    inline for (@typeInfo(InterruptBits).Struct.fields) |field| {
+    inline for (@typeInfo(InterruptBits).@"struct".fields) |field| {
         if (@field(self, field.name) == 1) {
             if (!first) try writer.writeAll(" | ");
             try writer.writeAll(field.name);
@@ -977,10 +977,10 @@ pub const AICA = struct {
                     const samples = dc.gdrom.get_cdda_samples();
                     // I guess each channel can be independently redirected. That's a little weird, but mmh, ok.
                     const left_sample = apply_pan_attenuation(samples[0], left_out.efsdl, left_out.efpan);
-                    const right_sample = apply_pan_attenuation(samples[1], right_out.efsdl, right_out.efpan);
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= left_sample.left;
-                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= right_sample.left;
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= left_sample.right;
+                    const right_sample = apply_pan_attenuation(samples[1], right_out.efsdl, right_out.efpan);
+                    self.sample_buffer[(self.sample_write_offset + 2 * i + 0) % self.sample_buffer.len] +|= right_sample.left;
                     self.sample_buffer[(self.sample_write_offset + 2 * i + 1) % self.sample_buffer.len] +|= right_sample.right;
                 }
 

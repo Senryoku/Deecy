@@ -699,7 +699,7 @@ pub const Emitter = struct {
         }
 
         if (@sizeOf(T) == 1) {
-            if (@typeInfo(T) == .Enum) {
+            if (@typeInfo(T) == .@"enum") {
                 try self.emit_byte(@intFromEnum(value));
             } else {
                 try self.emit_byte(@bitCast(value));

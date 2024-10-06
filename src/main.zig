@@ -25,14 +25,14 @@ const Deecy = @import("deecy.zig").Deecy;
 
 pub fn customLog(
     comptime message_level: std.log.Level,
-    comptime scope: @Type(.EnumLiteral),
+    comptime scope: @Type(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
     const static = struct {
         var last_message: struct {
             message_level: std.log.Level,
-            // scope: @Type(.EnumLiteral),
+            // scope: @Type(.enum_literal),
             format: []const u8,
             args_hash: u64,
         } = undefined;
