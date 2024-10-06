@@ -110,17 +110,24 @@ fn trapa_handler(app: *anyopaque) void {
 }
 
 // FIXME: Temp PoC, do better.
-const ExperimentalFBWriteBack = true;
-var fb_mapping_requested: bool = false;
 var fb_mapping_available: bool = false;
-fn tmp_bad_sync(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
+fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
     switch (status) {
         .success => {},
-        else => {
-            std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)});
-        },
+        else => std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)}),
     }
     fb_mapping_available = true;
+}
+fn write_back_fb(d: *Deecy) void {
+    defer d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.unmap();
+    const mapped_pixels = d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.getConstMappedRange(
+        u8,
+        0,
+        4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
+    );
+    if (mapped_pixels) |pixels| {
+        d.dc.gpu.write_framebuffer(pixels);
+    } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
 }
 
 pub fn main() !void {
@@ -299,15 +306,22 @@ pub fn main() !void {
         if (always_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
 
-            if (ExperimentalFBWriteBack) {
+            if (RendererModule.ExperimentalFBWriteBack) {
                 d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.mapAsync(
                     .{ .read = true },
                     0,
                     4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-                    @ptrCast(&tmp_bad_sync),
+                    @ptrCast(&signal_fb_mapped),
                     null,
                 );
-                fb_mapping_requested = true;
+                // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
+                // It needs to be unmapped before the next frame.
+                while (!fb_mapping_available) {
+                    d.gctx.device.tick();
+                }
+                fb_mapping_available = false;
+
+                write_back_fb(d);
             }
         }
 
@@ -319,52 +333,6 @@ pub fn main() !void {
 
         if (d.gctx.present() == .swap_chain_resized) {
             d.renderer.update_blit_to_screen_vertex_buffer();
-        }
-
-        if (ExperimentalFBWriteBack and fb_mapping_requested) {
-            fb_mapping_requested = false;
-
-            while (!fb_mapping_available) {
-                d.gctx.device.tick();
-            }
-            fb_mapping_available = false;
-            defer d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.unmap();
-
-            const mapped_pixels = d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.getConstMappedRange(
-                u8,
-                0,
-                4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-            );
-            if (mapped_pixels) |pixels| {
-                const FB_W_CTRL = dc.gpu._get_register(Holly.FB_W_CTRL, .FB_W_CTRL).*;
-                const FB_W_SOF1 = dc.gpu._get_register(u32, .FB_W_SOF1).*; // TODO: Support interlacing?
-                const FB_W_LINESTRIDE = 8 * dc.gpu._get_register(u32, .FB_W_LINESTRIDE).*;
-                for (0..Renderer.NativeResolution.height) |y| {
-                    for (0..Renderer.NativeResolution.width) |x| {
-                        const idx = (y * Renderer.NativeResolution.width + x) * 4;
-                        switch (FB_W_CTRL.fb_packmode) {
-                            .RGB565 => {
-                                const addr = FB_W_SOF1 + y * FB_W_LINESTRIDE + 2 * x;
-                                var pixel: *Colors.Color16 = @alignCast(@ptrCast(&dc.gpu.vram[addr]));
-                                pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
-                                pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
-                                pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
-                            },
-                            .RGB888 => {
-                                const addr = FB_W_SOF1 + y * FB_W_LINESTRIDE + 3 * x;
-                                dc.gpu.vram[addr + 0] = pixels[idx + 2];
-                                dc.gpu.vram[addr + 1] = pixels[idx + 1];
-                                dc.gpu.vram[addr + 2] = pixels[idx + 0];
-                            },
-                            else => {
-                                std.log.warn("TODO: {}", .{FB_W_CTRL.fb_packmode});
-                            },
-                        }
-                    }
-                }
-            } else {
-                std.log.err(termcolor.red("Failed to map framebuffer"), .{});
-            }
         }
     }
 }

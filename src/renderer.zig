@@ -18,6 +18,8 @@ const YUV422 = Colors.YUV422;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const HollyModule = @import("holly.zig");
 
+pub const ExperimentalFBWriteBack = false;
+
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
 var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
 
@@ -482,7 +484,7 @@ pub const Renderer = struct {
     // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
     framebuffer_texture_view: zgpu.TextureViewHandle,
-    framebuffer_copy_buffer: zgpu.BufferHandle,
+    framebuffer_copy_buffer: if (ExperimentalFBWriteBack) zgpu.BufferHandle else void, // Intermediate buffer used to read pixels back to main RAM.
     // Framebuffer at window resolution to draw on
     resized_framebuffer_texture: zgpu.TextureHandle = undefined,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle = undefined,
@@ -544,10 +546,10 @@ pub const Renderer = struct {
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
-        const framebuffer_copy_buffer = gctx.createBuffer(.{
+        const framebuffer_copy_buffer = if (ExperimentalFBWriteBack) gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .map_read = true },
             .size = 4 * NativeResolution.width * NativeResolution.height,
-        });
+        }) else {};
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
@@ -1199,7 +1201,8 @@ pub const Renderer = struct {
 
         self._gctx.releaseResource(self.framebuffer_texture_view);
         self._gctx.releaseResource(self.framebuffer_texture);
-        self._gctx.releaseResource(self.framebuffer_copy_buffer);
+        if (ExperimentalFBWriteBack)
+            self._gctx.releaseResource(self.framebuffer_copy_buffer);
 
         self._gctx.releaseResource(self.framebuffer_resize_bind_group);
 
@@ -2846,27 +2849,28 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            encoder.copyTextureToBuffer(
-                .{
-                    .texture = gctx.lookupResource(self.framebuffer_texture).?,
-                    .mip_level = 0,
-                    .origin = .{},
-                    .aspect = .all,
-                },
-                .{
-                    .layout = .{
-                        .offset = 0,
-                        .bytes_per_row = 4 * NativeResolution.width,
-                        .rows_per_image = NativeResolution.height,
+            if (ExperimentalFBWriteBack)
+                encoder.copyTextureToBuffer(
+                    .{
+                        .texture = gctx.lookupResource(self.framebuffer_texture).?,
+                        .mip_level = 0,
+                        .origin = .{},
+                        .aspect = .all,
                     },
-                    .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
-                },
-                .{
-                    .width = NativeResolution.width,
-                    .height = NativeResolution.height,
-                    .depth_or_array_layers = 1,
-                },
-            );
+                    .{
+                        .layout = .{
+                            .offset = 0,
+                            .bytes_per_row = 4 * NativeResolution.width,
+                            .rows_per_image = NativeResolution.height,
+                        },
+                        .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
+                    },
+                    .{
+                        .width = NativeResolution.width,
+                        .height = NativeResolution.height,
+                        .depth_or_array_layers = 1,
+                    },
+                );
 
             break :commands encoder.finish(null);
         };
