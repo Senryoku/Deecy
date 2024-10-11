@@ -78,7 +78,7 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
         for (0..6) |c| {
             var byte = row[5 - c];
             for (0..8) |b| {
-                const val: u8 = if (byte & 0x1 == 0x1) 0xFF else 0;
+                const val: u8 = if (byte & 0x1 == 0x1) 0 else 0xFF;
                 const idx = 4 * (48 * r + (8 * c + b));
                 pixels[idx + 0] = val;
                 pixels[idx + 1] = val;
