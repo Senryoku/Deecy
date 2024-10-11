@@ -403,12 +403,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
 
     if (zgui.beginPopupModal("Error: Missing Flash", .{ .flags = .{ .always_auto_resize = true } })) {
-        zgui.text("Failed to set region. Did you put flash files in 'data/[region]/'?", .{});
-        zgui.text("Your data folder should look like:", .{});
-        zgui.text("  data/dc_boot.bin", .{});
-        zgui.text("  data/us/dc_flash.bin", .{});
-        zgui.text("  data/eu/dc_flash.bin", .{});
-        zgui.text("  data/jp/dc_flash.bin", .{});
+        zgui.text("Failed to load flash. Did you put a copy of 'dc_flash.bin' in 'data/'?", .{});
         if (zgui.button("OK", .{})) {
             zgui.closeCurrentPopup();
         }
