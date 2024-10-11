@@ -749,8 +749,8 @@ pub const Deecy = struct {
                     const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
                     static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
                 } else {
-                    static.timestamp_diff.tv_sec = 0;
-                    static.timestamp_diff.tv_nsec = target_frame_time;
+                    static.timestamp_diff.sec = 0;
+                    static.timestamp_diff.nsec = target_frame_time;
                 }
             }
 
@@ -766,10 +766,10 @@ pub const Deecy = struct {
                         if (builtin.os.tag == .windows) {
                             self.dc_last_frame.timestamp += static.timestamp_diff;
                         } else {
-                            self.dc_last_frame.timestamp.tv_sec += static.timestamp_diff.tv_sec;
-                            self.dc_last_frame.timestamp.tv_nsec += static.timestamp_diff.tv_nsec;
-                            self.dc_last_frame.timestamp.tv_sec += @divTrunc(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
-                            self.dc_last_frame.timestamp.tv_nsec = @rem(self.dc_last_frame.timestamp.tv_nsec, std.time.ns_per_s);
+                            self.dc_last_frame.timestamp.sec += static.timestamp_diff.sec;
+                            self.dc_last_frame.timestamp.nsec += static.timestamp_diff.nsec;
+                            self.dc_last_frame.timestamp.sec += @divTrunc(self.dc_last_frame.timestamp.nsec, std.time.ns_per_s);
+                            self.dc_last_frame.timestamp.nsec = @rem(self.dc_last_frame.timestamp.nsec, std.time.ns_per_s);
                         }
                     } else {
                         // We're way too slow, don't try to compensate.
