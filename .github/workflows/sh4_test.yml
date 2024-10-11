@@ -21,10 +21,13 @@ jobs:
               run: python ./transcode_json.py
             - name: Move JSON test files to final location
               run: mv /home/runner/dev/sh4_json/ ../SingleStepTests_sh4/
-            - uses: mlugg/setup-zig@v1
-              with:
-                version: 0.14.0-dev.1710+8ee52f99c
             - uses: actions/checkout@v4
               with:
                 submodules: 'true'
+            - name: Get zig version
+              id: zigversion
+              run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
+            - uses: mlugg/setup-zig@v1
+              with:
+                version: ${{ steps.zigversion.outputs.version }}
             - run: zig build sh4_test --summary all
