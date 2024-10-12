@@ -28,7 +28,6 @@ You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files i
 Linux isn't fully supported yet.
 nfd-zig (native file dialog) needs these additional dependencies on Linux:
 ```sh
-sudo apt install librust-atk-dev
 sudo apt install libgtk-3-dev
 ```
 
@@ -61,7 +60,6 @@ sudo apt install libgtk-3-dev
 
 ### Nice to have
 
--   Display VMU animation :^)
 -   Some (rendering) performance metrics directly in the emulator?
 -   GDROM-DMA: Uses a superfluous memcpy (gdrom -> dma-queue -> ram). Not a huge deal on my main system, but I bet it's noticeable on lower end devices.
 
