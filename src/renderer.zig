@@ -514,6 +514,7 @@ pub const Renderer = struct {
     fog_col_vert: fRGBA = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
+    global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
 
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
@@ -1973,6 +1974,13 @@ pub const Renderer = struct {
             self.fog_lut[i] = @as([*]u32, @ptrCast(@constCast(gpu)._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
         }
 
+        const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
+        const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
+        self.global_clip.x.min = x_clip.min;
+        self.global_clip.x.max = x_clip.max;
+        self.global_clip.y.min = y_clip.min;
+        self.global_clip.y.max = y_clip.max;
+
         try self.update_background(gpu);
 
         for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
@@ -2392,21 +2400,32 @@ pub const Renderer = struct {
     }
 
     fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
+        const factor = @divTrunc(self.resolution.width, NativeResolution.width);
+        const x = factor * self.global_clip.x.min;
+        const y = factor * self.global_clip.y.min;
+        const width = @min(factor * (self.global_clip.x.max - self.global_clip.x.min), self.resolution.width);
+        const height = @min(factor * (self.global_clip.y.max - self.global_clip.y.min), self.resolution.height);
+
         if (user_clip) |uc| {
             // FIXME: Handle other usages.
             //        Use Stencil for OutsideEnabled
             if (uc.usage == .InsideEnabled) {
-                const factor = @divTrunc(self.resolution.width, NativeResolution.width);
                 return .{
                     .usage = .InsideEnabled,
-                    .x = @max(0, factor * uc.x),
-                    .y = @max(0, factor * uc.y),
-                    .width = @min(factor * uc.width, self.resolution.width),
-                    .height = @min(factor * uc.height, self.resolution.height),
+                    .x = @max(factor * uc.x, x),
+                    .y = @max(factor * uc.y, y),
+                    .width = @min(factor * uc.width, width),
+                    .height = @min(factor * uc.height, height),
                 };
             }
         }
-        return .{ .usage = .InsideEnabled, .x = 0, .y = 0, .width = self.resolution.width, .height = self.resolution.height };
+        return .{
+            .usage = .InsideEnabled,
+            .x = x,
+            .y = y,
+            .width = width,
+            .height = height,
+        };
     }
 
     // Convert Framebuffer from native 640*480 to window resolution
