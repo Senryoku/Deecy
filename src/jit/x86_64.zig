@@ -466,7 +466,7 @@ pub const FPRegister = enum(u4) {
     }
 };
 
-const REX = packed struct(u8) {
+pub const REX = packed struct(u8) {
     b: bool = false, // Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
     x: bool = false, // Extension of the SIB index field
     r: bool = false, // Extension of the ModR/M reg field
