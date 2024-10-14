@@ -1,5 +1,8 @@
 const std = @import("std");
 
+pub const EXCEPTION_CONTINUE_EXECUTION: c_long = -1;
+pub const EXCEPTION_EXECUTE_HANDLER: c_long = 1;
+
 // Some additional bindings for Windows APIs
 
 pub extern "kernel32" fn OpenFileMappingA(

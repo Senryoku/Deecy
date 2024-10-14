@@ -98,6 +98,61 @@ const ScheduledInterrupt = struct {
 // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
+const ExperimentalFastMem = true;
+var GLOBAL_DREAMCAST: ?*Dreamcast = null;
+fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(std.os.windows.WINAPI) c_long {
+    switch (info.ExceptionRecord.ExceptionCode) {
+        std.os.windows.EXCEPTION_ACCESS_VIOLATION => {
+            var dc = GLOBAL_DREAMCAST.?;
+            const access_type: enum(u1) { read = 0, write = 1 } = @enumFromInt(info.ExceptionRecord.ExceptionInformation[0]);
+            const fault_address = info.ExceptionRecord.ExceptionInformation[1];
+
+            if (fault_address >= @intFromPtr(dc._virtual_address_space) and fault_address < @intFromPtr(dc._virtual_address_space) + 0x1_0000_0000) {
+                std.debug.print("  Access Violation: {s} @ {X}\n", .{ @tagName(access_type), fault_address });
+                const instruction: [*]u8 = @ptrFromInt(info.ContextRecord.Rip);
+                std.debug.print("   Instr: {X:0>2}\n", .{instruction[0]});
+
+                const addr: u32 = fault_address - @intFromPtr(dc._virtual_address_space);
+
+                switch (access_type) {
+                    .read => {
+                        // TODO: Skip instruction
+                        switch (instruction[0]) {
+                            0x8A => {
+                                info.ContextRecord.Rax = dc.cpu.read(u8, addr);
+                                info.ContextRecord.Rip += 2;
+                            },
+                            else => {
+                                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                            },
+                        }
+                    },
+                    .write => {
+                        // TODO: Skip instruction
+                        switch (instruction[0]) {
+                            0xC6 => {
+                                const modrm: x86_64.MODRM = @bitCast(instruction[1]);
+                                std.debug.print("MODRM: {any}\n", .{modrm});
+                                info.ContextRecord.Rip += 3;
+                            },
+                            else => {
+                                std.debug.print("REX?", .{});
+                                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                            },
+                        }
+                    },
+                }
+                return windows.EXCEPTION_CONTINUE_EXECUTION; // Not defined in std
+            }
+        },
+        else => {
+            std.debug.print("  Unhandled Exception: {}\n", .{info.ExceptionRecord.ExceptionCode});
+            return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+        },
+    }
+    return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+}
+
 const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
@@ -112,9 +167,9 @@ pub const Dreamcast = struct {
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
 
-    boot: []u8 align(4),
+    boot: []u8 align(4) = undefined,
     flash: Flash,
-    ram: []u8 align(4),
+    ram: []u8 align(4) = undefined,
     hardware_registers: []u8 align(4),
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
@@ -126,6 +181,8 @@ pub const Dreamcast = struct {
 
     _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
 
+    _virtual_address_space: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
+
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
@@ -135,13 +192,26 @@ pub const Dreamcast = struct {
             .maple = try MapleHost.init(allocator),
             .gdrom = try GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
-            .boot = try allocator.alloc(u8, 0x200000),
             .flash = try Flash.init(allocator),
-            .ram = try allocator.alloc(u8, 0x0100_0000),
             .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
             .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
             ._allocator = allocator,
         };
+
+        if (ExperimentalFastMem) {
+            dc._virtual_address_space = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
+            const boot = try std.os.windows.VirtualAlloc(@ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0000_0000), 0x200000, std.os.windows.MEM_COMMIT, std.os.windows.PAGE_READWRITE);
+            dc.boot = @as([*]u8, @ptrCast(boot))[0..0x200000];
+            const ram = try std.os.windows.VirtualAlloc(@ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000), 0x0100_0000, std.os.windows.MEM_COMMIT, std.os.windows.PAGE_READWRITE);
+            dc.ram = @as([*]u8, @ptrCast(ram))[0..0x0100_0000];
+
+            _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
+
+            GLOBAL_DREAMCAST = dc;
+        } else {
+            dc.boot = try allocator.alloc(u8, 0x200000);
+            dc.ram = try allocator.alloc(u8, 0x0100_0000);
+        }
 
         dc.*.aica.setup_arm();
 

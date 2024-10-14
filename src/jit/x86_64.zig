@@ -505,13 +505,13 @@ const Mod = enum(u2) {
     reg = 0b11,
 };
 
-const MODRM = packed struct(u8) {
+pub const MODRM = packed struct(u8) {
     r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
     reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
     mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
 };
 
-const SIB = packed struct(u8) {
+pub const SIB = packed struct(u8) {
     base: u3,
     index: u3,
     scale: Scale,
