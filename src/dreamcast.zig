@@ -108,7 +108,7 @@ fn assign_register(info: *std.os.windows.EXCEPTION_POINTERS, modrm: x86_64.MODRM
     get_register(info, modrm, rex).* = val;
 }
 fn get_register(info: *std.os.windows.EXCEPTION_POINTERS, modrm: x86_64.MODRM, rex: x86_64.REX) *u64 {
-    const reg: u8 = modrm.reg_opcode + if (rex.r) @as(u8, 8) else 0;
+    const reg: u4 = @as(u4, modrm.reg_opcode) + if (rex.r) @as(u4, 8) else 0;
     return switch (reg) {
         0 => &info.ContextRecord.Rax,
         1 => &info.ContextRecord.Rcx,
@@ -126,11 +126,11 @@ fn get_register(info: *std.os.windows.EXCEPTION_POINTERS, modrm: x86_64.MODRM, r
         13 => &info.ContextRecord.R13,
         14 => &info.ContextRecord.R14,
         15 => &info.ContextRecord.R15,
-        else => {
-            std.debug.print("Invalid register: {}\n", .{reg});
-            @panic("Invalid register");
-        },
     };
+}
+fn get_fp_register(info: *std.os.windows.EXCEPTION_POINTERS, modrm: x86_64.MODRM, rex: x86_64.REX) *u128 {
+    const reg: u4 = @as(u4, modrm.reg_opcode) + if (rex.r) @as(u4, 8) else 0;
+    return @ptrCast(&info.ContextRecord.DUMMYUNIONNAME.FloatSave.XmmRegisters[reg]);
 }
 
 fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(std.os.windows.WINAPI) c_long {
@@ -142,61 +142,39 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
 
             if (fault_address >= @intFromPtr(dc._virtual_address_space) and fault_address < @intFromPtr(dc._virtual_address_space) + 0x1_0000_0000) {
                 const addr: u32 = @truncate(fault_address - @intFromPtr(dc._virtual_address_space));
-                std.debug.print("  Access Violation: {s} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
+                //std.debug.print("  Access Violation: {s} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
 
                 var legacy_16 = false;
                 if (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x66) {
                     legacy_16 = true;
-                    std.debug.print("   0x66\n", .{});
+                    //std.debug.print("   0x66\n", .{});
                     info.ContextRecord.Rip += 1;
                 }
 
                 var rex: x86_64.REX = .{};
                 if (0xF0 & @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x40) {
                     rex = @bitCast(@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*);
-                    std.debug.print("   REX: {X:0>2} - {any}\n", .{ @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*, rex });
+                    //std.debug.print("   REX: {X:0>2} - {any}\n", .{ @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*, rex });
                     info.ContextRecord.Rip += 1;
+
+                    if (rex.w and @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* != 0x0F) {
+                        std.debug.print("   64bit mode for {X:0>2}!\n", .{@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*});
+                        @panic("64bit mode!");
+                    }
                 }
 
                 const instruction: [*]u8 = @ptrFromInt(info.ContextRecord.Rip);
-                std.debug.print("   Instr: {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ instruction[0], instruction[1], instruction[2], instruction[3], instruction[4], instruction[5] });
+                //std.debug.print("   Instr: {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ instruction[0], instruction[1], instruction[2], instruction[3], instruction[4], instruction[5] });
                 var modrm: x86_64.MODRM = @bitCast(instruction[1]);
-                std.debug.print("     MODRM: {any}\n", .{modrm});
+                //std.debug.print("     MODRM: {any}\n", .{modrm});
 
                 switch (access_type) {
                     .read => {
-                        // TODO: Skip instruction
                         switch (instruction[0]) {
-                            0x89 => {
-                                // 89 /r - MOV r/m32, r32
-                                if (legacy_16) {
-                                    const val = dc.cpu.read(u16, addr);
-                                    assign_register(info, modrm, rex, val);
-                                } else {
-                                    const val = dc.cpu.read(u32, addr);
-                                    assign_register(info, modrm, rex, val);
-                                }
-                                switch (modrm.mod) {
-                                    .indirect => info.ContextRecord.Rip += 2,
-                                    .disp8 => info.ContextRecord.Rip += 3,
-                                    .disp32 => info.ContextRecord.Rip += 6,
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                                }
-                                // Special case: Skip SIB byte
-                                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
-                            },
                             0x8A => {
                                 // 8A /r - MOV r8, r/m8
                                 const val = dc.cpu.read(u8, addr);
                                 assign_register(info, modrm, rex, val);
-                                switch (modrm.mod) {
-                                    .indirect => info.ContextRecord.Rip += 2,
-                                    .disp8 => info.ContextRecord.Rip += 3,
-                                    .disp32 => info.ContextRecord.Rip += 6,
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                                }
-                                // Special case: Skip SIB byte
-                                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
                             },
                             0x8B => {
                                 if (legacy_16) {
@@ -208,51 +186,46 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
                                     const val = dc.cpu.read(u32, addr);
                                     assign_register(info, modrm, rex, val);
                                 }
-                                switch (modrm.mod) {
-                                    .indirect => info.ContextRecord.Rip += 2,
-                                    .disp8 => info.ContextRecord.Rip += 3,
-                                    .disp32 => info.ContextRecord.Rip += 6,
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                                }
-                                // Special case: Skip SIB byte
-                                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
                             },
                             0x0F => {
+                                info.ContextRecord.Rip += 1;
                                 modrm = @bitCast(instruction[2]);
                                 switch (instruction[1]) {
-                                    0xB7 => {
-                                        // 0F B7 /r - MOVZX r32, r/m16
-                                        const val: u32 = dc.cpu.read(u16, addr);
-                                        assign_register(info, modrm, rex, val);
-                                        switch (modrm.mod) {
-                                            .indirect => info.ContextRecord.Rip += 3,
-                                            .disp8 => info.ContextRecord.Rip += 4,
-                                            .disp32 => info.ContextRecord.Rip += 7,
-                                            else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
+                                    0xB6 => {
+                                        // 0F B6 /r         - MOVZX r16, r/m8
+                                        // 0F B6 /r         - MOVZX r32, r/m8
+                                        // REX.W + 0F B6 /r - MOVZX r64, r/m8
+                                        const val: u64 = dc.cpu.read(u8, addr);
+                                        if (legacy_16) {
+                                            get_register(info, modrm, rex).* &= 0xFFFF_0000;
+                                            get_register(info, modrm, rex).* |= val;
+                                        } else {
+                                            assign_register(info, modrm, rex, val);
                                         }
-                                        // Special case: Skip SIB byte
-                                        if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
                                     },
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
+                                    0xB7 => {
+                                        // 0F B7 /r         - MOVZX r32, r/m16
+                                        // REX.W + 0F B7 /r - MOVZX r64, r/m16
+                                        const val: u64 = dc.cpu.read(u16, addr);
+                                        assign_register(info, modrm, rex, val);
+                                    },
+                                    else => {
+                                        std.debug.print("Unhandled read: 0F {X}\n", .{instruction[0]});
+                                        return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                                    },
                                 }
                             },
-                            else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
+                            else => {
+                                std.debug.print("Unhandled read: {X}\n", .{instruction[0]});
+                                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                            },
                         }
                     },
                     .write => {
-                        // TODO: Skip instruction
                         switch (instruction[0]) {
                             0x88 => {
                                 // 88 /r - MOV r/m8, r8
                                 dc.cpu.write(u8, addr, @truncate(get_register(info, modrm, rex).*));
-                                switch (modrm.mod) {
-                                    .indirect => info.ContextRecord.Rip += 2,
-                                    .disp8 => info.ContextRecord.Rip += 3,
-                                    .disp32 => info.ContextRecord.Rip += 6,
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                                }
-                                // Special case: Skip SIB byte
-                                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
                             },
                             0x89 => {
                                 // 89 /r - MOV r/m32, r32
@@ -261,28 +234,45 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
                                 } else {
                                     dc.cpu.write(u32, addr, @truncate(get_register(info, modrm, rex).*));
                                 }
-                                switch (modrm.mod) {
-                                    .indirect => info.ContextRecord.Rip += 2,
-                                    .disp8 => info.ContextRecord.Rip += 3,
-                                    .disp32 => info.ContextRecord.Rip += 6,
-                                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                                }
-                                // Special case: Skip SIB byte
-                                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
                             },
-                            0xC6 => {
-                                // C6 /0 ib - MOV r/m8, imm8
-                                const val = instruction[2];
-                                dc.cpu.write(u8, addr, val);
-                                info.ContextRecord.Rip += 3;
+                            0x0F => {
+                                info.ContextRecord.Rip += 1;
+                                modrm = @bitCast(instruction[2]);
+                                switch (instruction[1]) {
+                                    0x7E => {
+                                        if (legacy_16) {
+                                            // 66 0F 7E /r MOVD r/m32, xmm
+                                            dc.cpu.write(u32, addr, @truncate(get_fp_register(info, modrm, rex).*));
+                                        } else {
+                                            // 0F 7F /r MOVQ mm/m64, mm
+                                            std.debug.print("0F 7F /r MOVQ mm/m64, mm\n", .{});
+                                            std.debug.print("   Instr: {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{ instruction[0], instruction[1], instruction[2], instruction[3], instruction[4], instruction[5] });
+                                            return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                                        }
+                                    },
+                                    else => {
+                                        std.debug.print("Unhandled write: 0F {X}\n", .{instruction[0]});
+                                        return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                                    },
+                                }
                             },
                             else => {
-                                std.debug.print("Unhandled write: {X}\n", .{instruction[0]});
+                                std.debug.print("Unhandled write: {X:0>2} {X:0>2}\n", .{ instruction[0], instruction[1] });
                                 return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
                             },
                         }
                     },
                 }
+
+                switch (modrm.mod) {
+                    .indirect => info.ContextRecord.Rip += 2,
+                    .disp8 => info.ContextRecord.Rip += 3,
+                    .disp32 => info.ContextRecord.Rip += 6,
+                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
+                }
+                // Special case: Skip SIB byte
+                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
+
                 return windows.EXCEPTION_CONTINUE_EXECUTION; // Not defined in std
             }
         },
@@ -325,6 +315,34 @@ pub const Dreamcast = struct {
     _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
 
     _virtual_address_space: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
+    _virtual_address_space_no_access: if (ExperimentalFastMem) std.ArrayList(*anyopaque) else void = undefined,
+    _virtual_address_space_boot: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
+    _virtual_address_space_ram: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
+
+    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !void {
+        const result = windows.MapViewOfFileEx(
+            file_handle,
+            windows.FILE_MAP_ALL_ACCESS,
+            0,
+            0, // Offset 0
+            0, // Full size
+            @ptrFromInt(@intFromPtr(self._virtual_address_space) + addr),
+        );
+
+        if (result == null) {
+            std.debug.print("MapViewOfFileEx({X:0>8}) Error: {}\n", .{ addr, std.os.windows.GetLastError() });
+            return error.MapError;
+        }
+    }
+
+    fn forbid(self: *@This(), from: u32, to: u64) !void {
+        try self._virtual_address_space_no_access.append(try std.os.windows.VirtualAlloc(
+            @ptrFromInt(@intFromPtr(self._virtual_address_space) + from),
+            to - from,
+            std.os.windows.MEM_RESERVE,
+            std.os.windows.PAGE_NOACCESS,
+        ));
+    }
 
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
@@ -342,14 +360,61 @@ pub const Dreamcast = struct {
         };
 
         if (ExperimentalFastMem) {
+            dc._virtual_address_space_no_access = std.ArrayList(*anyopaque).init(allocator);
+
+            // Ask nicely for an available virtual address space.
             dc._virtual_address_space = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
+            // Free it immediately. We'll try to reacquire it. I think I read somewhere there's a way to avoid this race condition with a newer API, but I don't remember right now.
+            std.os.windows.VirtualFree(dc._virtual_address_space, 0, std.os.windows.MEM_RELEASE);
 
             std.debug.print("Virtual Address Space: {X}\n", .{dc._virtual_address_space});
 
-            const boot = try std.os.windows.VirtualAlloc(@ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0000_0000), 0x200000, std.os.windows.MEM_COMMIT, std.os.windows.PAGE_READWRITE);
-            dc.boot = @as([*]u8, @ptrCast(boot))[0..0x200000];
-            const ram = try std.os.windows.VirtualAlloc(@ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000), 0x0100_0000, std.os.windows.MEM_COMMIT, std.os.windows.PAGE_READWRITE);
-            dc.ram = @as([*]u8, @ptrCast(ram))[0..0x0100_0000];
+            const BootSize = 0x20_0000;
+            const RAMSize = 0x100_0000;
+
+            const boot_handle = windows.CreateFileMappingA(
+                std.os.windows.INVALID_HANDLE_VALUE,
+                null,
+                std.os.windows.PAGE_READWRITE,
+                0,
+                BootSize,
+                null,
+            );
+            // FIXME: Try again.
+            if (boot_handle == null) {
+                return error.FileMapError;
+            }
+            dc._virtual_address_space_boot = boot_handle.?;
+
+            const ram_handle = windows.CreateFileMappingA(
+                std.os.windows.INVALID_HANDLE_VALUE,
+                null,
+                std.os.windows.PAGE_READWRITE,
+                0,
+                RAMSize,
+                null,
+            );
+            // FIXME: Try again.
+            if (boot_handle == null) {
+                return error.FileMapError;
+            }
+            dc._virtual_address_space_ram = ram_handle.?;
+
+            dc.boot = @as([*]u8, @ptrCast(dc._virtual_address_space))[0..BootSize];
+            dc.ram = @as([*]u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000))[0..RAMSize];
+
+            try dc.mirror(dc._virtual_address_space_boot, 0x0000_0000);
+            try dc.mirror(dc._virtual_address_space_boot, 0x8000_0000);
+
+            for (0..4) |i| {
+                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x0C00_0000 + i * RAMSize));
+                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x8C00_0000 + i * RAMSize));
+            }
+
+            try dc.forbid(BootSize, 0x0C00_0000);
+            try dc.forbid(0x1000_0000, 0x8000_0000);
+            try dc.forbid(0x8020_0000, 0x80C0_0000);
+            try dc.forbid(0x9000_0000, 0x1_0000_0000);
 
             _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
 
@@ -409,7 +474,8 @@ pub const Dreamcast = struct {
         self.flash.deinit();
 
         if (ExperimentalFastMem) {
-            std.os.windows.VirtualFree(self._virtual_address_space, 0, std.os.windows.MEM_RELEASE);
+            // TODO: Cleanup everything!
+            // std.os.windows.VirtualFree(self._virtual_address_space, 0, std.os.windows.MEM_RELEASE);
         } else {
             self._allocator.free(self.boot);
             self._allocator.free(self.ram);
