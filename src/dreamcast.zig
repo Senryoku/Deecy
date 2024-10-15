@@ -424,7 +424,7 @@ pub const Dreamcast = struct {
 
             try dc.forbid(BootSize, 0x0C00_0000);
             try dc.forbid(0x1000_0000, 0x8000_0000);
-            try dc.forbid(0x8020_0000, 0x80C0_0000);
+            try dc.forbid(0x8020_0000, 0x8C00_0000);
             try dc.forbid(0x9000_0000, 0x1_0000_0000);
 
             _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
