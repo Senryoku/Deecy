@@ -523,11 +523,11 @@ pub const SH4JIT = struct {
         if (DreamcastModule.ExperimentalFastMem) {
             const addr_space: u64 = @intFromPtr(ctx.cpu._dc.?._virtual_address_space);
             try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
-            try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
         } else {
             const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
             try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
         }
+        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
         ctx.start_index = @intCast(b.instructions.items.len);
 
@@ -871,35 +871,35 @@ fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
     return cpu.read(u8, virtual_addr);
 }
 pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u16, virtual_addr);
 }
 pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u32, virtual_addr);
 }
 pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u64, virtual_addr);
 }
 pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u8, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u16, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u32, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
-    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!DreamcastModule.ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u64, virtual_addr, value);
 }
 

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const common = @import("common.zig");
 const addr_t = common.addr_t;
@@ -101,7 +102,8 @@ const ScheduledInterrupt = struct {
 // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
-pub const ExperimentalFastMem = true;
+pub const ExperimentalFastMem = true and builtin.os.tag == .windows;
+
 var GLOBAL_DREAMCAST: ?*Dreamcast = null;
 
 fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(std.os.windows.WINAPI) c_long {
@@ -223,10 +225,11 @@ pub const Dreamcast = struct {
 
     _virtual_address_space: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
     _virtual_address_space_no_access: if (ExperimentalFastMem) std.ArrayList(*anyopaque) else void = undefined,
+    _virtual_address_space_mirrors: if (ExperimentalFastMem) std.ArrayList(std.os.windows.LPVOID) else void = undefined,
     _virtual_address_space_boot: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
     _virtual_address_space_ram: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
 
-    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !void {
+    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !std.os.windows.LPVOID {
         const result = windows.MapViewOfFileEx(
             file_handle,
             windows.FILE_MAP_ALL_ACCESS,
@@ -235,11 +238,11 @@ pub const Dreamcast = struct {
             0, // Full size
             @ptrFromInt(@intFromPtr(self._virtual_address_space) + addr),
         );
-
         if (result == null) {
             std.debug.print("MapViewOfFileEx({X:0>8}) Error: {}\n", .{ addr, std.os.windows.GetLastError() });
             return error.MapError;
         }
+        return result.?;
     }
 
     fn forbid(self: *@This(), from: u32, to: u64) !void {
@@ -268,6 +271,7 @@ pub const Dreamcast = struct {
 
         if (ExperimentalFastMem) {
             dc._virtual_address_space_no_access = std.ArrayList(*anyopaque).init(allocator);
+            dc._virtual_address_space_mirrors = std.ArrayList(std.os.windows.LPVOID).init(allocator);
 
             // Ask nicely for an available virtual address space.
             dc._virtual_address_space = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
@@ -287,10 +291,9 @@ pub const Dreamcast = struct {
                 BootSize,
                 null,
             );
-            // FIXME: Try again.
-            if (boot_handle == null) {
+            // FIXME: Try again?
+            if (boot_handle == null)
                 return error.FileMapError;
-            }
             dc._virtual_address_space_boot = boot_handle.?;
 
             const ram_handle = windows.CreateFileMappingA(
@@ -301,21 +304,20 @@ pub const Dreamcast = struct {
                 RAMSize,
                 null,
             );
-            // FIXME: Try again.
-            if (boot_handle == null) {
+            // FIXME: Try again?
+            if (boot_handle == null)
                 return error.FileMapError;
-            }
             dc._virtual_address_space_ram = ram_handle.?;
 
             dc.boot = @as([*]u8, @ptrCast(dc._virtual_address_space))[0..BootSize];
             dc.ram = @as([*]u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000))[0..RAMSize];
 
-            try dc.mirror(dc._virtual_address_space_boot, 0x0000_0000);
-            try dc.mirror(dc._virtual_address_space_boot, 0x8000_0000);
+            try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_boot, 0x0000_0000));
+            try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_boot, 0x8000_0000));
 
             for (0..4) |i| {
-                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x0C00_0000 + i * RAMSize));
-                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x8C00_0000 + i * RAMSize));
+                try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_ram, @intCast(0x0C00_0000 + i * RAMSize)));
+                try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_ram, @intCast(0x8C00_0000 + i * RAMSize)));
             }
 
             try dc.forbid(BootSize, 0x0C00_0000);
@@ -381,8 +383,17 @@ pub const Dreamcast = struct {
         self.flash.deinit();
 
         if (ExperimentalFastMem) {
-            // TODO: Cleanup everything!
-            // std.os.windows.VirtualFree(self._virtual_address_space, 0, std.os.windows.MEM_RELEASE);
+            for (self._virtual_address_space_mirrors.items) |item| {
+                if (windows.UnmapViewOfFile(item) == 0)
+                    std.log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
+            }
+            self._virtual_address_space_mirrors.deinit();
+            for (self._virtual_address_space_no_access.items) |item| {
+                std.os.windows.VirtualFree(item, 0, std.os.windows.MEM_RELEASE);
+            }
+            self._virtual_address_space_no_access.deinit();
+            std.os.windows.CloseHandle(self._virtual_address_space_boot);
+            std.os.windows.CloseHandle(self._virtual_address_space_ram);
         } else {
             self._allocator.free(self.boot);
             self._allocator.free(self.ram);
