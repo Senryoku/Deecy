@@ -157,8 +157,11 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
                     //std.debug.print("   REX: {X:0>2} - {any}\n", .{ @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*, rex });
                     info.ContextRecord.Rip += 1;
 
-                    if (rex.w and @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* != 0x0F) {
-                        std.debug.print("   64bit mode for {X:0>2}!\n", .{@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*});
+                    if (rex.w and
+                        (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* != 0x0F or
+                        (@as(*u8, @ptrFromInt(info.ContextRecord.Rip + 1)).* != 0xB6 and @as(*u8, @ptrFromInt(info.ContextRecord.Rip + 1)).* != 0xB7 and @as(*u8, @ptrFromInt(info.ContextRecord.Rip + 1)).* != 0x7E)))
+                    {
+                        std.debug.print("   64bit mode for {X:0>2}!\n", .{@as([*]u8, @ptrFromInt(info.ContextRecord.Rip))[0..6]});
                         @panic("64bit mode!");
                     }
                 }
@@ -241,8 +244,13 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
                                 switch (instruction[1]) {
                                     0x7E => {
                                         if (legacy_16) {
-                                            // 66 0F 7E /r MOVD r/m32, xmm
-                                            dc.cpu.write(u32, addr, @truncate(get_fp_register(info, modrm, rex).*));
+                                            if (rex.w) {
+                                                // 66 REX.W 0F 7E /r MOVQ r/m64, xmm
+                                                dc.cpu.write(u64, addr, @truncate(get_fp_register(info, modrm, rex).*));
+                                            } else {
+                                                // 66 0F 7E /r MOVD r/m32, xmm
+                                                dc.cpu.write(u32, addr, @truncate(get_fp_register(info, modrm, rex).*));
+                                            }
                                         } else {
                                             // 0F 7F /r MOVQ mm/m64, mm
                                             std.debug.print("0F 7F /r MOVQ mm/m64, mm\n", .{});
@@ -272,6 +280,9 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
                 }
                 // Special case: Skip SIB byte
                 if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
+
+                // TODO: Now. Rather than doing this dance everytime, we could patch in the function call.
+                //       Since we might have only 3 bytes to patch, it might be a bit tricky, even when using trampolines.
 
                 return windows.EXCEPTION_CONTINUE_EXECUTION; // Not defined in std
             }
