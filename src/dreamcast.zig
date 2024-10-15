@@ -338,7 +338,7 @@ pub const Dreamcast = struct {
             try dc.mirror(dc._virtual_address_space_vram, 0x0400_0000);
             try dc.mirror(dc._virtual_address_space_vram, 0x0600_0000);
 
-            // TODO: Operand Cache ?
+            // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
 
             try dc.forbid(BootSize, 0x0400_0000);
             try dc.forbid(0x0500_0000, 0x0600_0000);
