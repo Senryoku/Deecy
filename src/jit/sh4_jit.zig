@@ -22,7 +22,8 @@ const sh4_instructions = @import("../sh4_instructions.zig");
 
 const sh4_jit_log = std.log.scoped(.sh4_jit);
 
-const Dreamcast = @import("../dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("../dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
@@ -519,11 +520,14 @@ pub const SH4JIT = struct {
         const optional_saved_fp_register_offset = b.instructions.items.len;
         try b.append(.Nop);
 
-        // const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
-        // try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
-        const addr_space: u64 = @intFromPtr(ctx.cpu._dc.?._virtual_address_space);
-        try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
-        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
+        if (DreamcastModule.ExperimentalFastMem) {
+            const addr_space: u64 = @intFromPtr(ctx.cpu._dc.?._virtual_address_space);
+            try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
+            try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
+        } else {
+            const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
+            try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+        }
 
         ctx.start_index = @intCast(b.instructions.items.len);
 
@@ -867,35 +871,35 @@ fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u8, virtual_addr);
 }
 pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u16, virtual_addr);
 }
 pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u32, virtual_addr);
 }
 pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u64, virtual_addr);
 }
 pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u8, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u16, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u32, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    //std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u64, virtual_addr, value);
 }
 
@@ -913,7 +917,49 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
         try block.add(.{ .reg = addr }, .{ .reg = r0 });
     }
 
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
+    if (DreamcastModule.ExperimentalFastMem) {
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
+
+        var skip_fallback = try block.jmp(.Always);
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_read8),
+            16 => try call(block, ctx, &_out_of_line_read16),
+            32 => try call(block, ctx, &_out_of_line_read32),
+            64 => try call(block, ctx, &_out_of_line_read64),
+            else => @compileError("load_mem: Unsupported size."),
+        }
+        if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
+        skip_fallback.patch();
+    } else { // RAM Fast path
+        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[1], .size = size } });
+        var to_end = try block.jmp(.Always);
+
+        not_branch.patch();
+
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_read8),
+            16 => try call(block, ctx, &_out_of_line_read16),
+            32 => try call(block, ctx, &_out_of_line_read32),
+            64 => try call(block, ctx, &_out_of_line_read64),
+            else => @compileError("load_mem: Unsupported size."),
+        }
+
+        if (dest != ReturnRegister)
+            try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
+
+        to_end.patch();
+    }
 }
 
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
@@ -930,7 +976,48 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
         try block.add(.{ .reg = addr }, .{ .reg = r0 });
     }
 
-    try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+    if (DreamcastModule.ExperimentalFastMem) {
+        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+
+        var skip_fallback = try block.jmp(.Always);
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_write8),
+            16 => try call(block, ctx, &_out_of_line_write16),
+            32 => try call(block, ctx, &_out_of_line_write32),
+            64 => try call(block, ctx, &_out_of_line_write64),
+            else => @compileError("store_mem: Unsupported size."),
+        }
+        skip_fallback.patch();
+    } else {
+        // RAM Fast path
+        try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[3] }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+        var to_end = try block.jmp(.Always);
+
+        not_branch.patch();
+
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_write8),
+            16 => try call(block, ctx, &_out_of_line_write16),
+            32 => try call(block, ctx, &_out_of_line_write32),
+            64 => try call(block, ctx, &_out_of_line_write64),
+            else => @compileError("store_mem: Unsupported size."),
+        }
+        to_end.patch();
+    }
 }
 
 pub fn mov_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
@@ -1703,7 +1790,8 @@ pub fn movw_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read16(addr))) });
     } else { // Load from RAM and sign extend
-        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = 0x0C00_0000 + (addr & 0x00FFFFFF), .size = 16 } });
+        const offset = if (DreamcastModule.ExperimentalFastMem) 0x0C00_0000 else 0;
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
     }
     return false;
 }
@@ -1717,7 +1805,8 @@ pub fn movl_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read32(addr) });
     } else {
-        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = 0x0C00_0000 + (addr & 0x00FFFFFF), .size = 32 } });
+        const offset = if (DreamcastModule.ExperimentalFastMem) 0x0C00_0000 else 0;
+        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 32 } });
     }
     return false;
 }
