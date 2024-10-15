@@ -198,8 +198,11 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
 const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
+    const BootSize = 0x20_0000;
+    const RAMSize = 0x100_0000;
+
     cpu: SH4,
-    gpu: Holly,
+    gpu: Holly = undefined,
     aica: AICA,
     maple: MapleHost,
     gdrom: GDROM,
@@ -209,10 +212,11 @@ pub const Dreamcast = struct {
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
 
-    boot: []u8 align(4) = undefined,
+    boot: []align(4) u8 = undefined,
     flash: Flash,
-    ram: []u8 align(4) = undefined,
-    hardware_registers: []u8 align(4),
+    ram: []align(4) u8 = undefined,
+    vram: []align(32) u8 = undefined,
+    hardware_registers: []align(4) u8,
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
     _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
@@ -228,8 +232,9 @@ pub const Dreamcast = struct {
     _virtual_address_space_mirrors: if (ExperimentalFastMem) std.ArrayList(std.os.windows.LPVOID) else void = undefined,
     _virtual_address_space_boot: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
     _virtual_address_space_ram: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
+    _virtual_address_space_vram: if (ExperimentalFastMem) std.os.windows.LPVOID else void = undefined,
 
-    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !std.os.windows.LPVOID {
+    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !void {
         const result = windows.MapViewOfFileEx(
             file_handle,
             windows.FILE_MAP_ALL_ACCESS,
@@ -242,7 +247,7 @@ pub const Dreamcast = struct {
             std.debug.print("MapViewOfFileEx({X:0>8}) Error: {}\n", .{ addr, std.os.windows.GetLastError() });
             return error.MapError;
         }
-        return result.?;
+        try self._virtual_address_space_mirrors.append(result.?);
     }
 
     fn forbid(self: *@This(), from: u32, to: u64) !void {
@@ -258,13 +263,12 @@ pub const Dreamcast = struct {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try SH4.init(allocator, dc),
-            .gpu = try Holly.init(allocator, dc),
             .aica = try AICA.init(allocator),
             .maple = try MapleHost.init(allocator),
             .gdrom = try GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
             .flash = try Flash.init(allocator),
-            .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
+            .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
             ._allocator = allocator,
         };
@@ -279,9 +283,6 @@ pub const Dreamcast = struct {
             std.os.windows.VirtualFree(dc._virtual_address_space, 0, std.os.windows.MEM_RELEASE);
 
             std.debug.print("Virtual Address Space: {X}\n", .{dc._virtual_address_space});
-
-            const BootSize = 0x20_0000;
-            const RAMSize = 0x100_0000;
 
             const boot_handle = windows.CreateFileMappingA(
                 std.os.windows.INVALID_HANDLE_VALUE,
@@ -305,22 +306,43 @@ pub const Dreamcast = struct {
                 null,
             );
             // FIXME: Try again?
-            if (boot_handle == null)
+            if (ram_handle == null)
                 return error.FileMapError;
             dc._virtual_address_space_ram = ram_handle.?;
 
-            dc.boot = @as([*]u8, @ptrCast(dc._virtual_address_space))[0..BootSize];
-            dc.ram = @as([*]u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000))[0..RAMSize];
+            const vram_handle = windows.CreateFileMappingA(
+                std.os.windows.INVALID_HANDLE_VALUE,
+                null,
+                std.os.windows.PAGE_READWRITE,
+                0,
+                Holly.VRAMSize,
+                null,
+            );
+            // FIXME: Try again?
+            if (vram_handle == null)
+                return error.FileMapError;
+            dc._virtual_address_space_vram = vram_handle.?;
 
-            try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_boot, 0x0000_0000));
-            try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_boot, 0x8000_0000));
+            dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc._virtual_address_space)))[0..BootSize];
+            dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0C00_0000))[0..RAMSize];
+            dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space) + 0x0400_0000))[0..Holly.VRAMSize];
+
+            try dc.mirror(dc._virtual_address_space_boot, 0x0000_0000);
+            try dc.mirror(dc._virtual_address_space_boot, 0x8000_0000);
 
             for (0..4) |i| {
-                try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_ram, @intCast(0x0C00_0000 + i * RAMSize)));
-                try dc._virtual_address_space_mirrors.append(try dc.mirror(dc._virtual_address_space_ram, @intCast(0x8C00_0000 + i * RAMSize)));
+                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x0C00_0000 + i * RAMSize));
+                try dc.mirror(dc._virtual_address_space_ram, @intCast(0x8C00_0000 + i * RAMSize));
             }
 
-            try dc.forbid(BootSize, 0x0C00_0000);
+            try dc.mirror(dc._virtual_address_space_vram, 0x0400_0000);
+            try dc.mirror(dc._virtual_address_space_vram, 0x0600_0000);
+
+            // TODO: Operand Cache ?
+
+            try dc.forbid(BootSize, 0x0400_0000);
+            try dc.forbid(0x0500_0000, 0x0600_0000);
+            try dc.forbid(0x0700_0000, 0x0C00_0000);
             try dc.forbid(0x1000_0000, 0x8000_0000);
             try dc.forbid(0x8020_0000, 0x8C00_0000);
             try dc.forbid(0x9000_0000, 0x1_0000_0000);
@@ -329,11 +351,13 @@ pub const Dreamcast = struct {
 
             GLOBAL_DREAMCAST = dc;
         } else {
-            dc.boot = try allocator.alloc(u8, 0x200000);
-            dc.ram = try allocator.alloc(u8, 0x0100_0000);
+            dc.boot = try allocator.alloc(u8, BootSize);
+            dc.ram = try allocator.alloc(u8, RAMSize);
+            dc.vram = try allocator.alloc(u8, Holly.VRAMSize);
         }
 
-        dc.*.aica.setup_arm();
+        dc.gpu = try Holly.init(allocator, dc);
+        dc.aica.setup_arm();
 
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
@@ -392,11 +416,13 @@ pub const Dreamcast = struct {
                 std.os.windows.VirtualFree(item, 0, std.os.windows.MEM_RELEASE);
             }
             self._virtual_address_space_no_access.deinit();
-            std.os.windows.CloseHandle(self._virtual_address_space_boot);
+            std.os.windows.CloseHandle(self._virtual_address_space_vram);
             std.os.windows.CloseHandle(self._virtual_address_space_ram);
+            std.os.windows.CloseHandle(self._virtual_address_space_boot);
         } else {
-            self._allocator.free(self.boot);
+            self._allocator.free(self.vram);
             self._allocator.free(self.ram);
+            self._allocator.free(self.boot);
         }
         self._allocator.free(self.hardware_registers);
     }

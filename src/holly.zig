@@ -1321,7 +1321,7 @@ pub const Holly = struct {
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         var r = Holly{
-            .vram = try allocator.alignedAlloc(u8, 32, VRAMSize),
+            .vram = dc.vram,
             .registers = try allocator.alloc(u8, RegistersSize), // FIXME: Huge waste of memory
             ._allocator = allocator,
             ._dc = dc,
@@ -1337,7 +1337,6 @@ pub const Holly = struct {
             ta_list.deinit();
         }
         self._allocator.free(self.registers);
-        self._allocator.free(self.vram);
     }
 
     pub fn reset(self: *@This()) void {
