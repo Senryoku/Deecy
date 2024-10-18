@@ -521,7 +521,7 @@ pub const SH4JIT = struct {
         try b.append(.Nop);
 
         if (DreamcastModule.ExperimentalFastMem) {
-            const addr_space: u64 = @intFromPtr(ctx.cpu._dc.?._virtual_address_space);
+            const addr_space: u64 = @intFromPtr(ctx.cpu._dc.?._virtual_address_space.base);
             try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
         } else {
             const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
