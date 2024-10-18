@@ -275,7 +275,8 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
                     }
 
                     // Patch out the mov and jump, we'll always execute the fallback from now on.
-                    @memset(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)], 0x90);
+                    //@memset(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)], 0x90);
+                    x86_64.convert_to_nops(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)]);
 
                     return windows.EXCEPTION_CONTINUE_EXECUTION; // Not defined in std
                 }

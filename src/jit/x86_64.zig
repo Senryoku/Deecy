@@ -532,6 +532,29 @@ const ScalarFPOpcodes = enum(u8) {
     Max = 0x5F,
 };
 
+// Recommended Multi-Byte Sequence of NOP Instruction
+const NOPs = [_][]const u8{
+    "\x90",
+    "\x66\x90",
+    "\x0f\x1f\x00",
+    "\x0f\x1f\x40\x00",
+    "\x0f\x1f\x44\x00\x00",
+    "\x66\x0f\x1f\x44\x00\x00",
+    "\x0f\x1f\x80\x00\x00\x00\x00",
+    "\x0f\x1f\x84\x00\x00\x00\x00\x00",
+    "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00",
+};
+
+pub fn convert_to_nops(instructions: []u8) void {
+    var idx: usize = 0;
+    while (instructions.len - idx >= NOPs.len) {
+        @memcpy(instructions[idx..NOPs.len], NOPs[NOPs.len - 1]);
+        idx += NOPs.len;
+    }
+    if (idx < instructions.len)
+        @memcpy(instructions[idx..], NOPs[instructions.len - idx - 1]);
+}
+
 const PatchableJump = struct {
     source: u32 = Invalid,
     address_to_patch: u32 = Invalid,
