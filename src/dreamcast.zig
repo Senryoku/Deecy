@@ -104,9 +104,9 @@ const ScheduledInterrupt = struct {
 
 pub const ExperimentalFastMem = true and builtin.os.tag == .windows;
 
-var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?std.os.windows.LPVOID = null;
-
 const VirtualAddressSpace = if (ExperimentalFastMem) struct {
+    var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?std.os.windows.LPVOID = null;
+
     base: std.os.windows.LPVOID = undefined,
     no_access: std.ArrayList(*anyopaque), // Reads and Writes to these ranges will throw an access violation
     mirrors: std.ArrayList(std.os.windows.LPVOID),
@@ -275,10 +275,9 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
                     }
 
                     // Patch out the mov and jump, we'll always execute the fallback from now on.
-                    //@memset(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)], 0x90);
                     x86_64.convert_to_nops(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)]);
 
-                    return windows.EXCEPTION_CONTINUE_EXECUTION; // Not defined in std
+                    return windows.EXCEPTION_CONTINUE_EXECUTION;
                 }
             },
             else => {
@@ -347,9 +346,9 @@ pub const Dreamcast = struct {
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space.base) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc._virtual_address_space.base) + 0x0400_0000))[0..Holly.VRAMSize];
         } else {
-            dc.boot = try allocator.alloc(u8, BootSize);
-            dc.ram = try allocator.alloc(u8, RAMSize);
-            dc.vram = try allocator.alloc(u8, Holly.VRAMSize);
+            dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
+            dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
+            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
         }
 
         dc.gpu = try Holly.init(allocator, dc);
