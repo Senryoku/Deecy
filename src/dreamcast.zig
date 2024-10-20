@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const common = @import("common.zig");
 const addr_t = common.addr_t;
@@ -12,7 +13,8 @@ const Interrupt = Interrupts.Interrupt;
 
 pub const SH4Module = @import("sh4.zig");
 const SH4 = SH4Module.SH4;
-const SH4JIT = @import("jit/sh4_jit.zig").SH4JIT;
+const SH4JITModule = @import("jit/sh4_jit.zig");
+const SH4JIT = SH4JITModule.SH4JIT;
 const Flash = @import("flash.zig");
 pub const HollyModule = @import("holly.zig");
 const Holly = HollyModule.Holly;
@@ -101,8 +103,12 @@ const ScheduledInterrupt = struct {
 const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
+    pub const BootSize = 0x20_0000;
+    pub const RAMSize = 0x100_0000;
+    pub const VRAMSize = Holly.VRAMSize;
+
     cpu: SH4,
-    gpu: Holly,
+    gpu: Holly = undefined,
     aica: AICA,
     maple: MapleHost,
     gdrom: GDROM,
@@ -112,10 +118,11 @@ pub const Dreamcast = struct {
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
 
-    boot: []u8 align(4),
+    boot: []align(4) u8 = undefined,
     flash: Flash,
-    ram: []u8 align(4),
-    hardware_registers: []u8 align(4),
+    ram: []align(4) u8 = undefined,
+    vram: []align(32) u8 = undefined,
+    hardware_registers: []align(4) u8,
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
     _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
@@ -130,20 +137,28 @@ pub const Dreamcast = struct {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try SH4.init(allocator, dc),
-            .gpu = try Holly.init(allocator, dc),
             .aica = try AICA.init(allocator),
             .maple = try MapleHost.init(allocator),
             .gdrom = try GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
-            .boot = try allocator.alloc(u8, 0x200000),
             .flash = try Flash.init(allocator),
-            .ram = try allocator.alloc(u8, 0x0100_0000),
-            .hardware_registers = try allocator.alloc(u8, 0x20_0000), // FIXME: Huge waste of memory.
+            .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
             ._allocator = allocator,
         };
 
-        dc.*.aica.setup_arm();
+        if (SH4JITModule.ExperimentalFastMem) {
+            dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base)))[0..BootSize];
+            dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base) + 0x0C00_0000))[0..RAMSize];
+            dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base) + 0x0400_0000))[0..Holly.VRAMSize];
+        } else {
+            dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
+            dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
+            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
+        }
+
+        dc.gpu = try Holly.init(allocator, dc);
+        dc.aica.setup_arm();
 
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
@@ -191,9 +206,13 @@ pub const Dreamcast = struct {
         self.gpu.deinit();
         self.cpu.deinit();
         self.flash.deinit();
-        self._allocator.free(self.boot);
+
+        if (!SH4JITModule.ExperimentalFastMem) {
+            self._allocator.free(self.vram);
+            self._allocator.free(self.ram);
+            self._allocator.free(self.boot);
+        }
         self._allocator.free(self.hardware_registers);
-        self._allocator.free(self.ram);
     }
 
     pub fn reset(self: *@This()) !void {

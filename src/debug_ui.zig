@@ -425,7 +425,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         const range = 32; // In bytes.
         const pc = 0x00800000 + @max(4, dc.aica.arm7.pc() & dc.aica.arm7.memory_address_mask) - 4;
-        var addr = std.math.clamp(pc - range / 2, 0x00800000, 0x00A00000 - range);
+        var addr = std.math.clamp(pc - range / 2, 0x00800000, 0x00A00000 - range) & 0xFFFFFFFC;
         const end_addr = addr + range;
         while (addr < end_addr) {
             const disassembly = arm7.ARM7.disassemble(dc.aica.read_mem(u32, addr));

@@ -71,6 +71,11 @@ pub fn update_vmu_screen_0_0(self: *@This(), data: [*]const u8) void {
 }
 
 pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
+    const colors = [2][3]u8{ // bgr
+        .{ 152, 135, 92 }, // "white"
+        .{ 104, 43, 40 }, // "black"
+    };
+
     var tex = &self.vmu_displays[controller][index].?;
     var pixels: [4 * 48 * 32]u8 = undefined;
     for (0..32) |r| {
@@ -78,11 +83,11 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
         for (0..6) |c| {
             var byte = row[5 - c];
             for (0..8) |b| {
-                const val: u8 = if (byte & 0x1 == 0x1) 0 else 0xFF;
+                const color: [3]u8 = colors[byte & 0x1];
                 const idx = 4 * (48 * r + (8 * c + b));
-                pixels[idx + 0] = val;
-                pixels[idx + 1] = val;
-                pixels[idx + 2] = val;
+                pixels[idx + 0] = color[0];
+                pixels[idx + 1] = color[1];
+                pixels[idx + 2] = color[2];
                 pixels[idx + 3] = 255;
                 byte >>= 1;
             }

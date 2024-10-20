@@ -616,7 +616,7 @@ pub const AICA = struct {
     }
 
     fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
-        return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * channel) / 4])));
+        return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
     }
 
     pub fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {

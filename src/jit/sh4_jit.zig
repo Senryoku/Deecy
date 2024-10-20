@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const termcolor = @import("termcolor");
+
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
 const sh4_disassembly = @import("../sh4_disassembly.zig");
@@ -22,7 +24,10 @@ const sh4_instructions = @import("../sh4_instructions.zig");
 
 const sh4_jit_log = std.log.scoped(.sh4_jit);
 
-const Dreamcast = @import("../dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("../dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+
+const windows = @import("../windows.zig");
 
 const BlockBufferSize = 16 * 1024 * 1024;
 
@@ -35,6 +40,195 @@ const Optimizations = .{
     .inline_jumps_to_start_of_block = true,
     .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
 };
+
+pub const ExperimentalFastMem = true and builtin.os.tag == .windows;
+
+const VirtualAddressSpace = if (ExperimentalFastMem) struct {
+    var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?std.os.windows.LPVOID = null;
+
+    base: std.os.windows.LPVOID = undefined,
+    no_access: std.ArrayList(*anyopaque), // Reads and Writes to these ranges will throw an access violation
+    mirrors: std.ArrayList(std.os.windows.LPVOID),
+    boot: std.os.windows.LPVOID = undefined,
+    ram: std.os.windows.LPVOID = undefined,
+    vram: std.os.windows.LPVOID = undefined,
+
+    pub fn init(allocator: std.mem.Allocator) !@This() {
+        var vas: @This() = .{
+            .no_access = std.ArrayList(*anyopaque).init(allocator),
+            .mirrors = std.ArrayList(std.os.windows.LPVOID).init(allocator),
+        };
+
+        vas.boot = try allocate_backing_memory(Dreamcast.BootSize);
+        vas.ram = try allocate_backing_memory(Dreamcast.RAMSize);
+        vas.vram = try allocate_backing_memory(Dreamcast.VRAMSize);
+
+        // Ask nicely for an available virtual address space.
+        vas.base = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
+        // Free it immediately. We'll try to reacquire it. I think I read somewhere there's a way to avoid this race condition with a newer API, but I don't remember right now.
+        std.os.windows.VirtualFree(vas.base, 0, std.os.windows.MEM_RELEASE);
+
+        try vas.mirror(vas.boot, 0x0000_0000);
+        try vas.mirror(vas.boot, 0x8000_0000);
+
+        for (0..4) |i| {
+            try vas.mirror(vas.ram, @intCast(0x0C00_0000 + i * Dreamcast.RAMSize));
+            try vas.mirror(vas.ram, @intCast(0x8C00_0000 + i * Dreamcast.RAMSize));
+        }
+
+        try vas.mirror(vas.vram, 0x0400_0000);
+        try vas.mirror(vas.vram, 0x0600_0000);
+
+        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
+
+        try vas.forbid(Dreamcast.BootSize, 0x0400_0000);
+        try vas.forbid(0x0500_0000, 0x0600_0000);
+        try vas.forbid(0x0700_0000, 0x0C00_0000);
+        try vas.forbid(0x1000_0000, 0x8000_0000);
+        try vas.forbid(0x8020_0000, 0x8C00_0000);
+        try vas.forbid(0x9000_0000, 0x1_0000_0000);
+
+        GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
+        _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
+
+        return vas;
+    }
+
+    pub fn deinit(self: *@This()) void {
+        for (self.mirrors.items) |item| {
+            if (windows.UnmapViewOfFile(item) == 0)
+                std.log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
+        }
+        self.mirrors.deinit();
+        for (self.no_access.items) |item| {
+            std.os.windows.VirtualFree(item, 0, std.os.windows.MEM_RELEASE);
+        }
+        self.no_access.deinit();
+        std.os.windows.CloseHandle(self.vram);
+        std.os.windows.CloseHandle(self.ram);
+        std.os.windows.CloseHandle(self.boot);
+    }
+
+    fn allocate_backing_memory(size: std.os.windows.DWORD) !*anyopaque {
+        if (windows.CreateFileMappingA(std.os.windows.INVALID_HANDLE_VALUE, null, std.os.windows.PAGE_READWRITE, 0, size, null)) |handle| {
+            return handle;
+        }
+        return error.FileMapError;
+    }
+
+    fn mirror(self: *@This(), file_handle: std.os.windows.HANDLE, addr: u64) !void {
+        const result = windows.MapViewOfFileEx(
+            file_handle,
+            windows.FILE_MAP_ALL_ACCESS,
+            0,
+            0, // Offset 0
+            0, // Full size
+            @ptrFromInt(@intFromPtr(self.base) + addr),
+        );
+        if (result == null) {
+            std.debug.print("MapViewOfFileEx({X:0>8}) Error: {}\n", .{ addr, std.os.windows.GetLastError() });
+            return error.MapError;
+        }
+        try self.mirrors.append(result.?);
+    }
+
+    fn forbid(self: *@This(), from: u32, to: u64) !void {
+        try self.no_access.append(try std.os.windows.VirtualAlloc(
+            @ptrFromInt(@intFromPtr(self.base) + from),
+            to - from,
+            std.os.windows.MEM_RESERVE,
+            std.os.windows.PAGE_NOACCESS,
+        ));
+    }
+
+    fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(std.os.windows.WINAPI) c_long {
+        switch (info.ExceptionRecord.ExceptionCode) {
+            std.os.windows.EXCEPTION_ACCESS_VIOLATION => {
+                const access_type: enum(u1) { read = 0, write = 1 } = @enumFromInt(info.ExceptionRecord.ExceptionInformation[0]);
+                const fault_address = info.ExceptionRecord.ExceptionInformation[1];
+
+                if (fault_address >= @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) and fault_address < @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) + 0x1_0000_0000) {
+                    //const addr: u32 = @truncate(fault_address - @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE));
+                    //std.debug.print("  Access Violation: {s} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
+
+                    const start_rip = info.ContextRecord.Rip;
+
+                    // Skip 16bit prefix
+                    if (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x66)
+                        info.ContextRecord.Rip += 1;
+
+                    var rex: Architecture.REX = .{};
+                    if (0xF0 & @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x40) {
+                        rex = @bitCast(@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*);
+                        info.ContextRecord.Rip += 1;
+                    }
+
+                    const mov_instruction: [*]u8 = @ptrFromInt(info.ContextRecord.Rip);
+                    var modrm: Architecture.MODRM = @bitCast(mov_instruction[1]);
+
+                    switch (access_type) {
+                        .read => {
+                            switch (mov_instruction[0]) {
+                                0x8A, 0x8B => {},
+                                0x0F => {
+                                    info.ContextRecord.Rip += 1;
+                                    modrm = @bitCast(mov_instruction[2]);
+                                },
+                                else => {
+                                    std.debug.print("Unhandled read: {X}\n", .{mov_instruction[0]});
+                                    return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                                },
+                            }
+                        },
+                        .write => {
+                            switch (mov_instruction[0]) {
+                                0x88, 0x89 => {},
+                                0x0F => {
+                                    info.ContextRecord.Rip += 1;
+                                    modrm = @bitCast(mov_instruction[2]);
+                                },
+                                else => {
+                                    std.debug.print("Unhandled write: {X:0>2} {X:0>2}\n", .{ mov_instruction[0], mov_instruction[1] });
+                                    return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                                },
+                            }
+                        },
+                    }
+
+                    switch (modrm.mod) {
+                        .indirect => info.ContextRecord.Rip += 2,
+                        .disp8 => info.ContextRecord.Rip += 3,
+                        .disp32 => info.ContextRecord.Rip += 6,
+                        else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
+                    }
+                    // Special case: Skip SIB byte
+                    if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
+
+                    switch (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*) {
+                        0xEB => info.ContextRecord.Rip += 2, // JMP rel8
+                        0xE9 => info.ContextRecord.Rip += 5, // JMP rel32 in 64bit mode
+                        else => {
+                            std.debug.print("Unhandled jump: {X:0>2}\n", .{@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*});
+                            return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+                        },
+                    }
+
+                    // Patch out the mov and jump, we'll always execute the fallback from now on.
+                    Architecture.convert_to_nops(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)]);
+
+                    return windows.EXCEPTION_CONTINUE_EXECUTION;
+                }
+            },
+            else => {
+                std.debug.print("  Unhandled Exception: {X}\n", .{info.ExceptionRecord.ExceptionCode});
+                std.debug.print("    Info: {X}\n", .{info.ExceptionRecord.ExceptionInformation[0]});
+                std.debug.print("          {X}\n", .{info.ExceptionRecord.ExceptionInformation[1]});
+                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+            },
+        }
+        return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
+    }
+} else void;
 
 const BlockCache = struct {
     // 0x02200000 possible addresses, but 16bit aligned, multiplied by permutations of (sz, pr)
@@ -441,20 +635,27 @@ pub const JITContext = struct {
 pub const SH4JIT = struct {
     block_cache: BlockCache,
 
+    virtual_address_space: VirtualAddressSpace = undefined,
+
     _working_block: JITBlock,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
-        return .{
+        var r: @This() = .{
             .block_cache = try BlockCache.init(allocator),
             ._working_block = try JITBlock.init(allocator),
             ._allocator = allocator,
         };
+        if (ExperimentalFastMem)
+            r.virtual_address_space = try VirtualAddressSpace.init(allocator);
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
         self._working_block.deinit();
         self.block_cache.deinit();
+        if (ExperimentalFastMem)
+            self.virtual_address_space.deinit();
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
@@ -519,8 +720,13 @@ pub const SH4JIT = struct {
         const optional_saved_fp_register_offset = b.instructions.items.len;
         try b.append(.Nop);
 
-        const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
-        try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+        if (ExperimentalFastMem) {
+            const addr_space: u64 = @intFromPtr(self.virtual_address_space.base);
+            try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
+        } else {
+            const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
+            try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+        }
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
         ctx.start_index = @intCast(b.instructions.items.len);
@@ -865,76 +1071,95 @@ fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
     return cpu.read(u8, virtual_addr);
 }
 pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u16, virtual_addr);
 }
 pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u32, virtual_addr);
 }
 pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return cpu.read(u64, virtual_addr);
 }
 pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u8, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u16, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u32, virtual_addr, value);
 }
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
-    std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
+    if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     cpu.write(u64, virtual_addr, value);
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
 fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, comptime size: u32) !void {
     const src_guest_reg_location = try load_register(block, ctx, guest_reg);
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = src_guest_reg_location });
+
+    const addr = ArgRegisters[1];
+
+    try block.mov(.{ .reg = addr }, .{ .reg = src_guest_reg_location });
     if (displacement != 0)
-        try block.add(.{ .reg = ArgRegisters[1] }, .{ .imm32 = displacement });
+        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
     if (addressing == .Reg_R0) {
         const r0 = try load_register(block, ctx, 0);
-        try block.add(.{ .reg = ArgRegisters[1] }, .{ .reg = r0 });
+        try block.add(.{ .reg = addr }, .{ .reg = r0 });
     }
 
-    // RAM Fast path
-    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
-    // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
-    var not_branch = try block.jmp(.NotEqual);
-    // We're in RAM!
-    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
-    try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[1], .size = size } });
-    var to_end = try block.jmp(.Always);
+    if (ExperimentalFastMem) {
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
 
-    not_branch.patch();
+        var skip_fallback = try block.jmp(.Always);
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_read8),
+            16 => try call(block, ctx, &_out_of_line_read16),
+            32 => try call(block, ctx, &_out_of_line_read32),
+            64 => try call(block, ctx, &_out_of_line_read64),
+            else => @compileError("load_mem: Unsupported size."),
+        }
+        if (dest != ReturnRegister) try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
+        skip_fallback.patch();
+    } else { // RAM Fast path
+        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[1], .size = size } });
+        var to_end = try block.jmp(.Always);
 
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    // Address is already loaded into ArgRegisters[1]
-    switch (size) {
-        8 => try call(block, ctx, &_out_of_line_read8),
-        16 => try call(block, ctx, &_out_of_line_read16),
-        32 => try call(block, ctx, &_out_of_line_read32),
-        64 => try call(block, ctx, &_out_of_line_read64),
-        else => @compileError("load_mem: Unsupported size."),
+        not_branch.patch();
+
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_read8),
+            16 => try call(block, ctx, &_out_of_line_read16),
+            32 => try call(block, ctx, &_out_of_line_read32),
+            64 => try call(block, ctx, &_out_of_line_read64),
+            else => @compileError("load_mem: Unsupported size."),
+        }
+
+        if (dest != ReturnRegister)
+            try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
+
+        to_end.patch();
     }
-
-    if (dest != ReturnRegister)
-        try block.mov(.{ .reg = dest }, .{ .reg = ReturnRegister });
-
-    to_end.patch();
 }
 
 fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
@@ -951,30 +1176,48 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
         try block.add(.{ .reg = addr }, .{ .reg = r0 });
     }
 
-    // RAM Fast path
-    try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[3] }, .rhs = .{ .imm32 = 0x0C000000 } } });
-    var not_branch = try block.jmp(.NotEqual);
-    // We're in RAM!
-    try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
-    try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
-    var to_end = try block.jmp(.Always);
+    if (ExperimentalFastMem) {
+        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
 
-    not_branch.patch();
+        var skip_fallback = try block.jmp(.Always);
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_write8),
+            16 => try call(block, ctx, &_out_of_line_write16),
+            32 => try call(block, ctx, &_out_of_line_write32),
+            64 => try call(block, ctx, &_out_of_line_write64),
+            else => @compileError("store_mem: Unsupported size."),
+        }
+        skip_fallback.patch();
+    } else {
+        // RAM Fast path
+        try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[3] }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        var not_branch = try block.jmp(.NotEqual);
+        // We're in RAM!
+        try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
+        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+        var to_end = try block.jmp(.Always);
 
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    // Address is already loaded into ArgRegisters[1]
-    if (value.tag() != .reg or value.reg != ArgRegisters[2])
-        try block.mov(.{ .reg = ArgRegisters[2] }, value);
-    switch (size) {
-        8 => try call(block, ctx, &_out_of_line_write8),
-        16 => try call(block, ctx, &_out_of_line_write16),
-        32 => try call(block, ctx, &_out_of_line_write32),
-        64 => try call(block, ctx, &_out_of_line_write64),
-        else => @compileError("store_mem: Unsupported size."),
+        not_branch.patch();
+
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        // Address is already loaded into ArgRegisters[1]
+        if (value.tag() != .reg or value.reg != ArgRegisters[2])
+            try block.mov(.{ .reg = ArgRegisters[2] }, value);
+        switch (size) {
+            8 => try call(block, ctx, &_out_of_line_write8),
+            16 => try call(block, ctx, &_out_of_line_write16),
+            32 => try call(block, ctx, &_out_of_line_write32),
+            64 => try call(block, ctx, &_out_of_line_write64),
+            else => @compileError("store_mem: Unsupported size."),
+        }
+        to_end.patch();
     }
-    to_end.patch();
 }
 
 pub fn mov_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
@@ -1747,7 +1990,8 @@ pub fn movw_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read16(addr))) });
     } else { // Load from RAM and sign extend
-        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 16 } });
+        const offset = if (ExperimentalFastMem) 0x0C00_0000 else 0;
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
     }
     return false;
 }
@@ -1761,7 +2005,8 @@ pub fn movl_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read32(addr) });
     } else {
-        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = addr & 0x00FFFFFF, .size = 32 } });
+        const offset = if (ExperimentalFastMem) 0x0C00_0000 else 0;
+        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 32 } });
     }
     return false;
 }

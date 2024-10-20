@@ -466,7 +466,7 @@ pub const FPRegister = enum(u4) {
     }
 };
 
-const REX = packed struct(u8) {
+pub const REX = packed struct(u8) {
     b: bool = false, // Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
     x: bool = false, // Extension of the SIB index field
     r: bool = false, // Extension of the ModR/M reg field
@@ -505,13 +505,13 @@ const Mod = enum(u2) {
     reg = 0b11,
 };
 
-const MODRM = packed struct(u8) {
+pub const MODRM = packed struct(u8) {
     r_m: u3, // The r/m field can specify a register as an operand or it can be combined with the mod field to encode an addressing mode. Sometimes, certain combinations of the mod field and the r/m field are used to express opcode information for some instructions.
     reg_opcode: u3, // The reg/opcode field specifies either a register number or three more bits of opcode information. The purpose of the reg/opcode field is specified in the primary opcode.
     mod: Mod, // The mod field combines with the r/m field to form 32 possible values: eight registers and 24 addressing modes
 };
 
-const SIB = packed struct(u8) {
+pub const SIB = packed struct(u8) {
     base: u3,
     index: u3,
     scale: Scale,
@@ -531,6 +531,29 @@ const ScalarFPOpcodes = enum(u8) {
     Div = 0x5E,
     Max = 0x5F,
 };
+
+// Recommended Multi-Byte Sequence of NOP Instruction
+const NOPs = [_][]const u8{
+    "\x90",
+    "\x66\x90",
+    "\x0f\x1f\x00",
+    "\x0f\x1f\x40\x00",
+    "\x0f\x1f\x44\x00\x00",
+    "\x66\x0f\x1f\x44\x00\x00",
+    "\x0f\x1f\x80\x00\x00\x00\x00",
+    "\x0f\x1f\x84\x00\x00\x00\x00\x00",
+    "\x66\x0f\x1f\x84\x00\x00\x00\x00\x00",
+};
+
+pub fn convert_to_nops(instructions: []u8) void {
+    var idx: usize = 0;
+    while (instructions.len - idx >= NOPs.len) {
+        @memcpy(instructions[idx..NOPs.len], NOPs[NOPs.len - 1]);
+        idx += NOPs.len;
+    }
+    if (idx < instructions.len)
+        @memcpy(instructions[idx..], NOPs[instructions.len - idx - 1]);
+}
 
 const PatchableJump = struct {
     source: u32 = Invalid,
