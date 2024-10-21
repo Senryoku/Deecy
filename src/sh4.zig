@@ -981,7 +981,12 @@ pub const SH4 = struct {
                 self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr});
             },
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
-                self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
+                // self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
+
+                // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
+                sh4_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.pc, addr });
+                self._dc.?._dummy = .{ 0, 0, 0, 0 };
+                return @ptrCast(&self._dc.?._dummy);
             },
             0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
                 sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
