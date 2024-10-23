@@ -667,7 +667,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FB_R_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_CTRL)), FB_R_CTRL });
         zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
-        zgui.text("FB_R_SOF2: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
+        zgui.text("FB_R_SIZE: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
         zgui.text("VO_CONTROL: {any}", .{VO_CONTROL});
 
         var buffer: [256]u8 = .{0} ** 256;

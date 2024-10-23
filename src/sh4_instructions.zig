@@ -71,7 +71,7 @@ pub const OpcodeDescription = struct {
     }
 };
 
-pub const Opcodes: [217]OpcodeDescription = .{
+pub const Opcodes = [_]OpcodeDescription{
     // NOTE: According to MetalliC, not all technically invalid instructions causes a exception, some are treated as NOP. This includes the SH2 DSP opcodes for examples.
     //       One case where it matters is WinCE games, which might include 0 opcodes in their delay slots (maybe due to a compiler bug), hence the following special case.
     .{ .code = 0b0000000000000000, .mask = 0b1111111111111111, .fn_ = interpreter.nop, .name = "nop", .jit_emit_fn = sh4_jit.nop },

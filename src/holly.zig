@@ -1559,15 +1559,10 @@ pub const Holly = struct {
                 }
                 return;
             },
-            .TA_YUV_TEX_BASE => {
-                self._get_register(u32, .TA_YUV_TEX_CNT).* = 0;
-            },
-            .SPG_CONTROL => {
-                holly_log.warn("Write to SPG_CONTROL: {X:0>8}", .{v});
-            },
-            .SPG_LOAD => {
-                holly_log.warn("Write to SPG_LOAD: {X:0>8}", .{v});
-            },
+            .TA_YUV_TEX_BASE => self._get_register(u32, .TA_YUV_TEX_CNT).* = 0,
+            .SPG_CONTROL => holly_log.warn("Write to SPG_CONTROL: {X:0>8}", .{v}),
+            .SPG_LOAD => holly_log.warn("Write to SPG_LOAD: {X:0>8}", .{v}),
+            .FB_R_CTRL, .FB_R_SIZE, .FB_R_SOF1, .FB_R_SOF2 => self.dirty_framebuffer = true,
             else => |reg| {
                 holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
             },
@@ -2026,11 +2021,12 @@ pub const Holly = struct {
     fn check_framebuffer_write(self: *@This(), addr: u32) void {
         if (self.dirty_framebuffer) return;
 
-        const local_addr = addr & 0x007FFFFF;
+        const mask: u32 = 0x007FFFFF;
+        const local_addr = addr & mask;
 
         const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
-        const fb1_start_addr = self.read_register(u32, .FB_R_SOF1);
-        const fb2_start_addr = self.read_register(u32, .FB_R_SOF2);
+        const fb1_start_addr = self.read_register(u32, .FB_R_SOF1) & mask;
+        const fb2_start_addr = self.read_register(u32, .FB_R_SOF2) & mask;
         const fb_r_size = self.read_register(FB_R_SIZE, .FB_R_SIZE);
         const line_size: u32 = 4 * (@as(u32, fb_r_size.x_size) + @as(u32, fb_r_size.modulus)); // From 32-bit units to bytes.
         const line_count: u32 = @as(u32, fb_r_size.y_size) + 1; // Number of lines
