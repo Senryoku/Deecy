@@ -75,7 +75,8 @@ const ShadingInstructions = packed struct(u32) {
     gouraud_bit: u1,
     volume_bit: u1,
     tex_palette: bool, // Texture uses 4bpp or 8bpp palette
-    _: u6 = 0,
+    tex_palette_filtered: bool, // Should filtered manually in the shader.
+    _: u5 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1848,6 +1849,7 @@ pub const Renderer = struct {
                 .gouraud_bit = isp_tsp_instruction.gouraud,
                 .volume_bit = 0,
                 .tex_palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                .tex_palette_filtered = tsp_instruction.filter_mode != 0,
             },
         };
 
@@ -2105,7 +2107,9 @@ pub const Renderer = struct {
                 const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
                 const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
 
-                const filter_mode: wgpu.FilterMode = if (tsp_instruction.filter_mode == 0) .nearest else .linear; // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
+                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == 0) .nearest else .linear;
 
                 const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
@@ -2126,6 +2130,7 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .tex_palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                        .tex_palette_filtered = tsp_instruction.filter_mode != 0,
                     },
                 };
 
@@ -2146,6 +2151,7 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .tex_palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                        .tex_palette_filtered = atspi.filter_mode != 0,
                     },
                 } else VertexTextureInfo.invalid();
 

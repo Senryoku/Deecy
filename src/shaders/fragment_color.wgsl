@@ -19,14 +19,14 @@ fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, i
         var sample = vec4<f32>(0.0);
         // FIXME: Skipping the sampler here also means we don't following the UV mode (clamping/repeating...)
         switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-            case 0u: { sample = textureLoad(texture_array_8x8, vec2<u32>(8 * uv), index, 0); }
-            case 1u: { sample = textureLoad(texture_array_16x16, vec2<u32>(16 * uv), index, 0); }
-            case 2u: { sample = textureLoad(texture_array_32x32, vec2<u32>(32 * uv), index, 0); }
-            case 3u: { sample = textureLoad(texture_array_64x64, vec2<u32>(64 * uv), index, 0); }
-            case 4u: { sample = textureLoad(texture_array_128x128, vec2<u32>(128 * uv), index, 0); }
-            case 5u: { sample = textureLoad(texture_array_256x256, vec2<u32>(256 * uv), index, 0); }
-            case 6u: { sample = textureLoad(texture_array_512x512, vec2<u32>(512 * uv), index, 0); }
-            case 7u: { sample = textureLoad(texture_array_1024x1024, vec2<u32>(1024 * uv), index, 0); }
+            case 0u: { sample = textureSampleLevel(texture_array_8x8, image_sampler, uv, index, 0); }
+            case 1u: { sample = textureSampleLevel(texture_array_16x16, image_sampler, uv, index, 0); }
+            case 2u: { sample = textureSampleLevel(texture_array_32x32, image_sampler, uv, index, 0); }
+            case 3u: { sample = textureSampleLevel(texture_array_64x64, image_sampler, uv, index, 0); }
+            case 4u: { sample = textureSampleLevel(texture_array_128x128, image_sampler, uv, index, 0); }
+            case 5u: { sample = textureSampleLevel(texture_array_256x256, image_sampler, uv, index, 0); }
+            case 6u: { sample = textureSampleLevel(texture_array_512x512, image_sampler, uv, index, 0); }
+            case 7u: { sample = textureSampleLevel(texture_array_1024x1024, image_sampler, uv, index, 0); }
             default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); } 
         }
         let index = pack4x8unorm(sample.zyxw);
