@@ -54,9 +54,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         heads.fragment_count = 0;
     }
 
-    let modvol = modvols[heads_index];
+    let modvol_index = oit_uniforms.target_width * oit_uniforms.start_y + heads_index; // Modifier Volume if always done on the full frame at once
+    let modvol = modvols[modvol_index];
     // Reset the count for the next pass.
-    modvols[heads_index].count = 0;
+    modvols[modvol_index].count = 0;
 
     if element_index == 0xFFFFFFFFu {return;}
 

@@ -2760,6 +2760,72 @@ pub const Renderer = struct {
                 //       mode where the depth_compare mode can be set by the user (it is written, but unused).
             };
 
+            // Render Modifier Volumes
+            if (ta_lists.translucent_modifier_volumes.items.len > 0) {
+                const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
+                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
+                oit_uniform_mem.slice[0].target_width = self.resolution.width;
+                oit_uniform_mem.slice[0].start_y = 0;
+
+                const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
+                const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
+                const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                vs_uniform_mem.slice[0].min_depth = self.min_depth;
+                vs_uniform_mem.slice[0].max_depth = self.max_depth;
+
+                const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+
+                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                    .view = depth_view,
+                    .depth_read_only = true,
+                    .stencil_read_only = true,
+                };
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .label = "Translucent Modifier Volumes",
+                    .color_attachment_count = 0,
+                    .color_attachments = null,
+                    .depth_stencil_attachment = &depth_attachment,
+                };
+
+                // Close volume pass.
+                for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                    if (volume.closed) {
+                        {
+                            const pass = encoder.beginRenderPass(render_pass_info);
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
+
+                            pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                            pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_uniform_mem.offset});
+
+                            pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
+
+                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                        }
+                        {
+                            const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
+                            defer {
+                                pass.end();
+                                pass.release();
+                            }
+                            const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, 8) };
+                            pass.setPipeline(gctx.lookupResource(self.translucent_modvol_merge_pipeline).?);
+
+                            pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
+                            pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                        }
+                    } else {
+                        renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
+                        // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
+                        //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
+                    }
+                }
+            }
+
             const slice_size = self.resolution.height / OITHorizontalSlices;
             for (0..OITHorizontalSlices) |i| {
                 const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
@@ -2768,69 +2834,6 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
                 oit_uniform_mem.slice[0].target_width = self.resolution.width;
                 oit_uniform_mem.slice[0].start_y = start_y;
-
-                // Render Modifier Volumes
-                if (ta_lists.translucent_modifier_volumes.items.len > 0) {
-                    const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                    const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
-                    const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
-                    const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                    vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                    vs_uniform_mem.slice[0].max_depth = self.max_depth;
-
-                    const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
-
-                    const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                        .view = depth_view,
-                        .depth_read_only = true,
-                        .stencil_read_only = true,
-                    };
-                    const render_pass_info = wgpu.RenderPassDescriptor{
-                        .label = "Translucent Modifier Volumes",
-                        .color_attachment_count = 0,
-                        .color_attachments = null,
-                        .depth_stencil_attachment = &depth_attachment,
-                    };
-
-                    // Close volume pass.
-                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                        if (volume.closed) {
-                            {
-                                const pass = encoder.beginRenderPass(render_pass_info);
-                                defer {
-                                    pass.end();
-                                    pass.release();
-                                }
-
-                                pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                                pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-                                pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_uniform_mem.offset});
-
-                                pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
-                                pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
-
-                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                            }
-                            {
-                                const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
-                                defer {
-                                    pass.end();
-                                    pass.release();
-                                }
-                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                                pass.setPipeline(gctx.lookupResource(self.translucent_modvol_merge_pipeline).?);
-
-                                pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
-                                pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
-                            }
-                        } else {
-                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
-                            // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
-                            //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
-                        }
-                    }
-                }
-
                 {
                     const pass = encoder.beginRenderPass(oit_render_pass_info);
                     defer {
