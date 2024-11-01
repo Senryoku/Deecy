@@ -60,6 +60,13 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
+const PaletteInstructions = packed struct(u16) {
+    palette: bool, // Texture uses 4bpp or 8bpp palette
+    filtered: bool, // Should be filtered manually in the shader.
+    selector: u6,
+    _: u8 = 0,
+};
+
 const ShadingInstructions = packed struct(u32) {
     textured: u1 = 0,
     mode: HollyModule.TextureShadingInstruction = .Decal,
@@ -85,15 +92,16 @@ fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipma
         @as(u8, @truncate(@intFromEnum(mag_filter)));
 }
 
-const TextureIndex = u32;
+const TextureIndex = u16;
 const InvalidTextureIndex = std.math.maxInt(TextureIndex);
 
-const VertexTextureInfo = packed struct {
+const VertexTextureInfo = packed struct(u64) {
     index: TextureIndex,
+    palette: PaletteInstructions,
     shading: ShadingInstructions,
 
     pub fn invalid() VertexTextureInfo {
-        return .{ .index = InvalidTextureIndex, .shading = @bitCast(@as(u32, 0)) };
+        return .{ .index = InvalidTextureIndex, .palette = @bitCast(@as(u16, 0)), .shading = @bitCast(@as(u32, 0)) };
     }
 };
 
@@ -134,7 +142,7 @@ const Vertex = packed struct {
     }
 };
 
-const StripMetadata = packed struct {
+const StripMetadata = packed struct(u128) {
     area0_instructions: VertexTextureInfo,
     area1_instructions: VertexTextureInfo = VertexTextureInfo.invalid(),
 };
@@ -169,7 +177,22 @@ const TextureMetadata = struct {
     start_address: u32 = 0,
     end_address: u32 = 0,
     hash: u64 = 0,
-    palette_hash: u32 = 0,
+
+    fn masked_tcw(control_word: HollyModule.TextureControlWord) u32 {
+        return switch (control_word.pixel_format) {
+            .Palette4BPP, .Palette8BPP => control_word.masked() & 0xF81F_FFFF, // Ignore all palette selector bits
+            else => control_word.masked(),
+        };
+    }
+
+    // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
+    //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
+    //       This is pretty wasteful, but I hope this will be okay.
+    //       Ignores the palette selector bits for the cache. The shader can use the same texture data by recombining it with
+    //       the palette selector carried by the strip metadata.
+    pub fn match(self: @This(), control_word: HollyModule.TextureControlWord) bool {
+        return masked_tcw(self.control_word) == masked_tcw(control_word);
+    }
 };
 
 const DrawCall = struct {
@@ -477,6 +500,7 @@ pub const Renderer = struct {
 
     texture_arrays: [8]zgpu.TextureHandle,
     texture_array_views: [8]zgpu.TextureViewHandle,
+    palette_buffer: zgpu.BufferHandle,
 
     display_mode: DisplayMode = .Center,
     resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
@@ -520,7 +544,7 @@ pub const Renderer = struct {
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
 
-    _scratch_pad: []u8, // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
+    _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
@@ -563,6 +587,7 @@ pub const Renderer = struct {
             zgpu.textureEntry(7, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.textureEntry(8, .{ .fragment = true }, .float, .tvdim_2d_array, false),
             zgpu.bufferEntry(9, .{ .vertex = true }, .read_only_storage, false, 0),
+            zgpu.bufferEntry(10, .{ .fragment = true }, .read_only_storage, false, 0),
         });
         defer gctx.releaseResource(bind_group_layout);
         const sampler_bind_group_layout = gctx.createBindGroupLayout(&.{
@@ -692,6 +717,10 @@ pub const Renderer = struct {
             });
             texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
         }
+        const palette_buffer = gctx.createBuffer(.{
+            .usage = .{ .copy_dst = true, .storage = true },
+            .size = 4 * 1024,
+        });
 
         const StripMetadataSize = 4 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
         const strips_metadata_buffer = gctx.createBuffer(.{
@@ -710,6 +739,7 @@ pub const Renderer = struct {
             .{ .binding = 7, .texture_view_handle = texture_array_views[6] },
             .{ .binding = 8, .texture_view_handle = texture_array_views[7] },
             .{ .binding = 9, .buffer_handle = strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
+            .{ .binding = 10, .buffer_handle = palette_buffer, .offset = 0, .size = 4 * 1024 }, // FIXME: zgpu limits bindings to 10 by group.
         });
 
         const vertex_buffer = gctx.createBuffer(.{
@@ -1117,6 +1147,7 @@ pub const Renderer = struct {
 
             .texture_arrays = texture_arrays,
             .texture_array_views = texture_array_views,
+            .palette_buffer = palette_buffer,
 
             .samplers = samplers,
             .sampler_bind_groups = sampler_bind_groups,
@@ -1131,7 +1162,7 @@ pub const Renderer = struct {
 
             .ta_lists = HollyModule.TALists.init(allocator),
 
-            ._scratch_pad = try allocator.alloc(u8, 4 * 1024 * 1024),
+            ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
             ._gctx = gctx,
             ._allocator = allocator,
@@ -1257,9 +1288,7 @@ pub const Renderer = struct {
     pub fn get_texture_view(self: *const Renderer, control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
         const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
-            if (entry.status != .Invalid and entry.status != .Outdated and
-                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
-            {
+            if (entry.status != .Invalid and entry.status != .Outdated and entry.match(control_word)) {
                 return .{ .size_index = size_index, .index = @intCast(idx) };
             }
         }
@@ -1268,18 +1297,10 @@ pub const Renderer = struct {
 
     fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
-            if (entry.status != .Invalid and
-                // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
-                //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
-                //       This is pretty wasteful, but I hope this will be okay.
-                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
-            {
+            if (entry.status != .Invalid and entry.match(control_word)) {
                 if (entry.usage == 0) {
-                    const is_palette_texture = entry.control_word.pixel_format == .Palette4BPP or entry.control_word.pixel_format == .Palette8BPP;
-                    // Texture appears to have changed in memory, or palette has changed. Mark as outdated.
-                    if ((is_palette_texture and palette_hash(gpu, entry.control_word) != entry.palette_hash) or
-                        texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash)
-                    {
+                    // Texture appears to have changed in memory. Mark as outdated.
+                    if (texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash) {
                         entry.status = .Outdated;
                         entry.usage = 0xFFFFFFFF; // Do not check it again.
                         continue; // Not valid anymore, ignore it.
@@ -1512,25 +1533,16 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => |format| {
-                    const palette_ram = @as([*]const u32, @ptrCast(@constCast(gpu)._get_register(u32, .PALETTE_RAM_START)))[0..1024];
-                    const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
-                    const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-
+                    std.debug.assert(twiddled);
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
-                            const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
+                            const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
                             const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                            const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
-                            switch (palette_ctrl_ram) {
-                                0x0, 0x1, 0x2 => { // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                                    self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[palette_selector + offset]), twiddled);
-                                },
-                                0x3 => { // ARGB8888
-                                    self.bgra_scratch_pad()[pixel_idx] = @bitCast(palette_ram[palette_selector + offset]);
-                                },
-                            }
+                            const data: u8 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
+
+                            @as([*]u32, @alignCast(@ptrCast(self._scratch_pad.ptr)))[pixel_idx] = data;
                         }
                     }
                 },
@@ -1628,7 +1640,6 @@ pub const Renderer = struct {
             .start_address = addr,
             .end_address = end_address,
             .hash = texture_hash(gpu, addr, end_address),
-            .palette_hash = palette_hash(gpu, texture_control_word),
         };
 
         // Fill with repeating texture data when v_size != u_size to avoid wrapping artifacts.
@@ -1839,7 +1850,12 @@ pub const Renderer = struct {
 
         const tex = VertexTextureInfo{
             .index = tex_idx,
-            .shading = ShadingInstructions{
+            .palette = .{
+                .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                .filtered = tsp_instruction.filter_mode != 0,
+                .selector = @truncate(texture_control.palette_selector() >> 4),
+            },
+            .shading = .{
                 .textured = isp_tsp_instruction.texture,
                 .mode = tsp_instruction.texture_shading_instruction,
                 .ignore_alpha = tsp_instruction.ignore_texture_alpha,
@@ -1945,6 +1961,23 @@ pub const Renderer = struct {
         std.debug.assert(FirstIndex == indices.len);
     }
 
+    pub fn update_palette(self: *@This(), gpu: *const HollyModule.Holly) !void {
+        // TODO: Check if the palette has changed (palette hash) instead of updating unconditionally?
+
+        const palette_ram = @as([*]const u32, @ptrCast(@constCast(gpu)._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+        const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
+
+        for (0..palette_ram.len) |i| {
+            self.bgra_scratch_pad()[i] = switch (palette_ctrl_ram) {
+                // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
+                0x0, 0x1, 0x2 => bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[i]), true),
+                // ARGB8888
+                0x3 => @bitCast(palette_ram[i]),
+            };
+        }
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
+    }
+
     pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
         const ta_lists = self.ta_lists;
 
@@ -1983,6 +2016,7 @@ pub const Renderer = struct {
         self.global_clip.y.max = y_clip.max;
 
         try self.update_background(gpu);
+        try self.update_palette(gpu);
 
         for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
             // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
@@ -2090,12 +2124,19 @@ pub const Renderer = struct {
                 const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
                 const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
 
-                const filter_mode: wgpu.FilterMode = if (tsp_instruction.filter_mode == 0) .nearest else .linear; // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
+                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == 0) .nearest else .linear;
 
                 const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
                 const area0_instructions: VertexTextureInfo = .{
                     .index = tex_idx,
+                    .palette = .{
+                        .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                        .filtered = tsp_instruction.filter_mode != 0,
+                        .selector = @truncate(texture_control.palette_selector() >> 4),
+                    },
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
                         .mode = tsp_instruction.texture_shading_instruction,
@@ -2115,6 +2156,11 @@ pub const Renderer = struct {
 
                 const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
                     .index = tex_idx_area_1,
+                    .palette = .{
+                        .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                        .filtered = atspi.filter_mode != 0,
+                        .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
+                    },
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
                         .mode = atspi.texture_shading_instruction,

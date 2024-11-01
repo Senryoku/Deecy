@@ -518,7 +518,23 @@ pub const TextureControlWord = packed struct(u32) {
     pixel_format: TexturePixelFormat = .Reserved,
     vq_compressed: u1 = 0,
     mip_mapped: u1 = 0,
+
+    pub const Mask: u32 = 0xFE1F_FFFF;
+
+    // Mask out reserved bits.
+    pub fn masked(self: @This()) u32 {
+        return @as(u32, @bitCast(self)) & Mask;
+    }
+
+    pub fn palette_selector(self: @This()) u10 {
+        return @truncate(switch (self.pixel_format) {
+            .Palette4BPP => (((@as(u32, @bitCast(self)) >> 21) & 0b111111) << 4),
+            .Palette8BPP => (((@as(u32, @bitCast(self)) >> 25) & 0b11) << 8),
+            else => 0,
+        });
+    }
 };
+
 pub const PaletteTextureControlWord = packed struct(u32) {
     address: u21,
     palette_selector: u6,
