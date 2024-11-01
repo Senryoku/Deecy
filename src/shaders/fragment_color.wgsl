@@ -11,39 +11,32 @@
 
 @group(1) @binding(0) var image_sampler: sampler;
 
-fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
-    if index >= 512 { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
+
+fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+    if index >= textureNumLayers(tex_array) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
     if ((control >> 25) & 1) == 1 {
         // Palette Texture
-        var sample = vec4<f32>(0.0);
-        // FIXME: Skipping the sampler here also means we don't following the UV mode (clamping/repeating...)
-        switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-            case 0u: { sample = textureSampleLevel(texture_array_8x8, image_sampler, uv, index, 0); }
-            case 1u: { sample = textureSampleLevel(texture_array_16x16, image_sampler, uv, index, 0); }
-            case 2u: { sample = textureSampleLevel(texture_array_32x32, image_sampler, uv, index, 0); }
-            case 3u: { sample = textureSampleLevel(texture_array_64x64, image_sampler, uv, index, 0); }
-            case 4u: { sample = textureSampleLevel(texture_array_128x128, image_sampler, uv, index, 0); }
-            case 5u: { sample = textureSampleLevel(texture_array_256x256, image_sampler, uv, index, 0); }
-            case 6u: { sample = textureSampleLevel(texture_array_512x512, image_sampler, uv, index, 0); }
-            case 7u: { sample = textureSampleLevel(texture_array_1024x1024, image_sampler, uv, index, 0); }
-            default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); } 
-        }
-        let index = pack4x8unorm(sample.zyxw);
+        var sample = textureSampleLevel(tex_array, image_sampler, uv, index, 0);
+        let palette_index = pack4x8unorm(sample.zyxw);
         // FIXME/TODO: Bilinear filtering!
-        return unpack4x8unorm(palette[index]).zyxw;
+        return unpack4x8unorm(palette[palette_index]).zyxw;
     } else {
-        switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-            case 0u: { return textureSampleGrad(texture_array_8x8, image_sampler, uv, index, duvdx, duvdy); }
-            case 1u: { return textureSampleGrad(texture_array_16x16, image_sampler, uv, index, duvdx, duvdy); }
-            case 2u: { return textureSampleGrad(texture_array_32x32, image_sampler, uv, index, duvdx, duvdy); }
-            case 3u: { return textureSampleGrad(texture_array_64x64, image_sampler, uv, index, duvdx, duvdy); }
-            case 4u: { return textureSampleGrad(texture_array_128x128, image_sampler, uv, index, duvdx, duvdy); }
-            case 5u: { return textureSampleGrad(texture_array_256x256, image_sampler, uv, index, duvdx, duvdy); }
-            case 6u: { return textureSampleGrad(texture_array_512x512, image_sampler, uv, index, duvdx, duvdy); }
-            case 7u: { return textureSampleGrad(texture_array_1024x1024, image_sampler, uv, index, duvdx, duvdy); }
-            default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); } 
-        }
+        return textureSampleGrad(tex_array, image_sampler, uv, index, duvdx, duvdy);
+    }
+}
+
+fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+    switch(max((control >> 4) & 7, (control >> 7) & 7))  {
+        case 0u: { return tex_array_sample(texture_array_8x8, uv, duvdx, duvdy, control, index); }
+        case 1u: { return tex_array_sample(texture_array_16x16, uv, duvdx, duvdy, control, index); }
+        case 2u: { return tex_array_sample(texture_array_32x32, uv, duvdx, duvdy, control, index); }
+        case 3u: { return tex_array_sample(texture_array_64x64, uv, duvdx, duvdy, control, index); }
+        case 4u: { return tex_array_sample(texture_array_128x128, uv, duvdx, duvdy, control, index); }
+        case 5u: { return tex_array_sample(texture_array_256x256, uv, duvdx, duvdy, control, index); }
+        case 6u: { return tex_array_sample(texture_array_512x512, uv, duvdx, duvdy, control, index); }
+        case 7u: { return tex_array_sample(texture_array_1024x1024, uv, duvdx, duvdy, control, index); }
+        default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
     }
 }
 
