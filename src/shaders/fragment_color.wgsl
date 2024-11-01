@@ -11,16 +11,60 @@
 
 @group(1) @binding(0) var image_sampler: sampler;
 
+fn bilinear_interpolation(u_min_v_min: vec4<f32>, u_min_v_max: vec4<f32>, u_max_v_min: vec4<f32>, u_max_v_max: vec4<f32>, frac: vec2<f32>) -> vec4<f32> {
+    let v_min = mix(u_min_v_min, u_max_v_min, frac.x);
+    let v_max = mix(u_min_v_max, u_max_v_max, frac.x);
+    return mix(v_min, v_max, frac.y);
+}
 
 fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
     if index >= textureNumLayers(tex_array) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
     if ((control >> 25) & 1) == 1 {
         // Palette Texture
-        var sample = textureSampleLevel(tex_array, image_sampler, uv, index, 0);
-        let palette_index = pack4x8unorm(sample.zyxw);
-        // FIXME/TODO: Bilinear filtering!
-        return unpack4x8unorm(palette[palette_index]).zyxw;
+        if ((control >> 26) & 1) == 1 {
+            // with Bilinear filtering
+            let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv;
+
+            if false { // Fallback while the textureGather version is not working.
+                let palette_indices = vec4<u32>(
+                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 0.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
+                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
+                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(1.0, 0.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
+                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(1.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
+                );
+                return bilinear_interpolation(
+                    unpack4x8unorm(palette[palette_indices[0] ]),
+                    unpack4x8unorm(palette[palette_indices[1] ]),
+                    unpack4x8unorm(palette[palette_indices[2] ]),
+                    unpack4x8unorm(palette[palette_indices[3] ]),
+                    fract(texel_coord),
+                ).zyxw;
+            } else {
+                // FIXME: This should be more efficient, but doesn't work as expected. (For a failure example: Soul Calibur characted selection uses filtered palette texture for the background and "New" text) 
+                // Palette index is < 1024, we don't need every components.
+                let z = textureGather(2, tex_array, image_sampler, uv, index);
+                let y = textureGather(1, tex_array, image_sampler, uv, index);
+                let palette_indices = vec4<u32>(
+                    pack4x8unorm(vec4<f32>(z.x, y.x, 0, 0)), // Umin, Vmax (per WebGPU spec)
+                    pack4x8unorm(vec4<f32>(z.y, y.y, 0, 0)), // Umax, Vmax
+                    pack4x8unorm(vec4<f32>(z.z, y.z, 0, 0)), // Umax, Vmin
+                    pack4x8unorm(vec4<f32>(z.w, y.w, 0, 0)), // Umin, Vmin
+                );
+                // FIXME: The error looks like these parameters aren't in order, but I think I tried every permutation at this point...
+                return bilinear_interpolation(
+                    unpack4x8unorm(palette[palette_indices[3] ]),
+                    unpack4x8unorm(palette[palette_indices[0] ]),
+                    unpack4x8unorm(palette[palette_indices[2] ]),
+                    unpack4x8unorm(palette[palette_indices[1] ]),
+                    fract(texel_coord),
+                ).zyxw;
+            }
+        } else {
+            var sample = textureSampleLevel(tex_array, image_sampler, uv, index, 0);
+            let palette_index = pack4x8unorm(sample.zyxw);
+            return unpack4x8unorm(palette[palette_index]).zyxw;
+        }
     } else {
         return textureSampleGrad(tex_array, image_sampler, uv, index, duvdx, duvdy);
     }
