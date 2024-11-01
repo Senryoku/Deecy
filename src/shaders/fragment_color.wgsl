@@ -17,16 +17,18 @@ fn bilinear_interpolation(u_min_v_min: vec4<f32>, u_min_v_max: vec4<f32>, u_max_
     return mix(v_min, v_max, frac.y);
 }
 
-fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instructions: u32, control: u32, index: u32) -> vec4<f32> {
     if index >= textureNumLayers(tex_array) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
-    if ((control >> 25) & 1) == 1 {
+    if ((palette_instructions & 25) & 1) == 1 {
         // Palette Texture
-        if ((control >> 26) & 1) == 1 {
+        let palette_selector = ((palette_instructions >> 2) & 0x3F) << 4;
+
+        if ((palette_instructions >> 1) & 1) == 1 {
             // with Bilinear filtering
             let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv;
 
-            if false { // Fallback while the textureGather version is not working.
+            if true { // Fallback while the textureGather version is not working.
                 let palette_indices = vec4<u32>(
                     pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 0.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
                     pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
@@ -34,52 +36,51 @@ fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2
                     pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(1.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
                 );
                 return bilinear_interpolation(
-                    unpack4x8unorm(palette[palette_indices[0] ]),
-                    unpack4x8unorm(palette[palette_indices[1] ]),
-                    unpack4x8unorm(palette[palette_indices[2] ]),
-                    unpack4x8unorm(palette[palette_indices[3] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[0] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[1] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[2] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[3] ]),
                     fract(texel_coord),
                 ).zyxw;
             } else {
-                // FIXME: This should be more efficient, but doesn't work as expected. (For a failure example: Soul Calibur characted selection uses filtered palette texture for the background and "New" text) 
-                // Palette index is < 1024, we don't need every components.
+                // FIXME: This should be more efficient, but doesn't work as expected. (For a failure example: Soul Calibur characted selection uses filtered palette textures for the background and "New" text) 
+                // Palette data is 4 or 8bits, we don't need every components.
                 let z = textureGather(2, tex_array, image_sampler, uv, index);
-                let y = textureGather(1, tex_array, image_sampler, uv, index);
                 let palette_indices = vec4<u32>(
-                    pack4x8unorm(vec4<f32>(z.x, y.x, 0, 0)), // Umin, Vmax (per WebGPU spec)
-                    pack4x8unorm(vec4<f32>(z.y, y.y, 0, 0)), // Umax, Vmax
-                    pack4x8unorm(vec4<f32>(z.z, y.z, 0, 0)), // Umax, Vmin
-                    pack4x8unorm(vec4<f32>(z.w, y.w, 0, 0)), // Umin, Vmin
+                    pack4x8unorm(vec4<f32>(z.x, 0, 0, 0)), // Umin, Vmax (per WebGPU spec)
+                    pack4x8unorm(vec4<f32>(z.y, 0, 0, 0)), // Umax, Vmax
+                    pack4x8unorm(vec4<f32>(z.z, 0, 0, 0)), // Umax, Vmin
+                    pack4x8unorm(vec4<f32>(z.w, 0, 0, 0)), // Umin, Vmin
                 );
                 // FIXME: The error looks like these parameters aren't in order, but I think I tried every permutation at this point...
                 return bilinear_interpolation(
-                    unpack4x8unorm(palette[palette_indices[3] ]),
-                    unpack4x8unorm(palette[palette_indices[0] ]),
-                    unpack4x8unorm(palette[palette_indices[2] ]),
-                    unpack4x8unorm(palette[palette_indices[1] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[3] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[0] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[2] ]),
+                    unpack4x8unorm(palette[palette_selector + palette_indices[1] ]),
                     fract(texel_coord),
                 ).zyxw;
             }
         } else {
             var sample = textureSampleLevel(tex_array, image_sampler, uv, index, 0);
             let palette_index = pack4x8unorm(sample.zyxw);
-            return unpack4x8unorm(palette[palette_index]).zyxw;
+            return unpack4x8unorm(palette[palette_selector + palette_index]).zyxw;
         }
     } else {
         return textureSampleGrad(tex_array, image_sampler, uv, index, duvdx, duvdy);
     }
 }
 
-fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, control: u32, index: u32) -> vec4<f32> {
+fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instructions: u32, control: u32, index: u32) -> vec4<f32> {
     switch(max((control >> 4) & 7, (control >> 7) & 7))  {
-        case 0u: { return tex_array_sample(texture_array_8x8, uv, duvdx, duvdy, control, index); }
-        case 1u: { return tex_array_sample(texture_array_16x16, uv, duvdx, duvdy, control, index); }
-        case 2u: { return tex_array_sample(texture_array_32x32, uv, duvdx, duvdy, control, index); }
-        case 3u: { return tex_array_sample(texture_array_64x64, uv, duvdx, duvdy, control, index); }
-        case 4u: { return tex_array_sample(texture_array_128x128, uv, duvdx, duvdy, control, index); }
-        case 5u: { return tex_array_sample(texture_array_256x256, uv, duvdx, duvdy, control, index); }
-        case 6u: { return tex_array_sample(texture_array_512x512, uv, duvdx, duvdy, control, index); }
-        case 7u: { return tex_array_sample(texture_array_1024x1024, uv, duvdx, duvdy, control, index); }
+        case 0u: { return tex_array_sample(texture_array_8x8, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 1u: { return tex_array_sample(texture_array_16x16, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 2u: { return tex_array_sample(texture_array_32x32, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 3u: { return tex_array_sample(texture_array_64x64, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 4u: { return tex_array_sample(texture_array_128x128, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 5u: { return tex_array_sample(texture_array_256x256, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 6u: { return tex_array_sample(texture_array_512x512, uv, duvdx, duvdy, palette_instructions, control, index); }
+        case 7u: { return tex_array_sample(texture_array_1024x1024, uv, duvdx, duvdy, palette_instructions, control, index); }
         default: { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
     }
 }
@@ -149,6 +150,7 @@ fn area_color(
     duvdx: vec2<f32>,
     duvdy: vec2<f32>,
     texture_index: u32,
+    palette_instructions: u32,
     shading_instructions: u32,
     z: f32,
     punch_through: bool,
@@ -159,7 +161,7 @@ fn area_color(
         let u_size: f32 = tex_size((shading_instructions >> 4) & 7);
         let v_size: f32 = tex_size((shading_instructions >> 7) & 7);
         let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
-        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, shading_instructions, texture_index);
+        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
 
         let shading = (shading_instructions >> 1) & 0x3;
         let ignore_tex_alpha = ((shading_instructions >> 3) & 0x1) == 1;
@@ -212,14 +214,14 @@ fn fragment_color(
     varying_offset_color: vec4<f32>,
     flat_offset_color: vec4<f32>,
     uv: vec2<f32>,
-    texture_index: u32,
+    texture_index_palette: u32,
     shading_instructions: u32,
     area1_varying_base_color: vec4<f32>,
     area1_flat_base_color: vec4<f32>,
     area1_varying_offset_color: vec4<f32>,
     area1_flat_offset_color: vec4<f32>,
     area1_uv: vec2<f32>,
-    area1_texture_index: u32,
+    area1_texture_index_palette: u32,
     area1_shading_instructions: u32,
     z: f32,
     punch_through: bool,
@@ -240,6 +242,9 @@ fn fragment_color(
     let area1_duvdx = dpdx(area1_uv);
     let area1_duvdy = dpdy(area1_uv);
 
+    let texture_index: u32 = texture_index_palette & 0xFFFF;
+    let palette_instructions: u32 = texture_index_palette >> 16;
+
     output.area0 = area_color(
         base_color,
         offset_color,
@@ -247,6 +252,7 @@ fn fragment_color(
         duvdx,
         duvdy,
         texture_index,
+        palette_instructions,
         shading_instructions,
         z,
         punch_through
@@ -262,6 +268,9 @@ fn fragment_color(
     let shadow_bit = ((shading_instructions >> 22) & 1) == 1;
     let volume_bit = ((shading_instructions >> 24) & 1) == 1;
 
+    let area1_texture_index: u32 = area1_texture_index_palette & 0xFFFF;
+    let area1_palette_instructions: u32 = area1_texture_index_palette >> 16;
+
     if shadow_bit {
         if volume_bit { // Volume Bit
             output.area1 = area_color(
@@ -271,6 +280,7 @@ fn fragment_color(
                 area1_duvdx,
                 area1_duvdy,
                 area1_texture_index,
+                area1_texture_index_palette,
                 area1_shading_instructions,
                 z,
                 punch_through

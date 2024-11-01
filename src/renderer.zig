@@ -60,6 +60,13 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
+const PaletteInstructions = packed struct(u16) {
+    palette: bool, // Texture uses 4bpp or 8bpp palette
+    filtered: bool, // Should be filtered manually in the shader.
+    selector: u6,
+    _: u8 = 0,
+};
+
 const ShadingInstructions = packed struct(u32) {
     textured: u1 = 0,
     mode: HollyModule.TextureShadingInstruction = .Decal,
@@ -74,9 +81,7 @@ const ShadingInstructions = packed struct(u32) {
     shadow_bit: u1,
     gouraud_bit: u1,
     volume_bit: u1,
-    tex_palette: bool, // Texture uses 4bpp or 8bpp palette
-    tex_palette_filtered: bool, // Should filtered manually in the shader.
-    _: u5 = 0,
+    _: u7 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -87,15 +92,16 @@ fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipma
         @as(u8, @truncate(@intFromEnum(mag_filter)));
 }
 
-const TextureIndex = u32;
+const TextureIndex = u16;
 const InvalidTextureIndex = std.math.maxInt(TextureIndex);
 
-const VertexTextureInfo = packed struct {
+const VertexTextureInfo = packed struct(u64) {
     index: TextureIndex,
+    palette: PaletteInstructions,
     shading: ShadingInstructions,
 
     pub fn invalid() VertexTextureInfo {
-        return .{ .index = InvalidTextureIndex, .shading = @bitCast(@as(u32, 0)) };
+        return .{ .index = InvalidTextureIndex, .palette = @bitCast(@as(u16, 0)), .shading = @bitCast(@as(u32, 0)) };
     }
 };
 
@@ -136,7 +142,7 @@ const Vertex = packed struct {
     }
 };
 
-const StripMetadata = packed struct {
+const StripMetadata = packed struct(u128) {
     area0_instructions: VertexTextureInfo,
     area1_instructions: VertexTextureInfo = VertexTextureInfo.invalid(),
 };
@@ -173,17 +179,17 @@ const TextureMetadata = struct {
     hash: u64 = 0,
 
     fn masked_tcw(control_word: HollyModule.TextureControlWord) u32 {
-        var r = control_word.masked();
-        switch (control_word.pixel_format) {
-            .Palette4BPP, .Palette8BPP => r &= 0xF81F_FFFF,
-            else => {},
-        }
-        return r;
+        return switch (control_word.pixel_format) {
+            .Palette4BPP, .Palette8BPP => control_word.masked() & 0xF81F_FFFF, // Ignore all palette selector bits
+            else => control_word.masked(),
+        };
     }
 
     // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
     //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
     //       This is pretty wasteful, but I hope this will be okay.
+    //       Ignores the palette selector bits for the cache. The shader can use the same texture data by recombining it with
+    //       the palette selector carried by the strip metadata.
     pub fn match(self: @This(), control_word: HollyModule.TextureControlWord) bool {
         return masked_tcw(self.control_word) == masked_tcw(control_word);
     }
@@ -1527,8 +1533,6 @@ pub const Renderer = struct {
                     }
                 },
                 .Palette4BPP, .Palette8BPP => |format| {
-                    const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-
                     std.debug.assert(twiddled);
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
@@ -1536,9 +1540,9 @@ pub const Renderer = struct {
                             const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
                             const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                            const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
+                            const data: u8 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
 
-                            @as([*]u32, @alignCast(@ptrCast(self._scratch_pad.ptr)))[pixel_idx] = palette_selector + offset;
+                            @as([*]u32, @alignCast(@ptrCast(self._scratch_pad.ptr)))[pixel_idx] = data;
                         }
                     }
                 },
@@ -1846,7 +1850,12 @@ pub const Renderer = struct {
 
         const tex = VertexTextureInfo{
             .index = tex_idx,
-            .shading = ShadingInstructions{
+            .palette = .{
+                .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                .filtered = tsp_instruction.filter_mode != 0,
+                .selector = @truncate(texture_control.palette_selector() >> 4),
+            },
+            .shading = .{
                 .textured = isp_tsp_instruction.texture,
                 .mode = tsp_instruction.texture_shading_instruction,
                 .ignore_alpha = tsp_instruction.ignore_texture_alpha,
@@ -1858,8 +1867,6 @@ pub const Renderer = struct {
                 .shadow_bit = 0,
                 .gouraud_bit = isp_tsp_instruction.gouraud,
                 .volume_bit = 0,
-                .tex_palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                .tex_palette_filtered = tsp_instruction.filter_mode != 0,
             },
         };
 
@@ -2125,6 +2132,11 @@ pub const Renderer = struct {
 
                 const area0_instructions: VertexTextureInfo = .{
                     .index = tex_idx,
+                    .palette = .{
+                        .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                        .filtered = tsp_instruction.filter_mode != 0,
+                        .selector = @truncate(texture_control.palette_selector() >> 4),
+                    },
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
                         .mode = tsp_instruction.texture_shading_instruction,
@@ -2139,13 +2151,16 @@ pub const Renderer = struct {
                         .shadow_bit = parameter_control_word.obj_control.shadow,
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
-                        .tex_palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                        .tex_palette_filtered = tsp_instruction.filter_mode != 0,
                     },
                 };
 
                 const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
                     .index = tex_idx_area_1,
+                    .palette = .{
+                        .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                        .filtered = atspi.filter_mode != 0,
+                        .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
+                    },
                     .shading = .{
                         .textured = parameter_control_word.obj_control.texture,
                         .mode = atspi.texture_shading_instruction,
@@ -2160,8 +2175,6 @@ pub const Renderer = struct {
                         .shadow_bit = parameter_control_word.obj_control.shadow,
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
-                        .tex_palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
-                        .tex_palette_filtered = atspi.filter_mode != 0,
                     },
                 } else VertexTextureInfo.invalid();
 
