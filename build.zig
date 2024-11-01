@@ -70,7 +70,7 @@ pub fn build(b: *std.Build) void {
         exe.root_module.addImport("zpool", zpool.module("root"));
         exe_check.root_module.addImport("zpool", zpool.module("root"));
 
-        const zgpu = b.dependency("zgpu", .{});
+        const zgpu = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
         exe.root_module.addImport("zgpu", zgpu.module("root"));
         exe.linkLibrary(zgpu.artifact("zdawn"));
         exe_check.root_module.addImport("zgpu", zgpu.module("root"));
