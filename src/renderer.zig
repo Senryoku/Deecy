@@ -1529,10 +1529,11 @@ pub const Renderer = struct {
                 .Palette4BPP, .Palette8BPP => |format| {
                     const palette_selector: u10 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
 
+                    std.debug.assert(twiddled);
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
-                            const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
+                            const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
                             const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
                             const pixel_palette: u8 = gpu.vram[addr + ram_addr];
                             const offset: u10 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
@@ -1959,15 +1960,15 @@ pub const Renderer = struct {
         const palette_ram = @as([*]const u32, @ptrCast(@constCast(gpu)._get_register(u32, .PALETTE_RAM_START)))[0..1024];
         const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
 
-        for (0..1024) |i| {
+        for (0..palette_ram.len) |i| {
             self.bgra_scratch_pad()[i] = switch (palette_ctrl_ram) {
                 // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                0x0, 0x1, 0x2 => bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[i]), true), // FIXME: How to handle non-twiddled formats? Second buffer?
+                0x0, 0x1, 0x2 => bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[i]), true),
                 // ARGB8888
                 0x3 => @bitCast(palette_ram[i]),
             };
         }
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * 1024]);
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.palette_buffer).?, 0, u8, self._scratch_pad[0 .. 4 * palette_ram.len]);
     }
 
     pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
