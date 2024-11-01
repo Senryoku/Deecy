@@ -171,6 +171,22 @@ const TextureMetadata = struct {
     start_address: u32 = 0,
     end_address: u32 = 0,
     hash: u64 = 0,
+
+    fn masked_tcw(control_word: HollyModule.TextureControlWord) u32 {
+        var r = control_word.masked();
+        switch (control_word.pixel_format) {
+            .Palette4BPP, .Palette8BPP => r &= 0xF81F_FFFF,
+            else => {},
+        }
+        return r;
+    }
+
+    // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
+    //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
+    //       This is pretty wasteful, but I hope this will be okay.
+    pub fn match(self: @This(), control_word: HollyModule.TextureControlWord) bool {
+        return masked_tcw(self.control_word) == masked_tcw(control_word);
+    }
 };
 
 const DrawCall = struct {
@@ -1266,9 +1282,7 @@ pub const Renderer = struct {
     pub fn get_texture_view(self: *const Renderer, control_word: HollyModule.TextureControlWord, tsp_instruction: HollyModule.TSPInstructionWord) ?struct { size_index: u3, index: u32 } {
         const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
-            if (entry.status != .Invalid and entry.status != .Outdated and
-                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
-            {
+            if (entry.status != .Invalid and entry.status != .Outdated and entry.match(control_word)) {
                 return .{ .size_index = size_index, .index = @intCast(idx) };
             }
         }
@@ -1277,12 +1291,7 @@ pub const Renderer = struct {
 
     fn get_texture_index(self: *Renderer, gpu: *const HollyModule.Holly, size_index: u3, control_word: HollyModule.TextureControlWord) ?TextureIndex {
         for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
-            if (entry.status != .Invalid and
-                // NOTE: In most cases, the address should be enough, but Soul Calibur mixes multiple different pixel formats in the same texture.
-                //       Do handle this, we'll treat then as different textures and upload an additional copy of the texture for each pixel format used.
-                //       This is pretty wasteful, but I hope this will be okay.
-                @as(u32, @bitCast(entry.control_word)) == @as(u32, @bitCast(control_word)))
-            {
+            if (entry.status != .Invalid and entry.match(control_word)) {
                 if (entry.usage == 0) {
                     // Texture appears to have changed in memory. Mark as outdated.
                     if (texture_hash(gpu, entry.start_address, entry.end_address) != entry.hash) {
