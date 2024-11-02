@@ -153,6 +153,7 @@ pub fn main() !void {
     var skip_bios = false;
     var start_immediately = false;
     var force_stop = false;
+    var force_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
 
     var args = try std.process.argsWithAllocator(common.GeneralAllocator);
     defer args.deinit();
@@ -192,6 +193,9 @@ pub fn main() !void {
         }
         if (std.mem.eql(u8, arg, "--stop")) {
             force_stop = true;
+        }
+        if (std.mem.eql(u8, arg, "--force-render")) {
+            force_render = true;
         }
     }
 
@@ -302,8 +306,7 @@ pub fn main() !void {
             d.last_frame_timestamp = now;
         }
 
-        const always_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
-        if (always_render or render_start) {
+        if (force_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
 
             if (RendererModule.ExperimentalFBWriteBack) {
