@@ -220,9 +220,9 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
                 }
             },
             else => {
-                std.debug.print("  Unhandled Exception: {X}\n", .{info.ExceptionRecord.ExceptionCode});
-                std.debug.print("    Info: {X}\n", .{info.ExceptionRecord.ExceptionInformation[0]});
-                std.debug.print("          {X}\n", .{info.ExceptionRecord.ExceptionInformation[1]});
+                // std.debug.print("  Unhandled Exception: {X}\n", .{info.ExceptionRecord.ExceptionCode});
+                // std.debug.print("    Info: {X}\n", .{info.ExceptionRecord.ExceptionInformation[0]});
+                // std.debug.print("          {X}\n", .{info.ExceptionRecord.ExceptionInformation[1]});
                 return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
             },
         }

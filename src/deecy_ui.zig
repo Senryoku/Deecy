@@ -321,9 +321,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         "None";
                     if (zgui.beginCombo("Device" ++ number, .{ .preview_value = name })) {
                         for (available_controllers.items, 0..) |item, index| {
-                            const idx = @as(u32, @intCast(index));
-                            if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == available_controllers.items[idx].id }))
-                                d.controllers[i] = .{ .id = available_controllers.items[idx].id.? };
+                            if (available_controllers.items[index].id) |id| {
+                                if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == id }))
+                                    d.controllers[i] = .{ .id = id };
+                            } else {
+                                if (zgui.selectable(item.name, .{ .selected = d.controllers[i] == null }))
+                                    d.controllers[i] = null;
+                            }
                         }
                         zgui.endCombo();
                     }
