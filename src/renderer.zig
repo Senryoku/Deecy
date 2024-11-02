@@ -775,6 +775,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(0, .{ .fragment = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
+            zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
         });
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "modvol_vs");
@@ -2794,12 +2795,6 @@ pub const Renderer = struct {
                     };
 
                     {
-                        const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32, volume_index: u32 }, 1);
-                        oit_fs_uniform_mem.slice[0].max_fragments = oit_uniform_mem.slice[0].max_fragments;
-                        oit_fs_uniform_mem.slice[0].target_width = oit_uniform_mem.slice[0].target_width;
-                        oit_fs_uniform_mem.slice[0].start_y = oit_uniform_mem.slice[0].start_y;
-                        oit_fs_uniform_mem.slice[0].volume_index = 0;
-
                         const pass = encoder.beginRenderPass(render_pass_info);
                         defer {
                             pass.end();
@@ -2811,11 +2806,15 @@ pub const Renderer = struct {
                         pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
 
                         // Close volume pass.
+                        var volume_index: u32 = 0;
                         for (ta_lists.translucent_modifier_volumes.items) |volume| {
                             if (volume.closed) {
-                                pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_fs_uniform_mem.offset});
+                                const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
+                                oit_fs_uniform_mem.slice[0].volume_index = volume_index;
+                                pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
+                                volume_index += 1;
+
                                 pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                                oit_fs_uniform_mem.slice[0].volume_index += 1;
                             }
                         } else {
                             renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
@@ -3301,9 +3300,10 @@ pub const Renderer = struct {
 
     fn create_translucent_modvol_bind_group(self: *@This()) void {
         self.translucent_modvol_bind_group = self._gctx.createBindGroup(self.translucent_modvol_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 4 * @sizeOf(u32) },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
+            .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
