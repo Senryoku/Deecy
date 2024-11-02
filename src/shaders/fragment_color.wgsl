@@ -280,7 +280,7 @@ fn fragment_color(
                 area1_duvdx,
                 area1_duvdy,
                 area1_texture_index,
-                area1_texture_index_palette,
+                area1_palette_instructions,
                 area1_shading_instructions,
                 z,
                 punch_through
