@@ -289,7 +289,13 @@ pub fn main() !void {
         // Update the host texture and blit it to our render target.
         if (d.dc.gpu.dirty_framebuffer) {
             d.renderer.update_framebuffer_texture(&d.dc.gpu);
-            d.renderer.blit_framebuffer();
+            // FIXME: Yet another framebuffer hack.
+            //        Skip the framebuffer blit if we recently used the PVR for rendering.
+            //        Some games (like Speed Devils) renders only at 30FPS and each frame is presented twice,
+            //        however we don't actually write back the framebuffer to VRAM, meaning we'd blit garbage to the screen.
+            //        Plus, even if PVR writing to the framebuffer was perfectly emulated, it would still only be at native resolution.
+            if (std.time.microTimestamp() - d.last_frame_timestamp > 40_000)
+                d.renderer.blit_framebuffer();
             d.dc.gpu.dirty_framebuffer = false;
         }
 
