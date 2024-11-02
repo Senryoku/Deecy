@@ -3,7 +3,14 @@ struct Heads {
   data: array<atomic<u32>>
 };
 
-@group(1) @binding(0) var<uniform> oit_uniforms: OITUniforms;
+struct OITFSUniforms {
+    max_fragments: u32,
+    target_width: u32,
+    start_y: u32,
+    volume_index: u32,
+};
+
+@group(1) @binding(0) var<uniform> oit_uniforms: OITFSUniforms;
 @group(1) @binding(1) var<storage, read_write> heads: Heads;
 @group(1) @binding(2) var<storage, read_write> linked_list: VolumeLinkedList;
 
@@ -19,6 +26,7 @@ fn main(
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
         linked_list.data[frag_index].depth = position_clip.z;
+        linked_list.data[frag_index].volume_index = oit_uniforms.volume_index;
         linked_list.data[frag_index].next = last_head;
     }
 }

@@ -22,6 +22,7 @@ const MaxVolumesInterfaces = 2 * MaxVolumes;
 struct VolumeLinkedListElement {
   next: u32,
   depth: f32,
+  volume_index: u32,
 };
 
 struct VolumeLinkedList {
