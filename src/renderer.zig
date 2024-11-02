@@ -2762,10 +2762,10 @@ pub const Renderer = struct {
 
             // Render Modifier Volumes
             if (ta_lists.translucent_modifier_volumes.items.len > 0) {
-                const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
-                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
+                const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, volume_index: u32 }, 1);
+                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / (3 * 4));
                 oit_uniform_mem.slice[0].target_width = self.resolution.width;
-                oit_uniform_mem.slice[0].start_y = 0;
+                oit_uniform_mem.slice[0].volume_index = 0;
 
                 const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                 const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
@@ -2788,41 +2788,42 @@ pub const Renderer = struct {
                     .depth_stencil_attachment = &depth_attachment,
                 };
 
-                // Close volume pass.
-                for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                    if (volume.closed) {
-                        {
-                            const pass = encoder.beginRenderPass(render_pass_info);
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
+                {
+                    const pass = encoder.beginRenderPass(render_pass_info);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
 
-                            pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                            pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+                    pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+
+                    pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
+                    // Close volume pass.
+                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                        if (volume.closed) {
                             pass.setBindGroup(1, translucent_modvol_bind_group, &.{oit_uniform_mem.offset});
-
-                            pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
-
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                        }
-                        {
-                            const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, 8) };
-                            pass.setPipeline(gctx.lookupResource(self.translucent_modvol_merge_pipeline).?);
-
-                            pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
-                            pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                            oit_uniform_mem.slice[0].volume_index += 1;
                         }
                     } else {
                         renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
                         // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
                         //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                     }
+                }
+
+                {
+                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, 8) };
+                    const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
+                    pass.setPipeline(gctx.lookupResource(self.translucent_modvol_merge_pipeline).?);
+
+                    pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
+                    pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                 }
             }
 
@@ -3251,13 +3252,13 @@ pub const Renderer = struct {
         {
             self.modvol_list_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
-                .size = self.get_linked_list_heads_size(),
+                .size = self.get_modvol_linked_list_heads_size(),
                 .mapped_at_creation = true,
             });
             self._gctx.lookupResource(self.modvol_list_heads_buffer).?.setLabel("ModVol List Heads Buffer");
             {
                 const init_buffer = self._gctx.lookupResourceInfo(self.modvol_list_heads_buffer).?.gpuobj.?;
-                const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
+                const mapped = init_buffer.getMappedRange(u32, 0, self.get_modvol_linked_list_heads_size() / @sizeOf(u32));
                 @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
                 mapped.?[0] = 0; // Set fragment count to 0
                 init_buffer.unmap();
@@ -3296,14 +3297,14 @@ pub const Renderer = struct {
     fn create_translucent_modvol_bind_group(self: *@This()) void {
         self.translucent_modvol_bind_group = self._gctx.createBindGroup(self.translucent_modvol_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
+            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
         self.translucent_modvol_merge_bind_group = self._gctx.createBindGroup(self.translucent_modvol_merge_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
+            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
             .{ .binding = 3, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
@@ -3320,19 +3321,23 @@ pub const Renderer = struct {
         });
     }
 
+    fn get_modvol_linked_list_heads_size(self: *const @This()) u64 {
+        return (1 + self.resolution.width * self.resolution.height) * @sizeOf(u32);
+    }
+
     fn get_linked_list_heads_size(self: *const @This()) u64 {
         return (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
     }
 
     fn get_modvol_linked_list_size(self: *const @This()) u64 {
         return @min(
-            VolumeLinkedListNodeSize * (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * MaxFragmentsPerPixel,
+            VolumeLinkedListNodeSize * (1 + self.resolution.width * self.resolution.height) * MaxFragmentsPerPixel,
             self.get_max_storage_buffer_binding_size(),
         );
     }
 
     fn get_modvol_volumes_size(self: *const @This()) u64 {
-        return VolumePixelSize * (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices);
+        return VolumePixelSize * (1 + self.resolution.width * self.resolution.height);
     }
 
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
