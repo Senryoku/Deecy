@@ -718,7 +718,7 @@ pub const Renderer = struct {
                     .depth_or_array_layers = Renderer.MaxTextures[i],
                 },
                 .format = .bgra8_unorm,
-                .mip_level_count = @intCast(3 + i),
+                .mip_level_count = @intCast(4 + i),
             });
             texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
         }
