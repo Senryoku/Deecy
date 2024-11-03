@@ -20,9 +20,13 @@ fn bilinear_interpolation(u_min_v_min: vec4<f32>, u_min_v_max: vec4<f32>, u_max_
 fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instructions: u32, control: u32, index: u32) -> vec4<f32> {
     if index >= textureNumLayers(tex_array) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
+    let mipmap: bool = ((control >> 25) & 1) == 1;
+
     if (palette_instructions & 1) == 1 {
         // Palette Texture
         let palette_selector = ((palette_instructions >> 2) & 0x3F) << 4;
+
+        // TODO: Handle mipmaps?
 
         if ((palette_instructions >> 1) & 1) == 1 {
             // with Bilinear filtering
@@ -67,7 +71,11 @@ fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2
             return unpack4x8unorm(palette[palette_selector + palette_index]).zyxw;
         }
     } else {
-        return textureSampleGrad(tex_array, image_sampler, uv, index, duvdx, duvdy);
+        if mipmap {
+            return textureSampleGrad(tex_array, image_sampler, uv, index, duvdx, duvdy);
+        } else {
+            return textureSampleLevel(tex_array, image_sampler, uv, index, 0);
+        }
     }
 }
 
