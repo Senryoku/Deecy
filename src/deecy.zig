@@ -451,6 +451,11 @@ pub fn pool_controllers(self: *@This()) void {
         if (self.dc.maple.ports[controller_idx].main) |*guest_controller| {
             switch (guest_controller.*) {
                 .Controller => |*c| {
+                    c.axis[0] = 0;
+                    c.axis[1] = 0;
+                    c.axis[2] = 128;
+                    c.axis[3] = 128;
+
                     // NOTE: Hackish keyboard input for controller 1.
                     var any_keyboard_key_pressed = false;
                     if (controller_idx == 0) {
@@ -474,10 +479,13 @@ pub fn pool_controllers(self: *@This()) void {
                                 c.release_buttons(keybind[1]);
                             }
                         }
-                        c.axis[0] = if (self.window.getKey(.w) == .press) 0 else 255;
-                        c.axis[1] = if (self.window.getKey(.x) == .press) 0 else 255;
+                        c.axis[1] = if (self.window.getKey(.x) == .press) 255 else 0;
+                        c.axis[0] = if (self.window.getKey(.z) == .press) 255 else 0;
                         c.axis[2] = if (self.window.getKey(.kp_4) == .press) 0 else if (self.window.getKey(.kp_6) == .press) 255 else 128;
                         c.axis[3] = if (self.window.getKey(.kp_5) == .press) 0 else if (self.window.getKey(.kp_8) == .press) 255 else 128;
+
+                        if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128)
+                            any_keyboard_key_pressed = true;
                     }
 
                     if (!any_keyboard_key_pressed) {
@@ -504,8 +512,8 @@ pub fn pool_controllers(self: *@This()) void {
                                             c.release_buttons(keybind[1]);
                                         }
                                     }
-                                    c.axis[0] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)] * 0.5 + 0.5) * 255));
-                                    c.axis[1] = @as(u8, @intFromFloat((gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)] * 0.5 + 0.5) * 255));
+                                    c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)], 0.0, 1.0) * 255));
+                                    c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)], 0.0, 1.0) * 255));
 
                                     var x_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)];
                                     var y_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)];
