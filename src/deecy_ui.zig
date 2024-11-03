@@ -279,6 +279,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                 var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
+                    // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
                     d.renderer.on_inner_resolution_change();
                 }

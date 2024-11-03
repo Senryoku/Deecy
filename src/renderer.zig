@@ -739,7 +739,7 @@ pub const Renderer = struct {
             .{ .binding = 7, .texture_view_handle = texture_array_views[6] },
             .{ .binding = 8, .texture_view_handle = texture_array_views[7] },
             .{ .binding = 9, .buffer_handle = strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
-            .{ .binding = 10, .buffer_handle = palette_buffer, .offset = 0, .size = 4 * 1024 }, // FIXME: zgpu limits bindings to 10 by group.
+            .{ .binding = 10, .buffer_handle = palette_buffer, .offset = 0, .size = 4 * 1024 },
         });
 
         const vertex_buffer = gctx.createBuffer(.{
