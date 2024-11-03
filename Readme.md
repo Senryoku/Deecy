@@ -53,7 +53,7 @@ sudo apt install libgtk-3-dev
     -   Fog LUT Mode 2.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Bump mapping.
-    -   Handle and generate Mipmaps.
+    -   Mipmaps for palette textures?
     -   Sort-DMA?
     -   User Tile Clip, only the simplest version is supported.
 -   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)  
