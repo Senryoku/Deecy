@@ -22,7 +22,7 @@ const zglfw = @import("zglfw");
 const RendererModule = @import("renderer.zig");
 const Renderer = RendererModule.Renderer;
 
-const Deecy = @import("deecy.zig").Deecy;
+const Deecy = @import("deecy.zig");
 
 pub fn customLog(
     comptime message_level: std.log.Level,

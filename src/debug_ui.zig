@@ -20,7 +20,7 @@ const fRGBA = Colors.fRGBA;
 
 const RendererModule = @import("renderer.zig");
 
-const Deecy = @import("deecy.zig").Deecy;
+const Deecy = @import("deecy.zig");
 
 const vram_width: u32 = 640;
 const vram_height: u32 = 480;
