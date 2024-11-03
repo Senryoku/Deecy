@@ -477,7 +477,7 @@ pub const TSPInstructionWord = packed struct(u32) {
     texture_shading_instruction: TextureShadingInstruction,
     mipmap_d_adjust: u4,
     supersample_texture: u1,
-    filter_mode: u2,
+    filter_mode: enum(u2) { Point = 0, Bilinear = 1, TrilinearPassA = 2, TrilinearPassB = 3 },
     clamp_uv: u2,
     flip_uv: u2,
     ignore_texture_alpha: u1,

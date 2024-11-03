@@ -18,6 +18,8 @@ const YUV422 = Colors.YUV422;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const HollyModule = @import("holly.zig");
 
+const MipMap = @import("mipmap.zig");
+
 pub const ExperimentalFBWriteBack = false;
 
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
@@ -81,7 +83,8 @@ const ShadingInstructions = packed struct(u32) {
     shadow_bit: u1,
     gouraud_bit: u1,
     volume_bit: u1,
-    _: u7 = 0,
+    mipmap_bit: u1,
+    _: u6 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -544,6 +547,8 @@ pub const Renderer = struct {
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
 
+    mipmap_gen_pipeline: MipMap,
+
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
@@ -706,14 +711,14 @@ pub const Renderer = struct {
         var texture_array_views: [8]zgpu.TextureViewHandle = undefined;
         for (0..8) |i| {
             texture_arrays[i] = gctx.createTexture(.{
-                .usage = .{ .texture_binding = true, .copy_dst = true },
+                .usage = .{ .texture_binding = true, .storage_binding = true, .copy_dst = true },
                 .size = .{
                     .width = @as(u32, 8) << @intCast(i),
                     .height = @as(u32, 8) << @intCast(i),
                     .depth_or_array_layers = Renderer.MaxTextures[i],
                 },
                 .format = .bgra8_unorm,
-                .mip_level_count = 1, // std.math.log2_int(u32, @as(u32, 8))) + 1,
+                .mip_level_count = @intCast(3 + i),
             });
             texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
         }
@@ -1163,6 +1168,8 @@ pub const Renderer = struct {
 
             .ta_lists = HollyModule.TALists.init(allocator),
 
+            .mipmap_gen_pipeline = MipMap.init(gctx),
+
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
             ._gctx = gctx,
@@ -1178,6 +1185,8 @@ pub const Renderer = struct {
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
+
+        self.mipmap_gen_pipeline.deinit(self._gctx);
 
         self.translucent_pass.deinit();
         self.punchthrough_pass.deinit();
@@ -1692,8 +1701,7 @@ pub const Renderer = struct {
         }
 
         if (texture_control_word.mip_mapped == 1) {
-            // TODO: Here we'd want to generate mipmaps.
-            //       See zgpu.generateMipmaps, maybe?
+            self.mipmap_gen_pipeline.generate_mipmaps(self._gctx, self.texture_arrays[size_index], texture_index);
         }
 
         return texture_index;
@@ -1853,7 +1861,7 @@ pub const Renderer = struct {
             .index = tex_idx,
             .palette = .{
                 .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                .filtered = tsp_instruction.filter_mode != 0,
+                .filtered = tsp_instruction.filter_mode != .Point,
                 .selector = @truncate(texture_control.palette_selector() >> 4),
             },
             .shading = .{
@@ -1868,6 +1876,7 @@ pub const Renderer = struct {
                 .shadow_bit = 0,
                 .gouraud_bit = isp_tsp_instruction.gouraud,
                 .volume_bit = 0,
+                .mipmap_bit = 0,
             },
         };
 
@@ -2127,7 +2136,7 @@ pub const Renderer = struct {
 
                 // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
                 // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
-                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == 0) .nearest else .linear;
+                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
 
                 const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
 
@@ -2135,7 +2144,7 @@ pub const Renderer = struct {
                     .index = tex_idx,
                     .palette = .{
                         .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                        .filtered = tsp_instruction.filter_mode != 0,
+                        .filtered = tsp_instruction.filter_mode != .Point,
                         .selector = @truncate(texture_control.palette_selector() >> 4),
                     },
                     .shading = .{
@@ -2152,6 +2161,7 @@ pub const Renderer = struct {
                         .shadow_bit = parameter_control_word.obj_control.shadow,
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
+                        .mipmap_bit = texture_control.mip_mapped,
                     },
                 };
 
@@ -2159,7 +2169,7 @@ pub const Renderer = struct {
                     .index = tex_idx_area_1,
                     .palette = .{
                         .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
-                        .filtered = atspi.filter_mode != 0,
+                        .filtered = atspi.filter_mode != .Point,
                         .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
                     },
                     .shading = .{
@@ -2176,6 +2186,7 @@ pub const Renderer = struct {
                         .shadow_bit = parameter_control_word.obj_control.shadow,
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
+                        .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
                     },
                 } else VertexTextureInfo.invalid();
 
