@@ -559,6 +559,13 @@ pub const Dreamcast = struct {
         self.check_sb_interrupts();
     }
 
+    pub fn clear_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT) void {
+        self.hw_register(u32, .SB_ISTEXT).* &= ~@as(u32, @bitCast(int));
+        self.hw_register(u32, .SB_ISTNRM).* |= @bitCast(HardwareRegisters.SB_ISTNRM{ .ExtStatus = if (self.hw_register(u32, .SB_ISTEXT).* != 0) 1 else 0 });
+
+        self.check_sb_interrupts();
+    }
+
     fn check_sb_interrupts(self: *@This()) void {
         const istnrm = self.read_hw_register(u32, .SB_ISTNRM);
         const istext = self.read_hw_register(u32, .SB_ISTEXT);

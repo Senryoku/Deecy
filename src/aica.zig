@@ -778,6 +778,7 @@ pub const AICA = struct {
                         // FIXME: We should check for interrupts immediately here.
                         // self.check_sh4_interrupts(dc);
                     }
+                    return;
                 },
                 .MCIRE => { // Clear interrupt(s)
                     if (!high_byte) {
@@ -910,6 +911,8 @@ pub const AICA = struct {
     fn check_sh4_interrupt(self: *AICA, dc: *Dreamcast) void {
         if ((self.get_reg(u32, .MCIPD).* & self.get_reg(u32, .MCIEB).*) != 0) {
             dc.raise_external_interrupt(.{ .AICA = 1 });
+        } else {
+            dc.clear_external_interrupt(.{ .AICA = 1 });
         }
     }
 
