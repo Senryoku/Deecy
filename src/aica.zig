@@ -1271,9 +1271,8 @@ pub const AICA = struct {
                     if (attenuation >= 0x3C0) {
                         state.curr_sample = 0;
                     } else {
-                        const linear_volume: i32 = @intCast(((attenuation & 0x3F) ^ 0x7F) + 1);
-                        state.curr_sample *|= linear_volume;
-                        state.curr_sample >>= @intCast(7 + (attenuation >> 6));
+                        // (every 0x40 on the envelope attenuation level is 3dB)
+                        state.curr_sample = @divTrunc(state.curr_sample, std.math.pow(i32, 2, @as(i32, @bitCast(attenuation)) >> 6));
                     }
                 }
 
