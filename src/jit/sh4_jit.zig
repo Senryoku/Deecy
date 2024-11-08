@@ -68,25 +68,29 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
         // Free it immediately. We'll try to reacquire it. I think I read somewhere there's a way to avoid this race condition with a newer API, but I don't remember right now.
         std.os.windows.VirtualFree(vas.base, 0, std.os.windows.MEM_RELEASE);
 
-        try vas.mirror(vas.boot, 0x0000_0000);
-        try vas.mirror(vas.boot, 0x8000_0000);
+        // U0/P0, P1, P2, P3
+        for ([_]u32{ 0x0000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
+            try vas.mirror(vas.boot, base + 0x0000_0000);
 
-        for (0..4) |i| {
-            try vas.mirror(vas.ram, @intCast(0x0C00_0000 + i * Dreamcast.RAMSize));
-            try vas.mirror(vas.ram, @intCast(0x8C00_0000 + i * Dreamcast.RAMSize));
+            try vas.forbid(base + Dreamcast.BootSize, base + 0x0400_0000);
+
+            try vas.mirror(vas.vram, base + 0x0400_0000);
+            try vas.forbid(base + 0x0500_0000, base + 0x0600_0000);
+            try vas.mirror(vas.vram, base + 0x0600_0000);
+
+            try vas.forbid(base + 0x0700_0000, base + 0x0C00_0000);
+
+            for (0..4) |i| {
+                try vas.mirror(vas.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
+            }
+
+            try vas.forbid(base + 0x0C00_0000 + 4 * Dreamcast.RAMSize, base + 0x2000_0000);
+
+            // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
         }
 
-        try vas.mirror(vas.vram, 0x0400_0000);
-        try vas.mirror(vas.vram, 0x0600_0000);
-
-        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
-
-        try vas.forbid(Dreamcast.BootSize, 0x0400_0000);
-        try vas.forbid(0x0500_0000, 0x0600_0000);
-        try vas.forbid(0x0700_0000, 0x0C00_0000);
-        try vas.forbid(0x1000_0000, 0x8000_0000);
-        try vas.forbid(0x8020_0000, 0x8C00_0000);
-        try vas.forbid(0x9000_0000, 0x1_0000_0000);
+        // P4
+        try vas.forbid(0xE0000000, 0x1_0000_0000);
 
         GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
         _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
@@ -148,8 +152,8 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
                 const fault_address = info.ExceptionRecord.ExceptionInformation[1];
 
                 if (fault_address >= @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) and fault_address < @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) + 0x1_0000_0000) {
-                    //const addr: u32 = @truncate(fault_address - @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE));
-                    //std.debug.print("  Access Violation: {s} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
+                    // const addr: u32 = @truncate(fault_address - @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE));
+                    // std.debug.print("  Access Violation: {s: <5} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
 
                     const start_rip = info.ContextRecord.Rip;
 
