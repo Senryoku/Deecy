@@ -176,7 +176,18 @@ fn area_color(
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
 
         if punch_through && tex_a < uniforms.pt_alpha_ref {
-            discard;
+            // NOTE: Documentation says:
+            //  "In the case of a Punch Through polygon, "4" (SRC Alpha) must be
+            //   specified in the SRC instruction and "5" (Inverse SRC Alpha) must be specified in
+            //   the DST instruction."
+            // However, Soul Reaver uses DST Alpha Zero (0) and SRC Alpha One (1) for some Punch Through polygons
+            // in menus. It also uses ARGB1555 textures with all alpha values to 0 preventing them from being rendered
+            // if we strictly follow the documentation.
+            // I don't know if this is the best place to do this, but let's double check.
+            let src_alpha = (shading_instructions >> 10) & 3;
+            if src_alpha != 1 {
+                discard;
+            }
         }
 
         switch(shading)  {
