@@ -56,6 +56,7 @@ sudo apt install libgtk-3-dev
     -   Mipmaps for palette textures?
     -   Sort-DMA?
     -   User Tile Clip, only the simplest version is supported.
+    -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 -   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)  
 
 ### Nice to have
