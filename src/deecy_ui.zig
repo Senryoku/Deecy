@@ -11,14 +11,20 @@ const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig");
 const MapleModule = @import("maple.zig");
+const GDI = @import("gdi.zig");
+const Colors = @import("colors.zig");
+const PVRFile = @import("pvr_file.zig");
 
 const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
+    texture: ?zgpu.TextureHandle,
+    view: ?zgpu.TextureViewHandle,
 
     pub fn free(self: @This(), allocator: std.mem.Allocator) void {
         allocator.free(self.path);
         allocator.free(self.name);
+        // TODO: Free texture
     }
 };
 
@@ -166,11 +172,59 @@ fn refresh_games(self: *@This()) !void {
         var walker = try dir.walk(self.allocator);
         defer walker.deinit();
 
+        const tex_buffer: []u8 = try self.allocator.alloc(u8, 1024 * 1024);
+        defer self.allocator.free(tex_buffer);
+
         while (try walker.next()) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.path, ".gdi")) {
+                const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
+
+                var gdi = try GDI.GDI.init(path, self.allocator);
+                defer gdi.deinit();
+
+                var texture: ?zgpu.TextureHandle = null;
+                var view: ?zgpu.TextureViewHandle = null;
+
+                if (gdi.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
+                    std.debug.print("[{s:<30}] Found GDTex! Len: {d}\n", .{ entry.basename[0..@min(30, entry.basename.len)], len });
+
+                    if (PVRFile.decode(self.allocator, tex_buffer)) |result| {
+                        defer self.allocator.free(result.bgra);
+
+                        std.debug.print("  Width: {d}, Height: {d}\n", .{ result.width, result.height });
+
+                        texture = self.gctx.createTexture(.{
+                            .usage = .{ .texture_binding = true, .copy_dst = true },
+                            .size = .{
+                                .width = result.width,
+                                .height = result.height,
+                                .depth_or_array_layers = 1,
+                            },
+                            .format = .bgra8_unorm,
+                            .mip_level_count = 1,
+                        });
+
+                        view = self.gctx.createTextureView(texture.?, .{});
+
+                        self.gctx.queue.writeTexture(
+                            .{ .texture = self.gctx.lookupResource(texture.?).? },
+                            .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
+                            .{ .width = result.width, .height = result.height },
+                            u8,
+                            result.bgra,
+                        );
+                    } else |err| {
+                        ui_log.err(termcolor.red("Failed to decode GDTex: {any}"), .{err});
+                    }
+                } else |err| {
+                    ui_log.info("Failed to find GDTex: {any}", .{err});
+                }
+
                 try self.gdi_files.append(.{
                     .name = try self.allocator.dupeZ(u8, entry.basename),
-                    .path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path }),
+                    .path = path,
+                    .texture = texture,
+                    .view = view,
                 });
             }
         }
@@ -348,6 +402,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         },
                     }
                 };
+            }
+            if (entry.view) |view| {
+                zgui.image(self.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 });
             }
         }
     }

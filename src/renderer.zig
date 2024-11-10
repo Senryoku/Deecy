@@ -23,7 +23,15 @@ const MipMap = @import("mipmap.zig");
 pub const ExperimentalFBWriteBack = false;
 
 // First 1024 values of the Moser de Bruijin sequence, Textures on the dreamcast are limited to 1024*1024 pixels.
-var moser_de_bruijin_sequence: [1024]u32 = .{0} ** 1024;
+const moser_de_bruijin_sequence: [1024]u32 = moser: {
+    @setEvalBranchQuota(1024);
+    var table: [1024]u32 = undefined;
+    table[0] = 0;
+    for (1..table.len) |idx| {
+        table[idx] = (table[idx - 1] + 0xAAAAAAAB) & 0x55555555;
+    }
+    break :moser table;
+};
 
 // Returns the indice of the z-order curve for the given coordinates.
 pub fn zorder_curve(x: u32, y: u32) u32 {
@@ -394,6 +402,55 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     return r;
 }
 
+pub fn vq_mipmap_offset(u_size: u32) u32 {
+    return switch (u_size) {
+        8 => 0x6,
+        16 => 0x16,
+        32 => 0x56,
+        64 => 0x156,
+        128 => 0x556,
+        256 => 0x1556,
+        512 => 0x5556,
+        1024 => 0x15556,
+        else => {
+            renderer_log.err(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{});
+            @panic("Invalid u_size for vq_compressed mip mapped texture");
+        },
+    };
+}
+pub fn palette_mipmap_offset(u_size: u32) u32 {
+    return switch (u_size) {
+        8 => 0x18,
+        16 => 0x58,
+        32 => 0x158,
+        64 => 0x558,
+        128 => 0x1558,
+        256 => 0x5558,
+        512 => 0x15558,
+        1024 => 0x55558,
+        else => {
+            renderer_log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
+            @panic("Invalid u_size for paletted mip mapped texture");
+        },
+    };
+}
+pub fn mipmap_offset(u_size: u32) u32 {
+    return switch (u_size) {
+        8 => 0x30,
+        16 => 0xB0,
+        32 => 0x2B0,
+        64 => 0xAB0,
+        128 => 0x2AB0,
+        256 => 0xAAB0,
+        512 => 0x2AAB0,
+        1024 => 0xAAAB0,
+        else => {
+            renderer_log.err(termcolor.red("Invalid u_size for mip mapped texture"), .{});
+            @panic("Invalid u_size for mip mapped texture");
+        },
+    };
+}
+
 const VertexAttributes = [_]wgpu.VertexAttribute{
     .{ .format = .float32x3, .offset = 0, .shader_location = 0 },
     .{ .format = .uint32, .offset = @offsetOf(Vertex, "primitive_index"), .shader_location = 1 },
@@ -557,12 +614,6 @@ pub const Renderer = struct {
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
         // Write to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
-
-        // FIXME: Make this comptime?
-        moser_de_bruijin_sequence[0] = 0;
-        for (1..moser_de_bruijin_sequence.len) |idx| {
-            moser_de_bruijin_sequence[idx] = (moser_de_bruijin_sequence[idx - 1] + 0xAAAAAAAB) & 0x55555555;
-        }
 
         const framebuffer_texture = gctx.createTexture(.{
             .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
@@ -1337,80 +1388,15 @@ pub const Renderer = struct {
     }
 
     inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16, twiddled: bool) [4]u8 {
-        // See 3.6.3 Color Data Extension (p149)
-        if (twiddled) {
-            return bgra_from_16bits_color_twiddled(format, val);
-        } else {
-            return bgra_from_16bits_color_non_twiddled(format, val);
-        }
+        return (Color16{ .value = val }).bgra(format, twiddled);
     }
 
     inline fn bgra_from_16bits_color_non_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        const pixel: Color16 = .{ .value = val };
-        switch (format) {
-            .ARGB1555 => {
-                return .{
-                    @as(u8, pixel.arbg1555.b) << 3,
-                    @as(u8, pixel.arbg1555.g) << 3,
-                    @as(u8, pixel.arbg1555.r) << 3,
-                    @as(u8, pixel.arbg1555.a) * 0xFF,
-                };
-            },
-            .RGB565 => {
-                return .{
-                    @as(u8, pixel.rgb565.b) << 3,
-                    @as(u8, pixel.rgb565.g) << 2,
-                    @as(u8, pixel.rgb565.r) << 3,
-                    255,
-                };
-            },
-            .ARGB4444 => {
-                return .{
-                    @as(u8, pixel.argb4444.b) << 4,
-                    @as(u8, pixel.argb4444.g) << 4,
-                    @as(u8, pixel.argb4444.r) << 4,
-                    @as(u8, pixel.argb4444.a) << 4,
-                };
-            },
-            else => {
-                renderer_log.err("Invalid 16-bits pixel format {any}", .{format});
-                @panic("Invalid 16-bits pixel format");
-            },
-        }
+        return bgra_from_16bits_color(format, val, false);
     }
 
     inline fn bgra_from_16bits_color_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        const pixel: Color16 = .{ .value = val };
-        switch (format) {
-            .ARGB1555 => {
-                return .{
-                    @as(u8, pixel.arbg1555.b) << 3 | @as(u8, pixel.arbg1555.b) >> 2,
-                    @as(u8, pixel.arbg1555.g) << 3 | @as(u8, pixel.arbg1555.g) >> 2,
-                    @as(u8, pixel.arbg1555.r) << 3 | @as(u8, pixel.arbg1555.r) >> 2,
-                    @as(u8, pixel.arbg1555.a) * 0xFF,
-                };
-            },
-            .RGB565 => {
-                return .{
-                    @as(u8, pixel.rgb565.b) << 3 | @as(u8, pixel.rgb565.b) >> 2,
-                    @as(u8, pixel.rgb565.g) << 2 | @as(u8, pixel.rgb565.g) >> 4,
-                    @as(u8, pixel.rgb565.r) << 3 | @as(u8, pixel.rgb565.r) >> 2,
-                    255,
-                };
-            },
-            .ARGB4444 => {
-                return .{
-                    @as(u8, pixel.argb4444.b) << 4 | @as(u8, pixel.argb4444.b),
-                    @as(u8, pixel.argb4444.g) << 4 | @as(u8, pixel.argb4444.g),
-                    @as(u8, pixel.argb4444.r) << 4 | @as(u8, pixel.argb4444.r),
-                    @as(u8, pixel.argb4444.a) << 4 | @as(u8, pixel.argb4444.a),
-                };
-            },
-            else => {
-                renderer_log.err("Invalid 16-bits pixel format {any}", .{format});
-                @panic("Invalid 16-bits pixel format");
-            },
-        }
+        return bgra_from_16bits_color(format, val, true);
     }
 
     inline fn bgra_scratch_pad(self: *Renderer) [*][4]u8 {
@@ -1453,56 +1439,15 @@ pub const Renderer = struct {
         var vq_index_addr = addr + 8 * 256;
 
         if (texture_control_word.mip_mapped == 1) {
-            renderer_log.debug(termcolor.yellow(" TODO: Actually support mip mapping."), .{});
-
             // We only want the highest mip level and we'll compute the others ourself.
             // See DreamcastDevBoxSystemArchitecture.pdf p.148
             if (texture_control_word.vq_compressed == 1) {
-                vq_index_addr += switch (u_size) {
-                    8 => 0x6,
-                    16 => 0x16,
-                    32 => 0x56,
-                    64 => 0x156,
-                    128 => 0x556,
-                    256 => 0x1556,
-                    512 => 0x5556,
-                    1024 => 0x15556,
-                    else => {
-                        renderer_log.err(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{});
-                        @panic("Invalid u_size for vq_compressed mip mapped texture");
-                    },
-                };
+                vq_index_addr += vq_mipmap_offset(u_size);
             } else if (texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP) {
-                const val: u32 = switch (u_size) {
-                    8 => 0x18,
-                    16 => 0x58,
-                    32 => 0x158,
-                    64 => 0x558,
-                    128 => 0x1558,
-                    256 => 0x5558,
-                    512 => 0x15558,
-                    1024 => 0x55558,
-                    else => {
-                        renderer_log.err(termcolor.red("Invalid u_size for paletted mip mapped texture"), .{});
-                        @panic("Invalid u_size for paletted mip mapped texture");
-                    },
-                };
+                const val: u32 = palette_mipmap_offset(u_size);
                 addr += if (texture_control_word.pixel_format == .Palette4BPP) val / 2 else val;
             } else {
-                addr += switch (u_size) {
-                    8 => 0x30,
-                    16 => 0xB0,
-                    32 => 0x2B0,
-                    64 => 0xAB0,
-                    128 => 0x2AB0,
-                    256 => 0xAAB0,
-                    512 => 0x2AAB0,
-                    1024 => 0xAAAB0,
-                    else => {
-                        renderer_log.err(termcolor.red("Invalid u_size for mip mapped texture"), .{});
-                        @panic("Invalid u_size for mip mapped texture");
-                    },
-                };
+                addr += mipmap_offset(u_size);
             }
         }
 
@@ -1770,9 +1715,9 @@ pub const Renderer = struct {
                 switch (FB_R_CTRL.format) {
                     0x0 => { // 0555 RGB 16 bit
                         const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&vram[pixel_addr]))).* };
-                        self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.arbg1555.b) << 3) | FB_R_CTRL.concat;
-                        self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.arbg1555.g) << 3) | FB_R_CTRL.concat;
-                        self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.arbg1555.r) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.argb1555.b) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.argb1555.g) << 3) | FB_R_CTRL.concat;
+                        self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.argb1555.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x1 => { // 565 RGB

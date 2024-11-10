@@ -799,9 +799,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 switch (static.format & 0b111) {
                     0x0, 0x3 => { // 0555 KRGB 16 bits
                         const color: Color16 = .{ .value = dc.cpu.read16(addr) };
-                        self.pixels[4 * i + 0] = @as(u8, @intCast(color.arbg1555.r)) << 3;
-                        self.pixels[4 * i + 1] = @as(u8, @intCast(color.arbg1555.g)) << 3;
-                        self.pixels[4 * i + 2] = @as(u8, @intCast(color.arbg1555.b)) << 3;
+                        self.pixels[4 * i + 0] = @as(u8, @intCast(color.argb1555.r)) << 3;
+                        self.pixels[4 * i + 1] = @as(u8, @intCast(color.argb1555.g)) << 3;
+                        self.pixels[4 * i + 2] = @as(u8, @intCast(color.argb1555.b)) << 3;
                         self.pixels[4 * i + 3] = 255; // FIXME: Not really.
                         i += 1;
                     },

@@ -1,8 +1,10 @@
 const std = @import("std");
 
+const PixelFormat = @import("holly.zig").TexturePixelFormat;
+
 pub const Color16 = packed union {
     value: u16,
-    arbg1555: packed struct(u16) {
+    argb1555: packed struct(u16) {
         b: u5,
         g: u5,
         r: u5,
@@ -19,6 +21,75 @@ pub const Color16 = packed union {
         r: u4,
         a: u4,
     },
+
+    pub inline fn bgra(self: @This(), format: PixelFormat, twiddled: bool) [4]u8 {
+        // See 3.6.3 Color Data Extension (p149)
+        if (twiddled) {
+            return self.bgra_twiddled(format);
+        } else {
+            return self.bgra_non_twiddled(format);
+        }
+    }
+
+    pub inline fn bgra_non_twiddled(self: @This(), format: PixelFormat) [4]u8 {
+        switch (format) {
+            .ARGB1555 => {
+                return .{
+                    @as(u8, self.argb1555.b) << 3,
+                    @as(u8, self.argb1555.g) << 3,
+                    @as(u8, self.argb1555.r) << 3,
+                    @as(u8, self.argb1555.a) * 0xFF,
+                };
+            },
+            .RGB565 => {
+                return .{
+                    @as(u8, self.rgb565.b) << 3,
+                    @as(u8, self.rgb565.g) << 2,
+                    @as(u8, self.rgb565.r) << 3,
+                    255,
+                };
+            },
+            .ARGB4444 => {
+                return .{
+                    @as(u8, self.argb4444.b) << 4,
+                    @as(u8, self.argb4444.g) << 4,
+                    @as(u8, self.argb4444.r) << 4,
+                    @as(u8, self.argb4444.a) << 4,
+                };
+            },
+            else => @panic("Invalid 16-bits pixel format"),
+        }
+    }
+
+    pub inline fn bgra_twiddled(self: @This(), format: PixelFormat) [4]u8 {
+        switch (format) {
+            .ARGB1555 => {
+                return .{
+                    @as(u8, self.argb1555.b) << 3 | @as(u8, self.argb1555.b) >> 2,
+                    @as(u8, self.argb1555.g) << 3 | @as(u8, self.argb1555.g) >> 2,
+                    @as(u8, self.argb1555.r) << 3 | @as(u8, self.argb1555.r) >> 2,
+                    @as(u8, self.argb1555.a) * 0xFF,
+                };
+            },
+            .RGB565 => {
+                return .{
+                    @as(u8, self.rgb565.b) << 3 | @as(u8, self.rgb565.b) >> 2,
+                    @as(u8, self.rgb565.g) << 2 | @as(u8, self.rgb565.g) >> 4,
+                    @as(u8, self.rgb565.r) << 3 | @as(u8, self.rgb565.r) >> 2,
+                    255,
+                };
+            },
+            .ARGB4444 => {
+                return .{
+                    @as(u8, self.argb4444.b) << 4 | @as(u8, self.argb4444.b),
+                    @as(u8, self.argb4444.g) << 4 | @as(u8, self.argb4444.g),
+                    @as(u8, self.argb4444.r) << 4 | @as(u8, self.argb4444.r),
+                    @as(u8, self.argb4444.a) << 4 | @as(u8, self.argb4444.a),
+                };
+            },
+            else => @panic("Invalid 16-bits pixel format"),
+        }
+    }
 };
 
 pub const YUV422 = packed struct(u32) {
