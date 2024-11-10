@@ -236,7 +236,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = DeecyUI.init(allocator, self.gctx);
+    self.ui = try DeecyUI.init(allocator, self.gctx);
     try self.ui_init();
 
     self.dc = Dreamcast.create(allocator) catch |err| {

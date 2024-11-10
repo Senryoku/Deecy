@@ -1,4 +1,5 @@
 const std = @import("std");
+const termcolor = @import("termcolor");
 
 const zglfw = @import("zglfw");
 const zgui = @import("zgui");
@@ -11,6 +12,16 @@ const nfd = @import("nfd");
 const Deecy = @import("deecy.zig");
 const MapleModule = @import("maple.zig");
 
+const GameFile = struct {
+    path: [:0]const u8,
+    name: [:0]const u8,
+
+    pub fn free(self: @This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+        allocator.free(self.name);
+    }
+};
+
 last_error: []const u8 = "",
 
 display_vmus: bool = true,
@@ -21,15 +32,29 @@ vmu_displays: [4][2]?struct {
     data: [48 * 32 / 8]u8 = .{255} ** (48 * 32 / 8),
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
-gctx: *zgpu.GraphicsContext,
+game_directory: ?[]const u8 = null,
+gdi_files: std.ArrayList(GameFile),
 
-pub fn init(_: std.mem.Allocator, gctx: *zgpu.GraphicsContext) @This() {
-    var r: @This() = .{ .gctx = gctx };
+gctx: *zgpu.GraphicsContext,
+allocator: std.mem.Allocator,
+
+pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !@This() {
+    var r: @This() = .{
+        .gdi_files = std.ArrayList(GameFile).init(allocator),
+        .gctx = gctx,
+        .allocator = allocator,
+    };
+    r.game_directory = try allocator.dupe(u8, "D:/DC Games/"); // TODO: Load default game directory from config (when we have one :)))
     r.create_vmu_texture(0, 0);
+    try r.refresh_games();
     return r;
 }
 
 pub fn deinit(self: *@This()) void {
+    for (self.gdi_files.items) |entry| entry.free(self.allocator);
+    self.gdi_files.deinit();
+    self.allocator.free(self.game_directory);
+
     for (self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
             self.gctx.releaseResource(texture.texture);
@@ -126,6 +151,30 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.end();
 
     zgui.popStyleVar(.{});
+}
+
+fn refresh_games(self: *@This()) !void {
+    if (self.game_directory) |dir_path| {
+        for (self.gdi_files.items) |entry| entry.free(self.allocator);
+        self.gdi_files.clearRetainingCapacity();
+
+        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+            ui_log.err(termcolor.red("Failed to open game directory: {s}"), .{@errorName(err)});
+            return;
+        };
+        defer dir.close();
+        var walker = try dir.walk(self.allocator);
+        defer walker.deinit();
+
+        while (try walker.next()) |entry| {
+            if (entry.kind == .file and std.mem.endsWith(u8, entry.path, ".gdi")) {
+                try self.gdi_files.append(.{
+                    .name = try self.allocator.dupeZ(u8, entry.basename),
+                    .path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path }),
+                });
+            }
+        }
+    }
 }
 
 pub fn draw(self: *@This(), d: *Deecy) !void {
@@ -264,6 +313,45 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.endMainMenuBar();
     }
+
+    if (zgui.begin("Games", .{})) {
+        if (self.game_directory) |dir| {
+            zgui.text("Directory: {s}", .{dir});
+        } else {
+            zgui.text("Directory: None", .{});
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Refresh", .{})) {
+            try self.refresh_games();
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Change Directory", .{})) {
+            const open_path = try nfd.openFolderDialog(null);
+            if (open_path) |path| {
+                defer nfd.freePath(path);
+                if (self.game_directory) |old_dir| self.allocator.free(old_dir);
+                self.game_directory = try self.allocator.dupe(u8, path);
+                try self.refresh_games();
+            }
+        }
+
+        for (self.gdi_files.items) |entry| {
+            if (zgui.button(entry.name, .{})) {
+                const was_running = d.running;
+                if (was_running) d.stop();
+                d.load_and_start(entry.path) catch |err| {
+                    switch (err) {
+                        error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
+                        else => {
+                            ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
+                            error_popup_to_open = "Unknown error";
+                        },
+                    }
+                };
+            }
+        }
+    }
+    zgui.end();
 
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
