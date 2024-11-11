@@ -540,13 +540,13 @@ pub const Renderer = struct {
     blit_to_window_vertex_buffer: zgpu.BufferHandle,
 
     opaque_pipelines: std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle),
-    closed_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
-    shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
-    open_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
-    modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle,
+    closed_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
+    shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
+    open_modifier_volume_pipeline: zgpu.RenderPipelineHandle = .{},
+    modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_pipeline: zgpu.RenderPipelineHandle = .{},
-    translucent_modvol_pipeline: zgpu.RenderPipelineHandle,
-    translucent_modvol_merge_pipeline: zgpu.ComputePipelineHandle,
+    translucent_modvol_pipeline: zgpu.RenderPipelineHandle = .{},
+    translucent_modvol_merge_pipeline: zgpu.ComputePipelineHandle = .{},
     blend_pipeline: zgpu.ComputePipelineHandle,
 
     translucent_modvol_bind_group_layout: zgpu.BindGroupLayoutHandle,
@@ -867,77 +867,12 @@ pub const Renderer = struct {
         });
         defer gctx.releaseResource(modifier_volume_group_layout);
 
-        const translucent_modvol_pipeline = tmodvolp: {
-            const translucent_modvol_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_translucent_fs, "translucent_modvol_fs");
-            defer translucent_modvol_fs_module.release();
-
-            const translucent_modvol_pipeline_layout = gctx.createPipelineLayout(&.{
-                modifier_volume_group_layout,
-                translucent_modvol_bind_group_layout,
-            });
-
-            const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = modifier_volume_vertex_shader_module,
-                    .entry_point = "main",
-                    .buffer_count = ModifierVolumeVertexBufferLayout.len,
-                    .buffers = &ModifierVolumeVertexBufferLayout,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_list,
-                },
-                .depth_stencil = &wgpu.DepthStencilState{
-                    .format = .depth32_float_stencil8,
-                    .depth_write_enabled = false,
-                    .depth_compare = DepthCompareFunction,
-                    .stencil_read_mask = 0x00,
-                    .stencil_write_mask = 0x00,
-                    .stencil_front = .{
-                        .compare = .always,
-                        .fail_op = .keep,
-                        .pass_op = .keep,
-                        .depth_fail_op = .keep,
-                    },
-                    .stencil_back = .{
-                        .compare = .always,
-                        .fail_op = .keep,
-                        .pass_op = .keep,
-                        .depth_fail_op = .keep,
-                    },
-                },
-                .fragment = &wgpu.FragmentState{
-                    .module = translucent_modvol_fs_module,
-                    .entry_point = "main",
-                    .target_count = 0,
-                    .targets = null,
-                },
-            };
-            break :tmodvolp gctx.createRenderPipeline(translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor);
-        };
-        gctx.lookupResource(translucent_modvol_pipeline).?.setLabel("Translucent Modifier Volume Pipeline");
-
         const translucent_modvol_merge_bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .compute = true }, .uniform, true, 0),
             zgpu.bufferEntry(1, .{ .compute = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .compute = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .compute = true }, .storage, false, 0),
         });
-
-        const translucent_modvol_merge_pipeline = p: {
-            const translucent_modvol_merge_pipeline_layout = gctx.createPipelineLayout(&.{translucent_modvol_merge_bind_group_layout});
-            const translucent_modvol_merge_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_merge_cs, null);
-            defer translucent_modvol_merge_compute_module.release();
-            const translucent_modvol_merge_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
-                .compute = .{
-                    .module = translucent_modvol_merge_compute_module,
-                    .entry_point = "main",
-                },
-            };
-            break :p gctx.createComputePipeline(translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor);
-        };
-        gctx.lookupResource(translucent_modvol_merge_pipeline).?.setLabel("Translucent Modifier Volume Merge Pipeline");
 
         const color_targets = [_]wgpu.ColorTargetState{.{
             .format = zgpu.GraphicsContext.swapchain_format,
@@ -1043,7 +978,6 @@ pub const Renderer = struct {
                 .targets = null,
             },
         };
-        const closed_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor);
 
         const shift_stencil_buffer_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
@@ -1083,7 +1017,6 @@ pub const Renderer = struct {
                 .targets = null,
             },
         };
-        const shift_stencil_buffer_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor);
 
         const open_modifier_volume_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
             .vertex = wgpu.VertexState{
@@ -1123,14 +1056,78 @@ pub const Renderer = struct {
                 .targets = null,
             },
         };
-        const open_modifier_volume_pipeline = gctx.createRenderPipeline(modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor);
 
         const modifier_volume_bind_group = gctx.createBindGroup(modifier_volume_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
         });
 
+        var renderer = try allocator.create(Renderer);
+        renderer.* = .{
+            .blit_pipeline = blit_pipeline,
+            .blit_vertex_buffer = blit_vertex_buffer,
+            .blit_index_buffer = blit_index_buffer,
+            .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
+
+            .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
+
+            .framebuffer_texture = framebuffer_texture,
+            .framebuffer_texture_view = framebuffer_texture_view,
+            .framebuffer_copy_buffer = framebuffer_copy_buffer,
+
+            .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
+
+            .translucent_bind_group_layout = translucent_bind_group_layout,
+            .translucent_modvol_bind_group_layout = translucent_modvol_bind_group_layout,
+            .translucent_modvol_merge_bind_group_layout = translucent_modvol_merge_bind_group_layout,
+
+            .blend_pipeline = blend_pipeline,
+            .blend_bind_group_layout = blend_bind_group_layout,
+
+            .blit_vertex_shader_module = blit_vs_module,
+            .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout }),
+            .opaque_vertex_shader_module = opaque_vertex_shader_module,
+            .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
+
+            .bind_group = bind_group,
+            .modifier_volume_bind_group = modifier_volume_bind_group,
+            .vertex_buffer = vertex_buffer,
+            .index_buffer = index_buffer,
+            .strips_metadata_buffer = strips_metadata_buffer,
+            .modifier_volume_vertex_buffer = modifier_volume_vertex_buffer,
+
+            .texture_arrays = texture_arrays,
+            .texture_array_views = texture_array_views,
+            .palette_buffer = palette_buffer,
+
+            .samplers = samplers,
+            .sampler_bind_groups = sampler_bind_groups,
+
+            .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
+            .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
+            .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
+
+            .opaque_pass = PassMetadata.init(allocator, .Opaque),
+            .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
+            .translucent_pass = PassMetadata.init(allocator, .Translucent),
+
+            .ta_lists = HollyModule.TALists.init(allocator),
+
+            .mipmap_gen_pipeline = MipMap.init(gctx),
+
+            ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
+
+            ._gctx = gctx,
+            ._allocator = allocator,
+        };
+
+        gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
+
+        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
+        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, shift_stencil_buffer_modifier_volume_pipeline_descriptor, &renderer.shift_stencil_buffer_modifier_volume_pipeline);
+        gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, open_modifier_volume_pipeline_descriptor, &renderer.open_modifier_volume_pipeline);
+
         // Modifier Volume Apply pipeline - Use the stencil from the previous pass to apply modifier volume effects.
-        const mv_apply_pipeline = mvp: {
+        {
             const mv_apply_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_apply_fs, "fs");
             defer mv_apply_fragment_shader_module.release();
 
@@ -1183,76 +1180,70 @@ pub const Renderer = struct {
                     .targets = &mv_apply_color_targets,
                 },
             };
-            break :mvp gctx.createRenderPipeline(mv_apply_pipeline_layout, mv_apply_pipeline_descriptor);
-        };
+            gctx.createRenderPipelineAsync(allocator, mv_apply_pipeline_layout, mv_apply_pipeline_descriptor, &renderer.modifier_volume_apply_pipeline);
+        }
 
-        var renderer = try allocator.create(Renderer);
-        renderer.* = .{
-            .blit_pipeline = blit_pipeline,
-            .blit_vertex_buffer = blit_vertex_buffer,
-            .blit_index_buffer = blit_index_buffer,
-            .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
+        {
+            const translucent_modvol_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_translucent_fs, "translucent_modvol_fs");
+            defer translucent_modvol_fs_module.release();
 
-            .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
+            const translucent_modvol_pipeline_layout = gctx.createPipelineLayout(&.{
+                modifier_volume_group_layout,
+                translucent_modvol_bind_group_layout,
+            });
 
-            .framebuffer_texture = framebuffer_texture,
-            .framebuffer_texture_view = framebuffer_texture_view,
-            .framebuffer_copy_buffer = framebuffer_copy_buffer,
-
-            .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
-
-            .closed_modifier_volume_pipeline = closed_modifier_volume_pipeline,
-            .shift_stencil_buffer_modifier_volume_pipeline = shift_stencil_buffer_modifier_volume_pipeline,
-            .open_modifier_volume_pipeline = open_modifier_volume_pipeline,
-            .modifier_volume_apply_pipeline = mv_apply_pipeline,
-
-            .translucent_bind_group_layout = translucent_bind_group_layout,
-            .translucent_modvol_pipeline = translucent_modvol_pipeline,
-            .translucent_modvol_bind_group_layout = translucent_modvol_bind_group_layout,
-            .translucent_modvol_merge_pipeline = translucent_modvol_merge_pipeline,
-            .translucent_modvol_merge_bind_group_layout = translucent_modvol_merge_bind_group_layout,
-
-            .blend_pipeline = blend_pipeline,
-            .blend_bind_group_layout = blend_bind_group_layout,
-
-            .blit_vertex_shader_module = blit_vs_module,
-            .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout }),
-            .opaque_vertex_shader_module = opaque_vertex_shader_module,
-            .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
-
-            .bind_group = bind_group,
-            .modifier_volume_bind_group = modifier_volume_bind_group,
-            .vertex_buffer = vertex_buffer,
-            .index_buffer = index_buffer,
-            .strips_metadata_buffer = strips_metadata_buffer,
-            .modifier_volume_vertex_buffer = modifier_volume_vertex_buffer,
-
-            .texture_arrays = texture_arrays,
-            .texture_array_views = texture_array_views,
-            .palette_buffer = palette_buffer,
-
-            .samplers = samplers,
-            .sampler_bind_groups = sampler_bind_groups,
-
-            .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
-            .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
-            .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
-
-            .opaque_pass = PassMetadata.init(allocator, .Opaque),
-            .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
-            .translucent_pass = PassMetadata.init(allocator, .Translucent),
-
-            .ta_lists = HollyModule.TALists.init(allocator),
-
-            .mipmap_gen_pipeline = MipMap.init(gctx),
-
-            ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
-
-            ._gctx = gctx,
-            ._allocator = allocator,
-        };
-
-        gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
+            const translucent_modvol_pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = modifier_volume_vertex_shader_module,
+                    .entry_point = "main",
+                    .buffer_count = ModifierVolumeVertexBufferLayout.len,
+                    .buffers = &ModifierVolumeVertexBufferLayout,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_list,
+                },
+                .depth_stencil = &wgpu.DepthStencilState{
+                    .format = .depth32_float_stencil8,
+                    .depth_write_enabled = false,
+                    .depth_compare = DepthCompareFunction,
+                    .stencil_read_mask = 0x00,
+                    .stencil_write_mask = 0x00,
+                    .stencil_front = .{
+                        .compare = .always,
+                        .fail_op = .keep,
+                        .pass_op = .keep,
+                        .depth_fail_op = .keep,
+                    },
+                    .stencil_back = .{
+                        .compare = .always,
+                        .fail_op = .keep,
+                        .pass_op = .keep,
+                        .depth_fail_op = .keep,
+                    },
+                },
+                .fragment = &wgpu.FragmentState{
+                    .module = translucent_modvol_fs_module,
+                    .entry_point = "main",
+                    .target_count = 0,
+                    .targets = null,
+                },
+            };
+            gctx.createRenderPipelineAsync(allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &renderer.translucent_modvol_pipeline);
+        }
+        {
+            const translucent_modvol_merge_pipeline_layout = gctx.createPipelineLayout(&.{translucent_modvol_merge_bind_group_layout});
+            const translucent_modvol_merge_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_merge_cs, null);
+            defer translucent_modvol_merge_compute_module.release();
+            const translucent_modvol_merge_pipeline_descriptor = wgpu.ComputePipelineDescriptor{
+                .compute = .{
+                    .module = translucent_modvol_merge_compute_module,
+                    .entry_point = "main",
+                },
+            };
+            gctx.createComputePipelineAsync(allocator, translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor, &renderer.translucent_modvol_merge_pipeline);
+        }
 
         // Asyncronously create some common opaque pipelines ahead of time
         _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, true);
@@ -2602,7 +2593,12 @@ pub const Renderer = struct {
                 .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
-            if (ta_lists.opaque_modifier_volumes.items.len > 0) {
+            if (ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
+                const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
+                const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
+                const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
+                const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
+
                 // Write to stencil buffer
                 {
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -2644,20 +2640,19 @@ pub const Renderer = struct {
                     for (ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (volume.closed) {
                             pass.setStencilReference(0x00);
-                            pass.setPipeline(gctx.lookupResource(self.closed_modifier_volume_pipeline).?);
+                            pass.setPipeline(closed_modifier_volume_pipeline);
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
 
                             pass.setStencilReference(0x01);
-                            pass.setPipeline(gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline).?);
+                            pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
                             // NOTE: We could draw a single fullscreen quad here.
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                         }
                     }
-
                     // Open "volume" pass.
                     // Triangle passing the depth test immediately set the stencil buffer.
                     pass.setStencilReference(0x02);
-                    pass.setPipeline(gctx.lookupResource(self.open_modifier_volume_pipeline).?);
+                    pass.setPipeline(open_modifier_volume_pipeline);
                     for (ta_lists.opaque_modifier_volumes.items) |volume| {
                         if (!volume.closed)
                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
@@ -2701,7 +2696,7 @@ pub const Renderer = struct {
 
                     pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                     pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                    pass.setPipeline(gctx.lookupResource(self.modifier_volume_apply_pipeline).?);
+                    pass.setPipeline(modifier_volume_apply_pipeline);
                     pass.setBindGroup(0, mva_bind_group, &.{});
 
                     pass.setStencilReference(0x02);
@@ -2742,8 +2737,11 @@ pub const Renderer = struct {
                 oit_uniform_mem.slice[0].target_width = self.resolution.width;
                 oit_uniform_mem.slice[0].start_y = start_y;
 
-                // Render Modifier Volumes
-                if (ta_lists.translucent_modifier_volumes.items.len > 0) {
+                // Render Translucent Modifier Volumes
+                if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
+                    const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
+                    const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
+
                     oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
 
                     const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -2775,7 +2773,7 @@ pub const Renderer = struct {
                         }
                         pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
                         pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-                        pass.setPipeline(gctx.lookupResource(self.translucent_modvol_pipeline).?);
+                        pass.setPipeline(translucent_modvol_pipeline);
                         pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
 
                         // Close volume pass.
@@ -2803,7 +2801,7 @@ pub const Renderer = struct {
                             pass.release();
                         }
                         const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                        pass.setPipeline(gctx.lookupResource(self.translucent_modvol_merge_pipeline).?);
+                        pass.setPipeline(translucent_modvol_merge_pipeline);
 
                         pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
                         pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
