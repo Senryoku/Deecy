@@ -175,6 +175,24 @@ fn area_color(
         let ignore_tex_alpha = ((shading_instructions >> 3) & 0x1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
 
+        // NOTE: Doc. says alpha should be checked *after* applying the shading instructions, (i.e.
+        //       testing final_color.a instead of tex_a), but I found at least one instance 
+        //       where it doesn't produce the expected result: Ecco splash screen.
+        if punch_through && tex_a < uniforms.pt_alpha_ref {
+            // NOTE: Documentation says:
+            //  "In the case of a Punch Through polygon, "4" (SRC Alpha) must be
+            //   specified in the SRC instruction and "5" (Inverse SRC Alpha) must be specified in
+            //   the DST instruction."
+            // However, Soul Reaver uses DST Alpha Zero (0) and SRC Alpha One (1) for some Punch Through polygons
+            // in menus. It also uses ARGB1555 textures with all alpha values to 0 preventing them from being rendered
+            // if we strictly follow the documentation.
+            // I don't know if this is the best place to do this, but let's double check.
+            let src_alpha = (shading_instructions >> 10) & 3;
+            if src_alpha != 1 {
+                discard;
+            }
+        }
+
         switch(shading)  {
             // Decal
             case 0u: {
@@ -201,21 +219,6 @@ fn area_color(
                 final_color = vec4<f32>(rgb, a);
             }
             default: { final_color = base_color + vec4<f32>(offset_color.rgb, 0.0); }
-        }
-
-        if punch_through && final_color.a < uniforms.pt_alpha_ref {
-            // NOTE: Documentation says:
-            //  "In the case of a Punch Through polygon, "4" (SRC Alpha) must be
-            //   specified in the SRC instruction and "5" (Inverse SRC Alpha) must be specified in
-            //   the DST instruction."
-            // However, Soul Reaver uses DST Alpha Zero (0) and SRC Alpha One (1) for some Punch Through polygons
-            // in menus. It also uses ARGB1555 textures with all alpha values to 0 preventing them from being rendered
-            // if we strictly follow the documentation.
-            // I don't know if this is the best place to do this, but let's double check.
-            let src_alpha = (shading_instructions >> 10) & 3;
-            if src_alpha != 1 {
-                discard;
-            }
         }
     }
 
