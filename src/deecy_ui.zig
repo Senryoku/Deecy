@@ -21,10 +21,17 @@ const GameFile = struct {
     texture: ?zgpu.TextureHandle,
     view: ?zgpu.TextureViewHandle,
 
-    pub fn free(self: @This(), allocator: std.mem.Allocator) void {
+    pub fn free(self: *@This(), allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
         allocator.free(self.path);
         allocator.free(self.name);
-        // TODO: Free texture
+        if (self.texture) |texture| {
+            gctx.releaseResource(texture);
+            self.texture = null;
+        }
+        if (self.view) |view| {
+            gctx.releaseResource(view);
+            self.view = null;
+        }
     }
 };
 
@@ -38,6 +45,7 @@ vmu_displays: [4][2]?struct {
     data: [48 * 32 / 8]u8 = .{255} ** (48 * 32 / 8),
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
+display_library: bool = false,
 game_directory: ?[]const u8 = null,
 gdi_files: std.ArrayList(GameFile),
 
@@ -161,7 +169,9 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
 
 fn refresh_games(self: *@This()) !void {
     if (self.game_directory) |dir_path| {
-        for (self.gdi_files.items) |entry| entry.free(self.allocator);
+        const start = std.time.milliTimestamp();
+
+        for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
         self.gdi_files.clearRetainingCapacity();
 
         var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
@@ -186,12 +196,8 @@ fn refresh_games(self: *@This()) !void {
                 var view: ?zgpu.TextureViewHandle = null;
 
                 if (gdi.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
-                    std.debug.print("[{s:<30}] Found GDTex! Len: {d}\n", .{ entry.basename[0..@min(30, entry.basename.len)], len });
-
-                    if (PVRFile.decode(self.allocator, tex_buffer)) |result| {
+                    if (PVRFile.decode(self.allocator, tex_buffer[0..len])) |result| {
                         defer self.allocator.free(result.bgra);
-
-                        std.debug.print("  Width: {d}, Height: {d}\n", .{ result.width, result.height });
 
                         texture = self.gctx.createTexture(.{
                             .usage = .{ .texture_binding = true, .copy_dst = true },
@@ -214,20 +220,26 @@ fn refresh_games(self: *@This()) !void {
                             result.bgra,
                         );
                     } else |err| {
-                        ui_log.err(termcolor.red("Failed to decode GDTex: {any}"), .{err});
+                        ui_log.err(termcolor.red("[{s}] Failed to decode 0GDTEX.PVR: {any}"), .{ entry.basename[0..16], err });
                     }
                 } else |err| {
-                    ui_log.info("Failed to find GDTex: {any}", .{err});
+                    ui_log.info("[{s}] Failed to find 0GDTEX.PVR: {any}", .{ entry.basename[0..16], err });
                 }
 
+                const name = try self.allocator.dupeZ(u8, entry.basename);
+                errdefer self.allocator.free(name);
+
                 try self.gdi_files.append(.{
-                    .name = try self.allocator.dupeZ(u8, entry.basename),
+                    .name = name,
                     .path = path,
                     .texture = texture,
                     .view = view,
                 });
             }
         }
+
+        const end = std.time.milliTimestamp();
+        ui_log.info("Checked {d} GDI files in {d}ms", .{ self.gdi_files.items.len, end - start });
     }
 }
 
@@ -368,47 +380,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.endMainMenuBar();
     }
 
-    if (zgui.begin("Games", .{})) {
-        if (self.game_directory) |dir| {
-            zgui.text("Directory: {s}", .{dir});
-        } else {
-            zgui.text("Directory: None", .{});
-        }
-        zgui.sameLine(.{});
-        if (zgui.button("Refresh", .{})) {
-            try self.refresh_games();
-        }
-        zgui.sameLine(.{});
-        if (zgui.button("Change Directory", .{})) {
-            const open_path = try nfd.openFolderDialog(null);
-            if (open_path) |path| {
-                defer nfd.freePath(path);
-                if (self.game_directory) |old_dir| self.allocator.free(old_dir);
-                self.game_directory = try self.allocator.dupe(u8, path);
-                try self.refresh_games();
+    if (d.dc.gdrom.disk == null or self.display_library)
+        self.draw_game_library(d) catch |err| {
+            switch (err) {
+                error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
+                else => error_popup_to_open = "Unknown error",
             }
-        }
-
-        for (self.gdi_files.items) |entry| {
-            if (zgui.button(entry.name, .{})) {
-                const was_running = d.running;
-                if (was_running) d.stop();
-                d.load_and_start(entry.path) catch |err| {
-                    switch (err) {
-                        error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
-                        else => {
-                            ui_log.err("Failed to load GDI: {s}", .{@errorName(err)});
-                            error_popup_to_open = "Unknown error";
-                        },
-                    }
-                };
-            }
-            if (entry.view) |view| {
-                zgui.image(self.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 });
-            }
-        }
-    }
-    zgui.end();
+        };
 
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
@@ -576,4 +554,60 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.endPopup();
     }
+}
+
+pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
+    const target_width = 4 * 256 + 50;
+    zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 24, .cond = .always });
+    zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 48), .cond = .always });
+
+    if (zgui.begin("Games", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true } })) {
+        if (self.game_directory) |dir| {
+            zgui.text("Directory: {s}", .{dir});
+        } else {
+            zgui.text("Directory: None", .{});
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Refresh", .{})) {
+            try self.refresh_games();
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Change Directory", .{})) {
+            const open_path = try nfd.openFolderDialog(null);
+            if (open_path) |path| {
+                defer nfd.freePath(path);
+                if (self.game_directory) |old_dir| self.allocator.free(old_dir);
+                self.game_directory = try self.allocator.dupe(u8, path);
+                try self.refresh_games();
+            }
+        }
+
+        zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
+        for (self.gdi_files.items, 0..) |entry, idx| {
+            var launch = false;
+            zgui.beginGroup();
+            zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
+            zgui.pushIntId(@intCast(idx));
+            launch = (zgui.button(entry.name, .{ .w = 256 })) or launch;
+
+            zgui.pushStrId("image");
+            if (entry.view) |view| {
+                launch = zgui.imageButton(entry.name, self.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+            } else {
+                launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+            }
+            zgui.popId();
+
+            zgui.popId();
+            zgui.popStyleVar(.{});
+            zgui.endGroup();
+
+            if (launch)
+                try d.load_and_start(entry.path);
+
+            if (idx % 4 != 3) zgui.sameLine(.{});
+        }
+        zgui.popStyleVar(.{});
+    }
+    zgui.end();
 }

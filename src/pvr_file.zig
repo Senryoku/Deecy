@@ -64,11 +64,10 @@ pub const DecodedPVRImage = struct {
 pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage {
     if (std.mem.eql(u8, buffer[0..4], "GBIX")) {
         const header: *const GlobalIndexHeader = @alignCast(@ptrCast(buffer));
-        std.debug.print("  {any}\n", .{header.*});
-        return decode(allocator, buffer[@sizeOf(GlobalIndexHeader)..]);
+        if (8 + header.length >= buffer.len) return error.InvalidGlobalIndexHeader;
+        return decode(allocator, buffer[8 + header.length ..]);
     } else if (std.mem.eql(u8, buffer[0..4], "PVRT")) {
         const header: *const PVRTHeader = @alignCast(@ptrCast(buffer));
-        std.debug.print("  {any}\n", .{header.*});
 
         const twiddled = switch (header.image_data_type) {
             .SQUARE_TWIDDLED,
@@ -101,10 +100,6 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
 
         if (vq_compressed) return error.VQDecompressionNotImplementedForPVRT;
 
-        var offset: u32 = @sizeOf(PVRTHeader);
-        if (mipmap) offset += Renderer.mipmap_offset(header.width);
-        const texels = buffer[offset..];
-
         const image = DecodedPVRImage{
             .width = header.width,
             .height = header.height,
@@ -112,12 +107,18 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         };
         errdefer allocator.free(image.bgra);
 
+        var offset: u32 = @sizeOf(PVRTHeader);
+        if (mipmap) offset += Renderer.mipmap_offset(image.width) - 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
+        const texels = @as([*]const Colors.Color16, @alignCast(@ptrCast(&buffer[offset])))[0..];
+
         for (0..image.height) |y| {
             for (0..image.width) |x| {
                 const pixel_index: usize = y * image.width + x;
-                const texel_index: usize = 2 * (if (twiddled) Renderer.untwiddle(@intCast(x), @intCast(y), image.width, image.height) else pixel_index);
-                const texel: Colors.Color16 = @as(*const Colors.Color16, @alignCast(@ptrCast(&texels[texel_index]))).*;
-                @memcpy(image.bgra[pixel_index * 4 + 0 .. pixel_index * 4 + 4], texel.bgra(@enumFromInt(@intFromEnum(header.pixel_format)), twiddled)[0..4]);
+                const texel_index: usize = if (twiddled) Renderer.untwiddle(@intCast(x), @intCast(y), image.width, image.height) else pixel_index;
+                @memcpy(
+                    image.bgra[pixel_index * 4 + 0 .. pixel_index * 4 + 4],
+                    texels[texel_index].bgra(@enumFromInt(@intFromEnum(header.pixel_format)), twiddled)[0..4],
+                );
             }
         }
 

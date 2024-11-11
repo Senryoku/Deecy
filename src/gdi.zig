@@ -310,10 +310,8 @@ pub const GDI = struct {
         // TODO: Handle directories, and not just root files.
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
-            if (std.mem.eql(u8, dir_record.get_file_identifier(), filename)) {
-                std.debug.print("Loading '{s}' from LBA {X}\n", .{ filename, dir_record.location + GDI_SECTOR_OFFSET });
+            if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
                 return self.load_bytes(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
-            }
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;

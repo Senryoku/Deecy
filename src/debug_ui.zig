@@ -163,7 +163,7 @@ fn reset_hover(self: *@This()) void {
     }
 }
 
-fn textHighlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
+fn text_highlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
     zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
 }
 
@@ -194,11 +194,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("PR: {X:0>8}", .{dc.cpu.pr});
         zgui.text("SR: ", .{});
         zgui.sameLine(.{});
-        textHighlighted(dc.cpu.sr.t, "[T] ", .{});
+        text_highlighted(dc.cpu.sr.t, "[T] ", .{});
         zgui.sameLine(.{});
-        textHighlighted(dc.cpu.sr.s, "[S] ", .{});
+        text_highlighted(dc.cpu.sr.s, "[S] ", .{});
         zgui.sameLine(.{});
-        textHighlighted(dc.cpu.sr.bl, "[BL] ", .{});
+        text_highlighted(dc.cpu.sr.bl, "[BL] ", .{});
         zgui.text("IMASK: {d: >2} ", .{dc.cpu.sr.imask});
         zgui.text("GBR: {X:0>8}", .{dc.cpu.gbr});
         zgui.text("VBR: {X:0>8}", .{dc.cpu.vbr});
@@ -275,15 +275,15 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.beginGroup();
             const control = dc.cpu.read_p4_register(sh4.P4.TCR, timers[i].control);
             const enabled = ((TSTR >> i) & 1) == 1;
-            textHighlighted(enabled, "Timer {d:0>1}: {X:0>8} / {X:0>8}", .{
+            text_highlighted(enabled, "Timer {d:0>1}: {X:0>8} / {X:0>8}", .{
                 i,
                 dc.cpu.read_p4_register(u32, timers[i].counter),
                 dc.cpu.read_p4_register(u32, timers[i].constant),
             });
             if (i == 2) {
-                textHighlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1} ICPE {X:0>1} ICPF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf, control.icpe, control.icpf });
+                text_highlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1} ICPE {X:0>1} ICPF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf, control.icpe, control.icpf });
             } else {
-                textHighlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf });
+                text_highlighted(enabled, "  TPSC {X:0>1} CKEG {X:0>1} UNIE {X:0>1} UNF {X:0>1}", .{ control.tpsc, control.ckeg, control.unie, control.unf });
             }
             zgui.endGroup();
         }
