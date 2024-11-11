@@ -2351,7 +2351,7 @@ pub const Renderer = struct {
                         break :put pass.pipelines.getPtr(pipeline_key).?;
                     };
 
-                    const draw_call_key = .{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
+                    const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
 
                     var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                     if (draw_call == null) {
