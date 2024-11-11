@@ -46,7 +46,7 @@ vmu_displays: [4][2]?struct {
 
 display_library: bool = false,
 gdi_files: std.ArrayList(GameFile),
-gdi_files_mutex: std.Thread.Mutex = .{},
+gdi_files_mutex: std.Thread.Mutex = .{}, // Used during gdi_files population (then assumed to be constant outside of refresh_games)
 
 gctx: *zgpu.GraphicsContext,
 allocator: std.mem.Allocator,
@@ -179,40 +179,34 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer allocator.free(result.bgra);
 
-            if (result.width != 256 or result.width != 256) {
-                ui_log.warn(termcolor.yellow("TODO: Handle non-256x256 preview images ({d}x{d})."), .{ result.width, result.height });
-
-                // NOTE: Texture creation isn't thread safe.
-
-                //const texture = self.gctx.createTexture(.{
-                //    .usage = .{ .texture_binding = true, .copy_dst = true },
-                //    .size = .{
-                //        .width = result.width,
-                //        .height = result.height,
-                //        .depth_or_array_layers = 1,
-                //    },
-                //    .format = .bgra8_unorm,
-                //    .mip_level_count = 1,
-                //});
-                //
-                //const view = self.gctx.createTextureView(texture, .{});
-
-                return;
-            }
-
             {
                 self.gdi_files_mutex.lock();
                 defer self.gdi_files_mutex.unlock();
 
+                const texture = self.gctx.createTexture(.{
+                    .usage = .{ .texture_binding = true, .copy_dst = true },
+                    .size = .{
+                        .width = result.width,
+                        .height = result.height,
+                        .depth_or_array_layers = 1,
+                    },
+                    .format = .bgra8_unorm,
+                    .mip_level_count = 1,
+                });
+
+                const view = self.gctx.createTextureView(texture, .{});
+
                 for (self.gdi_files.items) |*entry| {
                     if (std.mem.eql(u8, entry.path, path)) {
                         self.gctx.queue.writeTexture(
-                            .{ .texture = self.gctx.lookupResource(entry.texture.?).? },
+                            .{ .texture = self.gctx.lookupResource(texture).? },
                             .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
                             .{ .width = result.width, .height = result.height },
                             u8,
                             result.bgra,
                         );
+                        entry.texture = texture;
+                        entry.view = view;
                         return;
                     }
                 }
@@ -225,18 +219,6 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
     } else |err| {
         ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {any}", .{ path, err });
     }
-
-    self.gdi_files_mutex.lock();
-    defer self.gdi_files_mutex.unlock();
-    for (self.gdi_files.items) |*entry| {
-        if (std.mem.eql(u8, entry.path, path)) {
-            self.gctx.releaseResource(entry.view.?);
-            entry.view = null;
-            self.gctx.releaseResource(entry.texture.?);
-            entry.texture = null;
-            return;
-        }
-    }
 }
 
 fn refresh_games(self: *@This(), d: *Deecy) !void {
@@ -247,9 +229,6 @@ fn refresh_games(self: *@This(), d: *Deecy) !void {
         defer threads.deinit();
 
         {
-            self.gdi_files_mutex.lock();
-            defer self.gdi_files_mutex.unlock();
-
             for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
             self.gdi_files.clearRetainingCapacity();
 
@@ -267,27 +246,16 @@ fn refresh_games(self: *@This(), d: *Deecy) !void {
 
                     const name = try self.allocator.dupeZ(u8, entry.basename);
                     errdefer self.allocator.free(name);
-
-                    const texture = self.gctx.createTexture(.{
-                        .usage = .{ .texture_binding = true, .copy_dst = true },
-                        .size = .{
-                            .width = 256,
-                            .height = 256,
-                            .depth_or_array_layers = 1,
-                        },
-                        .format = .bgra8_unorm,
-                        .mip_level_count = 1,
-                    });
-
-                    const view = self.gctx.createTextureView(texture, .{});
-
-                    try self.gdi_files.append(.{
-                        .name = name,
-                        .path = path,
-                        .texture = texture,
-                        .view = view,
-                    });
-
+                    {
+                        self.gdi_files_mutex.lock();
+                        defer self.gdi_files_mutex.unlock();
+                        try self.gdi_files.append(.{
+                            .name = name,
+                            .path = path,
+                            .texture = null,
+                            .view = null,
+                        });
+                    }
                     try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, path }));
                 }
             }
