@@ -281,7 +281,7 @@ pub fn main() !void {
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
-        d.pool_controllers();
+        d.poll_controllers();
 
         d.one_frame();
 

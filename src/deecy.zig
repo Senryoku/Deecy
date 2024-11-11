@@ -483,7 +483,7 @@ fn reset(self: *@This()) !void {
     try self.check_save_state_slots();
 }
 
-pub fn pool_controllers(self: *@This()) void {
+pub fn poll_controllers(self: *@This()) void {
     for (0..4) |controller_idx| {
         if (self.dc.maple.ports[controller_idx].main) |*guest_controller| {
             switch (guest_controller.*) {
@@ -519,7 +519,7 @@ pub fn pool_controllers(self: *@This()) void {
                         c.axis[1] = if (self.window.getKey(.x) == .press) 255 else 0;
                         c.axis[0] = if (self.window.getKey(.z) == .press) 255 else 0;
                         c.axis[2] = if (self.window.getKey(.kp_4) == .press) 0 else if (self.window.getKey(.kp_6) == .press) 255 else 128;
-                        c.axis[3] = if (self.window.getKey(.kp_5) == .press) 0 else if (self.window.getKey(.kp_8) == .press) 255 else 128;
+                        c.axis[3] = if (self.window.getKey(.kp_8) == .press) 0 else if (self.window.getKey(.kp_5) == .press) 255 else 128;
 
                         if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128)
                             any_keyboard_key_pressed = true;
