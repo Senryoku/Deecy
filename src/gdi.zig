@@ -198,7 +198,7 @@ pub const GDI = struct {
 
             std.debug.assert(pregap == 0); // FIXME: Not handled.
 
-            // NOTE: Use MMAP on non-windows platforms?
+            // TODO: Use MMAP on non-windows platforms
             if (@import("builtin").os.tag != .windows) {
                 const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
                 defer self._allocator.free(track_file_path);

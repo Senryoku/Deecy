@@ -46,6 +46,7 @@ vmu_displays: [4][2]?struct {
 
 display_library: bool = false,
 gdi_files: std.ArrayList(GameFile),
+gdi_files_mutex: std.Thread.Mutex = .{},
 
 gctx: *zgpu.GraphicsContext,
 allocator: std.mem.Allocator,
@@ -163,75 +164,137 @@ pub fn draw_vmus(self: *@This(), d: *const Deecy, editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
-fn refresh_games(self: *@This(), d: *Deecy) !void {
-    if (d.config.game_directory) |dir_path| {
-        const start = std.time.milliTimestamp();
+fn get_game_image(self: *@This(), path: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-        for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
-        self.gdi_files.clearRetainingCapacity();
+    var gdi = try GDI.GDI.init(path, allocator);
+    defer gdi.deinit();
 
-        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
-            ui_log.err(termcolor.red("Failed to open game directory: {s}"), .{@errorName(err)});
-            return;
-        };
-        defer dir.close();
-        var walker = try dir.walk(self.allocator);
-        defer walker.deinit();
+    const tex_buffer: []u8 = try allocator.alloc(u8, 1024 * 1024);
+    defer allocator.free(tex_buffer);
 
-        const tex_buffer: []u8 = try self.allocator.alloc(u8, 1024 * 1024);
-        defer self.allocator.free(tex_buffer);
+    if (gdi.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
+        if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
+            defer allocator.free(result.bgra);
 
-        while (try walker.next()) |entry| {
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.path, ".gdi")) {
-                const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
+            if (result.width != 256 or result.width != 256) {
+                ui_log.warn(termcolor.yellow("TODO: Handle non-256x256 preview images ({d}x{d})."), .{ result.width, result.height });
 
-                var gdi = try GDI.GDI.init(path, self.allocator);
-                defer gdi.deinit();
+                // NOTE: Texture creation isn't thread safe.
 
-                var texture: ?zgpu.TextureHandle = null;
-                var view: ?zgpu.TextureViewHandle = null;
+                //const texture = self.gctx.createTexture(.{
+                //    .usage = .{ .texture_binding = true, .copy_dst = true },
+                //    .size = .{
+                //        .width = result.width,
+                //        .height = result.height,
+                //        .depth_or_array_layers = 1,
+                //    },
+                //    .format = .bgra8_unorm,
+                //    .mip_level_count = 1,
+                //});
+                //
+                //const view = self.gctx.createTextureView(texture, .{});
 
-                if (gdi.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
-                    if (PVRFile.decode(self.allocator, tex_buffer[0..len])) |result| {
-                        defer self.allocator.free(result.bgra);
+                return;
+            }
 
-                        texture = self.gctx.createTexture(.{
-                            .usage = .{ .texture_binding = true, .copy_dst = true },
-                            .size = .{
-                                .width = result.width,
-                                .height = result.height,
-                                .depth_or_array_layers = 1,
-                            },
-                            .format = .bgra8_unorm,
-                            .mip_level_count = 1,
-                        });
+            {
+                self.gdi_files_mutex.lock();
+                defer self.gdi_files_mutex.unlock();
 
-                        view = self.gctx.createTextureView(texture.?, .{});
-
+                for (self.gdi_files.items) |*entry| {
+                    if (std.mem.eql(u8, entry.path, path)) {
                         self.gctx.queue.writeTexture(
-                            .{ .texture = self.gctx.lookupResource(texture.?).? },
+                            .{ .texture = self.gctx.lookupResource(entry.texture.?).? },
                             .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
                             .{ .width = result.width, .height = result.height },
                             u8,
                             result.bgra,
                         );
-                    } else |err| {
-                        ui_log.err(termcolor.red("[{s}] Failed to decode 0GDTEX.PVR: {any}"), .{ entry.basename[0..16], err });
+                        return;
                     }
-                } else |err| {
-                    ui_log.info("[{s}] Failed to find 0GDTEX.PVR: {any}", .{ entry.basename[0..16], err });
                 }
-
-                const name = try self.allocator.dupeZ(u8, entry.basename);
-                errdefer self.allocator.free(name);
-
-                try self.gdi_files.append(.{
-                    .name = name,
-                    .path = path,
-                    .texture = texture,
-                    .view = view,
-                });
             }
+
+            ui_log.err("Failed to find GDI entry for '{s}'", .{path});
+        } else |err| {
+            ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {any}"), .{ path, err });
+        }
+    } else |err| {
+        ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {any}", .{ path, err });
+    }
+
+    self.gdi_files_mutex.lock();
+    defer self.gdi_files_mutex.unlock();
+    for (self.gdi_files.items) |*entry| {
+        if (std.mem.eql(u8, entry.path, path)) {
+            self.gctx.releaseResource(entry.view.?);
+            entry.view = null;
+            self.gctx.releaseResource(entry.texture.?);
+            entry.texture = null;
+            return;
+        }
+    }
+}
+
+fn refresh_games(self: *@This(), d: *Deecy) !void {
+    if (d.config.game_directory) |dir_path| {
+        const start = std.time.milliTimestamp();
+
+        var threads = std.ArrayList(std.Thread).init(self.allocator);
+        defer threads.deinit();
+
+        {
+            self.gdi_files_mutex.lock();
+            defer self.gdi_files_mutex.unlock();
+
+            for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
+            self.gdi_files.clearRetainingCapacity();
+
+            var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
+                ui_log.err(termcolor.red("Failed to open game directory: {s}"), .{@errorName(err)});
+                return;
+            };
+            defer dir.close();
+            var walker = try dir.walk(self.allocator);
+            defer walker.deinit();
+
+            while (try walker.next()) |entry| {
+                if (entry.kind == .file and std.mem.endsWith(u8, entry.path, ".gdi")) {
+                    const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
+
+                    const name = try self.allocator.dupeZ(u8, entry.basename);
+                    errdefer self.allocator.free(name);
+
+                    const texture = self.gctx.createTexture(.{
+                        .usage = .{ .texture_binding = true, .copy_dst = true },
+                        .size = .{
+                            .width = 256,
+                            .height = 256,
+                            .depth_or_array_layers = 1,
+                        },
+                        .format = .bgra8_unorm,
+                        .mip_level_count = 1,
+                    });
+
+                    const view = self.gctx.createTextureView(texture, .{});
+
+                    try self.gdi_files.append(.{
+                        .name = name,
+                        .path = path,
+                        .texture = texture,
+                        .view = view,
+                    });
+
+                    try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, path }));
+                }
+            }
+        }
+
+        for (threads.items) |t| {
+            t.join();
         }
 
         const end = std.time.milliTimestamp();
