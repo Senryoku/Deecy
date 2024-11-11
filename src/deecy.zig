@@ -176,7 +176,7 @@ breakpoints: std.ArrayList(u32),
 controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
 
 display_ui: bool = true,
-ui: DeecyUI = undefined,
+ui: *DeecyUI = undefined,
 debug_ui: DebugUI = undefined,
 
 save_state_slots: [4]bool = .{ false, false, false, false },
@@ -269,7 +269,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = try DeecyUI.init(allocator, self);
+    self.ui = try DeecyUI.create(allocator, self);
     try self.ui_init();
 
     self.dc = Dreamcast.create(allocator) catch |err| {
@@ -342,6 +342,7 @@ pub fn destroy(self: *@This()) void {
 
     self.debug_ui.deinit();
     self.ui_deinit();
+    self.ui.destroy();
 
     zaudio.deinit();
 
@@ -648,7 +649,7 @@ pub fn on_game_load(self: *@This()) !void {
                 }
             }
             self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
-            self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&DeecyUI.update_vmu_screen_0_0), .userdata = &self.ui };
+            self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&DeecyUI.update_vmu_screen_0_0), .userdata = self.ui };
         }
     }
     try self.check_save_state_slots();

@@ -51,22 +51,25 @@ gdi_files_mutex: std.Thread.Mutex = .{}, // Used during gdi_files population (th
 gctx: *zgpu.GraphicsContext,
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator, d: *Deecy) !@This() {
-    var r: @This() = .{
+_thread: ?std.Thread = null,
+
+pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
+    var r = try allocator.create(@This());
+    r.* = .{
         .gdi_files = std.ArrayList(GameFile).init(allocator),
         .gctx = d.gctx,
         .allocator = allocator,
     };
     r.create_vmu_texture(0, 0);
-    try r.refresh_games(d);
+    try r.launch_async(refresh_games, .{ r, d });
     return r;
 }
 
-pub fn deinit(self: *@This()) void {
-    for (self.gdi_files.items) |entry| entry.free(self.allocator);
+pub fn destroy(self: *@This()) void {
+    for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
     self.gdi_files.deinit();
 
-    for (self.vmu_displays) |*vmu_texture| {
+    for (&self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
             self.gctx.releaseResource(texture.texture);
             self.gctx.releaseResource(texture.view);
@@ -78,6 +81,8 @@ pub fn deinit(self: *@This()) void {
             vmu_texture[1] = null;
         }
     }
+
+    self.allocator.destroy(self);
 }
 
 fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
@@ -219,6 +224,14 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
     } else |err| {
         ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {any}", .{ path, err });
     }
+}
+
+fn launch_async(self: *@This(), func: anytype, args: anytype) !void {
+    if (self._thread) |thread| {
+        thread.join();
+        self._thread = null;
+    }
+    self._thread = try std.Thread.spawn(.{}, func, args);
 }
 
 fn refresh_games(self: *@This(), d: *Deecy) !void {
@@ -588,7 +601,7 @@ pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 24, .cond = .always });
     zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 48), .cond = .always });
 
-    if (zgui.begin("Games", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true } })) {
+    if (zgui.begin("Games", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true } })) {
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
