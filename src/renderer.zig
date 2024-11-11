@@ -635,6 +635,9 @@ pub const Renderer = struct {
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
+        const start = std.time.milliTimestamp();
+        defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
+
         // Write to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
 
