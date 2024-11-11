@@ -78,6 +78,10 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
             .TWIDDLED_8_BIT_CLUT,
             .TWIDDLED_8_BIT_DIRECT,
             .RECTANGULAR_TWIDDLED,
+            .VQ,
+            .VQ_MIPMAP,
+            .SMALL_VQ,
+            .SMALL_VQ_MIPMAP,
             => true,
             else => false,
         };
@@ -98,8 +102,6 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
             else => false,
         };
 
-        if (vq_compressed) return error.VQDecompressionNotImplementedForPVRT;
-
         const image = DecodedPVRImage{
             .width = header.width,
             .height = header.height,
@@ -108,17 +110,32 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         errdefer allocator.free(image.bgra);
 
         var offset: u32 = @sizeOf(PVRTHeader);
-        if (mipmap) offset += Renderer.mipmap_offset(image.width) - 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
-        const texels = @as([*]const Colors.Color16, @alignCast(@ptrCast(&buffer[offset])))[0..];
+        var code_book_offset: u32 = offset;
+        if (mipmap) {
+            if (vq_compressed) {
+                offset += Renderer.vq_mipmap_offset(image.width);
+                code_book_offset -= 4; // FIXME: Not sure. VQ compressed textures are buggy atm.
+            } else {
+                offset += Renderer.mipmap_offset(image.width);
+            }
+            offset -= 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
+        }
 
-        for (0..image.height) |y| {
-            for (0..image.width) |x| {
-                const pixel_index: usize = y * image.width + x;
-                const texel_index: usize = if (twiddled) Renderer.untwiddle(@intCast(x), @intCast(y), image.width, image.height) else pixel_index;
-                @memcpy(
-                    image.bgra[pixel_index * 4 + 0 .. pixel_index * 4 + 4],
-                    texels[texel_index].bgra(@enumFromInt(@intFromEnum(header.pixel_format)), twiddled)[0..4],
-                );
+        if (vq_compressed) {
+            const code_book = @as([*]const u64, @alignCast(@ptrCast(&buffer[code_book_offset..])))[0..256];
+            const indices = buffer[8 * 256 + offset ..];
+            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), code_book, indices, image.width, image.height);
+        } else {
+            const texels = @as([*]const Colors.Color16, @alignCast(@ptrCast(&buffer[offset])))[0..];
+            for (0..image.height) |y| {
+                for (0..image.width) |x| {
+                    const pixel_index: usize = y * image.width + x;
+                    const texel_index: usize = if (twiddled) Renderer.untwiddle(@intCast(x), @intCast(y), image.width, image.height) else pixel_index;
+                    @memcpy(
+                        image.bgra[pixel_index * 4 + 0 .. pixel_index * 4 + 4],
+                        texels[texel_index].bgra(@enumFromInt(@intFromEnum(header.pixel_format)), twiddled)[0..4],
+                    );
+                }
             }
         }
 

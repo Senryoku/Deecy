@@ -70,6 +70,29 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
+pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u64, indices: []const u8, u_size: u32, v_size: u32) void {
+    // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
+    for (0..v_size / 2) |v| {
+        for (0..u_size / 2) |u| {
+            const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
+            const texels = code_book[index];
+            for (0..4) |tidx| {
+                switch (pixel_format) {
+                    .ARGB1555, .RGB565, .ARGB4444 => {
+                        //                  Macro 2*2 Block            Pixel within the block
+                        const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
+                        dest_bgra[pixel_index] = (Color16{ .value = @truncate(texels >> @intCast(16 * tidx)) }).bgra(pixel_format, true);
+                    },
+                    else => {
+                        renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{pixel_format});
+                        @panic("Unsupported pixel format in VQ texture");
+                    },
+                }
+            }
+        }
+    }
+}
+
 const PaletteInstructions = packed struct(u16) {
     palette: bool, // Texture uses 4bpp or 8bpp palette
     filtered: bool, // Should be filtered manually in the shader.
@@ -1454,28 +1477,9 @@ pub const Renderer = struct {
         // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
             std.debug.assert(twiddled); // Please.
-            const code_book = @as([*]u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
+            const code_book = @as([*]const u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
             const indices = gpu.vram[vq_index_addr..];
-            // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
-            for (0..v_size / 2) |v| {
-                for (0..u_size / 2) |u| {
-                    const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
-                    const texels = code_book[index];
-                    for (0..4) |tidx| {
-                        switch (texture_control_word.pixel_format) {
-                            .ARGB1555, .RGB565, .ARGB4444 => {
-                                //                  Macro 2*2 Block            Pixel within the block
-                                const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                                self.bgra_scratch_pad()[pixel_index] = bgra_from_16bits_color(texture_control_word.pixel_format, @truncate(texels >> @intCast(16 * tidx)), twiddled);
-                            },
-                            else => {
-                                renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{texture_control_word.pixel_format});
-                                @panic("Unsupported pixel format in VQ texture");
-                            },
-                        }
-                    }
-                }
-            }
+            decode_vq(self.bgra_scratch_pad(), texture_control_word.pixel_format, code_book, indices, u_size, v_size);
         } else {
             switch (texture_control_word.pixel_format) {
                 .ARGB1555, .RGB565, .ARGB4444 => |format| {
