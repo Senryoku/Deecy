@@ -157,7 +157,7 @@ gctx: *zgpu.GraphicsContext = undefined,
 scale_factor: f32 = 1.0,
 
 dc: *Dreamcast = undefined,
-renderer: Renderer = undefined,
+renderer: *Renderer = undefined,
 audio_device: *zaudio.Device = undefined,
 
 config: Configuration = .{},
@@ -284,10 +284,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         return err;
     };
 
-    self.renderer = try Renderer.init(self._allocator, self.gctx);
+    self.renderer = try Renderer.create(self._allocator, self.gctx);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
-        .context = &self.renderer,
+        .context = self.renderer,
     };
 
     zaudio.init(allocator);
@@ -335,7 +335,7 @@ pub fn destroy(self: *@This()) void {
 
     self.audio_device.destroy();
 
-    self.renderer.deinit();
+    self.renderer.destroy();
 
     self.dc.deinit();
     self._allocator.destroy(self.dc);

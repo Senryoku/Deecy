@@ -702,7 +702,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             }
                             if (node_open) {
                                 if (idx < list.vertex_strips.items.len) {
-                                    self.display_strip_info(&d.renderer, &list.vertex_strips.items[idx]);
+                                    self.display_strip_info(d.renderer, &list.vertex_strips.items[idx]);
                                     for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
                                         if (i < list.vertex_parameters.items.len)
                                             self.display_vertex_data(&list.vertex_parameters.items[i]);

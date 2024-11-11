@@ -544,7 +544,7 @@ pub const Renderer = struct {
     shift_stencil_buffer_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
     open_modifier_volume_pipeline: zgpu.RenderPipelineHandle,
     modifier_volume_apply_pipeline: zgpu.RenderPipelineHandle,
-    translucent_pipeline: zgpu.RenderPipelineHandle,
+    translucent_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_modvol_pipeline: zgpu.RenderPipelineHandle,
     translucent_modvol_merge_pipeline: zgpu.ComputePipelineHandle,
     blend_pipeline: zgpu.ComputePipelineHandle,
@@ -634,7 +634,7 @@ pub const Renderer = struct {
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !*Renderer {
         const start = std.time.milliTimestamp();
         defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -971,7 +971,6 @@ pub const Renderer = struct {
                 .targets = &color_targets,
             },
         };
-        const translucent_pipeline = gctx.createRenderPipeline(translucent_pipeline_layout, translucent_pipeline_descriptor);
 
         // Translucent fragment blending pipeline
 
@@ -1187,7 +1186,8 @@ pub const Renderer = struct {
             break :mvp gctx.createRenderPipeline(mv_apply_pipeline_layout, mv_apply_pipeline_descriptor);
         };
 
-        var renderer: Renderer = .{
+        var renderer = try allocator.create(Renderer);
+        renderer.* = .{
             .blit_pipeline = blit_pipeline,
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
@@ -1206,7 +1206,6 @@ pub const Renderer = struct {
             .open_modifier_volume_pipeline = open_modifier_volume_pipeline,
             .modifier_volume_apply_pipeline = mv_apply_pipeline,
 
-            .translucent_pipeline = translucent_pipeline,
             .translucent_bind_group_layout = translucent_bind_group_layout,
             .translucent_modvol_pipeline = translucent_modvol_pipeline,
             .translucent_modvol_bind_group_layout = translucent_modvol_bind_group_layout,
@@ -1253,12 +1252,14 @@ pub const Renderer = struct {
             ._allocator = allocator,
         };
 
+        gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
+
         renderer.on_inner_resolution_change();
 
         return renderer;
     }
 
-    pub fn deinit(self: *Renderer) void {
+    pub fn destroy(self: *Renderer) void {
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
@@ -1329,6 +1330,8 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.blit_index_buffer);
         self._gctx.releaseResource(self.blit_vertex_buffer);
         // self._gctx.releaseResource(self.blit_pipeline);
+
+        self._allocator.destroy(self);
     }
 
     pub fn reset(self: *@This()) void {
@@ -2511,7 +2514,7 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth_texture_view).?;
 
-            {
+            skip_opaque: {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
@@ -2558,7 +2561,8 @@ pub const Renderer = struct {
                     .depth_compare = .always,
                     .depth_write_enabled = false,
                 });
-                pass.setPipeline(gctx.lookupResource(background_pipeline).?);
+                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
+                pass.setPipeline(bg_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
@@ -2569,7 +2573,8 @@ pub const Renderer = struct {
                         // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                         if (entry.value_ptr.*.draw_calls.count() > 0) {
                             const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*);
-                            pass.setPipeline(gctx.lookupResource(pl).?);
+                            const pipeline = gctx.lookupResource(pl) orelse break;
+                            pass.setPipeline(pipeline);
 
                             for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
                                 if (draw_call.index_count > 0) {
@@ -2802,7 +2807,9 @@ pub const Renderer = struct {
 
                 oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
 
-                {
+                skip: {
+                    const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
+
                     const pass = encoder.beginRenderPass(oit_render_pass_info);
                     defer {
                         pass.end();
@@ -2812,7 +2819,7 @@ pub const Renderer = struct {
                     pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                     pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                    pass.setPipeline(gctx.lookupResource(self.translucent_pipeline).?);
+                    pass.setPipeline(pipeline);
 
                     pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
                     pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
@@ -2971,6 +2978,7 @@ pub const Renderer = struct {
             return pl;
 
         renderer_log.info("Creating Pipeline: {any}", .{key});
+        const start = std.time.milliTimestamp();
 
         const color_targets = [_]wgpu.ColorTargetState{
             .{
@@ -3015,16 +3023,25 @@ pub const Renderer = struct {
             },
         };
 
-        const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
+        if (true) {
+            defer renderer_log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
+            const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
 
-        if (!self._gctx.isResourceValid(pl)) {
-            renderer_log.err("Error creating pipeline.", .{});
-            renderer_log.err("{any}", .{pipeline_descriptor});
+            if (!self._gctx.isResourceValid(pl)) {
+                renderer_log.err("Error creating pipeline.", .{});
+                renderer_log.err("{any}", .{pipeline_descriptor});
+            }
+
+            try self.opaque_pipelines.putNoClobber(key, pl);
+
+            return pl;
+        } else {
+            // Experiment: Asynchronous pipeline creation
+            try self.opaque_pipelines.putNoClobber(key, .{});
+            const ptr = self.opaque_pipelines.getPtr(key).?;
+            self._gctx.createRenderPipelineAsync(self._allocator, self.opaque_pipeline_layout, pipeline_descriptor, ptr);
+            return ptr.*;
         }
-
-        try self.opaque_pipelines.putNoClobber(key, pl);
-
-        return pl;
     }
 
     fn deinit_screen_textures(self: *@This()) void {
