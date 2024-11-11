@@ -37,7 +37,6 @@ const GameFile = struct {
 
 last_error: []const u8 = "",
 
-display_vmus: bool = true,
 vmu_displays: [4][2]?struct {
     texture: zgpu.TextureHandle,
     view: zgpu.TextureViewHandle,
@@ -46,28 +45,25 @@ vmu_displays: [4][2]?struct {
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 display_library: bool = false,
-game_directory: ?[]const u8 = null,
 gdi_files: std.ArrayList(GameFile),
 
 gctx: *zgpu.GraphicsContext,
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !@This() {
+pub fn init(allocator: std.mem.Allocator, d: *Deecy) !@This() {
     var r: @This() = .{
         .gdi_files = std.ArrayList(GameFile).init(allocator),
-        .gctx = gctx,
+        .gctx = d.gctx,
         .allocator = allocator,
     };
-    r.game_directory = try allocator.dupe(u8, "D:/DC Games/"); // TODO: Load default game directory from config (when we have one :)))
     r.create_vmu_texture(0, 0);
-    try r.refresh_games();
+    try r.refresh_games(d);
     return r;
 }
 
 pub fn deinit(self: *@This()) void {
     for (self.gdi_files.items) |entry| entry.free(self.allocator);
     self.gdi_files.deinit();
-    self.allocator.free(self.game_directory);
 
     for (self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
@@ -142,8 +138,8 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
     tex.dirty = false;
 }
 
-pub fn draw_vmus(self: *@This(), editable: bool) void {
-    if (!editable and !self.display_vmus) return;
+pub fn draw_vmus(self: *@This(), d: *const Deecy, editable: bool) void {
+    if (!editable and !d.config.display_vmus) return;
 
     zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
 
@@ -167,8 +163,8 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
-fn refresh_games(self: *@This()) !void {
-    if (self.game_directory) |dir_path| {
+fn refresh_games(self: *@This(), d: *Deecy) !void {
+    if (d.config.game_directory) |dir_path| {
         const start = std.time.milliTimestamp();
 
         for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
@@ -368,8 +364,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Settings", true)) {
-            if (zgui.menuItem("Display VMUs", .{ .selected = self.display_vmus })) {
-                self.display_vmus = !self.display_vmus;
+            if (zgui.menuItem("Display VMUs", .{ .selected = d.config.display_vmus })) {
+                d.config.display_vmus = !d.config.display_vmus;
             }
             zgui.separator();
             if (zgui.menuItem("Debug Menu", .{ .selected = d.config.display_debug_ui })) {
@@ -562,23 +558,23 @@ pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
     zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 48), .cond = .always });
 
     if (zgui.begin("Games", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true } })) {
-        if (self.game_directory) |dir| {
+        if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
             zgui.text("Directory: None", .{});
         }
         zgui.sameLine(.{});
         if (zgui.button("Refresh", .{})) {
-            try self.refresh_games();
+            try self.refresh_games(d);
         }
         zgui.sameLine(.{});
         if (zgui.button("Change Directory", .{})) {
             const open_path = try nfd.openFolderDialog(null);
             if (open_path) |path| {
                 defer nfd.freePath(path);
-                if (self.game_directory) |old_dir| self.allocator.free(old_dir);
-                self.game_directory = try self.allocator.dupe(u8, path);
-                try self.refresh_games();
+                if (d.config.game_directory) |old_dir| self.allocator.free(old_dir);
+                d.config.game_directory = try self.allocator.dupe(u8, path);
+                try self.refresh_games(d);
             }
         }
 

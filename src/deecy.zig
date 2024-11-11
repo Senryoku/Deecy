@@ -138,9 +138,17 @@ const Configuration = struct {
     per_game_vmu: bool = true,
     cpu_throttling_method: CPUThrottleMethod = .PerFrame,
     display_debug_ui: bool = false,
+    display_vmus: bool = true,
+    game_directory: ?[]const u8 = null,
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        if (self.game_directory) |game_directory|
+            allocator.free(game_directory);
+    }
 };
 
-pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will deleted on program exit!
+pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
+pub const ConfigPath = "./userdata/config.json";
 
 const ExperimentalThreadedDC = true;
 
@@ -181,6 +189,30 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         else => return err,
     };
 
+    // Load user config
+    // TODO: Replace by ZON when available.
+    const config = config: {
+        if (std.fs.cwd().openFile(ConfigPath, .{})) |file| {
+            defer file.close();
+            const conf_str = try file.readToEndAlloc(allocator, 1024 * 1024);
+            defer allocator.free(conf_str);
+            const json = try std.json.parseFromSlice(Configuration, allocator, conf_str, .{});
+            defer json.deinit();
+
+            var conf: Configuration = .{};
+            conf.display_debug_ui = json.value.display_debug_ui;
+            conf.per_game_vmu = json.value.per_game_vmu;
+            conf.display_vmus = json.value.display_vmus;
+            conf.cpu_throttling_method = json.value.cpu_throttling_method;
+            if (json.value.game_directory) |game_directory|
+                conf.game_directory = try allocator.dupe(u8, game_directory);
+
+            break :config conf;
+        } else |_| {
+            break :config Configuration{};
+        }
+    };
+
     try zglfw.init();
 
     // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
@@ -192,6 +224,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const self = try allocator.create(@This());
     self.* = .{
         .window = try zglfw.Window.create(default_resolution.width, default_resolution.height, "Deecy", null),
+        .config = config,
         .last_frame_timestamp = std.time.microTimestamp(),
         .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
         .breakpoints = std.ArrayList(u32).init(allocator),
@@ -236,7 +269,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = try DeecyUI.init(allocator, self.gctx);
+    self.ui = try DeecyUI.init(allocator, self);
     try self.ui_init();
 
     self.dc = Dreamcast.create(allocator) catch |err| {
@@ -294,6 +327,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
 pub fn destroy(self: *@This()) void {
     self.stop();
+
+    self.save_config() catch |err| deecy_log.err("Error writing config: {s}", .{@errorName(err)});
+    self.config.deinit(self._allocator);
 
     self.breakpoints.deinit();
 
@@ -702,7 +738,7 @@ pub fn draw_ui(self: *@This()) !void {
 
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
-    self.ui.draw_vmus(self.display_ui);
+    self.ui.draw_vmus(self, self.display_ui);
 
     if (self.display_ui) {
         try self.ui.draw(self);
@@ -971,4 +1007,10 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     _ = try self.dc.deserialize(&reader);
     deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+}
+
+fn save_config(self: *@This()) !void {
+    var config_file = try std.fs.cwd().createFile(ConfigPath, .{});
+    defer config_file.close();
+    try std.json.stringify(self.config, .{}, config_file.writer());
 }
