@@ -440,6 +440,10 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Renderer", .{})) {
+                var fullscreen = self.deecy.fullscreen;
+                if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
+                    self.deecy.toggle_fullscreen();
+                }
                 zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                 var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
@@ -599,11 +603,11 @@ pub fn draw(self: *@This()) !void {
 
 pub fn draw_game_library(self: *@This()) !void {
     const d = self.deecy;
-    const target_width = 4 * 256 + 50;
+    const target_width = 4 * 256 + 64;
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 32, .cond = .always });
     zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 64), .cond = .always });
 
-    if (zgui.begin("Games", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
+    if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
@@ -628,32 +632,44 @@ pub fn draw_game_library(self: *@This()) !void {
             self.gdi_files_mutex.lock();
             defer self.gdi_files_mutex.unlock();
 
-            zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
-            defer zgui.popStyleVar(.{});
-            for (self.gdi_files.items, 0..) |entry, idx| {
-                var launch = false;
-                zgui.beginGroup();
-                zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
-                zgui.pushIntId(@intCast(idx));
-                launch = (zgui.button(entry.name, .{ .w = 256 })) or launch;
+            _ = zgui.beginChild("Games", .{});
+            {
+                var truncated_name: [28:0]u8 = undefined;
+                zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
+                zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
+                defer zgui.popStyleVar(.{ .count = 2 });
+                for (self.gdi_files.items, 0..) |entry, idx| {
+                    var launch = false;
+                    zgui.beginGroup();
+                    zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
+                    zgui.pushIntId(@intCast(idx));
+                    @memset(&truncated_name, 0);
+                    @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
+                    launch = (zgui.button(&truncated_name, .{ .w = 256, .h = 24 })) or launch;
 
-                zgui.pushStrId("image");
-                if (entry.view) |view| {
-                    launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
-                } else {
-                    launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                    zgui.pushStrId("image");
+                    if (entry.view) |view| {
+                        launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+                    } else {
+                        launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                    }
+                    zgui.popId();
+
+                    zgui.popId();
+                    zgui.popStyleVar(.{});
+                    zgui.endGroup();
+                    if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
+                        zgui.text("{s}", .{entry.name});
+                        zgui.endTooltip();
+                    }
+
+                    if (launch)
+                        try d.load_and_start(entry.path);
+
+                    if (idx % 4 != 3) zgui.sameLine(.{});
                 }
-                zgui.popId();
-
-                zgui.popId();
-                zgui.popStyleVar(.{});
-                zgui.endGroup();
-
-                if (launch)
-                    try d.load_and_start(entry.path);
-
-                if (idx % 4 != 3) zgui.sameLine(.{});
             }
+            zgui.endChild();
         }
     }
     zgui.end();

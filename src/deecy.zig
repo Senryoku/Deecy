@@ -162,6 +162,9 @@ renderer: *Renderer = undefined,
 audio_device: *zaudio.Device = undefined,
 
 config: Configuration = .{},
+fullscreen: bool = false,
+toggle_fullscreen_request: bool = false,
+previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
 last_frame_timestamp: i64,
 last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
@@ -706,6 +709,19 @@ pub fn set_throttle_method(self: *@This(), method: CPUThrottleMethod) void {
         .PerFrame => self.reset_per_frame_throttling(),
     }
     self.config.cpu_throttling_method = method;
+}
+
+pub fn toggle_fullscreen(self: *@This()) void {
+    if (self.fullscreen) {
+        self.fullscreen = false;
+        self.window.setMonitor(null, self.previous_window_position.x, self.previous_window_position.y, self.previous_window_position.w, self.previous_window_position.h, 0);
+    } else {
+        self.previous_window_position = .{ .x = self.window.getPos()[0], .y = self.window.getPos()[1], .w = self.window.getSize()[0], .h = self.window.getSize()[1] };
+        const monitor = zglfw.Monitor.getPrimary().?;
+        const mode = monitor.getVideoMode() catch unreachable;
+        self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
+        self.fullscreen = true;
+    }
 }
 
 pub fn start(self: *@This()) void {
