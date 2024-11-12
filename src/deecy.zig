@@ -15,7 +15,7 @@ const GDI = @import("./gdi.zig").GDI;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
-const DeecyUI = @import("./deecy_ui.zig");
+pub const UI = @import("./deecy_ui.zig");
 const DebugUI = @import("./debug_ui.zig");
 
 const lz4 = @import("lz4");
@@ -154,6 +154,7 @@ const ExperimentalThreadedDC = true;
 
 window: *zglfw.Window,
 gctx: *zgpu.GraphicsContext = undefined,
+gctx_queue_mutex: std.Thread.Mutex = .{}, // GPU Memory access isn't thread safe. Use this to copy to textures from another thread for example.
 scale_factor: f32 = 1.0,
 
 dc: *Dreamcast = undefined,
@@ -176,12 +177,14 @@ breakpoints: std.ArrayList(u32),
 controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
 
 display_ui: bool = true,
-ui: *DeecyUI = undefined,
+ui: *UI = undefined,
 debug_ui: DebugUI = undefined,
 
 save_state_slots: [4]bool = .{ false, false, false, false },
 
 _allocator: std.mem.Allocator,
+
+_thread: ?std.Thread = null, // Thread for one-time, fire-and-forget, async jobs
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
     std.fs.cwd().makeDir("userdata") catch |err| switch (err) {
@@ -269,7 +272,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = try DeecyUI.create(allocator, self);
+    self.ui = try UI.create(allocator, self);
     try self.ui_init();
 
     self.dc = Dreamcast.create(allocator) catch |err| {
@@ -327,6 +330,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
 pub fn destroy(self: *@This()) void {
     self.stop();
+    self.wait_async_jobs();
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {s}", .{@errorName(err)});
     self.config.deinit(self._allocator);
@@ -346,6 +350,8 @@ pub fn destroy(self: *@This()) void {
 
     zaudio.deinit();
 
+    // NOTE/FIXME: We might crash here if there are still some pipeline creations in flight.
+    //       I can't find a mechanism in zgpu or dawn to track those.
     self.gctx.destroy(self._allocator);
 
     self.window.destroy();
@@ -465,8 +471,6 @@ fn ui_init(self: *@This()) !void {
     );
 
     zgui.plot.init();
-
-    self.ui.gctx = self.gctx;
 }
 
 fn ui_deinit(_: *@This()) void {
@@ -649,7 +653,7 @@ pub fn on_game_load(self: *@This()) !void {
                 }
             }
             self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
-            self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&DeecyUI.update_vmu_screen_0_0), .userdata = self.ui };
+            self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
         }
     }
     try self.check_save_state_slots();
@@ -704,6 +708,8 @@ pub fn set_throttle_method(self: *@This(), method: CPUThrottleMethod) void {
 
 pub fn start(self: *@This()) void {
     if (!self.running) {
+        self.wait_async_jobs();
+
         if (self.dc.region == .Unknown) {
             self.dc.set_region(.USA) catch {
                 @panic("Failed to set default region");
@@ -739,10 +745,10 @@ pub fn draw_ui(self: *@This()) !void {
 
     _ = zgui.DockSpaceOverViewport(0, zgui.getMainViewport(), .{ .passthru_central_node = true });
 
-    self.ui.draw_vmus(self, self.display_ui);
+    self.ui.draw_vmus(self.display_ui);
 
     if (self.display_ui) {
-        try self.ui.draw(self);
+        try self.ui.draw();
         if (self.config.display_debug_ui)
             try self.debug_ui.draw(self);
     } else {
@@ -949,11 +955,7 @@ pub fn save_state(self: *@This(), index: usize) !void {
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
-    // FIXME: Not exactly the safest way of parallelizing this...
-    var thread = try std.Thread.spawn(.{ .allocator = self._allocator }, compress_and_dump_save_state, .{
-        self, index, uncompressed_array,
-    });
-    thread.detach();
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, uncompressed_array });
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: std.ArrayList(u8)) !void {
@@ -1014,4 +1016,16 @@ fn save_config(self: *@This()) !void {
     var config_file = try std.fs.cwd().createFile(ConfigPath, .{});
     defer config_file.close();
     try std.json.stringify(self.config, .{}, config_file.writer());
+}
+
+pub fn wait_async_jobs(self: *@This()) void {
+    if (self._thread) |thread| {
+        thread.join();
+        self._thread = null;
+    }
+}
+
+pub fn launch_async(self: *@This(), func: anytype, args: anytype) !void {
+    self.wait_async_jobs();
+    self._thread = try std.Thread.spawn(.{}, func, args);
 }

@@ -48,36 +48,33 @@ display_library: bool = false,
 gdi_files: std.ArrayList(GameFile),
 gdi_files_mutex: std.Thread.Mutex = .{}, // Used during gdi_files population (then assumed to be constant outside of refresh_games)
 
-gctx: *zgpu.GraphicsContext,
+deecy: *Deecy,
 allocator: std.mem.Allocator,
-
-_thread: ?std.Thread = null,
 
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
         .gdi_files = std.ArrayList(GameFile).init(allocator),
-        .gctx = d.gctx,
+        .deecy = d,
         .allocator = allocator,
     };
     r.create_vmu_texture(0, 0);
-    try r.launch_async(refresh_games, .{ r, d });
     return r;
 }
 
 pub fn destroy(self: *@This()) void {
-    for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
+    for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
     self.gdi_files.deinit();
 
     for (&self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
-            self.gctx.releaseResource(texture.texture);
-            self.gctx.releaseResource(texture.view);
+            self.deecy.gctx.releaseResource(texture.texture);
+            self.deecy.gctx.releaseResource(texture.view);
             vmu_texture[0] = null;
         }
         if (vmu_texture[1]) |texture| {
-            self.gctx.releaseResource(texture.texture);
-            self.gctx.releaseResource(texture.view);
+            self.deecy.gctx.releaseResource(texture.texture);
+            self.deecy.gctx.releaseResource(texture.view);
             vmu_texture[1] = null;
         }
     }
@@ -86,7 +83,7 @@ pub fn destroy(self: *@This()) void {
 }
 
 fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
-    const tex = self.gctx.createTexture(.{
+    const tex = self.deecy.gctx.createTexture(.{
         .usage = .{ .texture_binding = true, .copy_dst = true },
         .size = .{
             .width = 48,
@@ -96,7 +93,7 @@ fn create_vmu_texture(self: *@This(), controller: u8, index: u8) void {
         .format = .bgra8_unorm,
         .mip_level_count = 1,
     });
-    const view = self.gctx.createTextureView(tex, .{});
+    const view = self.deecy.gctx.createTextureView(tex, .{});
     self.vmu_displays[controller][index] = .{ .texture = tex, .view = view };
     self.upload_vmu_texture(controller, index);
 }
@@ -134,8 +131,8 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
             }
         }
     }
-    self.gctx.queue.writeTexture(
-        .{ .texture = self.gctx.lookupResource(tex.texture).? },
+    self.deecy.gctx.queue.writeTexture(
+        .{ .texture = self.deecy.gctx.lookupResource(tex.texture).? },
         .{ .bytes_per_row = 4 * 48, .rows_per_image = 32 },
         .{ .width = 48, .height = 32 },
         u8,
@@ -144,8 +141,8 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
     tex.dirty = false;
 }
 
-pub fn draw_vmus(self: *@This(), d: *const Deecy, editable: bool) void {
-    if (!editable and !d.config.display_vmus) return;
+pub fn draw_vmus(self: *@This(), editable: bool) void {
+    if (!editable and !self.deecy.config.display_vmus) return;
 
     zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
 
@@ -159,7 +156,7 @@ pub fn draw_vmus(self: *@This(), d: *const Deecy, editable: bool) void {
                     const tex = &self.vmu_displays[controller][index].?;
                     if (tex.dirty)
                         self.upload_vmu_texture(@intCast(controller), @intCast(index));
-                    zgui.image(self.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
+                    zgui.image(self.deecy.gctx.lookupResource(tex.view).?, .{ .w = win_width, .h = win_width * 32.0 / 48.0 });
                 }
             }
         }
@@ -184,40 +181,42 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer allocator.free(result.bgra);
 
-            {
-                self.gdi_files_mutex.lock();
-                defer self.gdi_files_mutex.unlock();
+            self.deecy.gctx_queue_mutex.lock();
+            const texture = self.deecy.gctx.createTexture(.{
+                .usage = .{ .texture_binding = true, .copy_dst = true },
+                .size = .{
+                    .width = result.width,
+                    .height = result.height,
+                    .depth_or_array_layers = 1,
+                },
+                .format = .bgra8_unorm,
+                .mip_level_count = 1,
+            });
+            const view = self.deecy.gctx.createTextureView(texture, .{});
+            self.deecy.gctx.queue.writeTexture(
+                .{ .texture = self.deecy.gctx.lookupResource(texture).? },
+                .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
+                .{ .width = result.width, .height = result.height },
+                u8,
+                result.bgra,
+            );
+            self.deecy.gctx_queue_mutex.unlock();
 
-                const texture = self.gctx.createTexture(.{
-                    .usage = .{ .texture_binding = true, .copy_dst = true },
-                    .size = .{
-                        .width = result.width,
-                        .height = result.height,
-                        .depth_or_array_layers = 1,
-                    },
-                    .format = .bgra8_unorm,
-                    .mip_level_count = 1,
-                });
-
-                const view = self.gctx.createTextureView(texture, .{});
-
-                for (self.gdi_files.items) |*entry| {
-                    if (std.mem.eql(u8, entry.path, path)) {
-                        self.gctx.queue.writeTexture(
-                            .{ .texture = self.gctx.lookupResource(texture).? },
-                            .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
-                            .{ .width = result.width, .height = result.height },
-                            u8,
-                            result.bgra,
-                        );
-                        entry.texture = texture;
-                        entry.view = view;
-                        return;
-                    }
+            self.gdi_files_mutex.lock();
+            defer self.gdi_files_mutex.unlock();
+            for (self.gdi_files.items) |*entry| {
+                if (std.mem.eql(u8, entry.path, path)) {
+                    entry.texture = texture;
+                    entry.view = view;
+                    return;
                 }
             }
 
             ui_log.err("Failed to find GDI entry for '{s}'", .{path});
+            self.deecy.gctx_queue_mutex.lock();
+            defer self.deecy.gctx_queue_mutex.unlock();
+            self.deecy.gctx.releaseResource(view);
+            self.deecy.gctx.releaseResource(texture);
         } else |err| {
             ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {any}"), .{ path, err });
         }
@@ -226,23 +225,15 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
     }
 }
 
-fn launch_async(self: *@This(), func: anytype, args: anytype) !void {
-    if (self._thread) |thread| {
-        thread.join();
-        self._thread = null;
-    }
-    self._thread = try std.Thread.spawn(.{}, func, args);
-}
-
-fn refresh_games(self: *@This(), d: *Deecy) !void {
-    if (d.config.game_directory) |dir_path| {
+pub fn refresh_games(self: *@This()) !void {
+    if (self.deecy.config.game_directory) |dir_path| {
         const start = std.time.milliTimestamp();
 
         var threads = std.ArrayList(std.Thread).init(self.allocator);
         defer threads.deinit();
 
         {
-            for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.gctx);
+            for (self.gdi_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
             self.gdi_files.clearRetainingCapacity();
 
             var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
@@ -283,7 +274,8 @@ fn refresh_games(self: *@This(), d: *Deecy) !void {
     }
 }
 
-pub fn draw(self: *@This(), d: *Deecy) !void {
+pub fn draw(self: *@This()) !void {
+    const d = self.deecy;
     var error_popup_to_open: [:0]const u8 = "";
 
     if (zgui.beginMainMenuBar()) {
@@ -421,7 +413,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
 
     if (d.dc.gdrom.disk == null or self.display_library)
-        self.draw_game_library(d) catch |err| {
+        self.draw_game_library() catch |err| {
             switch (err) {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
                 else => error_popup_to_open = "Unknown error",
@@ -596,7 +588,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
 }
 
-pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
+pub fn draw_game_library(self: *@This()) !void {
+    const d = self.deecy;
     const target_width = 4 * 256 + 50;
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 32, .cond = .always });
     zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 64), .cond = .always });
@@ -609,7 +602,7 @@ pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
         }
         zgui.sameLine(.{});
         if (zgui.button("Refresh", .{})) {
-            try self.refresh_games(d);
+            try self.deecy.launch_async(refresh_games, .{self});
         }
         zgui.sameLine(.{});
         if (zgui.button("Change Directory", .{})) {
@@ -618,36 +611,41 @@ pub fn draw_game_library(self: *@This(), d: *Deecy) !void {
                 defer nfd.freePath(path);
                 if (d.config.game_directory) |old_dir| self.allocator.free(old_dir);
                 d.config.game_directory = try self.allocator.dupe(u8, path);
-                try self.refresh_games(d);
+                try self.deecy.launch_async(refresh_games, .{self});
             }
         }
 
-        zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
-        for (self.gdi_files.items, 0..) |entry, idx| {
-            var launch = false;
-            zgui.beginGroup();
-            zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
-            zgui.pushIntId(@intCast(idx));
-            launch = (zgui.button(entry.name, .{ .w = 256 })) or launch;
+        {
+            self.gdi_files_mutex.lock();
+            defer self.gdi_files_mutex.unlock();
 
-            zgui.pushStrId("image");
-            if (entry.view) |view| {
-                launch = zgui.imageButton(entry.name, self.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
-            } else {
-                launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+            zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
+            defer zgui.popStyleVar(.{});
+            for (self.gdi_files.items, 0..) |entry, idx| {
+                var launch = false;
+                zgui.beginGroup();
+                zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
+                zgui.pushIntId(@intCast(idx));
+                launch = (zgui.button(entry.name, .{ .w = 256 })) or launch;
+
+                zgui.pushStrId("image");
+                if (entry.view) |view| {
+                    launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+                } else {
+                    launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                }
+                zgui.popId();
+
+                zgui.popId();
+                zgui.popStyleVar(.{});
+                zgui.endGroup();
+
+                if (launch)
+                    try d.load_and_start(entry.path);
+
+                if (idx % 4 != 3) zgui.sameLine(.{});
             }
-            zgui.popId();
-
-            zgui.popId();
-            zgui.popStyleVar(.{});
-            zgui.endGroup();
-
-            if (launch)
-                try d.load_and_start(entry.path);
-
-            if (idx % 4 != 3) zgui.sameLine(.{});
         }
-        zgui.popStyleVar(.{});
     }
     zgui.end();
 }

@@ -272,6 +272,8 @@ pub fn main() !void {
             // Skip IP.bin (Maybe we should bundle one to load here).
             dc.cpu.pc = 0xAC010000;
         }
+
+        try d.launch_async(Deecy.UI.refresh_games, .{d.ui});
     }
 
     dc.cpu.set_trapa_callback(trapa_handler, d);
@@ -284,6 +286,9 @@ pub fn main() !void {
         d.poll_controllers();
 
         d.one_frame();
+
+        d.gctx_queue_mutex.lock();
+        defer d.gctx_queue_mutex.unlock();
 
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
