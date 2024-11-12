@@ -296,6 +296,15 @@ const PipelineKey = struct {
     dst_blend_factor: wgpu.BlendFactor,
     depth_compare: wgpu.CompareFunction,
     depth_write_enabled: bool,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("PipelineKey{{ .src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {} }}", .{
+            @tagName(self.src_blend_factor),
+            @tagName(self.dst_blend_factor),
+            @tagName(self.depth_compare),
+            self.depth_write_enabled,
+        });
+    }
 };
 
 const DrawCallKey = struct {
@@ -547,7 +556,7 @@ pub const Renderer = struct {
     translucent_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_modvol_pipeline: zgpu.RenderPipelineHandle = .{},
     translucent_modvol_merge_pipeline: zgpu.ComputePipelineHandle = .{},
-    blend_pipeline: zgpu.ComputePipelineHandle,
+    blend_pipeline: zgpu.ComputePipelineHandle = .{},
 
     translucent_modvol_bind_group_layout: zgpu.BindGroupLayoutHandle,
     translucent_bind_group_layout: zgpu.BindGroupLayoutHandle,
@@ -929,7 +938,6 @@ pub const Renderer = struct {
                 .entry_point = "main",
             },
         };
-        const blend_pipeline = gctx.createComputePipeline(blend_pipeline_layout, blend_pipeline_descriptor);
 
         // Modifier Volumes
         // Implemented using a stencil buffer and the shadow volume algorithm.
@@ -1080,7 +1088,6 @@ pub const Renderer = struct {
             .translucent_modvol_bind_group_layout = translucent_modvol_bind_group_layout,
             .translucent_modvol_merge_bind_group_layout = translucent_modvol_merge_bind_group_layout,
 
-            .blend_pipeline = blend_pipeline,
             .blend_bind_group_layout = blend_bind_group_layout,
 
             .blit_vertex_shader_module = blit_vs_module,
@@ -1120,6 +1127,7 @@ pub const Renderer = struct {
             ._allocator = allocator,
         };
 
+        gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
         gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
 
         gctx.createRenderPipelineAsync(allocator, modifier_volume_pipeline_layout, closed_modifier_volume_pipeline_descriptor, &renderer.closed_modifier_volume_pipeline);
@@ -1256,6 +1264,30 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
+        // Wait for async pipeline creation to finish (prevents crashing on exit).
+        while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
+            self._gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) == null or
+            self._gctx.lookupResource(self.open_modifier_volume_pipeline) == null or
+            self._gctx.lookupResource(self.modifier_volume_apply_pipeline) == null or
+            self._gctx.lookupResource(self.translucent_pipeline) == null or
+            self._gctx.lookupResource(self.translucent_modvol_pipeline) == null or
+            self._gctx.lookupResource(self.translucent_modvol_merge_pipeline) == null or
+            self._gctx.lookupResource(self.blend_pipeline) == null)
+        {
+            self._gctx.device.tick();
+        }
+        var async_pipeline_creation = true;
+        while (async_pipeline_creation) {
+            async_pipeline_creation = false;
+            self._gctx.device.tick();
+            var it = self.opaque_pipelines.iterator();
+            while (it.next()) |pipeline| {
+                if (self._gctx.lookupResource(pipeline.value_ptr.*) == null) {
+                    async_pipeline_creation = true;
+                }
+            }
+        }
+
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
@@ -2849,14 +2881,16 @@ pub const Renderer = struct {
                 }
 
                 // Blend the results of the translucent pass
-                {
+                skip_blend: {
+                    const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
+
                     const pass = encoder.beginComputePass(null);
                     defer {
                         pass.end();
                         pass.release();
                     }
                     const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                    pass.setPipeline(gctx.lookupResource(self.blend_pipeline).?);
+                    pass.setPipeline(pipeline);
 
                     pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
 
@@ -2865,7 +2899,9 @@ pub const Renderer = struct {
             }
 
             // Blit to framebuffer texture
-            {
+            skip_blit: {
+                const pipeline = gctx.lookupResource(self.blit_pipeline) orelse break :skip_blit;
+
                 const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                 const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                 const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
@@ -2890,7 +2926,7 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                 pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
 
-                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
+                pass.setPipeline(pipeline);
 
                 pass.setBindGroup(0, blit_bind_group, &.{});
                 pass.drawIndexed(4, 1, 0, 0, 0);

@@ -350,8 +350,6 @@ pub fn destroy(self: *@This()) void {
 
     zaudio.deinit();
 
-    // NOTE/FIXME: We might crash here if there are still some pipeline creations in flight.
-    //       I can't find a mechanism in zgpu or dawn to track those.
     self.gctx.destroy(self._allocator);
 
     self.window.destroy();
