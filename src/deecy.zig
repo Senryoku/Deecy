@@ -308,15 +308,19 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     try self.audio_device.setMasterVolume(0.3);
     try self.audio_device.start();
 
-    var curr_pad: usize = 0;
-    for (0..zglfw.Joystick.maximum_supported) |idx| {
-        const jid: zglfw.Joystick.Id = @intCast(idx);
-        if (zglfw.Joystick.get(jid)) |joystick| {
-            if (joystick.asGamepad()) |_| {
-                self.controllers[curr_pad] = .{ .id = jid };
-                curr_pad += 1;
-                if (curr_pad >= 4)
-                    break;
+    {
+        const start_time = std.time.milliTimestamp();
+        defer deecy_log.info("Joysticks initialized in {d}ms", .{std.time.milliTimestamp() - start_time});
+        var curr_pad: usize = 0;
+        for (0..zglfw.Joystick.maximum_supported) |idx| {
+            const jid: zglfw.Joystick.Id = @intCast(idx);
+            if (zglfw.Joystick.get(jid)) |joystick| {
+                if (joystick.asGamepad()) |_| {
+                    self.controllers[curr_pad] = .{ .id = jid };
+                    curr_pad += 1;
+                    if (curr_pad >= 4)
+                        break;
+                }
             }
         }
     }

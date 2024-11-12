@@ -1737,8 +1737,8 @@ pub const Renderer = struct {
         };
 
         const interlaced = SPG_CONTROL.interlace == 1;
-        const x_size = line_size / bytes_per_pixels;
-        const y_size = if (interlaced) field_size * 2 else field_size;
+        const x_size: u32 = @min(NativeResolution.width, line_size / bytes_per_pixels);
+        const y_size: u32 = @min(NativeResolution.height, if (interlaced) field_size * 2 else field_size);
         // FB_R_SIZE.modulus: "Set this value to 0x001 in order to link the last pixel data on a line with the first pixel data on a line."
         const line_padding = 4 * if (FB_R_SIZE.modulus > 0) @as(u32, FB_R_SIZE.modulus) - 1 else 0; // From 32-bit units to bytes.
 

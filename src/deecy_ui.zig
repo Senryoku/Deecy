@@ -33,6 +33,10 @@ const GameFile = struct {
             self.view = null;
         }
     }
+
+    pub fn sort(_: void, a: @This(), b: @This()) bool {
+        return std.mem.order(u8, a.name, b.name) == .lt;
+    }
 };
 
 last_error: []const u8 = "",
@@ -263,6 +267,11 @@ pub fn refresh_games(self: *@This()) !void {
                     try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, path }));
                 }
             }
+        }
+        {
+            self.gdi_files_mutex.lock();
+            defer self.gdi_files_mutex.unlock();
+            std.mem.sort(GameFile, self.gdi_files.items, {}, GameFile.sort);
         }
 
         for (threads.items) |t| {
