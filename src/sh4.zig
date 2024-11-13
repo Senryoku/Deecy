@@ -881,6 +881,7 @@ pub const SH4 = struct {
 
     pub inline fn _get_memory(self: *@This(), addr: addr_t) *u8 {
         std.debug.assert(addr <= 0x1FFFFFFF);
+        const dc = self._dc.?;
 
         if (false) {
             // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
@@ -899,10 +900,10 @@ pub const SH4 = struct {
         //       The compiler seems to like really having equal length ranges (and also easily maskable, I guess)!
         switch (addr) {
             0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
-                return &self._dc.?.ram[addr & 0x00FFFFFF];
+                return &dc.ram[addr & 0x00FFFFFF];
             },
             0x04000000...0x07FFFFFF => {
-                return self._dc.?.gpu._get_vram(addr);
+                return dc.gpu._get_vram(addr);
             },
 
             0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
@@ -912,25 +913,25 @@ pub const SH4 = struct {
                 const area_0_addr = addr & 0x01FFFFFF;
                 switch (area_0_addr) {
                     0x00000000...0x001FFFFF => {
-                        return &self._dc.?.boot[area_0_addr];
+                        return &dc.boot[area_0_addr];
                     },
                     0x00200000...0x0021FFFF => {
-                        return &self._dc.?.flash.data[area_0_addr - 0x200000];
+                        return &dc.flash.data[area_0_addr - 0x200000];
                     },
                     0x005F6800...0x005F6FFF => {
-                        return self._dc.?.hw_register_addr(u8, area_0_addr);
+                        return dc.hw_register_addr(u8, area_0_addr);
                     },
                     0x005F7000...0x005F709C => {
                         @panic("_get_memory to GDROM Register. This should be handled in read/write functions.");
                     },
                     0x005F709D...0x005F7FFF => {
-                        return self._dc.?.hw_register_addr(u8, area_0_addr);
+                        return dc.hw_register_addr(u8, area_0_addr);
                     },
                     0x005F8000...0x005F9FFF => {
-                        return self._dc.?.gpu._get_register_from_addr(u8, area_0_addr);
+                        return dc.gpu._get_register_from_addr(u8, area_0_addr);
                     },
                     0x005FA000...0x005FFFFF => {
-                        return self._dc.?.hw_register_addr(u8, area_0_addr);
+                        return dc.hw_register_addr(u8, area_0_addr);
                     },
                     0x00600000...0x006007FF => {
                         const static = struct {
@@ -940,8 +941,8 @@ pub const SH4 = struct {
                             static.once = true;
                             sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
                         }
-                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
-                        return @ptrCast(&self._dc.?._dummy);
+                        dc._dummy = .{ 0, 0, 0, 0 };
+                        return @ptrCast(&dc._dummy);
                     },
                     0x00700000...0x00707FFF => { // G2 AICA Register
                         @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
@@ -951,11 +952,11 @@ pub const SH4 = struct {
                     },
                     0x00800000...0x009FFFFF => { // G2 Wave Memory
                         sh4_log.warn("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
-                        return @ptrCast(&self._dc.?.aica.wave_memory[area_0_addr - 0x00800000]);
+                        return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x00800000]);
                     },
                     0x02800000...0x029FFFFF => { // G2 Wave Memory - Mirror
                         sh4_log.warn("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
-                        return @ptrCast(&self._dc.?.aica.wave_memory[area_0_addr - 0x02800000]);
+                        return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x02800000]);
                     },
                     0x01000000...0x01FFFFFF => { // Expansion Devices
                         sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
@@ -965,15 +966,15 @@ pub const SH4 = struct {
                         // self.on_trapa.?();
 
                         // FIXME: I have no idea why Crazy Taxi seem to expect to find 0x80 at 01010008, but this lets it go further.
-                        self._dc.?._dummy = .{ 0x80, 0, 0, 0 };
+                        dc._dummy = .{ 0x80, 0, 0, 0 };
 
-                        return @ptrCast(&self._dc.?._dummy);
+                        return @ptrCast(&dc._dummy);
                     },
                     else => {
                         sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
 
-                        self._dc.?._dummy = .{ 0, 0, 0, 0 };
-                        return @ptrCast(&self._dc.?._dummy);
+                        dc._dummy = .{ 0, 0, 0, 0 };
+                        return @ptrCast(&dc._dummy);
                     },
                 }
             },
@@ -985,13 +986,13 @@ pub const SH4 = struct {
 
                 // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
                 sh4_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.pc, addr });
-                self._dc.?._dummy = .{ 0, 0, 0, 0 };
-                return @ptrCast(&self._dc.?._dummy);
+                dc._dummy = .{ 0, 0, 0, 0 };
+                return @ptrCast(&dc._dummy);
             },
             0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
                 sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
-                self._dc.?._dummy = .{ 0, 0, 0, 0 };
-                return @ptrCast(&self._dc.?._dummy);
+                dc._dummy = .{ 0, 0, 0, 0 };
+                return @ptrCast(&dc._dummy);
             },
             0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
                 self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr});
@@ -1008,7 +1009,7 @@ pub const SH4 = struct {
                 //        and I have no idea if this is an issue with the emulator... See #51.
                 //        Ignoring the writes allow these games to progress a bit, but this might become an issue.
                 sh4_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
-                return @ptrCast(&self._dc.?._dummy);
+                return @ptrCast(&dc._dummy);
             },
         }
     }

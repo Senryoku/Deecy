@@ -1,5 +1,8 @@
 const std = @import("std");
 const common = @import("common.zig");
+const termcolor = @import("termcolor");
+
+const gdi_log = std.log.scoped(.gdi);
 
 const windows = @import("windows.zig");
 
@@ -126,6 +129,8 @@ const Track = struct {
         if (self.track_type == 0 or self.format == 2048) {
             var copied: u32 = 0;
             for (0..count) |_| {
+                if (dest.len <= copied or self.data.len <= sector_start) return copied;
+
                 var chunk_size = @min(self.format, dest.len - copied);
                 chunk_size = @min(chunk_size, self.data.len - sector_start);
                 @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
@@ -136,10 +141,18 @@ const Track = struct {
         } else if (self.format == 2352) {
             var copied: u32 = 0;
             for (0..count) |_| {
+                if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
+                    return copied;
+
                 const header = self.data[sector_start .. sector_start + self.header_size()];
-                std.debug.assert(header[0x0F] == 1 or header[0x0F] == 2); // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
+                // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
+                if (header[0x0F] != 1 and header[0x0F] != 2) {
+                    gdi_log.warn(termcolor.yellow("Invalid sector mode: {X:0>2}"), .{header[0x0F]});
+                    return copied;
+                }
                 const data_size: u32 = if (header[0x0F] == 1) 2048 else 2336;
 
+                if (dest.len <= copied) return copied;
                 const chunk_size = @min(data_size, dest.len - copied);
                 @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start + self.header_size() .. sector_start + self.header_size() + chunk_size]);
                 copied += chunk_size;
@@ -186,15 +199,18 @@ pub const GDI = struct {
         const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);
         try self.tracks.resize(track_count);
 
-        for (0..track_count) |_| {
+        for (0..track_count) |i| {
             var vals = std.mem.splitSequence(u8, lines.next().?, " ");
 
             const num = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
-            const offset = (try std.fmt.parseUnsigned(u32, vals.next().?, 10)) + GDI_SECTOR_OFFSET; // FIXME?
+            var offset = (try std.fmt.parseUnsigned(u32, vals.next().?, 10));
             const track_type = try std.fmt.parseUnsigned(u8, vals.next().?, 10);
             const format = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
             const filename = vals.next().?;
             const pregap = try std.fmt.parseUnsigned(u32, vals.next().?, 10);
+
+            if (i >= 2)
+                offset += GDI_SECTOR_OFFSET;
 
             std.debug.assert(pregap == 0); // FIXME: Not handled.
 

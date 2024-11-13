@@ -1024,7 +1024,7 @@ pub const GDROM = struct {
         self.state = .Paused;
         self.audio_state.status = .Paused;
 
-        var start_addr: u32 = if (parameter_type == 0)
+        const start_addr: u32 = if (parameter_type == 0)
             (@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4] // Start FAD
         else
             msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]);
@@ -1033,11 +1033,6 @@ pub const GDROM = struct {
 
         gdrom_log.debug("CD Read: parameter_type: {b:0>1} expected_data_type:{b:0>3} data_select:{b:0>4} - @{X:0>8} ({X})", .{ parameter_type, expected_data_type, data_select, start_addr, transfer_length });
         gdrom_log.debug("Command: {X}", .{self.packet_command});
-
-        if (start_addr < 45000) {
-            gdrom_log.warn(termcolor.yellow("  GDROM CDRead - Before Track 3 - Start Address {d} ({X:0>8})"), .{ start_addr, start_addr });
-            start_addr += 150; // FIXME: GDI stuff I still do have to figure out correctly... The offset is only applied on track 3? 3+?
-        }
 
         const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
