@@ -70,18 +70,90 @@ fn uv16(val: u16) f32 {
     return @bitCast(@as(u32, val) << 16);
 }
 
-pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u64, indices: []const u8, u_size: u32, v_size: u32) void {
+pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, texture: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
+    switch (pixel_format) {
+        .ARGB1555, .RGB565, .ARGB4444 => |format| {
+            const texels = std.mem.bytesAsSlice(Colors.Color16, texture[0..]);
+            for (0..v_size) |y| {
+                for (0..u_size) |x| {
+                    const pixel_index: usize = y * u_size + x;
+                    const texel_index: usize = if (twiddled) untwiddle(@intCast(x), @intCast(y), u_size, v_size) else pixel_index;
+                    dest_bgra[pixel_index] = texels[texel_index].bgra(@enumFromInt(@intFromEnum(format)), twiddled);
+                }
+            }
+        },
+        .Palette4BPP, .Palette8BPP => |format| {
+            std.debug.assert(twiddled);
+            for (0..v_size) |v| {
+                for (0..u_size) |u| {
+                    const pixel_idx = v * u_size + u;
+                    const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
+                    const data: u8 = if (format == .Palette4BPP) ((texture[texel_idx >> 1] >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else texture[texel_idx];
+                    @as([*]u32, @alignCast(@ptrCast(&dest_bgra[0])))[pixel_idx] = data;
+                }
+            }
+        },
+        .YUV422 => {
+            if (twiddled) {
+                for (0..v_size / 2) |v| {
+                    for (0..u_size / 2) |u| {
+                        const pixel_idx = 2 * v * u_size + 2 * u;
+                        const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
+                        const halfwords = @as([*]const u16, @alignCast(@ptrCast(&texture[8 * texel_idx])))[0..4];
+                        const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
+                        const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
+                        const colors_0 = Colors.yuv_to_rgba(texels_0_1);
+                        dest_bgra[pixel_idx] = .{ colors_0[0].b, colors_0[0].g, colors_0[0].r, colors_0[0].a };
+                        dest_bgra[pixel_idx + 1] = .{ colors_0[1].b, colors_0[1].g, colors_0[1].r, colors_0[1].a };
+                        const colors_1 = Colors.yuv_to_rgba(texels_2_3);
+                        dest_bgra[pixel_idx + u_size] = .{ colors_1[0].b, colors_1[0].g, colors_1[0].r, colors_1[0].a };
+                        dest_bgra[pixel_idx + u_size + 1] = .{ colors_1[1].b, colors_1[1].g, colors_1[1].r, colors_1[1].a };
+                    }
+                }
+            } else {
+                const texels = std.mem.bytesAsSlice(YUV422, texture);
+                for (0..v_size) |v| {
+                    for (0..u_size / 2) |u| {
+                        const pixel_idx = v * u_size + 2 * u;
+                        const colors = Colors.yuv_to_rgba(texels[pixel_idx / 2]);
+                        dest_bgra[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
+                        dest_bgra[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
+                    }
+                }
+            }
+        },
+        .BumpMap => {
+            renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{pixel_format});
+            for (0..v_size) |v| {
+                for (0..u_size) |u| {
+                    const pixel_idx = v * u_size + u;
+                    const texel_idx = 2 * pixel_idx;
+                    const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&texture[texel_idx])))[0..2].*;
+                    dest_bgra[pixel_idx] = .{ texels[0], texels[1], 0, 0 };
+                }
+            }
+        },
+        else => {
+            renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{pixel_format});
+            @panic("Unsupported pixel format");
+        },
+    }
+}
+
+pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32) void {
+    std.debug.assert(code_book.len >= 8 * 256);
+    std.debug.assert(indices.len >= u_size * v_size / 4);
+    const texels = std.mem.bytesAsSlice([4]Color16, code_book);
     // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
     for (0..v_size / 2) |v| {
         for (0..u_size / 2) |u| {
             const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
-            const texels = code_book[index];
             for (0..4) |tidx| {
                 switch (pixel_format) {
                     .ARGB1555, .RGB565, .ARGB4444 => {
                         //                  Macro 2*2 Block            Pixel within the block
                         const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                        dest_bgra[pixel_index] = (Color16{ .value = @truncate(texels >> @intCast(16 * tidx)) }).bgra(pixel_format, true);
+                        dest_bgra[pixel_index] = texels[index][tidx].bgra(pixel_format, true);
                     },
                     else => {
                         renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{pixel_format});
@@ -1484,84 +1556,11 @@ pub const Renderer = struct {
             }
         }
 
-        // FIXME: This needs a big refactor.
         if (texture_control_word.vq_compressed == 1) {
-            std.debug.assert(twiddled); // Please.
-            const code_book = @as([*]const u64, @alignCast(@ptrCast(&gpu.vram[addr])))[0..256];
-            const indices = gpu.vram[vq_index_addr..];
-            decode_vq(self.bgra_scratch_pad(), texture_control_word.pixel_format, code_book, indices, u_size, v_size);
+            std.debug.assert(twiddled);
+            decode_vq(self.bgra_scratch_pad(), texture_control_word.pixel_format, gpu.vram[addr..], gpu.vram[vq_index_addr..], u_size, v_size);
         } else {
-            switch (texture_control_word.pixel_format) {
-                .ARGB1555, .RGB565, .ARGB4444 => |format| {
-                    const texels = std.mem.bytesAsSlice(Color16, gpu.vram[addr..]);
-                    for (0..v_size) |v| {
-                        for (0..u_size) |u| {
-                            const pixel_idx = v * u_size + u;
-                            const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = texels[texel_idx].bgra(format, twiddled);
-                        }
-                    }
-                },
-                .Palette4BPP, .Palette8BPP => |format| {
-                    std.debug.assert(twiddled);
-                    for (0..v_size) |v| {
-                        for (0..u_size) |u| {
-                            const pixel_idx = v * u_size + u;
-                            const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
-                            const ram_addr = if (format == .Palette4BPP) texel_idx >> 1 else texel_idx;
-                            const pixel_palette: u8 = gpu.vram[addr + ram_addr];
-                            const data: u8 = if (format == .Palette4BPP) ((pixel_palette >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else pixel_palette;
-
-                            @as([*]u32, @alignCast(@ptrCast(self._scratch_pad.ptr)))[pixel_idx] = data;
-                        }
-                    }
-                },
-                .YUV422 => {
-                    if (twiddled) {
-                        for (0..v_size / 2) |v| {
-                            for (0..u_size / 2) |u| {
-                                const pixel_idx = 2 * v * u_size + 2 * u;
-                                const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                                const halfwords = @as([*]const u16, @alignCast(@ptrCast(&gpu.vram[addr + 8 * texel_idx])))[0..4];
-                                const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
-                                const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
-                                const colors_0 = Colors.yuv_to_rgba(texels_0_1);
-                                self.bgra_scratch_pad()[pixel_idx] = .{ colors_0[0].b, colors_0[0].g, colors_0[0].r, colors_0[0].a };
-                                self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors_0[1].b, colors_0[1].g, colors_0[1].r, colors_0[1].a };
-                                const colors_1 = Colors.yuv_to_rgba(texels_2_3);
-                                self.bgra_scratch_pad()[pixel_idx + u_size] = .{ colors_1[0].b, colors_1[0].g, colors_1[0].r, colors_1[0].a };
-                                self.bgra_scratch_pad()[pixel_idx + u_size + 1] = .{ colors_1[1].b, colors_1[1].g, colors_1[1].r, colors_1[1].a };
-                            }
-                        }
-                    } else {
-                        for (0..v_size) |v| {
-                            for (0..u_size / 2) |u| {
-                                const pixel_idx = v * u_size + 2 * u;
-                                const texel_idx = 2 * pixel_idx;
-                                const texel: YUV422 = @bitCast(@as(*const u32, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx]))).*);
-                                const colors = Colors.yuv_to_rgba(texel);
-                                self.bgra_scratch_pad()[pixel_idx] = .{ colors[0].b, colors[0].g, colors[0].r, colors[0].a };
-                                self.bgra_scratch_pad()[pixel_idx + 1] = .{ colors[1].b, colors[1].g, colors[1].r, colors[1].a };
-                            }
-                        }
-                    }
-                },
-                .BumpMap => {
-                    renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
-                    for (0..v_size) |v| {
-                        for (0..u_size) |u| {
-                            const pixel_idx = v * u_size + u;
-                            const texel_idx = 2 * pixel_idx;
-                            const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&gpu.vram[addr + texel_idx])))[0..2].*;
-                            self.bgra_scratch_pad()[pixel_idx] = .{ texels[0], texels[1], 0, 0 };
-                        }
-                    }
-                },
-                else => {
-                    renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{texture_control_word.pixel_format});
-                    @panic("Unsupported pixel format");
-                },
-            }
+            decode_tex(self.bgra_scratch_pad(), texture_control_word.pixel_format, gpu.vram[addr..], u_size, v_size, twiddled);
         }
 
         // Search for an available texture index.

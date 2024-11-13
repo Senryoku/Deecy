@@ -198,7 +198,7 @@ pub inline fn _yuv(y: f32, u: f32, v: f32) RGBA {
     };
 }
 
-pub fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
+pub inline fn yuv_to_rgba(yuv: YUV422) [2]RGBA {
     const v = @as(f32, @floatFromInt(yuv.v)) - 128.0;
     const u = @as(f32, @floatFromInt(yuv.u)) - 128.0;
     const y0: f32 = @floatFromInt(yuv.y0);
