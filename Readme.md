@@ -1,4 +1,8 @@
-# Deecy
+
+<h1 align="center">
+    <img src="https://raw.githubusercontent.com/Senryoku/Deecy/refs/heads/main/src/assets/logo-256.png" width="128">
+    <div>Deecy</div>
+</h1>
 
 Deecy is a very experimental Dreamcast emulator written in Zig.
 
