@@ -191,6 +191,9 @@ _allocator: std.mem.Allocator,
 _thread: ?std.Thread = null, // Thread for one-time, fire-and-forget, async jobs
 
 pub fn create(allocator: std.mem.Allocator) !*@This() {
+    const start_time = std.time.milliTimestamp();
+    defer deecy_log.info("Deecy initialized in {d} ms", .{std.time.milliTimestamp() - start_time});
+
     std.fs.cwd().makeDir("userdata") catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
@@ -239,38 +242,46 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         ._allocator = allocator,
     };
 
+    // NOTE: For some reason this is the longest operation in here. Start ASAP and in parallel of context creation (second longest operation).
+    var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
+    defer joystick_thread.join();
+
     self.window.setUserPointer(self);
     _ = self.window.setKeyCallback(glfw_key_callback);
     _ = self.window.setDropCallback(glfw_drop_callback);
 
-    self.gctx = try zgpu.GraphicsContext.create(allocator, .{
-        .window = self.window,
-        .fn_getTime = @ptrCast(&zglfw.getTime),
-        .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
-        .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
-        .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
-        .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
-        .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
-    }, .{
-        .present_mode = .mailbox,
-        .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
-        .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
-    });
+    {
+        const gctx_start_time = std.time.milliTimestamp();
+        defer deecy_log.info("Graphics context initialized in {d} ms", .{std.time.milliTimestamp() - gctx_start_time});
+        self.gctx = try zgpu.GraphicsContext.create(allocator, .{
+            .window = self.window,
+            .fn_getTime = @ptrCast(&zglfw.getTime),
+            .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
+            .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
+            .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
+            .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+            .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
+        }, .{
+            .present_mode = .mailbox,
+            .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
+            .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
+        });
+    }
 
     brk_limits: {
         var device_limits: zgpu.wgpu.SupportedLimits = .{};
         var adapter_limits: zgpu.wgpu.SupportedLimits = .{};
         if (!self.gctx.device.getLimits(&device_limits)) {
-            deecy_log.err("Failed to get device limits.", .{});
+            deecy_log.debug("Failed to get device limits.", .{});
             break :brk_limits;
         }
         if (!self.gctx.device.getAdapter().getLimits(&adapter_limits)) {
-            deecy_log.err("Failed to get adapter limits.", .{});
+            deecy_log.debug("Failed to get adapter limits.", .{});
             break :brk_limits;
         }
-        deecy_log.info("WebGPU Limits (Device/Adapter):", .{});
+        deecy_log.debug("WebGPU Limits (Device/Adapter):", .{});
         inline for (std.meta.fields(zgpu.wgpu.Limits)) |field| {
-            deecy_log.info("{s: >48}: {d: >10} / {d: >10}", .{ field.name, @field(device_limits.limits, field.name), @field(adapter_limits.limits, field.name) });
+            deecy_log.debug("{s: >48}: {d: >10} / {d: >10}", .{ field.name, @field(device_limits.limits, field.name), @field(adapter_limits.limits, field.name) });
         }
     }
 
@@ -347,6 +358,23 @@ pub fn destroy(self: *@This()) void {
     zglfw.terminate();
 
     self._allocator.destroy(self);
+}
+
+fn auto_populate_joysticks(self: *@This()) !void {
+    const start_time = std.time.milliTimestamp();
+    defer deecy_log.info("Joysticks initialized in {d}ms", .{std.time.milliTimestamp() - start_time});
+    var curr_pad: usize = 0;
+    for (0..zglfw.Joystick.maximum_supported) |idx| {
+        const jid: zglfw.Joystick.Id = @intCast(idx);
+        if (zglfw.Joystick.get(jid)) |joystick| {
+            if (joystick.asGamepad()) |_| {
+                self.controllers[curr_pad] = .{ .id = jid };
+                curr_pad += 1;
+                if (curr_pad >= 4)
+                    break;
+            }
+        }
+    }
 }
 
 fn ui_init(self: *@This()) !void {
