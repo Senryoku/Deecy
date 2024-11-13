@@ -258,19 +258,15 @@ pub const GDI = struct {
     }
 
     pub fn get_region(self: *const @This()) Region {
-        var region: Region = .Unknown;
         if (self.tracks.items.len >= 3) {
-            if (self.tracks.items[2].data[0x40] == 'J') {
-                region = .Japan;
-            }
-            if (self.tracks.items[2].data[0x41] == 'U') {
-                region = .USA;
-            }
-            if (self.tracks.items[2].data[0x42] == 'E') {
-                region = .Europe;
-            }
+            if (self.tracks.items[2].data[0x40] == 'J')
+                return .Japan;
+            if (self.tracks.items[2].data[0x41] == 'U')
+                return .USA;
+            if (self.tracks.items[2].data[0x42] == 'E')
+                return .Europe;
         }
-        return region;
+        return .Unknown;
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
@@ -340,25 +336,3 @@ pub const GDI = struct {
         return 2352 * count;
     }
 };
-
-test "gdi" {
-    var gdi = try GDI.init("./bin/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", std.testing.allocator);
-    defer gdi.deinit();
-    try std.testing.expect(gdi.tracks.items.len == 3);
-
-    const root_directory_entry = gdi.get_primary_volume_descriptor().*.root_directory_entry;
-    try std.testing.expect(root_directory_entry.file_identifier == 0x0);
-
-    const root_directory_length = root_directory_entry.length;
-    const root_directory_lba = root_directory_entry.location;
-
-    const root_track = try gdi.get_corresponding_track(root_directory_lba);
-    const root_directory_offset: u32 = (root_directory_lba - root_track.offset) * root_track.format + 0x10; // TODO internalize offset computation to the GDI class. Why +0x10? No idea.
-
-    var curr_offset = root_directory_offset;
-    for (0..root_directory_length) |_| {
-        const dir_record = root_track.get_directory_record(curr_offset);
-        std.debug.print("({X:0>8}) Name: {s: >32} - LBA: {d: >8}, Size: {d: >8}\n", .{ curr_offset, dir_record.get_file_identifier(), dir_record.location, dir_record.data_length });
-        curr_offset += dir_record.length;
-    }
-}

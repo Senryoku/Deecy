@@ -183,7 +183,7 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
 
     if (gdi.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
-            defer allocator.free(result.bgra);
+            defer result.deinit(allocator);
 
             self.deecy.gctx_queue_mutex.lock();
             const texture = self.deecy.gctx.createTexture(.{
@@ -206,13 +206,15 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
             );
             self.deecy.gctx_queue_mutex.unlock();
 
-            self.gdi_files_mutex.lock();
-            defer self.gdi_files_mutex.unlock();
-            for (self.gdi_files.items) |*entry| {
-                if (std.mem.eql(u8, entry.path, path)) {
-                    entry.texture = texture;
-                    entry.view = view;
-                    return;
+            {
+                self.gdi_files_mutex.lock();
+                defer self.gdi_files_mutex.unlock();
+                for (self.gdi_files.items) |*entry| {
+                    if (std.mem.eql(u8, entry.path, path)) {
+                        entry.texture = texture;
+                        entry.view = view;
+                        return;
+                    }
                 }
             }
 

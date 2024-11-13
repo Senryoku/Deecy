@@ -43,6 +43,27 @@ const ImageDataType = enum(u8) {
     SMALL_VQ_MIPMAP = 0x11,
     SQUARE_TWIDDLED_MIPMAP_2 = 0x12,
     _,
+
+    pub fn twiddled(self: @This()) bool {
+        return switch (self) {
+            .RECTANGLE, .RECTANGULAR_STRIDE => false,
+            else => true,
+        };
+    }
+
+    pub fn mipmapped(self: @This()) bool {
+        return switch (self) {
+            .SQUARE_TWIDDLED_MIPMAP, .VQ_MIPMAP, .SMALL_VQ_MIPMAP, .SQUARE_TWIDDLED_MIPMAP_2 => true,
+            else => false,
+        };
+    }
+
+    pub fn vq_compressed(self: @This()) bool {
+        return switch (self) {
+            .VQ, .VQ_MIPMAP, .SMALL_VQ, .SMALL_VQ_MIPMAP => true,
+            else => false,
+        };
+    }
 };
 
 pub const PVRTHeader = extern struct {
@@ -59,8 +80,21 @@ pub const DecodedPVRImage = struct {
     width: u32,
     height: u32,
     bgra: []u8,
+
+    pub fn init(allocator: std.mem.Allocator, width: u32, height: u32) !DecodedPVRImage {
+        return .{
+            .width = width,
+            .height = height,
+            .bgra = try allocator.alloc(u8, 4 * width * height),
+        };
+    }
+
+    pub fn deinit(self: @This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.bgra);
+    }
 };
 
+// Caller owns the allocated memory.
 pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage {
     if (buffer.len < 8) return error.BufferTooSmall;
 
@@ -72,52 +106,15 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         if (buffer.len < @sizeOf(PVRTHeader)) return error.InvalidPVRT;
         const header: *const PVRTHeader = @alignCast(@ptrCast(buffer));
 
-        const twiddled = switch (header.image_data_type) {
-            .SQUARE_TWIDDLED,
-            .SQUARE_TWIDDLED_MIPMAP,
-            .SQUARE_TWIDDLED_MIPMAP_2,
-            .TWIDDLED_4_BIT_CLUT,
-            .TWIDDLED_4_BIT_DIRECT,
-            .TWIDDLED_8_BIT_CLUT,
-            .TWIDDLED_8_BIT_DIRECT,
-            .RECTANGULAR_TWIDDLED,
-            .VQ,
-            .VQ_MIPMAP,
-            .SMALL_VQ,
-            .SMALL_VQ_MIPMAP,
-            => true,
-            else => false,
-        };
-        const mipmap = switch (header.image_data_type) {
-            .SQUARE_TWIDDLED_MIPMAP,
-            .VQ_MIPMAP,
-            .SMALL_VQ_MIPMAP,
-            .SQUARE_TWIDDLED_MIPMAP_2,
-            => true,
-            else => false,
-        };
-        const vq_compressed = switch (header.image_data_type) {
-            .VQ,
-            .VQ_MIPMAP,
-            .SMALL_VQ,
-            .SMALL_VQ_MIPMAP,
-            => true,
-            else => false,
-        };
-
         if (header.width > 1024 or header.height > 1024) return error.InvalidImageSize;
 
-        const image = DecodedPVRImage{
-            .width = header.width,
-            .height = header.height,
-            .bgra = try allocator.alloc(u8, @as(u32, 4) * header.width * header.height),
-        };
-        errdefer allocator.free(image.bgra);
+        const image = try DecodedPVRImage.init(allocator, header.width, header.height);
+        errdefer image.deinit(allocator);
 
         var texels_offset: u32 = @sizeOf(PVRTHeader);
         const code_book_offset: u32 = texels_offset;
-        if (mipmap) {
-            if (vq_compressed) {
+        if (header.image_data_type.mipmapped()) {
+            if (header.image_data_type.vq_compressed()) {
                 texels_offset += Renderer.vq_mipmap_offset(image.width);
             } else if (header.pixel_format == .Palette4BPP or header.pixel_format == .Palette8BPP) {
                 const val: u32 = Renderer.palette_mipmap_offset(image.width);
@@ -128,10 +125,10 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
             texels_offset -= 4; // FIXME: I have no idea why is it off, seems to be fine when textures are uploaded to the PVR.
         }
 
-        if (vq_compressed) {
+        if (header.image_data_type.vq_compressed()) {
             Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height);
         } else {
-            Renderer.decode_tex(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, twiddled);
+            Renderer.decode_tex(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
         }
 
         return image;
