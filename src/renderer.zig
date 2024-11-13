@@ -647,7 +647,7 @@ pub const Renderer = struct {
         const start = std.time.milliTimestamp();
         defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
-        // Write to texture all rely on that.
+        // Writes to texture all rely on that.
         std.debug.assert(zgpu.GraphicsContext.swapchain_format == .bgra8_unorm);
 
         const framebuffer_texture = gctx.createTexture(.{
@@ -1432,30 +1432,6 @@ pub const Renderer = struct {
         return null;
     }
 
-    fn palette_hash(gpu: *const HollyModule.Holly, texture_control_word: HollyModule.TextureControlWord) u32 {
-        switch (texture_control_word.pixel_format) {
-            .Palette4BPP, .Palette8BPP => |format| {
-                const palette_ram = gpu.get_palette_data();
-                const palette_selector: u16 = @truncate(if (format == .Palette4BPP) (((@as(u32, @bitCast(texture_control_word)) >> 21) & 0b111111) << 4) else (((@as(u32, @bitCast(texture_control_word)) >> 25) & 0b11) << 8));
-                const size: u16 = if (format == .Palette4BPP) 16 else 256;
-                return std.hash.Murmur3_32.hash(palette_ram[4 * palette_selector .. @min(4 * (palette_selector + size), palette_ram.len)]);
-            },
-            else => return 0,
-        }
-    }
-
-    inline fn bgra_from_16bits_color(format: HollyModule.TexturePixelFormat, val: u16, twiddled: bool) [4]u8 {
-        return (Color16{ .value = val }).bgra(format, twiddled);
-    }
-
-    inline fn bgra_from_16bits_color_non_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        return bgra_from_16bits_color(format, val, false);
-    }
-
-    inline fn bgra_from_16bits_color_twiddled(format: HollyModule.TexturePixelFormat, val: u16) [4]u8 {
-        return bgra_from_16bits_color(format, val, true);
-    }
-
     inline fn bgra_scratch_pad(self: *Renderer) [*][4]u8 {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
@@ -1500,7 +1476,7 @@ pub const Renderer = struct {
             // See DreamcastDevBoxSystemArchitecture.pdf p.148
             if (texture_control_word.vq_compressed == 1) {
                 vq_index_addr += vq_mipmap_offset(u_size);
-            } else if (texture_control_word.pixel_format == .Palette4BPP or texture_control_word.pixel_format == .Palette8BPP) {
+            } else if (is_paletted) {
                 const val: u32 = palette_mipmap_offset(u_size);
                 addr += if (texture_control_word.pixel_format == .Palette4BPP) val / 2 else val;
             } else {
@@ -1517,11 +1493,12 @@ pub const Renderer = struct {
         } else {
             switch (texture_control_word.pixel_format) {
                 .ARGB1555, .RGB565, .ARGB4444 => |format| {
+                    const texels = std.mem.bytesAsSlice(Color16, gpu.vram[addr..]);
                     for (0..v_size) |v| {
                         for (0..u_size) |u| {
                             const pixel_idx = v * u_size + u;
                             const texel_idx = if (twiddled) untwiddle(@intCast(u), @intCast(v), u_size, v_size) else pixel_idx;
-                            self.bgra_scratch_pad()[pixel_idx] = bgra_from_16bits_color(format, @as(*const u16, @alignCast(@ptrCast(&gpu.vram[addr + 2 * texel_idx]))).*, twiddled);
+                            self.bgra_scratch_pad()[pixel_idx] = texels[texel_idx].bgra(format, twiddled);
                         }
                     }
                 },
@@ -1613,12 +1590,12 @@ pub const Renderer = struct {
         }
 
         const end_address = if (texture_control_word.vq_compressed == 1)
-            vq_index_addr + @as(u32, u_size) * v_size / 4
+            vq_index_addr + u_size * v_size / 4
         else
             addr + switch (texture_control_word.pixel_format) {
-                .Palette4BPP => @as(u32, u_size) * v_size / 2,
-                .Palette8BPP => @as(u32, u_size) * v_size,
-                else => 2 * @as(u32, u_size) * v_size,
+                .Palette4BPP => u_size * v_size / 2,
+                .Palette8BPP => u_size * v_size,
+                else => 2 * u_size * v_size,
             };
 
         self.texture_metadata[size_index][texture_index] = .{
@@ -1649,10 +1626,9 @@ pub const Renderer = struct {
                 tex_source[1] = self._scratch_pad[4 * u_size * v_size .. 2 * 4 * u_size * v_size];
                 for (0..v_size) |v| {
                     for (0..u_size) |u| {
-                        tex_source[1][4 * (u_size * v + u) ..][0] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][0];
-                        tex_source[1][4 * (u_size * v + u) ..][1] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][1];
-                        tex_source[1][4 * (u_size * v + u) ..][2] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][2];
-                        tex_source[1][4 * (u_size * v + u) ..][3] = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..][3];
+                        const src = tex_source[0][4 * (u_size * v + (u_size - u - 1)) ..];
+                        const dst = tex_source[1][4 * (u_size * v + u) ..];
+                        @memcpy(dst[0..4], src[0..4]);
                     }
                 }
             } else if ((clamp_v or flip_v) and repeat_vertically) {
@@ -1752,28 +1728,28 @@ pub const Renderer = struct {
                 const pixel_addr = addr + bytes_per_pixels * x;
                 switch (FB_R_CTRL.format) {
                     0x0 => { // 0555 RGB 16 bit
-                        const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&vram[pixel_addr]))).* };
+                        const pixel = std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.argb1555.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.argb1555.g) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.argb1555.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x1 => { // 565 RGB
-                        const pixel: Color16 = .{ .value = @as(*const u16, @alignCast(@ptrCast(&vram[pixel_addr]))).* };
+                        const pixel = std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x2 => { // 888 RGB 24 bit packed
-                        const pixel: [3]u8 = @as([*]const u8, @alignCast(@ptrCast(&vram[pixel_addr])))[0..3].*;
+                        const pixel = vram[pixel_addr .. pixel_addr + 3];
                         self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
                         self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
                         self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x3 => { // 0888 RGB 32 bit
-                        const pixel: [4]u8 = @as([*]const u8, @alignCast(@ptrCast(&vram[pixel_addr])))[0..4].*;
+                        const pixel = vram[pixel_addr .. pixel_addr + 3];
                         self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
                         self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
                         self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
@@ -1802,9 +1778,9 @@ pub const Renderer = struct {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
         const param_base: u32 = self.on_render_start_param_base;
         const addr = param_base + 4 * @as(u32, tags.tag_address);
-        const isp_tsp_instruction = @as(*const HollyModule.ISPTSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr]))).*;
-        const tsp_instruction = @as(*const HollyModule.TSPInstructionWord, @alignCast(@ptrCast(&gpu.vram[addr + 4]))).*;
-        const texture_control = @as(*const HollyModule.TextureControlWord, @alignCast(@ptrCast(&gpu.vram[addr + 8]))).*;
+        const isp_tsp_instruction = std.mem.bytesAsValue(HollyModule.ISPTSPInstructionWord, gpu.vram[addr..]);
+        const tsp_instruction = std.mem.bytesAsValue(HollyModule.TSPInstructionWord, gpu.vram[addr + 4 ..]).*;
+        const texture_control = std.mem.bytesAsValue(HollyModule.TextureControlWord, gpu.vram[addr + 8 ..]).*;
         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
@@ -1814,7 +1790,7 @@ pub const Renderer = struct {
         _ = depth;
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
-        const parameter_volume_mode = (gpu.read_register(u32, .FPU_SHAD_SCALE) >> 8) & 1 == 1 and tags.shadow == 1;
+        const parameter_volume_mode = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).enable and tags.shadow == 1;
         const skipped_vertex_byte_size: u32 = @as(u32, 4) * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
@@ -1957,13 +1933,13 @@ pub const Renderer = struct {
     pub fn update_palette(self: *@This(), gpu: *const HollyModule.Holly) !void {
         // TODO: Check if the palette has changed (palette hash) instead of updating unconditionally?
 
-        const palette_ram = @as([*]const u32, @ptrCast(@constCast(gpu)._get_register(u32, .PALETTE_RAM_START)))[0..1024];
+        const palette_ram = gpu.get_palette();
         const palette_ctrl_ram: u2 = @truncate(gpu.read_register(u32, .PAL_RAM_CTRL) & 0b11);
 
         for (0..palette_ram.len) |i| {
             self.bgra_scratch_pad()[i] = switch (palette_ctrl_ram) {
                 // ARGB1555, RGB565, ARGB4444. These happen to match the values of TexturePixelFormat.
-                0x0, 0x1, 0x2 => bgra_from_16bits_color(@enumFromInt(palette_ctrl_ram), @truncate(palette_ram[i]), true),
+                0x0, 0x1, 0x2 => (Color16{ .value = @truncate(palette_ram[i]) }).bgra(@enumFromInt(palette_ctrl_ram), true),
                 // ARGB8888
                 0x3 => @bitCast(palette_ram[i]),
             };
@@ -1985,8 +1961,7 @@ pub const Renderer = struct {
 
         self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
 
-        const fpu_shad_scale = gpu.read_register(u32, .FPU_SHAD_SCALE);
-        self.fpu_shad_scale = if ((fpu_shad_scale & 0x100) != 0) @as(f32, @floatFromInt(fpu_shad_scale & 0xFF)) / 256.0 else 1.0;
+        self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
 
         const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
         const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
@@ -1998,7 +1973,7 @@ pub const Renderer = struct {
         const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
         self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
         for (0..0x80) |i| {
-            self.fog_lut[i] = @as([*]u32, @ptrCast(@constCast(gpu)._get_register(u32, .FOG_TABLE_START)))[i] & 0x0000FFFF;
+            self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
         }
 
         const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);

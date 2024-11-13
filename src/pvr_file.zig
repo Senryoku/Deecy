@@ -62,11 +62,14 @@ pub const DecodedPVRImage = struct {
 };
 
 pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage {
+    if (buffer.len < 8) return error.BufferTooSmall;
+
     if (std.mem.eql(u8, buffer[0..4], "GBIX")) {
         const header: *const GlobalIndexHeader = @alignCast(@ptrCast(buffer));
         if (8 + header.length >= buffer.len) return error.InvalidGlobalIndexHeader;
         return decode(allocator, buffer[8 + header.length ..]);
     } else if (std.mem.eql(u8, buffer[0..4], "PVRT")) {
+        if (buffer.len < @sizeOf(PVRTHeader)) return error.InvalidPVRT;
         const header: *const PVRTHeader = @alignCast(@ptrCast(buffer));
 
         const twiddled = switch (header.image_data_type) {
@@ -102,6 +105,8 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
             else => false,
         };
 
+        if (header.width > 1024 or header.height > 1024) return error.InvalidImageSize;
+
         const image = DecodedPVRImage{
             .width = header.width,
             .height = header.height,
@@ -114,7 +119,7 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         if (mipmap) {
             if (vq_compressed) {
                 offset += Renderer.vq_mipmap_offset(image.width);
-                code_book_offset -= 4; // FIXME: Not sure. VQ compressed textures are buggy atm.
+                code_book_offset -= 4; // FIXME: Not sure. VQ compressed textures are buggy with or without it atm.
             } else {
                 offset += Renderer.mipmap_offset(image.width);
             }
@@ -122,11 +127,13 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         }
 
         if (vq_compressed) {
-            const code_book = @as([*]const u64, @alignCast(@ptrCast(&buffer[code_book_offset..])))[0..256];
+            if (buffer.len < offset + 8 * 256 + image.width * image.height / 4) return error.TruncatedFile;
+            const code_book = std.mem.bytesAsSlice(u64, buffer);
             const indices = buffer[8 * 256 + offset ..];
-            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), code_book, indices, image.width, image.height);
+            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), @alignCast(code_book), indices, image.width, image.height);
         } else {
-            const texels = @as([*]const Colors.Color16, @alignCast(@ptrCast(&buffer[offset])))[0..];
+            if (buffer.len < offset + 2 * image.width * image.height) return error.TruncatedFile;
+            const texels = std.mem.bytesAsSlice(Colors.Color16, buffer[offset..]);
             for (0..image.height) |y| {
                 for (0..image.width) |x| {
                     const pixel_index: usize = y * image.width + x;

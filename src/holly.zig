@@ -227,6 +227,16 @@ pub const FB_CLIP = packed struct(u32) {
     _1: u5 = 0,
 };
 
+pub const FPU_SHAD_SCALE = packed struct(u32) {
+    factor: u8,
+    enable: bool,
+    _: u23,
+
+    pub fn get_factor(self: @This()) f32 {
+        return if (self.enable) @as(f32, @floatFromInt(self.factor)) / 256.0 else 1.0;
+    }
+};
+
 pub const FB_R_CTRL = packed struct(u32) {
     enable: bool,
     line_double: bool,
@@ -1924,7 +1934,6 @@ pub const Holly = struct {
     pub fn ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
         const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
         const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
-        holly_log.debug("ta_fifo_yuv_converter_path: tex_base={X:0>8}, data.len={X:0>8}\n    ctrl={any}", .{ data.len, tex_base, ctrl });
         const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
         const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
         var tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
@@ -2017,8 +2026,12 @@ pub const Holly = struct {
         return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
     }
 
-    pub inline fn get_palette_data(self: *const @This()) []u8 {
-        return @as([*]u8, @ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart]))[0 .. 4 * 1024];
+    pub inline fn get_palette(self: *const @This()) []const u32 {
+        return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart])))[0..1024];
+    }
+
+    pub inline fn get_fog_table(self: *const @This()) []const u32 {
+        return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
     pub inline fn get_region_array_data_config(self: *const @This()) RegionArrayDataConfiguration {
