@@ -2,16 +2,16 @@
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
 <svg
-   width="353.19348"
-   height="354.04733"
-   viewBox="0 0 93.449112 93.675026"
+   width="355"
+   height="355"
+   viewBox="0 0 93.927087 93.927086"
    version="1.1"
    id="svg1"
    sodipodi:docname="logo.svg"
    inkscape:version="1.4 (86a8ad7, 2024-10-11)"
-   inkscape:export-filename="logo-32.png"
-   inkscape:export-xdpi="8.6977825"
-   inkscape:export-ydpi="8.6977825"
+   inkscape:export-filename="logo-256.png"
+   inkscape:export-xdpi="69.228172"
+   inkscape:export-ydpi="69.228172"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns="http://www.w3.org/2000/svg"
@@ -26,9 +26,9 @@
      inkscape:pagecheckerboard="true"
      inkscape:deskcolor="#000000"
      inkscape:document-units="mm"
-     inkscape:zoom="1.4142136"
-     inkscape:cx="115.61196"
-     inkscape:cy="166.52364"
+     inkscape:zoom="2.0000001"
+     inkscape:cx="45.999999"
+     inkscape:cy="201.24999"
      inkscape:window-width="2560"
      inkscape:window-height="1369"
      inkscape:window-x="1912"
@@ -41,10 +41,10 @@
      inkscape:label="Calque 1"
      inkscape:groupmode="layer"
      id="layer1"
-     transform="translate(1.5207958,-69.705744)">
+     transform="translate(1.3337061,-69.705744)">
     <g
        id="g2"
-       transform="rotate(21.089592,45.962923,117.91783)">
+       transform="rotate(21.089592,45.790485,119.17364)">
       <path
          sodipodi:type="spiral"
          style="font-variation-settings:normal;display:none;opacity:1;fill:none;fill-opacity:1;fill-rule:evenodd;stroke:#3b75c2;stroke-width:18.8976;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-dashoffset:0;stroke-opacity:1;stop-color:#000000;stop-opacity:1"
