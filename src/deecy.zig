@@ -6,6 +6,10 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zaudio = @import("zaudio");
 
+extern fn glfwSetWindowIcon(window: *zglfw.Window, count: i32, images: [*]const zglfw.Image) void;
+const icon_data = @embedFile("assets/icon.rgba");
+const icon = zglfw.Image{ .width = 48, .height = 48, .pixels = @constCast(icon_data)[0..] };
+
 const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("./dreamcast.zig");
@@ -241,6 +245,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .breakpoints = std.ArrayList(u32).init(allocator),
         ._allocator = allocator,
     };
+    glfwSetWindowIcon(self.window, 1, &[_]zglfw.Image{icon});
 
     // NOTE: For some reason this is the longest operation in here. Start ASAP and in parallel of context creation (second longest operation).
     var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});

@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
         .name = "DeecyCheck",
