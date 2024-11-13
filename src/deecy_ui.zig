@@ -569,9 +569,8 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Audio", .{})) {
-                var volume = try d.audio_device.getMasterVolume();
-                if (zgui.sliderFloat("Volume", .{ .v = &volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
-                    try d.audio_device.setMasterVolume(volume);
+                if (zgui.sliderFloat("Volume", .{ .v = &d.config.audio_volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
+                    try d.audio_device.setMasterVolume(d.config.audio_volume);
                 }
                 zgui.endTabItem();
             }

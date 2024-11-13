@@ -140,6 +140,7 @@ const Configuration = struct {
     display_debug_ui: bool = false,
     display_vmus: bool = true,
     game_directory: ?[]const u8 = null,
+    audio_volume: f32 = 0.3,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (self.game_directory) |game_directory|
@@ -212,6 +213,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             conf.cpu_throttling_method = json.value.cpu_throttling_method;
             if (json.value.game_directory) |game_directory|
                 conf.game_directory = try allocator.dupe(u8, game_directory);
+            conf.audio_volume = json.value.audio_volume;
 
             break :config conf;
         } else |_| {
@@ -305,28 +307,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     audio_device_config.period_size_in_frames = 16;
     audio_device_config.playback.format = .signed32;
     audio_device_config.playback.channels = 2;
-    // std.debug.print("Audio device config: {}\n", .{audio_device_config});
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
-    try self.audio_device.setMasterVolume(0.3);
+    try self.audio_device.setMasterVolume(config.audio_volume);
     try self.audio_device.start();
-
-    {
-        const start_time = std.time.milliTimestamp();
-        defer deecy_log.info("Joysticks initialized in {d}ms", .{std.time.milliTimestamp() - start_time});
-        var curr_pad: usize = 0;
-        for (0..zglfw.Joystick.maximum_supported) |idx| {
-            const jid: zglfw.Joystick.Id = @intCast(idx);
-            if (zglfw.Joystick.get(jid)) |joystick| {
-                if (joystick.asGamepad()) |_| {
-                    self.controllers[curr_pad] = .{ .id = jid };
-                    curr_pad += 1;
-                    if (curr_pad >= 4)
-                        break;
-                }
-            }
-        }
-    }
 
     self.debug_ui = try DebugUI.init(self);
 
