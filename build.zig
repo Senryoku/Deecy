@@ -43,6 +43,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    switch (target.result.os.tag) {
+        .windows => {
+            exe.linkSystemLibrary("dwmapi");
+            exe_check.linkSystemLibrary("dwmapi");
+        },
+        else => {},
+    }
+
     { // zig-gamedev
         const zgui = b.dependency("zgui", .{
             .shared = false,

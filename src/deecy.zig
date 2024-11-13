@@ -252,6 +252,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         ._allocator = allocator,
     };
     glfwSetWindowIcon(self.window, icons.len, &icons);
+    if (builtin.os.tag == .windows)
+        @import("dwmapi.zig").allow_dark_mode(self.window, true);
 
     // NOTE: For some reason this is the longest operation in here. Start ASAP and in parallel of context creation (second longest operation).
     var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
