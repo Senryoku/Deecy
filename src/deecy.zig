@@ -7,8 +7,14 @@ const zgui = @import("zgui");
 const zaudio = @import("zaudio");
 
 extern fn glfwSetWindowIcon(window: *zglfw.Window, count: i32, images: [*]const zglfw.Image) void;
-const icon_data = @embedFile("assets/icon.rgba");
-const icon = zglfw.Image{ .width = 48, .height = 48, .pixels = @constCast(icon_data)[0..] };
+const icon_48_data = @embedFile("assets/icon-48.rgba");
+const icon_32_data = @embedFile("assets/icon-32.rgba");
+const icon_16_data = @embedFile("assets/icon-small-16.rgba");
+const icons = [_]zglfw.Image{
+    .{ .width = 48, .height = 48, .pixels = @constCast(icon_48_data)[0..] },
+    .{ .width = 32, .height = 32, .pixels = @constCast(icon_32_data)[0..] },
+    .{ .width = 16, .height = 16, .pixels = @constCast(icon_16_data)[0..] },
+};
 
 const termcolor = @import("termcolor");
 
@@ -245,7 +251,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .breakpoints = std.ArrayList(u32).init(allocator),
         ._allocator = allocator,
     };
-    glfwSetWindowIcon(self.window, 1, &[_]zglfw.Image{icon});
+    glfwSetWindowIcon(self.window, icons.len, &icons);
 
     // NOTE: For some reason this is the longest operation in here. Start ASAP and in parallel of context creation (second longest operation).
     var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
