@@ -3,41 +3,36 @@ const zgpu = @import("zgpu");
 
 const ShaderSource = @embedFile("shaders/generate_mipmaps.wgsl");
 
-bind_group_layout: zgpu.BindGroupLayoutHandle,
-pipeline: zgpu.ComputePipelineHandle,
+var initialized = false;
+var pipeline_handle: zgpu.ComputePipelineHandle = .{};
+var bind_group_layout_handle: zgpu.BindGroupLayoutHandle = .{};
 
-pub fn init(gctx: *zgpu.GraphicsContext) @This() {
-    const bind_group_layout = gctx.createBindGroupLayout(&.{
-        zgpu.textureEntry(0, .{ .compute = true }, .unfilterable_float, .tvdim_2d, false),
-        zgpu.storageTextureEntry(1, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
-        zgpu.storageTextureEntry(2, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
-        zgpu.storageTextureEntry(3, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
-    });
-    const pipeline_layout = gctx.createPipelineLayout(&.{
-        bind_group_layout,
-    });
-    defer gctx.releaseResource(pipeline_layout);
+pub fn init(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) void {
+    if (!initialized) {
+        initialized = true;
 
-    const cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSource, "generate_mipmaps");
-    defer cs_module.release();
+        bind_group_layout_handle = gctx.createBindGroupLayout(&.{
+            zgpu.textureEntry(0, .{ .compute = true }, .unfilterable_float, .tvdim_2d, false),
+            zgpu.storageTextureEntry(1, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
+            zgpu.storageTextureEntry(2, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
+            zgpu.storageTextureEntry(3, .{ .compute = true }, .write_only, .bgra8_unorm, .tvdim_2d),
+        });
+        const pipeline_layout = gctx.createPipelineLayout(&.{bind_group_layout_handle});
+        defer gctx.releaseResource(pipeline_layout);
 
-    return .{
-        .bind_group_layout = bind_group_layout,
-        .pipeline = gctx.createComputePipeline(pipeline_layout, .{
+        const cs_module = zgpu.createWgslShaderModule(gctx.device, ShaderSource, "generate_mipmaps");
+        defer cs_module.release();
+
+        gctx.createComputePipelineAsync(allocator, pipeline_layout, .{
             .compute = .{
                 .module = cs_module,
                 .entry_point = "main",
             },
-        }),
-    };
+        }, &pipeline_handle);
+    }
 }
 
-pub fn deinit(self: *@This(), gctx: *zgpu.GraphicsContext) void {
-    gctx.releaseResource(self.bind_group_layout);
-    gctx.releaseResource(self.pipeline);
-}
-
-pub fn generate_mipmaps(self: @This(), gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle, layer: u32) void {
+pub fn generate_mipmaps(gctx: *zgpu.GraphicsContext, texture: zgpu.TextureHandle, layer: u32) void {
     const texture_info = gctx.lookupResourceInfo(texture) orelse return;
 
     std.debug.assert(texture_info.usage.copy_dst == true);
@@ -46,12 +41,17 @@ pub fn generate_mipmaps(self: @This(), gctx: *zgpu.GraphicsContext, texture: zgp
     std.debug.assert(texture_info.size.width >= 8 and texture_info.size.width <= 1024);
     std.debug.assert(std.math.isPowerOfTwo(texture_info.size.width));
 
+    // Wait for async pipeline creation to finish
+    var pipeline = gctx.lookupResource(pipeline_handle);
+    while (pipeline == null)
+        pipeline = gctx.lookupResource(pipeline_handle);
+
     const commands = commands: {
         const encoder = gctx.device.createCommandEncoder(null);
         defer encoder.release();
 
         const pass = encoder.beginComputePass(null);
-        pass.setPipeline(gctx.lookupResource(self.pipeline).?);
+        pass.setPipeline(pipeline.?);
 
         const last_mip_level = texture_info.mip_level_count - 1;
         var base_mip_level: u32 = 0;
@@ -92,7 +92,7 @@ pub fn generate_mipmaps(self: @This(), gctx: *zgpu.GraphicsContext, texture: zgp
                     gctx.releaseResource(dst_texture_view);
             }
 
-            const bind_group = gctx.createBindGroup(self.bind_group_layout, &.{
+            const bind_group = gctx.createBindGroup(bind_group_layout_handle, &.{
                 .{ .binding = 0, .texture_view_handle = src_texture_view },
                 .{ .binding = 1, .texture_view_handle = dst_texture_views[0] },
                 .{ .binding = 2, .texture_view_handle = dst_texture_views[1] },

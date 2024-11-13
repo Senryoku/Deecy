@@ -614,7 +614,7 @@ pub const Renderer = struct {
 
     framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
-    blit_pipeline: zgpu.RenderPipelineHandle,
+    blit_pipeline: zgpu.RenderPipelineHandle = .{},
     blit_bind_group: zgpu.BindGroupHandle = undefined,
     blit_vertex_buffer: zgpu.BufferHandle,
     blit_index_buffer: zgpu.BufferHandle,
@@ -634,8 +634,6 @@ pub const Renderer = struct {
     translucent_bind_group_layout: zgpu.BindGroupLayoutHandle,
     translucent_modvol_merge_bind_group_layout: zgpu.BindGroupLayoutHandle,
     blend_bind_group_layout: zgpu.BindGroupLayoutHandle,
-
-    blit_vertex_shader_module: wgpu.ShaderModule,
 
     opaque_pipeline_layout: zgpu.PipelineLayoutHandle,
     opaque_vertex_shader_module: wgpu.ShaderModule,
@@ -708,8 +706,6 @@ pub const Renderer = struct {
     strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
     modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
 
-    mipmap_gen_pipeline: MipMap,
-
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
@@ -773,40 +769,6 @@ pub const Renderer = struct {
             .attribute_count = blit_vertex_attributes.len,
             .attributes = &blit_vertex_attributes,
         }};
-
-        const blit_pipeline = blit_pl: {
-            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "blit_fs");
-            defer blit_fs_module.release();
-            const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
-            defer gctx.releaseResource(blit_pipeline_layout);
-
-            const color_targets = [_]wgpu.ColorTargetState{.{
-                .format = zgpu.GraphicsContext.swapchain_format,
-            }};
-
-            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
-                .vertex = wgpu.VertexState{
-                    .module = blit_vs_module,
-                    .entry_point = "main",
-                    .buffer_count = blit_vertex_buffers.len,
-                    .buffers = &blit_vertex_buffers,
-                },
-                .primitive = wgpu.PrimitiveState{
-                    .front_face = .ccw,
-                    .cull_mode = .none,
-                    .topology = .triangle_strip,
-                    .strip_index_format = .uint32,
-                },
-                .depth_stencil = null,
-                .fragment = &wgpu.FragmentState{
-                    .module = blit_fs_module,
-                    .entry_point = "main",
-                    .target_count = color_targets.len,
-                    .targets = &color_targets,
-                },
-            };
-            break :blit_pl gctx.createRenderPipeline(blit_pipeline_layout, pipeline_descriptor);
-        };
 
         const blit_vertex_data = [_]f32{
             // x    y     u    v
@@ -1143,7 +1105,6 @@ pub const Renderer = struct {
 
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
-            .blit_pipeline = blit_pipeline,
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
             .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
@@ -1162,7 +1123,6 @@ pub const Renderer = struct {
 
             .blend_bind_group_layout = blend_bind_group_layout,
 
-            .blit_vertex_shader_module = blit_vs_module,
             .opaque_pipeline_layout = gctx.createPipelineLayout(&.{ bind_group_layout, sampler_bind_group_layout }),
             .opaque_vertex_shader_module = opaque_vertex_shader_module,
             .opaque_fragment_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_fs, "fs"),
@@ -1191,13 +1151,47 @@ pub const Renderer = struct {
 
             .ta_lists = HollyModule.TALists.init(allocator),
 
-            .mipmap_gen_pipeline = MipMap.init(gctx),
-
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
             ._gctx = gctx,
             ._allocator = allocator,
         };
+
+        MipMap.init(allocator, gctx);
+        // Blit pipeline
+        {
+            const blit_fs_module = zgpu.createWgslShaderModule(gctx.device, blit_fs, "blit_fs");
+            defer blit_fs_module.release();
+            const blit_pipeline_layout = gctx.createPipelineLayout(&.{blit_bind_group_layout});
+            defer gctx.releaseResource(blit_pipeline_layout);
+
+            const blit_color_targets = [_]wgpu.ColorTargetState{.{
+                .format = zgpu.GraphicsContext.swapchain_format,
+            }};
+
+            const pipeline_descriptor = wgpu.RenderPipelineDescriptor{
+                .vertex = wgpu.VertexState{
+                    .module = blit_vs_module,
+                    .entry_point = "main",
+                    .buffer_count = blit_vertex_buffers.len,
+                    .buffers = &blit_vertex_buffers,
+                },
+                .primitive = wgpu.PrimitiveState{
+                    .front_face = .ccw,
+                    .cull_mode = .none,
+                    .topology = .triangle_strip,
+                    .strip_index_format = .uint32,
+                },
+                .depth_stencil = null,
+                .fragment = &wgpu.FragmentState{
+                    .module = blit_fs_module,
+                    .entry_point = "main",
+                    .target_count = blit_color_targets.len,
+                    .targets = &blit_color_targets,
+                },
+            };
+            gctx.createRenderPipelineAsync(allocator, blit_pipeline_layout, pipeline_descriptor, &renderer.blit_pipeline);
+        }
 
         gctx.createComputePipelineAsync(allocator, blend_pipeline_layout, blend_pipeline_descriptor, &renderer.blend_pipeline);
         gctx.createRenderPipelineAsync(allocator, translucent_pipeline_layout, translucent_pipeline_descriptor, &renderer.translucent_pipeline);
@@ -1262,7 +1256,7 @@ pub const Renderer = struct {
             };
             gctx.createRenderPipelineAsync(allocator, mv_apply_pipeline_layout, mv_apply_pipeline_descriptor, &renderer.modifier_volume_apply_pipeline);
         }
-
+        // Translucent modifier volume pipeline
         {
             const translucent_modvol_fs_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_translucent_fs, "translucent_modvol_fs");
             defer translucent_modvol_fs_module.release();
@@ -1312,6 +1306,7 @@ pub const Renderer = struct {
             };
             gctx.createRenderPipelineAsync(allocator, translucent_modvol_pipeline_layout, translucent_modvol_pipeline_descriptor, &renderer.translucent_modvol_pipeline);
         }
+        // Translucent modifier volume merge pipeline
         {
             const translucent_modvol_merge_pipeline_layout = gctx.createPipelineLayout(&.{translucent_modvol_merge_bind_group_layout});
             const translucent_modvol_merge_compute_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modvol_merge_cs, null);
@@ -1364,8 +1359,6 @@ pub const Renderer = struct {
 
         self._allocator.free(self._scratch_pad);
 
-        self.mipmap_gen_pipeline.deinit(self._gctx);
-
         self.translucent_pass.deinit();
         self.punchthrough_pass.deinit();
         self.opaque_pass.deinit();
@@ -1395,7 +1388,6 @@ pub const Renderer = struct {
 
         self.opaque_vertex_shader_module.release();
         self.opaque_fragment_shader_module.release();
-        self.blit_vertex_shader_module.release();
         self._gctx.releaseResource(self.opaque_pipeline_layout);
 
         self._gctx.releaseResource(self.blend_bind_group_layout);
@@ -1658,9 +1650,8 @@ pub const Renderer = struct {
             );
         }
 
-        if (texture_control_word.mip_mapped == 1) {
-            self.mipmap_gen_pipeline.generate_mipmaps(self._gctx, self.texture_arrays[size_index], texture_index);
-        }
+        if (texture_control_word.mip_mapped == 1)
+            MipMap.generate_mipmaps(self._gctx, self.texture_arrays[size_index], texture_index);
 
         return texture_index;
     }
@@ -2448,47 +2439,49 @@ pub const Renderer = struct {
     pub fn blit_framebuffer(self: *Renderer) void {
         const gctx = self._gctx;
 
-        const commands = commands: {
-            const encoder = gctx.device.createCommandEncoder(null);
-            defer encoder.release();
+        if (gctx.lookupResource(self.blit_pipeline)) |pipeline| {
+            const commands = commands: {
+                const encoder = gctx.device.createCommandEncoder(null);
+                defer encoder.release();
 
-            const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-            const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
 
-            const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
+                const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
-            const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                .load_op = .clear,
-                .store_op = .store,
-            }};
-            const render_pass_info = wgpu.RenderPassDescriptor{
-                .label = "Blit Framebuffer",
-                .color_attachment_count = color_attachments.len,
-                .color_attachments = &color_attachments,
-            };
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .load_op = .clear,
+                    .store_op = .store,
+                }};
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .label = "Blit Framebuffer",
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                };
 
-            {
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
+                {
+                    const pass = encoder.beginRenderPass(render_pass_info);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
+
+                    pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                    pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+
+                    pass.setPipeline(pipeline);
+
+                    pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
+                    pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
-                pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+                break :commands encoder.finish(null);
+            };
+            defer commands.release();
 
-                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
-
-                pass.setBindGroup(0, framebuffer_resize_bind_group, &.{});
-                pass.drawIndexed(4, 1, 0, 0, 0);
-            }
-
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
-
-        gctx.submit(&.{commands});
+            gctx.submit(&.{commands});
+        }
     }
 
     pub fn render(self: *Renderer, _: *const HollyModule.Holly) !void {
@@ -2937,53 +2930,53 @@ pub const Renderer = struct {
     }
 
     pub fn draw(self: *Renderer) void {
-        const gctx = self._gctx;
+        if (self._gctx.lookupResource(self.blit_pipeline)) |pipeline| {
+            const back_buffer_view = self._gctx.swapchain.getCurrentTextureView();
+            defer back_buffer_view.release();
 
-        const back_buffer_view = gctx.swapchain.getCurrentTextureView();
-        defer back_buffer_view.release();
+            // NOTE: This does not change - expect for the back_buffer_view - and could be recorded once and for all.
+            const commands = commands: {
+                const encoder = self._gctx.device.createCommandEncoder(null);
+                defer encoder.release();
 
-        // NOTE: This does not change - expect for the back_buffer_view - and could be recorded once and for all.
-        const commands = commands: {
-            const encoder = gctx.device.createCommandEncoder(null);
-            defer encoder.release();
+                // Blit to screen
+                {
+                    const vb_info = self._gctx.lookupResourceInfo(self.blit_to_window_vertex_buffer).?;
+                    const ib_info = self._gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                    const blit_bind_group = self._gctx.lookupResource(self.blit_bind_group).?;
 
-            // Blit to screen
-            {
-                const vb_info = gctx.lookupResourceInfo(self.blit_to_window_vertex_buffer).?;
-                const ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
-                const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
+                    const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                        .view = back_buffer_view,
+                        .load_op = .clear,
+                        .store_op = .store,
+                    }};
+                    const render_pass_info = wgpu.RenderPassDescriptor{
+                        .label = "Final Blit",
+                        .color_attachment_count = color_attachments.len,
+                        .color_attachments = &color_attachments,
+                    };
 
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = back_buffer_view,
-                    .load_op = .clear,
-                    .store_op = .store,
-                }};
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Final Blit",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                };
+                    const pass = encoder.beginRenderPass(render_pass_info);
+                    defer {
+                        pass.end();
+                        pass.release();
+                    }
 
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
+                    pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                    pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                    pass.setPipeline(pipeline);
+
+                    pass.setBindGroup(0, blit_bind_group, &.{});
+                    pass.drawIndexed(4, 1, 0, 0, 0);
                 }
 
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+                break :commands encoder.finish(null);
+            };
+            defer commands.release();
 
-                pass.setPipeline(gctx.lookupResource(self.blit_pipeline).?);
-
-                pass.setBindGroup(0, blit_bind_group, &.{});
-                pass.drawIndexed(4, 1, 0, 0, 0);
-            }
-
-            break :commands encoder.finish(null);
-        };
-        defer commands.release();
-
-        gctx.submit(&.{commands});
+            self._gctx.submit(&.{commands});
+        }
     }
 
     fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey, async_: bool) !zgpu.RenderPipelineHandle {
