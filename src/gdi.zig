@@ -123,21 +123,18 @@ const Track = struct {
     }
 
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
+        std.debug.assert(lba >= self.offset);
         var sector_start = (lba - self.offset) * self.format;
+        if (sector_start >= self.data.len) {
+            gdi_log.warn(termcolor.yellow("lba out of range (track offset: {d}, lba: {d})"), .{ self.offset, lba });
+            return 0;
+        }
 
         // Each sector only has raw data.
         if (self.track_type == 0 or self.format == 2048) {
-            var copied: u32 = 0;
-            for (0..count) |_| {
-                if (dest.len <= copied or self.data.len <= sector_start) return copied;
-
-                var chunk_size = @min(self.format, dest.len - copied);
-                chunk_size = @min(chunk_size, self.data.len - sector_start);
-                @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
-                copied += chunk_size;
-                sector_start += chunk_size;
-            }
-            return copied;
+            const to_copy: u32 = @min(@min(dest.len, count * 2048), self.data[sector_start..].len);
+            @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
+            return to_copy;
         } else if (self.format == 2352) {
             var copied: u32 = 0;
             for (0..count) |_| {
