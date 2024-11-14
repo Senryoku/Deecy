@@ -473,9 +473,9 @@ pub const JITContext = struct {
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
 
-    gpr_cache: RegisterCache(JIT.Register, if (builtin.os.tag == .windows) 5 else 3) = .{
+    gpr_cache: RegisterCache(JIT.Register, if (Architecture.JITABI == .Win64) 5 else 4) = .{
         .highest_saved_register_used = 0,
-        .entries = if (builtin.os.tag == .windows) .{
+        .entries = if (Architecture.JITABI == .Win64) .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
             .{ .host = SavedRegisters[3] },
@@ -484,13 +484,14 @@ pub const JITContext = struct {
         } else .{
             .{ .host = SavedRegisters[1] },
             .{ .host = SavedRegisters[2] },
-            .{ .host = SavedRegisters[3] }, // FIXME/TODO: Improve logic to use SavedRegisters[4] (NOTE: Be mindful  of stack alignment :))
+            .{ .host = SavedRegisters[3] },
+            .{ .host = SavedRegisters[4] },
         },
     },
 
     fpr_cache: RegisterCache(JIT.FPRegister, 8) = .{
         .highest_saved_register_used = null,
-        .entries = if (builtin.os.tag == .windows) .{
+        .entries = if (Architecture.JITABI == .Win64) .{
             .{ .host = FPSavedRegisters[0] },
             .{ .host = FPSavedRegisters[1] },
             .{ .host = FPSavedRegisters[2] },
@@ -719,7 +720,11 @@ pub const SH4JIT = struct {
         // We'll turn those into NOP if they're not used.
         try b.push(.{ .reg = SavedRegisters[2] });
         try b.push(.{ .reg = SavedRegisters[3] });
-        if (SavedRegisters.len >= 6) {
+        if (SavedRegisters.len == 5) {
+            // Preserve alignment
+            try b.push(.{ .reg = SavedRegisters[4] });
+            try b.push(.{ .reg = SavedRegisters[4] });
+        } else if (SavedRegisters.len >= 6) {
             try b.push(.{ .reg = SavedRegisters[4] });
             try b.push(.{ .reg = SavedRegisters[5] });
         }
@@ -779,19 +784,29 @@ pub const SH4JIT = struct {
         try ctx.gpr_cache.commit_and_invalidate_all(b);
         try ctx.fpr_cache.commit_and_invalidate_all(b);
 
-        // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
-        if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
-            b.instructions.items[optional_saved_fp_register_offset] = .{ .SaveFPRegisters = .{
-                .count = @intCast(highest_saved_register_used + 1),
-            } };
-            try b.append(.{ .RestoreFPRegisters = .{
-                .count = @intCast(highest_saved_register_used + 1),
-            } });
+        if (Architecture.JITABI == .Win64) {
+            // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
+            if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
+                b.instructions.items[optional_saved_fp_register_offset] = .{ .SaveFPRegisters = .{
+                    .count = @intCast(highest_saved_register_used + 1),
+                } };
+                try b.append(.{ .RestoreFPRegisters = .{
+                    .count = @intCast(highest_saved_register_used + 1),
+                } });
+            }
         }
 
         // Restore callee saved registers.
         const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (SavedRegisters.len >= 6) {
+        if (SavedRegisters.len == 5) {
+            if (highest_saved_gpr_used >= 3) {
+                try b.pop(.{ .reg = SavedRegisters[4] });
+                try b.pop(.{ .reg = SavedRegisters[4] });
+            } else {
+                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
+                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
+            }
+        } else if (SavedRegisters.len >= 6) {
             if (highest_saved_gpr_used >= 3) {
                 try b.pop(.{ .reg = SavedRegisters[5] });
                 try b.pop(.{ .reg = SavedRegisters[4] });
@@ -921,7 +936,7 @@ pub const SH4JIT = struct {
 };
 
 pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
-    if (builtin.os.tag != .windows) {
+    if (Architecture.JITABI == .SystemV) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .SaveFPRegisters = .{
                 .count = highest_saved_register_used + 1,
@@ -931,7 +946,7 @@ pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
 
     try block.call(func);
 
-    if (builtin.os.tag != .windows) {
+    if (Architecture.JITABI == .SystemV) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .RestoreFPRegisters = .{
                 .count = highest_saved_register_used + 1,
