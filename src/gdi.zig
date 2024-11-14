@@ -250,8 +250,15 @@ pub const GDI = struct {
                     .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
                     .creation = std.os.windows.FILE_OPEN,
                 });
+                errdefer std.os.windows.CloseHandle(file_handle);
+
                 const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
+                if (mapping_handle == null) return error.FileMapError;
+                errdefer std.os.windows.CloseHandle(mapping_handle);
+
                 const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
+                errdefer windows.UnmapViewOfFile(ptr);
+
                 var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                 _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
 
@@ -261,10 +268,10 @@ pub const GDI = struct {
                     .track_type = track_type,
                     .format = format,
                     .pregap = pregap,
-                    .data = @as([]align(std.mem.page_size) const u8, @alignCast(@ptrCast(ptr)))[0..info.RegionSize],
+                    .data = @as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(ptr)))[0..info.RegionSize],
                     .platform_specific = .{
                         .file_handle = file_handle,
-                        .mapping_handle = mapping_handle,
+                        .mapping_handle = mapping_handle.?,
                     },
                 });
             }
