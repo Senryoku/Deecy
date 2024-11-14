@@ -1662,7 +1662,7 @@ pub const Emitter = struct {
             }
 
             // movdqa XMMWORD PTR [rsp],xmm6      16bytes aligned version of movd, basically.
-            // movdqa XMMWORD PTR [rsp+8],xmm7
+            // movdqa XMMWORD PTR [rsp+0x10],xmm7
             // ...
             // Yes, I know. I'm too lazy to provide actual codegen for movsqa
             const instrs = [_][]const u8{

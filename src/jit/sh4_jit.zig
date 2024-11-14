@@ -761,6 +761,15 @@ pub const SH4JIT = struct {
             ctx.index += 1;
             ctx.address += 2;
 
+            if (Architecture.JITABI == .SystemV) {
+                // FIXME: This shouldn't be needed, but there's an issue with the FPR cache on Linux.
+                //        All host FP registers are temporary (caller saved) on SystemV.
+                //        However, FP registers are saved and restored in call().
+                //        What can mess with it except function calls?
+                //        Am I missing a function call somewhere?
+                try ctx.fpr_cache.commit_and_invalidate_all(b);
+            }
+
             if (branch or ctx.cycles >= MaxCyclesPerBlock)
                 break;
         }
