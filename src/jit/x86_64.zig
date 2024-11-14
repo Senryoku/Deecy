@@ -77,12 +77,13 @@ pub const FPScratchRegisters = switch (JITABI) {
         .xmm5,
     },
     .SystemV => [_]FPRegister{
-        .xmm8,
-        .xmm9,
-        .xmm10,
-        .xmm11,
-        .xmm12,
-        .xmm13,
+        // NOTE: These are scratch registers for the ABI, but we're using them as saved registers!
+        // .xmm8,
+        // .xmm9,
+        // .xmm10,
+        // .xmm11,
+        // .xmm12,
+        // .xmm13,
         .xmm14,
         .xmm15,
     },
@@ -101,7 +102,7 @@ pub const FPSavedRegisters = switch (JITABI) {
         .xmm14,
         .xmm15,
     },
-    .SystemV => [_]FPRegister{}, // FIXME: This is an issue :))
+    .SystemV => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm8-xmm13 (manually saving them)
 };
 
 // RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
