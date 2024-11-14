@@ -121,14 +121,13 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
     }
 
-    pub fn emit(self: *@This(), buffer: []u8) !BasicBlock {
+    pub fn emit(self: *@This(), buffer: []u8) !u32 {
         self._emitter.set_buffer(buffer);
 
         try self._emitter.emit_block_prologue();
         try self._emitter.emit_instructions(self.instructions.items);
         try self._emitter.emit_block_epilogue();
 
-        self._emitter.block.buffer = self._emitter.block.buffer[0..self._emitter.block_size]; // Update slice size.
-        return self._emitter.block;
+        return self._emitter.block_size;
     }
 };

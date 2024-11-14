@@ -174,7 +174,7 @@ pub const ARM7JIT = struct {
                 });
             }
             // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
-            block.?.execute(cpu);
+            block.?.execute(self.block_cache.buffer, cpu);
             cpu.check_fiq(); // FIXME: Non-tested.
 
             spent_cycles += @intCast(block.?.cycles);
@@ -248,11 +248,14 @@ pub const ARM7JIT = struct {
         for (b.instructions.items, 0..) |instr, idx|
             arm_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-        var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-        self.block_cache.cursor += block.buffer.len;
-        block.cycles = cycles;
+        const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        const block = BasicBlock{
+            .offset = @intCast(self.block_cache.cursor),
+            .cycles = cycles,
+        };
+        self.block_cache.cursor += block_size;
 
-        arm_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
+        arm_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.address, ctx.address, block);
         return block;

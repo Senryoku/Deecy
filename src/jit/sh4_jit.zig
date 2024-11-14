@@ -235,8 +235,11 @@ const VirtualAddressSpace = if (ExperimentalFastMem) struct {
 } else void;
 
 const BlockCache = struct {
-    // 0x02200000 possible addresses, but 16bit aligned, multiplied by permutations of (sz, pr)
-    const BlockEntryCount = (0x02200000 >> 1) << 2;
+    const RAMEntryCount = Dreamcast.RAMSize;
+    const BootEntryCount = Dreamcast.BootSize;
+    const RAMMask = RAMEntryCount - 1;
+    // 0x02000000 possible addresses (0x0100_0000 for RAM and... 0x0100_0000 for boot), but 16bit aligned, multiplied by permutations of (sz, pr)
+    const BlockEntryCount = (0x0200_0000 >> 1) << 2;
 
     buffer: []align(std.mem.page_size) u8,
     cursor: usize = 0,
@@ -331,7 +334,7 @@ const BlockCache = struct {
     }
 
     inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
-        return ((if (address > 0x0C000000) (address & 0x01FFFFFF) + 0x00200000 else address) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
+        return ((if (address > 0x0C000000) (address & RAMMask) else address + RAMEntryCount) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
     pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *?BasicBlock {
@@ -670,6 +673,7 @@ pub const SH4JIT = struct {
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
+            std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
             if (block.* == null) {
@@ -684,7 +688,7 @@ pub const SH4JIT = struct {
             }
             const block_cycles = block.*.?.cycles;
             const start = std.time.nanoTimestamp();
-            block.*.?.execute(cpu);
+            block.*.?.execute(self.block_cache.buffer, cpu);
             if (BasicBlock.EnableInstrumentation and block.* != null) { // Might have been invalidated.
                 block.*.?.time_spent += std.time.nanoTimestamp() - start;
                 block.*.?.call_count += 1;
@@ -812,20 +816,23 @@ pub const SH4JIT = struct {
 
         try self.idle_speedup(&ctx);
 
-        var block = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        var block = BasicBlock{
+            .offset = @intCast(self.block_cache.cursor),
+            .cycles = ctx.cycles,
+        };
         if (BasicBlock.EnableInstrumentation) {
             block.start_addr = ctx.start_address;
             block.len = ctx.index;
         }
-        self.block_cache.cursor += block.buffer.len;
+        self.block_cache.cursor += block_size;
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
         if (self.block_cache.cursor & 0xF != 0) {
             self.block_cache.cursor += 0x10;
             self.block_cache.cursor &= ~@as(usize, 0xF);
         }
-        block.cycles = ctx.cycles;
 
-        sh4_jit_log.debug("Compiled: {X:0>2}", .{block.buffer});
+        sh4_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
         return self.block_cache.get(start_ctx.address, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));

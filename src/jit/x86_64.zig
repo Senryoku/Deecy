@@ -583,7 +583,7 @@ const PatchableJumpList = struct {
 };
 
 pub const Emitter = struct {
-    block: BasicBlock = undefined,
+    block_buffer: []u8 = undefined,
     block_size: u32 = 0,
 
     jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList),
@@ -601,7 +601,7 @@ pub const Emitter = struct {
 
     // Call this before emitting
     pub fn set_buffer(self: *@This(), block_buffer: []u8) void {
-        self.block = BasicBlock.init(block_buffer);
+        self.block_buffer = block_buffer;
         self.block_size = 0;
         std.debug.assert(self.jumps_to_patch.count() == 0);
     }
@@ -622,7 +622,7 @@ pub const Emitter = struct {
                 for (jumps.items) |jump| {
                     if (!jump.invalid()) {
                         const rel: u32 = @intCast(self.block_size - jump.source);
-                        @memcpy(@as([*]u8, @ptrCast(&self.block.buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                        @memcpy(@as([*]u8, @ptrCast(&self.block_buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
                     }
                 }
                 _ = self.jumps_to_patch.remove(@intCast(idx));
@@ -698,7 +698,7 @@ pub const Emitter = struct {
     }
 
     pub fn emit_byte(self: *@This(), value: u8) !void {
-        self.block.buffer[self.block_size] = value;
+        self.block_buffer[self.block_size] = value;
         self.block_size += 1;
     }
 
