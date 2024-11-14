@@ -427,6 +427,11 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
                 try reg.commit(block);
                 reg.guest = null;
             }
+
+            // In this case all registers are temporary, we can forget we ever used them.
+            if (Architecture.JITABI == .SystemV and reg_type == JIT.FPRegister) {
+                self.highest_saved_register_used = null;
+            }
         }
 
         pub fn commit_all(self: *@This(), block: *JITBlock) !void {
@@ -439,16 +444,19 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 
         // Means this will be overwritten outside of the JIT
         pub fn invalidate(self: *@This(), guest_reg: u4) !void {
+            std.debug.assert(reg_type == JIT.Register);
             if (self.get_cached_register(32, guest_reg)) |reg| {
                 reg.guest = null;
             }
         }
         pub fn commit(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+            std.debug.assert(reg_type == JIT.Register);
             if (self.get_cached_register(32, guest_reg)) |reg| {
                 try reg.commit(block);
             }
         }
         pub fn commit_and_invalidate(self: *@This(), block: *JITBlock, guest_reg: u4) !void {
+            std.debug.assert(reg_type == JIT.Register);
             if (self.get_cached_register(32, guest_reg)) |reg|
                 try reg.commit_and_invalidate(block);
         }
