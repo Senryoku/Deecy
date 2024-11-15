@@ -20,9 +20,9 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     var vas: @This() = .{
         .base = try std.posix.mmap(null, 0x1_0000_0000, std.posix.PROT.NONE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .NORESERVE = true }, -1, 0),
         .mirrors = std.ArrayList([]align(std.mem.page_size) u8).init(allocator),
-        .boot = try allocate_backing_memory(Dreamcast.BootSize),
-        .ram = try allocate_backing_memory(Dreamcast.RAMSize),
-        .vram = try allocate_backing_memory(Dreamcast.VRAMSize),
+        .boot = try allocate_backing_memory("boot", Dreamcast.BootSize),
+        .ram = try allocate_backing_memory("ram", Dreamcast.RAMSize),
+        .vram = try allocate_backing_memory("vram", Dreamcast.VRAMSize),
     };
 
     // U0/P0, P1, P2, P3
@@ -54,9 +54,9 @@ pub fn deinit(self: *@This()) void {
         std.posix.munmap(item);
     }
     self.mirrors.deinit();
-    std.posix.unlinkat(self.vram, "", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink vram: {}\n"), .{err});
-    std.posix.unlinkat(self.ram, "", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink ram: {}\n"), .{err});
-    std.posix.unlinkat(self.boot, "", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink boot: {}\n"), .{err});
+    std.posix.unlinkat(self.vram, "vram", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink vram: {}\n"), .{err});
+    std.posix.unlinkat(self.ram, "ram", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink ram: {}\n"), .{err});
+    std.posix.unlinkat(self.boot, "boot", 0) catch |err| std.debug.print(termcolor.yellow("Failed to unlink boot: {}\n"), .{err});
     std.posix.munmap(self.base);
 }
 
@@ -64,8 +64,8 @@ pub fn base_addr(self: *@This()) *u8 {
     return @ptrCast(self.base.ptr);
 }
 
-fn allocate_backing_memory(size: u64) !std.posix.fd_t {
-    const fd = try std.posix.memfd_create("my_shared_memory", 0);
+fn allocate_backing_memory(name: []const u8, size: u64) !std.posix.fd_t {
+    const fd = try std.posix.memfd_create(name, 0);
     try std.posix.ftruncate(fd, size);
     return fd;
 }
@@ -76,7 +76,7 @@ fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
         @alignCast(@ptrCast(self.base[offset .. offset + size])),
         size,
         std.posix.PROT.READ | std.posix.PROT.WRITE,
-        .{ .TYPE = .PRIVATE, .FIXED = true },
+        .{ .TYPE = .SHARED, .FIXED = true },
         fd,
         0,
     );
@@ -115,56 +115,27 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
 
                 var access_type: enum(u1) { read = 0, write = 1 } = .read;
 
-                if (false) {
-                    switch (access_type) {
-                        .read => {
-                            switch (mov_instruction[0]) {
-                                0x8A, 0x8B => {},
-                                0x0F => {
-                                    end_patch += 1;
-                                    modrm = @bitCast(mov_instruction[2]);
-                                },
-                                else => {
-                                    std.debug.print("Unhandled read: {X}\n", .{mov_instruction[0]});
-                                    return signal_not_handled();
-                                },
-                            }
-                        },
-                        .write => {
-                            switch (mov_instruction[0]) {
-                                0x88, 0x89 => {},
-                                0x0F => {
-                                    end_patch += 1;
-                                    modrm = @bitCast(mov_instruction[2]);
-                                },
-                                else => {
-                                    std.debug.print("Unhandled write: {X:0>2} {X:0>2}\n", .{ mov_instruction[0], mov_instruction[1] });
-                                    return signal_not_handled();
-                                },
-                            }
-                        },
-                    }
-                } else {
-                    switch (mov_instruction[0]) {
-                        0x8A, 0x8B => access_type = .read,
-                        0x88, 0x89 => access_type = .write,
-                        0x0F => {
-                            switch (mov_instruction[1]) {
-                                0x8A, 0x8B => access_type = .read,
-                                0x88, 0x89 => access_type = .write,
-                                else => {
-                                    std.debug.print("Unhandled instruction: {X}\n", .{mov_instruction[0]});
-                                    return signal_not_handled();
-                                },
-                            }
-                            end_patch += 1;
-                            modrm = @bitCast(mov_instruction[2]);
-                        },
-                        else => {
-                            std.debug.print("Unhandled instruction: {X}\n", .{mov_instruction[0]});
-                            return signal_not_handled();
-                        },
-                    }
+                switch (mov_instruction[0]) {
+                    0x8A, 0x8B => access_type = .read,
+                    0x88, 0x89 => access_type = .write,
+                    0x0F => {
+                        switch (mov_instruction[1]) {
+                            //  mov       movzx
+                            0x8A, 0x8B, 0xB6, 0xB7 => access_type = .read,
+                            //  mov       movq
+                            0x88, 0x89, 0x7E => access_type = .write,
+                            else => {
+                                std.debug.print("Unhandled instruction: {X}\n", .{mov_instruction[1]});
+                                return signal_not_handled();
+                            },
+                        }
+                        end_patch += 1;
+                        modrm = @bitCast(mov_instruction[2]);
+                    },
+                    else => {
+                        std.debug.print("Unhandled instruction: {X}\n", .{mov_instruction[0]});
+                        return signal_not_handled();
+                    },
                 }
 
                 switch (modrm.mod) {
@@ -204,8 +175,8 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
                     "RDX",
                     "RCX",
                     "RAX",
-                }) |reg, name| {
-                    std.debug.print("  {s}: {X:0>8}\n", .{ name, context.mcontext.gregs[reg] });
+                }, 0..) |reg, name, rn| {
+                    std.debug.print("  {s}={X:0>16}  R{d: <2}={X:0>16}\n", .{ name, context.mcontext.gregs[reg], 8 + rn, context.mcontext.gregs[rn] });
                 }
 
                 // const aligned_addr: []align(std.mem.page_size) u8 = @as([*]align(std.mem.page_size) u8, @ptrFromInt(start_patch & ~(@as(u64, std.mem.page_size) - 1)))[0..std.mem.page_size];
@@ -218,8 +189,8 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
 
                 // std.posix.mprotect(aligned_addr, std.posix.PROT.READ | std.posix.PROT.EXEC) catch |err| std.debug.print(termcolor.yellow("Failed to mprotect: {}\n"), .{err});
 
-                std.debug.print("start_patch - 0x100: {X:0>8}, start_patch: {X:0>8}, end_patch: {X:0>8}\n", .{ start_patch - 0x100, start_patch, end_patch });
-                std.debug.print("  Around: {X:0>2}\n", .{@as([*]u8, @ptrFromInt(start_patch - 0x100))[0..(end_patch + 0x200 - start_patch)]});
+                std.debug.print("start_patch: {X:0>8}, end_patch: {X:0>8}\n", .{ start_patch, end_patch });
+                //std.debug.print("  Around: {X:0>2}\n", .{@as([*]u8, @ptrFromInt(start_patch - 0x100))[0..(end_patch + 0x200 - start_patch)]});
 
                 // Skip patched instructions. Not strictly necessary.
                 // context.mcontext.gregs[std.posix.REG.RIP] = end_patch;
