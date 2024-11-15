@@ -1,7 +1,7 @@
 const std = @import("std");
-const windows = std.os.windows;
+const windows = @import("../windows.zig");
 const termcolor = @import("termcolor");
-const Dreamcast = @import("../dreamcast.zig");
+const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
 const VAS = @import("sh4_virtual_address_space.zig");
 
@@ -117,7 +117,7 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
 
             VAS.patch_access(fault_address, @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE), 0x1_0000_0000, &info.ContextRecord.Rip) catch |err| {
                 std.log.scoped(.sh4_jit).err("Failed to patch FastMem access: {s}", .{@errorName(err)});
-                return windows.EXCEPTION_CONTINUE_SEARCH;
+                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
             };
 
             return windows.EXCEPTION_CONTINUE_EXECUTION;
