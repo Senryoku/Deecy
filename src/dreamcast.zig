@@ -148,9 +148,9 @@ pub const Dreamcast = struct {
         };
 
         if (SH4JITModule.ExperimentalFastMem) {
-            dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base)))[0..BootSize];
-            dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base) + 0x0C00_0000))[0..RAMSize];
-            dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base) + 0x0400_0000))[0..Holly.VRAMSize];
+            dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
+            dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
+            dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
         } else {
             dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);

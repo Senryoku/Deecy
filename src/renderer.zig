@@ -2787,7 +2787,7 @@ pub const Renderer = struct {
                                 pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
                             }
                         } else {
-                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Mofifier Volume!"), .{});
+                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
                             // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
                             //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
                         }

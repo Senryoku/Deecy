@@ -8,7 +8,20 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [],
 			"cwd": "${workspaceFolder}",
-			"preLaunchTask": "build"
+			"preLaunchTask": "build",
+			"setupCommands": [
+				{
+					"text": "process handle SIGSEGV --notify false --pass true --stop false"
+				}
+			]
+		},
+		{
+			"name": "Debug (GDB)",
+			"type": "gdb",
+			"request": "launch",
+			"target": "${workspaceFolder}/zig-out/bin/Deecy",
+			"cwd": "${workspaceFolder}",
+			"preLaunchTask": "build",
 		},
 		{
 			"name": "Debug",

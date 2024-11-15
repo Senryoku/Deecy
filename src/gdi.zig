@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const common = @import("common.zig");
 const termcolor = @import("termcolor");
 
@@ -93,18 +94,25 @@ const Track = struct {
     track_type: u8,
     format: u32, // Sector size
     pregap: u32,
-    data: []u8,
-    _mapping_handle: ?*anyopaque = null,
-    _file_handle: ?*anyopaque = null,
+    data: []align(std.mem.page_size) const u8,
+
+    platform_specific: if (builtin.os.tag == .windows) struct {
+        mapping_handle: *anyopaque,
+        file_handle: *anyopaque,
+    } else struct {
+        file: std.fs.File,
+    },
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        if (@import("builtin").os.tag != .windows) {
-            allocator.free(self.data);
+        _ = allocator;
+        if (builtin.os.tag != .windows) {
+            std.posix.munmap(self.data);
+            self.platform_specific.file.close();
         } else {
             // TODO:
             _ = windows.UnmapViewOfFile(self.data.ptr);
-            std.os.windows.CloseHandle(self._mapping_handle.?);
-            std.os.windows.CloseHandle(self._file_handle.?);
+            std.os.windows.CloseHandle(self.platform_specific.mapping_handle);
+            std.os.windows.CloseHandle(self.platform_specific.file_handle);
         }
     }
 
@@ -212,16 +220,15 @@ pub const GDI = struct {
             std.debug.assert(pregap == 0); // FIXME: Not handled.
 
             // TODO: Use MMAP on non-windows platforms
-            if (@import("builtin").os.tag != .windows) {
+            if (builtin.os.tag != .windows) {
                 const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
                 defer self._allocator.free(track_file_path);
                 const track_file = std.fs.cwd().openFile(track_file_path, .{}) catch {
                     std.debug.print("Track File not found: {s}\n", .{track_file_path});
                     return error.TrackFileNotFound;
                 };
-                defer track_file.close();
 
-                const track_data = try track_file.readToEndAlloc(self._allocator, 4 * 1024 * 1024 * 1024);
+                const track_data = try std.posix.mmap(null, (try track_file.stat()).size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, track_file.handle, 0);
 
                 self.tracks.items[num - 1] = (.{
                     .num = num,
@@ -230,6 +237,7 @@ pub const GDI = struct {
                     .format = format,
                     .pregap = pregap,
                     .data = track_data,
+                    .platform_specific = .{ .file = track_file },
                 });
             } else {
                 const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
@@ -242,8 +250,16 @@ pub const GDI = struct {
                     .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
                     .creation = std.os.windows.FILE_OPEN,
                 });
+                errdefer std.os.windows.CloseHandle(file_handle);
+
                 const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
+                if (mapping_handle == null) return error.FileMapError;
+                errdefer std.os.windows.CloseHandle(mapping_handle.?);
+
                 const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
+                if (ptr == null) return error.MapViewOfFileError;
+                errdefer _ = windows.UnmapViewOfFile(ptr.?);
+
                 var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                 _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
 
@@ -253,9 +269,11 @@ pub const GDI = struct {
                     .track_type = track_type,
                     .format = format,
                     .pregap = pregap,
-                    .data = @as([*]u8, @ptrCast(ptr))[0..info.RegionSize],
-                    ._file_handle = file_handle,
-                    ._mapping_handle = mapping_handle,
+                    .data = @as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(ptr)))[0..info.RegionSize],
+                    .platform_specific = .{
+                        .file_handle = file_handle,
+                        .mapping_handle = mapping_handle.?,
+                    },
                 });
             }
         }
