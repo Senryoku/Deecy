@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
+const VAS = @import("sh4_virtual_address_space.zig");
 
 var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?[]align(std.mem.page_size) u8 = null;
 
@@ -81,64 +82,25 @@ fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
 }
 
 fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.C) void {
-    const context: *std.posix.ucontext_t = @alignCast(@ptrCast(context_ptr.?));
     switch (sig) {
         std.posix.SIG.SEGV => {
             const fault_address = switch (builtin.os.tag) {
                 .linux => @intFromPtr(info.fields.sigfault.addr),
                 else => @compileError("Unsupported OS"),
             };
-            const space_base = @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE.?.ptr);
 
-            if (fault_address >= space_base and fault_address < space_base + GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE.?.len) {
-                const addr: u32 = @truncate(fault_address - space_base);
-                std.log.scoped(.sh4_jit).debug("  Patching Acces: @ {X} - {X:0>8}  \n", .{ fault_address, addr });
-
-                const start_patch = context.mcontext.gregs[std.posix.REG.RIP];
-                var end_patch = start_patch;
-
-                // Skip 16bit prefix
-                if (@as(*u8, @ptrFromInt(end_patch)).* == 0x66)
-                    end_patch += 1;
-
-                // Skip REX
-                if (0xF0 & @as(*u8, @ptrFromInt(end_patch)).* == 0x40)
-                    end_patch += 1;
-
-                // Skip OF prefix
-                if (@as(*u8, @ptrFromInt(end_patch)).* == 0x0F)
-                    end_patch += 1;
-
-                const modrm: Architecture.MODRM = @bitCast(@as(*u8, @ptrFromInt(end_patch + 1)).*);
-
-                switch (modrm.mod) {
-                    .indirect => end_patch += 2,
-                    .disp8 => end_patch += 3,
-                    .disp32 => end_patch += 6,
-                    else => return signal_not_handled(),
-                }
-                // Special case: Skip SIB byte
-                if (modrm.r_m == 4) end_patch += 1;
-
-                switch (@as(*u8, @ptrFromInt(end_patch)).*) {
-                    0xEB => end_patch += 2, // JMP rel8
-                    0xE9 => end_patch += 5, // JMP rel32 in 64bit mode
-                    else => {
-                        std.debug.print("Unhandled jump: {X:0>2}\n", .{@as(*u8, @ptrFromInt(end_patch)).*});
-                        return signal_not_handled();
-                    },
-                }
-
-                // Patch out the mov and jump, we'll always execute the fallback from now on.
-                Architecture.convert_to_nops(@as([*]u8, @ptrFromInt(start_patch))[0..(end_patch - start_patch)]);
-
-                // Skip patched instructions. Not strictly necessary.
-                context.mcontext.gregs[std.posix.REG.RIP] = end_patch;
-
+            if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |base| {
+                const context: *std.posix.ucontext_t = @alignCast(@ptrCast(context_ptr.?));
+                VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.gregs[std.posix.REG.RIP]) catch |err| {
+                    std.log.scoped(.sh4_jit).err("Failed to patch FastMem access: {s}", .{@errorName(err)});
+                    signal_not_handled();
+                };
                 return;
+            } else {
+                std.log.scoped(.sh4_jit).err("Virtual Address Space not initialized.", .{});
             }
         },
-        else => std.debug.print("  Unhandled Signal: {X}\n", .{sig}),
+        else => std.log.scoped(.sh4_jit).debug("Unhandled Signal: {X}\n", .{sig}),
     }
 
     signal_not_handled();

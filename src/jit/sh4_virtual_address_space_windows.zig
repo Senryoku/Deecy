@@ -3,6 +3,7 @@ const windows = std.os.windows;
 const termcolor = @import("termcolor");
 const Dreamcast = @import("../dreamcast.zig");
 const Architecture = @import("x86_64.zig");
+const VAS = @import("sh4_virtual_address_space.zig");
 
 var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?std.os.windows.LPVOID = null;
 
@@ -112,87 +113,16 @@ fn forbid(self: *@This(), from: u32, to: u64) !void {
 fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(std.os.windows.WINAPI) c_long {
     switch (info.ExceptionRecord.ExceptionCode) {
         std.os.windows.EXCEPTION_ACCESS_VIOLATION => {
-            const access_type: enum(u1) { read = 0, write = 1 } = @enumFromInt(info.ExceptionRecord.ExceptionInformation[0]);
             const fault_address = info.ExceptionRecord.ExceptionInformation[1];
 
-            if (fault_address >= @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) and fault_address < @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) + 0x1_0000_0000) {
-                // const addr: u32 = @truncate(fault_address - @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE));
-                // std.debug.print("  Access Violation: {s: <5} @ {X} - {X:0>8}  \n", .{ @tagName(access_type), fault_address, addr });
+            VAS.patch_access(fault_address, @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE), 0x1_0000_0000, &info.ContextRecord.Rip) catch |err| {
+                std.log.scoped(.sh4_jit).err("Failed to patch FastMem access: {s}", .{@errorName(err)});
+                return windows.EXCEPTION_CONTINUE_SEARCH;
+            };
 
-                const start_rip = info.ContextRecord.Rip;
-
-                // Skip 16bit prefix
-                if (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x66)
-                    info.ContextRecord.Rip += 1;
-
-                var rex: Architecture.REX = .{};
-                if (0xF0 & @as(*u8, @ptrFromInt(info.ContextRecord.Rip)).* == 0x40) {
-                    rex = @bitCast(@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*);
-                    info.ContextRecord.Rip += 1;
-                }
-
-                const mov_instruction: [*]u8 = @ptrFromInt(info.ContextRecord.Rip);
-                var modrm: Architecture.MODRM = @bitCast(mov_instruction[1]);
-
-                switch (access_type) {
-                    .read => {
-                        switch (mov_instruction[0]) {
-                            0x8A, 0x8B => {},
-                            0x0F => {
-                                info.ContextRecord.Rip += 1;
-                                modrm = @bitCast(mov_instruction[2]);
-                            },
-                            else => {
-                                std.debug.print("Unhandled read: {X}\n", .{mov_instruction[0]});
-                                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
-                            },
-                        }
-                    },
-                    .write => {
-                        switch (mov_instruction[0]) {
-                            0x88, 0x89 => {},
-                            0x0F => {
-                                info.ContextRecord.Rip += 1;
-                                modrm = @bitCast(mov_instruction[2]);
-                            },
-                            else => {
-                                std.debug.print("Unhandled write: {X:0>2} {X:0>2}\n", .{ mov_instruction[0], mov_instruction[1] });
-                                return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
-                            },
-                        }
-                    },
-                }
-
-                switch (modrm.mod) {
-                    .indirect => info.ContextRecord.Rip += 2,
-                    .disp8 => info.ContextRecord.Rip += 3,
-                    .disp32 => info.ContextRecord.Rip += 6,
-                    else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
-                }
-                // Special case: Skip SIB byte
-                if (modrm.r_m == 4) info.ContextRecord.Rip += 1;
-
-                switch (@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*) {
-                    0xEB => info.ContextRecord.Rip += 2, // JMP rel8
-                    0xE9 => info.ContextRecord.Rip += 5, // JMP rel32 in 64bit mode
-                    else => {
-                        std.debug.print("Unhandled jump: {X:0>2}\n", .{@as(*u8, @ptrFromInt(info.ContextRecord.Rip)).*});
-                        return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
-                    },
-                }
-
-                // Patch out the mov and jump, we'll always execute the fallback from now on.
-                Architecture.convert_to_nops(@as([*]u8, @ptrFromInt(start_rip))[0..(info.ContextRecord.Rip - start_rip)]);
-
-                return windows.EXCEPTION_CONTINUE_EXECUTION;
-            }
+            return windows.EXCEPTION_CONTINUE_EXECUTION;
         },
-        else => {
-            // std.debug.print("  Unhandled Exception: {X}\n", .{info.ExceptionRecord.ExceptionCode});
-            // std.debug.print("    Info: {X}\n", .{info.ExceptionRecord.ExceptionInformation[0]});
-            // std.debug.print("          {X}\n", .{info.ExceptionRecord.ExceptionInformation[1]});
-            return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
-        },
+        else => return std.os.windows.EXCEPTION_CONTINUE_SEARCH,
     }
     return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
 }
