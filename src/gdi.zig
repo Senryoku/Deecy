@@ -254,10 +254,11 @@ pub const GDI = struct {
 
                 const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
                 if (mapping_handle == null) return error.FileMapError;
-                errdefer std.os.windows.CloseHandle(mapping_handle);
+                errdefer std.os.windows.CloseHandle(mapping_handle.?);
 
                 const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
-                errdefer windows.UnmapViewOfFile(ptr);
+                if (ptr == null) return error.MapViewOfFileError;
+                errdefer _ = windows.UnmapViewOfFile(ptr.?);
 
                 var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                 _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
