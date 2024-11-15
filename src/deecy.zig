@@ -751,8 +751,6 @@ pub fn toggle_fullscreen(self: *@This()) void {
 
 pub fn start(self: *@This()) void {
     if (!self.running) {
-        self.wait_async_jobs();
-
         if (self.dc.region == .Unknown) {
             self.dc.set_region(.USA) catch {
                 @panic("Failed to set default region");
