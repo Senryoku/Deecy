@@ -18,7 +18,7 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
         if (0xF0 & @as(*u8, @ptrFromInt(end_patch)).* == 0x40)
             end_patch += 1;
 
-        // Skip OF prefix
+        // Skip 0F prefix
         if (@as(*u8, @ptrFromInt(end_patch)).* == 0x0F)
             end_patch += 1;
 

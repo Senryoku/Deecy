@@ -110,6 +110,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         let dst = color;
         let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
         color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
+        color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
     }
 
     textureStore(output_texture, frag_coords, color);
