@@ -130,6 +130,27 @@ fn write_back_fb(d: *Deecy) void {
     } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
 }
 
+const Hack = struct { addr: u32, instr: []const u16 };
+
+const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
+    .{
+        .name = "Loop Checker version 1.00",
+        .hacks = &[_]Hack{
+            .{ .addr = 0x0C0196DA, .instr = &[_]u16{0x9} },
+            .{ .addr = 0x0C0196EC, .instr = &[_]u16{0x9} },
+        },
+    },
+    .{
+        .name = "DC CHECKER for Repair v2.050",
+        .hacks = &[_]Hack{
+            .{ .addr = 0x0C018F54, .instr = &[_]u16{0x9} },
+            .{ .addr = 0x0C018F42, .instr = &[_]u16{0x9} },
+        },
+    },
+};
+
+var EnabledHacks: ?[]const Hack = null;
+
 pub fn main() !void {
     defer {
         // Cleanup temprary directory, if it exists
@@ -251,18 +272,13 @@ pub fn main() !void {
             _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
         }
 
-        // FIXME: Hacks.
-        // NOPs for DC Checker, skips serial check
-        if (std.mem.count(u8, path, "Loop Checker version 1.00") > 0) {
-            dc.cpu.write16(0x0C0196DA, 0x9);
-            dc.cpu.write16(0x0C0196EC, 0x9);
+        for (AvailableHacks) |hack| {
+            if (std.mem.count(u8, path, hack.name) > 0) {
+                EnabledHacks = hack.hacks;
+                break;
+            }
         }
 
-        // DC CHECKER for Repair v2.050
-        if (std.mem.count(u8, path, "DC CHECKER for Repair v2.050") > 0) {
-            dc.cpu.write16(0x0C018F54, 0x9);
-            dc.cpu.write16(0x0C018F42, 0x9);
-        }
         start_immediately = true;
     } else {
         if (skip_bios) {
@@ -284,6 +300,16 @@ pub fn main() !void {
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
         d.poll_controllers();
+
+        if (EnabledHacks) |hacks| {
+            for (hacks) |hack| {
+                var addr = hack.addr;
+                for (hack.instr) |instr| {
+                    dc.cpu.write16(addr, instr);
+                    addr += 2;
+                }
+            }
+        }
 
         d.one_frame();
 

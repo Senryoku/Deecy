@@ -48,7 +48,7 @@ pub const SR = packed struct(u32) {
 };
 
 pub const FPSCR = packed struct(u32) {
-    rm: enum(u2) { RoundToNearest = 0, RoundToZero = 1, _reserved } = .RoundToZero, // Rounding mode
+    rm: enum(u2) { RoundToNearest = 0, RoundToZero = 1, _ } = .RoundToZero, // Rounding mode
     inexact: bool = false,
     underflow: bool = false,
     overflow: bool = false,
