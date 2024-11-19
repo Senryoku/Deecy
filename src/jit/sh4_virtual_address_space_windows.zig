@@ -19,39 +19,25 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
         .no_access = std.ArrayList(*anyopaque).init(allocator),
         .mirrors = std.ArrayList(std.os.windows.LPVOID).init(allocator),
     };
+    errdefer vas.deinit();
 
     vas.boot = try allocate_backing_memory(Dreamcast.BootSize);
     vas.ram = try allocate_backing_memory(Dreamcast.RAMSize);
     vas.vram = try allocate_backing_memory(Dreamcast.VRAMSize);
 
-    // Ask nicely for an available virtual address space.
-    vas.base = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
-    // Free it immediately. We'll try to reacquire it. I think I read somewhere there's a way to avoid this race condition with a newer API, but I don't remember right now.
-    std.os.windows.VirtualFree(vas.base, 0, std.os.windows.MEM_RELEASE);
-
-    // U0/P0, P1, P2, P3
-    for ([_]u32{ 0x0000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
-        try vas.mirror(vas.boot, base + 0x0000_0000);
-
-        try vas.forbid(base + Dreamcast.BootSize, base + 0x0400_0000);
-
-        try vas.mirror(vas.vram, base + 0x0400_0000);
-        try vas.forbid(base + 0x0500_0000, base + 0x0600_0000);
-        try vas.mirror(vas.vram, base + 0x0600_0000);
-
-        try vas.forbid(base + 0x0700_0000, base + 0x0C00_0000);
-
-        for (0..4) |i| {
-            try vas.mirror(vas.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
-        }
-
-        try vas.forbid(base + 0x0C00_0000 + 4 * Dreamcast.RAMSize, base + 0x2000_0000);
-
-        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
+    // Try repeatedly to map the virtual address space.
+    // It can technically fail if another thread uses the VirtualAlloc/MapViewOfFile API.
+    // We can do better using placeholders: https://devblogs.microsoft.com/oldnewthing/20240201-00/?p=109346
+    var attempts: u32 = 0;
+    var mapped = false;
+    while (!mapped and attempts < 10) : (attempts += 1) {
+        mapped = true;
+        vas.try_mapping() catch |err| {
+            std.log.scoped(.sh4_jit).err("Failed to map virtual address space: {s}", .{@errorName(err)});
+            mapped = false;
+        };
     }
-
-    // P4
-    try vas.forbid(0xE0000000, 0x1_0000_0000);
+    if (!mapped) return error.FailedToMapVirtualAddressSpace;
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
     _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
@@ -59,15 +45,54 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     return vas;
 }
 
-pub fn deinit(self: *@This()) void {
+fn try_mapping(self: *@This()) !void {
+    // Ask nicely for an available virtual address space.
+    self.base = try std.os.windows.VirtualAlloc(null, 0x1_0000_0000, std.os.windows.MEM_RESERVE, std.os.windows.PAGE_NOACCESS);
+    // Free it immediately. We'll try to reacquire it.
+    std.os.windows.VirtualFree(self.base, 0, std.os.windows.MEM_RELEASE);
+
+    errdefer self.release_views();
+
+    // U0/P0, P1, P2, P3
+    for ([_]u32{ 0x0000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
+        try self.mirror(self.boot, base + 0x0000_0000);
+
+        try self.forbid(base + Dreamcast.BootSize, base + 0x0400_0000);
+
+        try self.mirror(self.vram, base + 0x0400_0000);
+        try self.forbid(base + 0x0500_0000, base + 0x0600_0000);
+        try self.mirror(self.vram, base + 0x0600_0000);
+
+        try self.forbid(base + 0x0700_0000, base + 0x0C00_0000);
+
+        for (0..4) |i| {
+            try self.mirror(self.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
+        }
+
+        try self.forbid(base + 0x0C00_0000 + 4 * Dreamcast.RAMSize, base + 0x2000_0000);
+
+        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
+    }
+
+    // P4
+    try self.forbid(0xE0000000, 0x1_0000_0000);
+}
+
+fn release_views(self: *@This()) void {
     for (self.mirrors.items) |item| {
         if (windows.UnmapViewOfFile(item) == 0)
             std.log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
     }
-    self.mirrors.deinit();
+    self.mirrors.clearRetainingCapacity();
     for (self.no_access.items) |item| {
         std.os.windows.VirtualFree(item, 0, std.os.windows.MEM_RELEASE);
     }
+    self.no_access.clearRetainingCapacity();
+}
+
+pub fn deinit(self: *@This()) void {
+    self.release_views();
+    self.mirrors.deinit();
     self.no_access.deinit();
     std.os.windows.CloseHandle(self.vram);
     std.os.windows.CloseHandle(self.ram);

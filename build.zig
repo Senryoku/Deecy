@@ -45,6 +45,7 @@ pub fn build(b: *std.Build) void {
 
     switch (target.result.os.tag) {
         .windows => {
+            // DwmSetWindowAttribute
             exe.linkSystemLibrary("dwmapi");
             exe_check.linkSystemLibrary("dwmapi");
         },
