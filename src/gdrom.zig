@@ -139,7 +139,7 @@ const InterruptReasonRegister = packed struct(u8) {
 
 const ScheduledEvent = struct {
     cycles: u32,
-    state: ?GDROMStatus = GDROMStatus.Standby,
+    state: ?GDROMStatus = null,
     status: StatusRegister,
     interrupt_reason: ?InterruptReasonRegister,
 
@@ -680,7 +680,12 @@ pub const GDROM = struct {
     fn req_stat(self: *@This()) !void {
         const start_addr = self.packet_command[2];
         const alloc_length = self.packet_command[4];
+
         gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}"), .{ start_addr, alloc_length });
+        if (start_addr != 0)
+            gdrom_log.warn(termcolor.yellow("                      ReqStat - Start Addr isn't 0! ({X:0>2})"), .{start_addr});
+        if (alloc_length != 0x0A)
+            gdrom_log.warn(termcolor.yellow("                      ReqStat - Alloc Length isn't 0x0A! ({X:0>2})"), .{alloc_length});
 
         // 0 |  0 0 0 0 STATUS
         // 1 |  Disc Format - Repeat Count
@@ -706,7 +711,7 @@ pub const GDROM = struct {
             };
 
             try self.pio_data_queue.writeItem(if (self.disk == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state)); // 0000 | Status
-            try self.pio_data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | 0xE); // Disc Format | Repeat Count
+            try self.pio_data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | self.audio_state.repetitions); // Disc Format | Repeat Count
             try self.pio_data_queue.writeItem(0x04); // Address | Control
             try self.pio_data_queue.writeItem(0x02); // TNO
             try self.pio_data_queue.writeItem(0x00); // X
