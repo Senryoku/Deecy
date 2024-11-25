@@ -1444,13 +1444,14 @@ pub const Holly = struct {
 
     // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
-        self._tmp_cycles += 10 * cycles;
+        self._tmp_cycles += 1000 * cycles;
 
         // FIXME: Move all of this to its own SPG Module ?
         const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
         const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
         const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
-        const cycles_per_pixel = 74; // FIXME: Approximation. ~200/27.
+        const fb_r_ctrl = self._get_register(FB_R_CTRL, .FB_R_CTRL).*;
+        const cycles_per_pixel = (if (fb_r_ctrl.vclk_div == 0) @as(u32, 2) else 1) * 7407; // FIXME: Approximation. ~200/27.
 
         if (self._tmp_cycles >= cycles_per_pixel) {
             const start_pixel = self._pixel;
