@@ -1753,7 +1753,7 @@ pub const Holly = struct {
                     if (volume.triangle_count > 0) {
                         const config = self.get_region_array_data_config();
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
-                            // Both lists are actually the same, we'll add it twice for convience.
+                            // Both lists are actually the same, we'll add it twice for convenience.
                             self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch unreachable;
                             self.ta_current_lists().translucent_modifier_volumes.append(volume.*) catch unreachable;
                         } else {

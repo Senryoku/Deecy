@@ -755,10 +755,10 @@ pub const Dreamcast = struct {
 };
 
 test "boot" {
-    var dc = try Dreamcast.create(common.GeneralAllocator);
+    var dc = try Dreamcast.create(std.testing.allocator);
     defer {
         dc.deinit();
-        common.GeneralAllocator.destroy(dc);
+        std.testing.allocator.destroy(dc);
     }
 
     _ = try dc.tick(1); // mov 0x0F,R3
@@ -927,10 +927,10 @@ test "boot" {
 }
 
 test "IP.bin" {
-    var dc = try Dreamcast.create(common.GeneralAllocator);
+    var dc = try Dreamcast.create(std.testing.allocator);
     defer {
         dc.deinit();
-        common.GeneralAllocator.destroy(dc);
+        std.testing.allocator.destroy(dc);
     }
 
     // Example IP.bin file
@@ -946,10 +946,10 @@ test "IP.bin" {
 }
 
 test "IP.bin init boot" {
-    var dc = try Dreamcast.create(common.GeneralAllocator);
+    var dc = try Dreamcast.create(std.testing.allocator);
     defer {
         dc.deinit();
-        common.GeneralAllocator.destroy(dc);
+        std.testing.allocator.destroy(dc);
     }
 
     dc.skip_bios();
@@ -968,10 +968,10 @@ test "IP.bin init boot" {
 
 // Loads a binary at 0x8C080000, set R14 to 1, and executes it until R14 == 0 (success condition)
 fn load_and_test_binary(comptime filename: []const u8) !void {
-    var dc = try Dreamcast.create(common.GeneralAllocator);
+    var dc = try Dreamcast.create(std.testing.allocator);
     defer {
         dc.deinit();
-        common.GeneralAllocator.destroy(dc);
+        std.testing.allocator.destroy(dc);
     }
 
     const bin_file = try std.fs.cwd().openFile("./test/bin/" ++ filename, .{});

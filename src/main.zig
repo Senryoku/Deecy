@@ -152,12 +152,14 @@ const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
 var EnabledHacks: ?[]const Hack = null;
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var allocator = gpa.allocator();
     defer {
         // Cleanup temprary directory, if it exists
         std.fs.cwd().deleteTree(Deecy.TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ Deecy.TmpDirPath ++ "'): {s}", .{@errorName(err)});
     }
 
-    var d = try Deecy.create(common.GeneralAllocator);
+    var d = try Deecy.create(allocator);
     defer d.destroy();
     var dc = d.dc;
 
@@ -167,7 +169,7 @@ pub fn main() !void {
     var gdi_path: ?[]const u8 = null;
 
     var default_vmu = true;
-    var vmu_path = std.ArrayList(u8).init(common.GeneralAllocator);
+    var vmu_path = std.ArrayList(u8).init(allocator);
     defer vmu_path.deinit();
     try vmu_path.appendSlice("./userdata/vmu_default.bin");
 
@@ -176,7 +178,7 @@ pub fn main() !void {
     var force_stop = false;
     var force_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
 
-    var args = try std.process.argsWithAllocator(common.GeneralAllocator);
+    var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-b")) {
@@ -220,7 +222,7 @@ pub fn main() !void {
         }
     }
 
-    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(common.GeneralAllocator, vmu_path.items) };
+    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(allocator, vmu_path.items) };
 
     if (binary_path) |path| {
         try dc.set_region(.USA);
@@ -265,8 +267,8 @@ pub fn main() !void {
             const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
             const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x60 + header_size .. 0x70 + header_size];
             const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
-            var first_read: []u8 = try common.GeneralAllocator.alloc(u8, name_end + 2);
-            defer common.GeneralAllocator.free(first_read);
+            var first_read: []u8 = try allocator.alloc(u8, name_end + 2);
+            defer allocator.free(first_read);
             @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
             @memcpy(first_read[name_end .. name_end + 2], ";1");
             _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
