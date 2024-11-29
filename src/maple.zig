@@ -494,12 +494,7 @@ pub const VMU = struct {
     }
 };
 
-const PeripheralType = enum {
-    Controller,
-    VMU,
-};
-
-const Peripheral = union(PeripheralType) {
+const Peripheral = union(enum) {
     Controller: Controller,
     VMU: VMU,
 

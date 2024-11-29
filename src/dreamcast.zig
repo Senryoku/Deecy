@@ -68,10 +68,8 @@ const Callback = struct {
 };
 
 const ScheduledInterrupt = struct {
-    const InterruptType = enum { Normal, External };
-
     trigger_cycle: u64,
-    interrupt: ?union(InterruptType) {
+    interrupt: ?union(enum) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
     },

@@ -202,10 +202,6 @@ pub const MemOperand = struct {
             });
         }
     }
-
-    pub fn equal(a: @This(), b: @This()) bool {
-        return a.base == b.base and a.index == b.index and a.displacement == b.displacement and a.size == b.size;
-    }
 };
 
 pub const Operand = union(enum) {
@@ -244,72 +240,14 @@ pub const Operand = union(enum) {
             .mem => |mem| writer.print("{any}", .{mem}),
         };
     }
-
-    pub fn equal(a: @This(), b: @This()) bool {
-        return switch (a) {
-            .reg8 => |a_reg| b == .reg8 and a_reg == b.reg8,
-            .reg16 => |a_reg| b == .reg16 and a_reg == b.reg16,
-            .reg => |a_reg| b == .reg and a_reg == b.reg,
-            .reg64 => |a_reg| b == .reg64 and a_reg == b.reg64,
-            .freg32 => |a_reg| b == .freg32 and a_reg == b.freg32,
-            .freg64 => |a_reg| b == .freg64 and a_reg == b.freg64,
-            .freg128 => |a_reg| b == .freg128 and a_reg == b.freg128,
-            .imm8 => |a_imm| b == .imm8 and a_imm == b.imm8,
-            .imm16 => |a_imm| b == .imm16 and a_imm == b.imm16,
-            .imm32 => |a_imm| b == .imm32 and a_imm == b.imm32,
-            .imm64 => |a_imm| b == .imm64 and a_imm == b.imm64,
-            .mem => |a_mem| b == .mem and a_mem.equal(b.mem),
-        };
-    }
 };
 
-pub const InstructionType = enum {
-    Nop,
-    Break, // For Debugging
-    FunctionCall,
-    Mov, // Mov with zero extention (NOTE: This is NOT the same as the x86 mov instruction, which doesn't zero extend from 8 and 16-bit memory accesses)
-    Movsx, // Mov with sign extension
-    Push,
-    Pop,
-    Not,
-    Neg,
-    Add,
-    Adc,
-    Sub,
-    Sbb,
-    Mul,
-    Div,
-    Fma, // Fused Multiply Add
-    Sqrt,
-    Min,
-    Max,
-    And,
-    Or,
-    Xor,
-    Cmp,
-    SetByteCondition,
-    BitTest,
-    Rol,
-    Ror,
-    Rcl,
-    Rcr,
-    Shl,
-    Shr,
-    Sar,
-    Jmp,
-    Convert,
-    Div64_32, // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
-
-    SaveFPRegisters,
-    RestoreFPRegisters,
-};
-
-pub const Instruction = union(InstructionType) {
+pub const Instruction = union(enum) {
     Nop, // Usefull to patch out instructions without having to rewrite the entire block.
-    Break,
+    Break, // For Debugging
     FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
-    Mov: struct { dst: Operand, src: Operand, preserve_flags: bool = false },
-    Movsx: struct { dst: Operand, src: Operand },
+    Mov: struct { dst: Operand, src: Operand, preserve_flags: bool = false }, // Mov with zero extention (NOTE: This is NOT the same as the x86 mov instruction, which doesn't zero extend from 8 and 16-bit memory accesses)
+    Movsx: struct { dst: Operand, src: Operand }, // Mov with sign extension
     Push: Operand,
     Pop: Operand,
     Not: struct { dst: Operand },
@@ -320,7 +258,7 @@ pub const Instruction = union(InstructionType) {
     Sbb: struct { dst: Operand, src: Operand },
     Mul: struct { dst: Operand, src: Operand },
     Div: struct { dst: Operand, src: Operand },
-    Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand },
+    Fma: struct { dst: FPRegister, src1: FPRegister, src2: Operand }, // Fused Multiply Add
     Sqrt: struct { dst: Operand, src: Operand },
     Min: struct { dst: Operand, src: Operand },
     Max: struct { dst: Operand, src: Operand },
@@ -339,6 +277,7 @@ pub const Instruction = union(InstructionType) {
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
     Convert: struct { dst: Operand, src: Operand },
+    // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
 
     SaveFPRegisters: struct { count: u8 },
@@ -884,10 +823,10 @@ pub const Emitter = struct {
             },
         };
 
-        if (mem.size == 16 or reg.tag() == .freg32 or reg.tag() == .freg64)
+        if (mem.size == 16 or reg == .freg32 or reg == .freg64)
             try self.emit(u8, 0x66);
 
-        if (reg.tag() == .reg8 and (reg.reg8 == .rsp or reg.reg8 == .rbp or reg.reg8 == .rsi or reg.reg8 == .rdi)) {
+        if (reg == .reg8 and (reg.reg8 == .rsp or reg.reg8 == .rbp or reg.reg8 == .rsi or reg.reg8 == .rdi)) {
             // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
             // emit it unconditionally.
             // FIXME: This should probably be done elsewhere too...
@@ -1019,7 +958,7 @@ pub const Emitter = struct {
         switch (dst) {
             // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
             .reg, .reg64 => |dst_reg| {
-                const is_64 = dst.tag() == .reg64;
+                const is_64 = dst == .reg64;
                 switch (src) {
                     .mem => |src_m| {
                         try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
@@ -1311,7 +1250,7 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.MulOperandMismatch;
-                        const is_64 = dst.tag() == .reg64;
+                        const is_64 = dst == .reg64;
 
                         // FIXME: This is supposed to be a condensed version of the instruction for rax,
                         //        but it's measurably slower on my machine. What?

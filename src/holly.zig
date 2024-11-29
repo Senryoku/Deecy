@@ -644,14 +644,9 @@ pub const Polygon = union(enum) {
         return std.meta.activeTag(self);
     }
 
-    pub fn size(polygon_format: std.meta.Tag(Polygon)) u32 {
-        return switch (polygon_format) {
-            .PolygonType0 => @sizeOf(PolygonType0) / 4,
-            .PolygonType1 => @sizeOf(PolygonType1) / 4,
-            .PolygonType2 => @sizeOf(PolygonType2) / 4,
-            .PolygonType3 => @sizeOf(PolygonType3) / 4,
-            .PolygonType4 => @sizeOf(PolygonType4) / 4,
-            .Sprite => @sizeOf(Sprite) / 4,
+    pub fn size(format: std.meta.Tag(@This())) u32 {
+        return switch (format) {
+            inline else => |f| @sizeOf(std.meta.TagPayload(@This(), f)) / 4,
         };
     }
 
@@ -1044,27 +1039,7 @@ const VertexParameter_Sprite_1 = packed struct(u512) {
     cuv: UV16,
 };
 
-pub const VertexParameterType = enum {
-    Type0,
-    Type1,
-    Type2,
-    Type3,
-    Type4,
-    Type5,
-    Type6,
-    Type7,
-    Type8,
-    Type9,
-    Type10,
-    Type11,
-    Type12,
-    Type13,
-    Type14,
-    SpriteType0,
-    SpriteType1,
-};
-
-pub const VertexParameter = union(VertexParameterType) {
+pub const VertexParameter = union(enum) {
     Type0: VertexParameter_0,
     Type1: VertexParameter_1,
     Type2: VertexParameter_2,
@@ -1087,6 +1062,12 @@ pub const VertexParameter = union(VertexParameterType) {
         return std.meta.activeTag(self);
     }
 
+    // Returns the size in words (4 bytes) of the vertex parameter
+    pub fn size(format: std.meta.Tag(@This())) u32 {
+        return switch (format) {
+            inline else => |f| @sizeOf(std.meta.TagPayload(@This(), f)) / 4,
+        };
+    }
     pub fn position(self: *const @This()) [3]f32 {
         std.debug.assert(self.tag() != .SpriteType0 and self.tag() != .SpriteType1);
         return @as([*]const f32, @alignCast(@ptrCast(self)))[1..4].*;
@@ -1099,30 +1080,7 @@ pub const VertexParameter = union(VertexParameterType) {
     }
 };
 
-// Returns the size in words (4 bytes) of the vertex parameter
-pub fn vertex_parameter_size(format: VertexParameterType) u32 {
-    return switch (format) {
-        .Type0 => @sizeOf(VertexParameter_0) / 4,
-        .Type1 => @sizeOf(VertexParameter_1) / 4,
-        .Type2 => @sizeOf(VertexParameter_2) / 4,
-        .Type3 => @sizeOf(VertexParameter_3) / 4,
-        .Type4 => @sizeOf(VertexParameter_4) / 4,
-        .Type5 => @sizeOf(VertexParameter_5) / 4,
-        .Type6 => @sizeOf(VertexParameter_6) / 4,
-        .Type7 => @sizeOf(VertexParameter_7) / 4,
-        .Type8 => @sizeOf(VertexParameter_8) / 4,
-        .Type9 => @sizeOf(VertexParameter_9) / 4,
-        .Type10 => @sizeOf(VertexParameter_10) / 4,
-        .Type11 => @sizeOf(VertexParameter_11) / 4,
-        .Type12 => @sizeOf(VertexParameter_12) / 4,
-        .Type13 => @sizeOf(VertexParameter_13) / 4,
-        .Type14 => @sizeOf(VertexParameter_14) / 4,
-        .SpriteType0 => @sizeOf(VertexParameter_Sprite_0) / 4,
-        .SpriteType1 => @sizeOf(VertexParameter_Sprite_1) / 4,
-    };
-}
-
-fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) VertexParameterType {
+fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(VertexParameter) {
     // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset (Ignored) - Gouraud (Ignored) - 16bit UV
     const masked = @as(u16, @bitCast(obj_control)) & 0b00000000_0_1_11_1_0_0_1;
     switch (masked) {
@@ -1691,12 +1649,8 @@ pub const Holly = struct {
                     if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
 
                     self._ta_current_polygon = switch (polygon_type) {
-                        .PolygonType0 => .{ .PolygonType0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType1 => .{ .PolygonType1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType2 => .{ .PolygonType2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType3 => .{ .PolygonType3 = @as(*PolygonType3, @ptrCast(&self._ta_command_buffer)).* },
-                        .PolygonType4 => .{ .PolygonType4 = @as(*PolygonType4, @ptrCast(&self._ta_command_buffer)).* },
-                        else => @panic("Invalid polygon format"),
+                        .Sprite => @panic("Invalid polygon format"),
+                        inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
                     };
                 }
             },
@@ -1727,44 +1681,27 @@ pub const Holly = struct {
                     } else {
                         var display_list = self.ta_current_lists().get_list(list_type);
                         if (self._ta_current_polygon) |*polygon| {
-                            const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).*.parameter_control_word.obj_control;
+                            const polygon_obj_control = @as(*const GenericGlobalParameter, @ptrCast(polygon)).parameter_control_word.obj_control;
                             switch (polygon.*) {
                                 .Sprite => {
                                     if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
                                         holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {any}", .{parameter_control_word});
                                     }
                                     if (polygon_obj_control.texture == 0) {
-                                        if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType0)) return;
+                                        if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
                                         display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                                     } else {
-                                        if (self._ta_command_buffer_index < vertex_parameter_size(.SpriteType1)) return;
+                                        if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
                                         display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch unreachable;
                                     }
                                 },
                                 else => {
                                     const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
-                                    if (self._ta_command_buffer_index < vertex_parameter_size(format)) return;
+                                    if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
 
                                     display_list.vertex_parameters.append(switch (format) {
-                                        .Type0 => .{ .Type0 = @as(*VertexParameter_0, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type1 => .{ .Type1 = @as(*VertexParameter_1, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type2 => .{ .Type2 = @as(*VertexParameter_2, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type3 => .{ .Type3 = @as(*VertexParameter_3, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type4 => .{ .Type4 = @as(*VertexParameter_4, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type5 => .{ .Type5 = @as(*VertexParameter_5, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type6 => .{ .Type6 = @as(*VertexParameter_6, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type7 => .{ .Type7 = @as(*VertexParameter_7, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type8 => .{ .Type8 = @as(*VertexParameter_8, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type9 => .{ .Type9 = @as(*VertexParameter_9, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type10 => .{ .Type10 = @as(*VertexParameter_10, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type11 => .{ .Type11 = @as(*VertexParameter_11, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type12 => .{ .Type12 = @as(*VertexParameter_12, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type13 => .{ .Type13 = @as(*VertexParameter_13, @ptrCast(&self._ta_command_buffer)).* },
-                                        .Type14 => .{ .Type14 = @as(*VertexParameter_14, @ptrCast(&self._ta_command_buffer)).* },
-                                        else => {
-                                            holly_log.err(termcolor.red("  Unexpected vertex parameter type: {any}."), .{format});
-                                            @panic("Unexpected vertex parameter type");
-                                        },
+                                        .SpriteType0, .SpriteType1 => unreachable,
+                                        inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
                                     }) catch unreachable;
                                 },
                             }

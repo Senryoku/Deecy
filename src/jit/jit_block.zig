@@ -86,7 +86,7 @@ pub const JITBlock = struct {
         // Combine shift instructions if possible
         if (self.instructions.items.len > 0 and amount == .imm8) {
             const prev = &self.instructions.items[self.instructions.items.len - 1];
-            if (prev.* == .Shl and prev.Shl.dst.equal(dst) and prev.Shl.amount == .imm8) {
+            if (prev.* == .Shl and std.meta.eql(prev.Shl.dst, dst) and prev.Shl.amount == .imm8) {
                 prev.Shl.amount.imm8 += amount.imm8;
                 return;
             }
@@ -98,7 +98,7 @@ pub const JITBlock = struct {
         // Combine shift instructions if possible
         if (self.instructions.items.len > 0 and amount == .imm8) {
             const prev = &self.instructions.items[self.instructions.items.len - 1];
-            if (prev.* == .Shr and prev.Shr.dst.equal(dst) and prev.Shr.amount == .imm8) {
+            if (prev.* == .Shr and std.meta.eql(prev.Shr.dst, dst) and prev.Shr.amount == .imm8) {
                 prev.Shr.amount.imm8 += amount.imm8;
                 return;
             }

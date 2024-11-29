@@ -446,20 +446,16 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
             r[3].y = v.cy;
             r[3].z = v.cz;
         },
-        else => unreachable,
+        else => @panic("Not a Sprite"),
     }
-    switch (sprite) {
-        .SpriteType1 => |v| {
-            r[0].u = uv16(v.auv.u);
-            r[0].v = uv16(v.auv.v);
-
-            r[2].u = uv16(v.buv.u);
-            r[2].v = uv16(v.buv.v);
-
-            r[3].u = uv16(v.cuv.u);
-            r[3].v = uv16(v.cuv.v);
-        },
-        else => {},
+    if (sprite == .SpriteType1) {
+        const v = sprite.SpriteType1;
+        r[0].u = uv16(v.auv.u);
+        r[0].v = uv16(v.auv.v);
+        r[2].u = uv16(v.buv.u);
+        r[2].v = uv16(v.buv.v);
+        r[3].u = uv16(v.cuv.u);
+        r[3].v = uv16(v.cuv.v);
     }
 
     // dz have to be deduced from the plane equation
@@ -2020,12 +2016,9 @@ pub const Renderer = struct {
 
                 var sprite_base_color: PackedColor = undefined;
                 var sprite_offset_color: PackedColor = undefined;
-                switch (polygon) {
-                    .Sprite => |p| {
-                        sprite_base_color = p.base_color;
-                        sprite_offset_color = p.offset_color;
-                    },
-                    else => {},
+                if (polygon == .Sprite) {
+                    sprite_base_color = polygon.Sprite.base_color;
+                    sprite_offset_color = polygon.Sprite.offset_color;
                 }
 
                 var tex_idx: TextureIndex = 0;
