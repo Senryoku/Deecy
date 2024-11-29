@@ -632,16 +632,7 @@ const Sprite = packed struct(u256) {
     next_address: u32,
 };
 
-const PolygonType = enum {
-    PolygonType0,
-    PolygonType1,
-    PolygonType2,
-    PolygonType3,
-    PolygonType4,
-    Sprite,
-};
-
-pub const Polygon = union(PolygonType) {
+pub const Polygon = union(enum) {
     PolygonType0: PolygonType0,
     PolygonType1: PolygonType1,
     PolygonType2: PolygonType2,
@@ -649,14 +640,18 @@ pub const Polygon = union(PolygonType) {
     PolygonType4: PolygonType4,
     Sprite: Sprite,
 
-    pub fn tag(self: @This()) PolygonType {
-        return switch (self) {
-            .PolygonType0 => .PolygonType0,
-            .PolygonType1 => .PolygonType1,
-            .PolygonType2 => .PolygonType2,
-            .PolygonType3 => .PolygonType3,
-            .PolygonType4 => .PolygonType4,
-            .Sprite => .Sprite,
+    pub fn tag(self: @This()) std.meta.Tag(@This()) {
+        return std.meta.activeTag(self);
+    }
+
+    pub fn size(polygon_format: std.meta.Tag(Polygon)) u32 {
+        return switch (polygon_format) {
+            .PolygonType0 => @sizeOf(PolygonType0) / 4,
+            .PolygonType1 => @sizeOf(PolygonType1) / 4,
+            .PolygonType2 => @sizeOf(PolygonType2) / 4,
+            .PolygonType3 => @sizeOf(PolygonType3) / 4,
+            .PolygonType4 => @sizeOf(PolygonType4) / 4,
+            .Sprite => @sizeOf(Sprite) / 4,
         };
     }
 
@@ -719,7 +714,7 @@ pub const Polygon = union(PolygonType) {
     }
 };
 
-fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
+fn obj_control_to_polygon_type(obj_control: ObjControl) std.meta.Tag(Polygon) {
     // NOTE: See 3.7.6.2 Parameter Combinations. Some entries are duplicated to account for the fact that the value of offset doesn't matter in these cases.
     // Shadow (Ignored) - Volume - ColType (u2) - Texture - Offset - Gouraud (Ignored) - 16bit UV
     // NOTE: Offset is ignored and fixed at 0 when non-textured
@@ -767,17 +762,6 @@ fn obj_control_to_polygon_format(obj_control: ObjControl) PolygonType {
             @panic("Unimplemented");
         },
     }
-}
-
-fn polygon_format_size(polygon_format: PolygonType) u32 {
-    return switch (polygon_format) {
-        .PolygonType0 => @sizeOf(PolygonType0) / 4,
-        .PolygonType1 => @sizeOf(PolygonType1) / 4,
-        .PolygonType2 => @sizeOf(PolygonType2) / 4,
-        .PolygonType3 => @sizeOf(PolygonType3) / 4,
-        .PolygonType4 => @sizeOf(PolygonType4) / 4,
-        .Sprite => @sizeOf(Sprite) / 4,
-    };
 }
 
 const VolumeInstruction = enum(u3) {
@@ -1099,26 +1083,8 @@ pub const VertexParameter = union(VertexParameterType) {
     SpriteType0: VertexParameter_Sprite_0,
     SpriteType1: VertexParameter_Sprite_1,
 
-    pub fn tag(self: @This()) VertexParameterType {
-        return switch (self) {
-            .Type0 => .Type0,
-            .Type1 => .Type1,
-            .Type2 => .Type2,
-            .Type3 => .Type3,
-            .Type4 => .Type4,
-            .Type5 => .Type5,
-            .Type6 => .Type6,
-            .Type7 => .Type7,
-            .Type8 => .Type8,
-            .Type9 => .Type9,
-            .Type10 => .Type10,
-            .Type11 => .Type11,
-            .Type12 => .Type12,
-            .Type13 => .Type13,
-            .Type14 => .Type14,
-            .SpriteType0 => .SpriteType0,
-            .SpriteType1 => .SpriteType1,
-        };
+    pub fn tag(self: @This()) std.meta.Tag(@This()) {
+        return std.meta.activeTag(self);
     }
 
     pub fn position(self: *const @This()) [3]f32 {
@@ -1721,10 +1687,10 @@ pub const Holly = struct {
                     global_parameter.*.isp_tsp_instruction.gouraud = global_parameter.*.parameter_control_word.obj_control.gouraud;
                     global_parameter.*.isp_tsp_instruction.uv_16bit = global_parameter.*.parameter_control_word.obj_control.uv_16bit;
 
-                    const format = obj_control_to_polygon_format(parameter_control_word.obj_control);
-                    if (self._ta_command_buffer_index < polygon_format_size(format)) return;
+                    const polygon_type = obj_control_to_polygon_type(parameter_control_word.obj_control);
+                    if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
 
-                    self._ta_current_polygon = switch (format) {
+                    self._ta_current_polygon = switch (polygon_type) {
                         .PolygonType0 => .{ .PolygonType0 = @as(*PolygonType0, @ptrCast(&self._ta_command_buffer)).* },
                         .PolygonType1 => .{ .PolygonType1 = @as(*PolygonType1, @ptrCast(&self._ta_command_buffer)).* },
                         .PolygonType2 => .{ .PolygonType2 = @as(*PolygonType2, @ptrCast(&self._ta_command_buffer)).* },

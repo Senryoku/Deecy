@@ -503,11 +503,8 @@ const Peripheral = union(PeripheralType) {
     Controller: Controller,
     VMU: VMU,
 
-    pub fn tag(self: @This()) PeripheralType {
-        return switch (self) {
-            .Controller => .Controller,
-            .VMU => .VMU,
-        };
+    pub fn tag(self: @This()) std.meta.Tag(@This()) {
+        return std.meta.activeTag(self);
     }
 
     pub fn get_identity(self: @This()) DeviceInfoPayload {

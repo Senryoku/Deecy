@@ -208,22 +208,7 @@ pub const MemOperand = struct {
     }
 };
 
-const OperandType = enum {
-    reg8,
-    reg16,
-    reg,
-    reg64,
-    freg32,
-    freg64,
-    freg128,
-    imm8,
-    imm16,
-    imm32,
-    imm64,
-    mem,
-};
-
-pub const Operand = union(OperandType) {
+pub const Operand = union(enum) {
     reg8: Register,
     reg16: Register,
     reg: Register, // FIXME: This will sometimes be treated as a 32-bit register, and sometimes as a 64-bit register, depending on the instruction, or the size of the other operand. Make it explicit.
@@ -237,21 +222,8 @@ pub const Operand = union(OperandType) {
     imm64: u64,
     mem: MemOperand,
 
-    pub fn tag(self: @This()) OperandType {
-        return switch (self) {
-            .reg8 => .reg8,
-            .reg16 => .reg16,
-            .reg => .reg,
-            .reg64 => .reg64,
-            .freg32 => .freg32,
-            .freg64 => .freg64,
-            .freg128 => .freg128,
-            .imm8 => .imm8,
-            .imm16 => .imm16,
-            .imm32 => .imm32,
-            .imm64 => .imm64,
-            .mem => .mem,
-        };
+    pub fn tag(self: @This()) std.meta.Tag(@This()) {
+        return std.meta.activeTag(self);
     }
 
     pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
