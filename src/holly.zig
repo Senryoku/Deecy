@@ -617,8 +617,8 @@ const PolygonType4 = packed struct(u512) {
     texture_control_1: TextureControlWord,
     data_size: u32,
     next_address: u32,
-    face_color: fARGB,
-    face_offset_color: fARGB,
+    face_color_0: fARGB,
+    face_color_1: fARGB,
 };
 
 const Sprite = packed struct(u256) {
@@ -662,69 +662,48 @@ pub const Polygon = union(PolygonType) {
 
     pub fn control_word(self: @This()) ParameterControlWord {
         return switch (self) {
-            .PolygonType0 => |p| p.parameter_control_word,
-            .PolygonType1 => |p| p.parameter_control_word,
-            .PolygonType2 => |p| p.parameter_control_word,
-            .PolygonType3 => |p| p.parameter_control_word,
-            .PolygonType4 => |p| p.parameter_control_word,
-            .Sprite => |p| p.parameter_control_word,
+            inline else => |p| p.parameter_control_word,
         };
     }
 
     pub fn isp_tsp_instruction(self: @This()) ISPTSPInstructionWord {
         return switch (self) {
-            .PolygonType0 => |p| p.isp_tsp_instruction,
-            .PolygonType1 => |p| p.isp_tsp_instruction,
-            .PolygonType2 => |p| p.isp_tsp_instruction,
-            .PolygonType3 => |p| p.isp_tsp_instruction,
-            .PolygonType4 => |p| p.isp_tsp_instruction,
-            .Sprite => |p| p.isp_tsp_instruction,
+            inline else => |p| p.isp_tsp_instruction,
         };
     }
 
     pub fn tsp_instruction(self: @This()) TSPInstructionWord {
         return switch (self) {
-            .PolygonType0 => |p| p.tsp_instruction,
-            .PolygonType1 => |p| p.tsp_instruction,
-            .PolygonType2 => |p| p.tsp_instruction,
-            .PolygonType3 => |p| p.tsp_instruction_0,
-            .PolygonType4 => |p| p.tsp_instruction_0,
-            .Sprite => |p| p.tsp_instruction,
+            inline .PolygonType3, .PolygonType4 => |p| p.tsp_instruction_0,
+            inline else => |p| p.tsp_instruction,
         };
     }
 
     pub fn texture_control(self: @This()) TextureControlWord {
         return switch (self) {
-            .PolygonType0 => |p| p.texture_control,
-            .PolygonType1 => |p| p.texture_control,
-            .PolygonType2 => |p| p.texture_control,
-            .PolygonType3 => |p| p.texture_control_0,
-            .PolygonType4 => |p| p.texture_control_0,
-            .Sprite => |p| p.texture_control,
+            inline .PolygonType3, .PolygonType4 => |p| p.texture_control_0,
+            inline else => |p| p.texture_control,
         };
     }
 
     pub fn area1_tsp_instruction(self: @This()) ?TSPInstructionWord {
         return switch (self) {
-            .PolygonType3 => |p| p.tsp_instruction_1,
-            .PolygonType4 => |p| p.tsp_instruction_1,
+            inline .PolygonType3, .PolygonType4 => |p| p.tsp_instruction_1,
             else => null,
         };
     }
 
     pub fn area1_texture_control(self: @This()) ?TextureControlWord {
         return switch (self) {
-            .PolygonType3 => |p| p.texture_control_1,
-            .PolygonType4 => |p| p.texture_control_1,
+            inline .PolygonType3, .PolygonType4 => |p| p.texture_control_1,
             else => null,
         };
     }
 
     pub fn base_color(self: @This()) ?[4]f32 {
         return switch (self) {
-            .PolygonType1 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
-            .PolygonType2 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
-            .PolygonType4 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
+            inline .PolygonType1, .PolygonType2 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
+            .PolygonType4 => |p| .{ p.face_color_0.r, p.face_color_0.g, p.face_color_0.b, p.face_color_0.a },
             .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.base_color, true)),
             else => null,
         };
@@ -733,7 +712,8 @@ pub const Polygon = union(PolygonType) {
     pub fn offset_color(self: @This()) ?[4]f32 {
         return switch (self) {
             .PolygonType2 => |p| .{ p.face_offset_color.r, p.face_offset_color.g, p.face_offset_color.b, p.face_offset_color.a },
-            .PolygonType4 => |p| .{ p.face_offset_color.r, p.face_offset_color.g, p.face_offset_color.b, p.face_offset_color.a },
+            .PolygonType4 => |p| .{ p.face_color_0.r, p.face_color_0.g, p.face_color_0.b, p.face_color_0.a }, // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+            .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.offset_color, true)),
             else => null,
         };
     }
@@ -851,6 +831,18 @@ const BumpMapParameter = packed struct(u32) {
 pub const UV16 = packed struct(u32) {
     v: u16, // Upper bits of a 32-bit float
     u: u16,
+
+    fn to_f32(val: u16) f32 {
+        return @bitCast(@as(u32, val) << 16);
+    }
+
+    pub fn u_as_f32(self: UV16) f32 {
+        return to_f32(self.u);
+    }
+
+    pub fn v_as_f32(self: UV16) f32 {
+        return to_f32(self.v);
+    }
 };
 
 // Packed Color, Non-Textured
@@ -954,8 +946,8 @@ const VertexParameter_9 = packed struct(u256) {
     x: f32,
     y: f32,
     z: f32,
-    base_0: PackedColor,
-    base_1: PackedColor,
+    base_color_0: PackedColor,
+    base_color_1: PackedColor,
     _ignored: u64,
 };
 // Non-Textured, Intensity, with Two Volumes

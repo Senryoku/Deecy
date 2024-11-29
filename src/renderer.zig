@@ -430,7 +430,7 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     // Pushing the vertices in CCW order: A, D, B, C
 
     switch (sprite) {
-        .SpriteType0 => |v| {
+        inline .SpriteType0, .SpriteType1 => |v| {
             r[0].x = v.ax;
             r[0].y = v.ay;
             r[0].z = v.az;
@@ -446,31 +446,20 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
             r[3].y = v.cy;
             r[3].z = v.cz;
         },
+        else => unreachable,
+    }
+    switch (sprite) {
         .SpriteType1 => |v| {
-            r[0].x = v.ax;
-            r[0].y = v.ay;
-            r[0].z = v.az;
             r[0].u = uv16(v.auv.u);
             r[0].v = uv16(v.auv.v);
 
-            r[1].x = v.dx;
-            r[1].y = v.dy;
-
-            r[2].x = v.bx;
-            r[2].y = v.by;
-            r[2].z = v.bz;
             r[2].u = uv16(v.buv.u);
             r[2].v = uv16(v.buv.v);
 
-            r[3].x = v.cx;
-            r[3].y = v.cy;
-            r[3].z = v.cz;
             r[3].u = uv16(v.cuv.u);
             r[3].v = uv16(v.cuv.v);
         },
-        else => {
-            @panic("That's not a sprite. Dafuq are you doing?");
-        },
+        else => {},
     }
 
     // dz have to be deduced from the plane equation
@@ -1993,67 +1982,50 @@ pub const Renderer = struct {
             // Parameters specific to a polygon type
             var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
             var face_offset_color: fARGB = undefined;
+            var area1_face_color: fARGB = undefined;
+            var area1_face_offset_color: fARGB = undefined;
             const display_list: *const HollyModule.DisplayList = @constCast(&ta_lists).get_list(list_type);
 
             for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(self.vertices.items.len);
+                const polygon = display_list.vertex_strips.items[idx].polygon;
 
                 // Generic Parameters
-                var parameter_control_word: HollyModule.ParameterControlWord = undefined;
-                var isp_tsp_instruction: HollyModule.ISPTSPInstructionWord = undefined;
-                var tsp_instruction: HollyModule.TSPInstructionWord = undefined;
-                var texture_control: HollyModule.TextureControlWord = undefined;
-                var area1_tsp_instruction: ?HollyModule.TSPInstructionWord = null;
-                var area1_texture_control: ?HollyModule.TextureControlWord = null;
+                const parameter_control_word = polygon.control_word();
+                const isp_tsp_instruction = polygon.isp_tsp_instruction();
+                const tsp_instruction = polygon.tsp_instruction();
+                const texture_control = polygon.texture_control();
+                const area1_tsp_instruction = polygon.area1_tsp_instruction();
+                const area1_texture_control = polygon.area1_texture_control();
+
+                if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
+                    switch (polygon) {
+                        .PolygonType1 => |p| {
+                            face_color = p.face_color;
+                        },
+                        .PolygonType2 => |p| {
+                            face_color = p.face_color;
+                            face_offset_color = p.face_offset_color;
+                        },
+                        .PolygonType4 => |p| {
+                            // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                            face_color = p.face_color_0;
+                            face_offset_color = p.face_color_0;
+                            area1_face_color = p.face_color_1;
+                            area1_face_offset_color = p.face_color_1;
+                        },
+                        else => {},
+                    }
+                }
 
                 var sprite_base_color: PackedColor = undefined;
                 var sprite_offset_color: PackedColor = undefined;
-
-                switch (display_list.vertex_strips.items[idx].polygon) {
-                    .PolygonType0 => |p| {
-                        parameter_control_word = p.parameter_control_word;
-                        isp_tsp_instruction = p.isp_tsp_instruction;
-                        tsp_instruction = p.tsp_instruction;
-                        texture_control = p.texture_control;
-                    },
-                    .PolygonType1 => |p| {
-                        parameter_control_word = p.parameter_control_word;
-                        isp_tsp_instruction = p.isp_tsp_instruction;
-                        tsp_instruction = p.tsp_instruction;
-                        texture_control = p.texture_control;
-                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_color = p.face_color;
-                    },
-                    .PolygonType2 => |p| {
-                        parameter_control_word = p.parameter_control_word;
-                        isp_tsp_instruction = p.isp_tsp_instruction;
-                        tsp_instruction = p.tsp_instruction;
-                        texture_control = p.texture_control;
-                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_color = p.face_color;
-                        if (parameter_control_word.obj_control.col_type == .IntensityMode1)
-                            face_offset_color = p.face_offset_color;
-                    },
-                    .PolygonType3 => |p| {
-                        parameter_control_word = p.parameter_control_word;
-                        isp_tsp_instruction = p.isp_tsp_instruction;
-                        tsp_instruction = p.tsp_instruction_0;
-                        texture_control = p.texture_control_0;
-                        area1_tsp_instruction = p.tsp_instruction_1;
-                        area1_texture_control = p.texture_control_1;
-                    },
-                    // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                switch (polygon) {
                     .Sprite => |p| {
-                        parameter_control_word = p.parameter_control_word;
-                        isp_tsp_instruction = p.isp_tsp_instruction;
-                        tsp_instruction = p.tsp_instruction;
-                        texture_control = p.texture_control;
                         sprite_base_color = p.base_color;
                         sprite_offset_color = p.offset_color;
                     },
-                    else => {
-                        renderer_log.err("Unhandled polygon type: {any}", .{display_list.vertex_strips.items[idx].polygon});
-                    },
+                    else => {},
                 }
 
                 var tex_idx: TextureIndex = 0;
@@ -2209,8 +2181,8 @@ pub const Renderer = struct {
                                 .z = v.z,
                                 .base_color = v.base_color.with_alpha(use_alpha),
                                 .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
-                                .u = @bitCast(@as(u32, v.uv.u) << 16),
-                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .u = v.uv.u_as_f32(),
+                                .v = v.uv.v_as_f32(),
                             });
                         },
                         // Floating Color, Textured
@@ -2235,8 +2207,8 @@ pub const Renderer = struct {
                                 .z = v.z,
                                 .base_color = v.base_color.to_packed(use_alpha),
                                 .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
-                                .u = @bitCast(@as(u32, v.uv.u) << 16),
-                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .u = v.uv.u_as_f32(),
+                                .v = v.uv.v_as_f32(),
                             });
                         },
                         // Intensity
@@ -2265,8 +2237,35 @@ pub const Renderer = struct {
                                 .z = v.z,
                                 .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
                                 .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
-                                .u = @bitCast(@as(u32, v.uv.u) << 16),
-                                .v = @bitCast(@as(u32, v.uv.v) << 16),
+                                .u = v.uv.u_as_f32(),
+                                .v = v.uv.v_as_f32(),
+                            });
+                        },
+                        // Non-Textured, Packed Color, with Two Volumes
+                        .Type9 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(!textured);
+                            try self.vertices.append(.{
+                                .primitive_index = primitive_index,
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = v.base_color_0.with_alpha(use_alpha),
+                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                            });
+                        },
+                        // Non-Textured, Intensity, with Two Volumes
+                        .Type10 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(!textured);
+                            try self.vertices.append(.{
+                                .primitive_index = primitive_index,
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
                             });
                         },
                         // Textured, Packed Color, with Two Volumes
@@ -2290,6 +2289,67 @@ pub const Renderer = struct {
                                 .area1_v = v.v1,
                             });
                         },
+                        // Textured, Packed Color, 16bit UV, with Two Volumes
+                        .Type12 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(area1_texture_control != null);
+                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                            std.debug.assert(textured);
+                            try self.vertices.append(.{
+                                .primitive_index = primitive_index,
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = v.base_color_0.with_alpha(use_alpha),
+                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                .u = v.uv_0.u_as_f32(),
+                                .v = v.uv_0.v_as_f32(),
+                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                .area1_u = v.uv_1.u_as_f32(),
+                                .area1_v = v.uv_1.v_as_f32(),
+                            });
+                        },
+                        // Textured, Intensity, with Two Volumes
+                        .Type13 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(area1_texture_control != null);
+                            std.debug.assert(textured);
+                            try self.vertices.append(.{
+                                .primitive_index = primitive_index,
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                .u = v.u0,
+                                .v = v.v0,
+                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                .area1_u = v.u1,
+                                .area1_v = v.v1,
+                            });
+                        },
+                        // Textured, Intensity, with Two Volumes
+                        .Type14 => |v| {
+                            std.debug.assert(area1_tsp_instruction != null);
+                            std.debug.assert(area1_texture_control != null);
+                            std.debug.assert(textured);
+                            try self.vertices.append(.{
+                                .primitive_index = primitive_index,
+                                .x = v.x,
+                                .y = v.y,
+                                .z = v.z,
+                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                .u = v.uv_0.u_as_f32(),
+                                .v = v.uv_0.v_as_f32(),
+                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                .area1_u = v.uv_1.u_as_f32(),
+                                .area1_v = v.uv_1.v_as_f32(),
+                            });
+                        },
                         .SpriteType0, .SpriteType1 => {
                             var vs = gen_sprite_vertices(vertex);
                             for (&vs) |*v| {
@@ -2302,10 +2362,6 @@ pub const Renderer = struct {
 
                                 try self.vertices.append(v.*);
                             }
-                        },
-                        else => {
-                            renderer_log.err(termcolor.red("Unsupported vertex type {any}"), .{vertex});
-                            @panic("Unsupported vertex type");
                         },
                     }
 
