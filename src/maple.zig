@@ -91,7 +91,6 @@ pub const InputCapabilities = packed struct(u32) {
     right: u1 = 0,
 };
 
-// Note: I'm not sure of the order of fields here...
 const FunctionCodesMask = packed struct(u32) {
     _: u20 = 0,
 
@@ -108,6 +107,10 @@ const FunctionCodesMask = packed struct(u32) {
     argun: u1 = 0,
     keyboard: u1 = 0,
     gun: u1 = 0,
+
+    pub fn as_u32(self: @This()) u32 {
+        return @bitCast(self);
+    }
 };
 
 const LocationWord = packed struct(u32) {
@@ -117,7 +120,6 @@ const LocationWord = packed struct(u32) {
     partition: u8,
 };
 
-// Not sure about the order in this, especially around the strings.
 const DeviceInfoPayload = extern struct {
     FunctionCodesMask: FunctionCodesMask align(1),
     SubFunctionCodesMasks: [3]u32 align(1),
@@ -128,28 +130,6 @@ const DeviceInfoPayload = extern struct {
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
     // Possible extension
-};
-
-const StandardControllerCapabilities: InputCapabilities = .{
-    .b = 1,
-    .a = 1,
-    .start = 1,
-    .up = 1,
-    .down = 1,
-    .left = 1,
-    .right = 1,
-    .y = 1,
-    .x = 1,
-    .analogRtrigger = 1,
-    .analogLtrigger = 1,
-    .analogHorizontal = 1,
-    .analogVertical = 1,
-};
-
-const VMUCapabilities: FunctionCodesMask = .{
-    .storage = 1,
-    .screen = 1,
-    .timer = 1,
 };
 
 // NOTE: 0 = Pressed!
@@ -172,9 +152,34 @@ pub const ControllerButtons = packed struct(u16) {
     _2: u5 = 0b11111,
 };
 
+const StandardControllerCapabilities: InputCapabilities = .{
+    .b = 1,
+    .a = 1,
+    .start = 1,
+    .up = 1,
+    .down = 1,
+    .left = 1,
+    .right = 1,
+    .y = 1,
+    .x = 1,
+    .analogRtrigger = 1,
+    .analogLtrigger = 1,
+    .analogHorizontal = 1,
+    .analogVertical = 1,
+};
+
 pub const Controller = struct {
     pub const Capabilities: FunctionCodesMask = .{ .controller = 1 };
     pub const Subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 };
+
+    const Identity: DeviceInfoPayload = .{
+        .FunctionCodesMask = Capabilities,
+        .SubFunctionCodesMasks = Subcapabilities,
+        .DescriptionString = "Dreamcast Controller          \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
+        .StandbyConsumption = 0x01AE,
+        .MaximumConsumption = 0x01F4,
+    };
 
     buttons: ControllerButtons = .{},
     axis: [6]u8 = .{0x80} ** 6,
@@ -185,17 +190,8 @@ pub const Controller = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
-    pub fn get_identity(_: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
-        var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
-        @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
-            .FunctionCodesMask = Capabilities,
-            .SubFunctionCodesMasks = Subcapabilities,
-            .DescriptionString = "Dreamcast Controller          \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
-            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
-            .StandbyConsumption = 0x01AE,
-            .MaximumConsumption = 0x01F4,
-        };
-        return r;
+    pub fn get_identity(_: *const @This()) DeviceInfoPayload {
+        return Identity;
     }
 
     pub fn get_condition(self: *const @This()) [3]u32 {
@@ -267,7 +263,11 @@ pub const VMU = struct {
     const FATBlock = 0x00FE;
     const SystemBlock = BlockCount - 1;
 
-    const Capabilities: FunctionCodesMask = VMUCapabilities;
+    const Capabilities: FunctionCodesMask = .{
+        .storage = 1,
+        .screen = 1,
+        .timer = 1,
+    };
     const Subcapabilities: [3]u32 = .{
         @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)),
         @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // One of these is ScreenFunctionDefinition
@@ -281,12 +281,22 @@ pub const VMU = struct {
         }),
     };
 
+    const Identity: DeviceInfoPayload = .{
+        .FunctionCodesMask = Capabilities,
+        .SubFunctionCodesMasks = Subcapabilities,
+        .RegionCode = 0xFF,
+        .DescriptionString = "Visual Memory                  ".*,
+        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
+        .StandbyConsumption = 0x007C,
+        .MaximumConsumption = 0x0082,
+    };
+
     blocks: [][BlockSize]u8,
 
     backing_file_path: []const u8,
     last_unsaved_change: ?i64 = null,
 
-    on_screen_update: ?struct { function: *const fn (usedata: ?*anyopaque, data: [*]const u8) void, userdata: ?*anyopaque } = null,
+    on_screen_update: ?struct { function: *const fn (userdata: ?*anyopaque, data: [*]const u8) void, userdata: ?*anyopaque } = null,
 
     pub fn init(allocator: std.mem.Allocator, backing_file_path: []const u8) !@This() {
         var vmu: @This() = .{
@@ -407,18 +417,8 @@ pub const VMU = struct {
         };
     }
 
-    pub fn get_identity(_: *const @This()) [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 {
-        var r: [@sizeOf(DeviceInfoPayload) / @sizeOf(u32)]u32 = undefined;
-        @as(*DeviceInfoPayload, @ptrCast(&r)).* = .{
-            .FunctionCodesMask = Capabilities,
-            .SubFunctionCodesMasks = Subcapabilities,
-            .RegionCode = 0xFF,
-            .DescriptionString = "Visual Memory                  ".*,
-            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
-            .StandbyConsumption = 0x007C,
-            .MaximumConsumption = 0x0082,
-        };
-        return r;
+    pub fn get_identity(_: *const @This()) DeviceInfoPayload {
+        return Identity;
     }
 
     // Write Media Info to dest. Returns the payload size in 32-bit words.
@@ -440,12 +440,10 @@ pub const VMU = struct {
                     .save_area_block_number = 0x00C8,
                     .number_of_save_area_blocks = 0x00C8,
                 };
-                @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], @as([*]const u8, @ptrCast(&value))[0..@sizeOf(GetMediaInformationResponse)]);
+                @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], std.mem.asBytes(&value));
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
-            else => {
-                maple_log.err("Unimplemented VMU::GetMediaInformation for function: {any}", .{function});
-            },
+            else => maple_log.err("Unimplemented VMU::GetMediaInformation for function: {any}", .{function}),
         }
         return 0;
     }
@@ -453,25 +451,22 @@ pub const VMU = struct {
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
         std.debug.assert(partition == 0);
         switch (function) {
-            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
-                if (block_num >= BlockCount) {
+            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
+                if (block_num >= BlockCount)
                     maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
-                }
                 const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
                 const len = BlockSize / ReadAccessPerBlock;
                 @memcpy(dest[start .. start + len], self.blocks[block_num % BlockCount][start .. start + len]);
                 return len / 4;
             },
-            else => {
-                maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function});
-            },
+            else => maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function}),
         }
         return 0;
     }
 
     pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
         switch (function) {
-            @as(u32, @bitCast(FunctionCodesMask{ .screen = 1 })) => {
+            (FunctionCodesMask{ .screen = 1 }).as_u32() => {
                 //  - Partition is the screen number, should always be zero.
                 //  - Phase is used if a frame doesn't fit in one message.
                 //  - Block number specify the plane.
@@ -481,7 +476,7 @@ pub const VMU = struct {
                     callback.function(callback.userdata, @ptrCast(data.ptr));
                 }
             },
-            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
                 std.debug.assert(data.len == BlockSize / 4);
@@ -490,9 +485,7 @@ pub const VMU = struct {
 
                 self.last_unsaved_change = std.time.timestamp();
             },
-            else => {
-                maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function});
-            },
+            else => maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function}),
         }
     }
 
@@ -510,19 +503,43 @@ const Peripheral = union(PeripheralType) {
     Controller: Controller,
     VMU: VMU,
 
+    pub fn tag(self: @This()) PeripheralType {
+        return switch (self) {
+            .Controller => .Controller,
+            .VMU => .VMU,
+        };
+    }
+
+    pub fn get_identity(self: @This()) DeviceInfoPayload {
+        return switch (self) {
+            inline else => |impl| impl.get_identity(),
+        };
+    }
+
+    pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
+        return switch (self.*) {
+            .VMU => |*v| v.block_read(dest, function, partition, block_num, phase),
+            else => s: {
+                maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{self.tag()});
+                break :s 0;
+            },
+        };
+    }
+
+    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
+        switch (self.*) {
+            .VMU => |*v| v.block_write(function, partition, phase, block_num, data),
+            else => maple_log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {any}"), .{self.tag()}),
+        }
+    }
+
     pub fn serialize(self: @This(), writer: anytype) !usize {
         var bytes: usize = 0;
-
         switch (self) {
-            .Controller => |controller| {
-                const tag: u32 = @intFromEnum(PeripheralType.Controller);
-                bytes += try writer.write(std.mem.asBytes(&tag));
-                bytes += try controller.serialize(writer);
-            },
-            .VMU => |vmu| {
-                const tag: u32 = @intFromEnum(PeripheralType.VMU);
-                bytes += try writer.write(std.mem.asBytes(&tag));
-                bytes += try vmu.serialize(writer);
+            inline else => |impl| {
+                const t: u32 = @intFromEnum(self.tag());
+                bytes += try writer.write(std.mem.asBytes(&t));
+                bytes += try impl.serialize(writer);
             },
         }
         return bytes;
@@ -535,8 +552,8 @@ const MaplePort = struct {
 
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
-
         const command: CommandWord = @bitCast(data[1]);
+        const function_type = data[2];
         maple_log.debug("    Command: {any}", .{command});
 
         // Note: The sender address should also include the sub-peripheral bit when appropriate.
@@ -553,42 +570,30 @@ const MaplePort = struct {
         if (maybe_target.*) |*target| {
             switch (command.command) {
                 .DeviceInfoRequest => {
-                    const identity = switch (target.*) {
-                        .Controller => |*c| c.get_identity(),
-                        .VMU => |*v| v.get_identity(),
-                    };
-                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(identity.len) }));
-                    const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
-                    @memcpy(ptr[0..identity.len], &identity);
+                    const identity = target.get_identity();
+                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
+                    const ptr = dc.cpu._get_memory(return_addr + 4);
+                    @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                 },
                 .GetCondition => {
                     switch (target.*) {
                         .Controller => |*c| {
                             std.debug.assert(command.payload_length == 1);
-                            const function = data[2];
-                            std.debug.assert(function == 0x01000000);
-
+                            std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
                             dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
                             const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                         },
-                        .VMU => {
-                            maple_log.err("TODO: GetCondition for VMU", .{});
-                            @panic("TODO VMU GET CONDITION");
+                        else => {
+                            maple_log.err(termcolor.red("TODO: GetCondition for {any}"), .{target.tag()});
+                            @panic("Missing GetCondition implementation");
                         },
-                        //else => {
-                        //    maple_log.err("Unimplemented GetCondition for target: {any}", .{target});
-                        //    @panic("[Maple] Unimplemented GetCondition for target");
-                        //},
                     }
                 },
                 .GetMediaInformation => {
                     std.debug.assert(command.payload_length == 2);
-
-                    const function_type = data[2];
                     const partition_number: u8 = @truncate(data[3] >> 24);
-
                     maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
 
                     switch (target.*) {
@@ -603,12 +608,12 @@ const MaplePort = struct {
                             }
                         },
                         else => {
-                            maple_log.err("Unimplemented GetMediaInformation for target: {any}", .{target});
+                            maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
+                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                         },
                     }
                 },
                 .BlockRead => {
-                    const function_type = data[2];
                     std.debug.assert(function_type == @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })));
                     const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
                     const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
@@ -616,13 +621,7 @@ const MaplePort = struct {
                     maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
                     const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
-                    const payload_size = switch (target.*) {
-                        .VMU => |*v| v.block_read(dest, function_type, partition, block_num, phase),
-                        else => s: {
-                            maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{target});
-                            break :s 0;
-                        },
-                    };
+                    const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
                         dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
@@ -633,19 +632,11 @@ const MaplePort = struct {
                     }
                 },
                 .BlockWrite => {
-                    const function_type = data[2];
                     const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
                     const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
-
-                    switch (target.*) {
-                        .VMU => |*v| v.block_write(function_type, partition, phase, block_num, write_data),
-                        else => {
-                            maple_log.warn(termcolor.yellow("BlockWrite Unimplemented! Recipient: {X:0>2} (Function: {X:0>8}), Partition: {any} Phase: {any} Block: {any}"), .{ command.recipent_address, function_type, partition, phase, block_num });
-                        },
-                    }
-
+                    target.block_write(function_type, partition, phase, block_num, write_data);
                     dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
                 .GetLastError => {
