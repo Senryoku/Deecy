@@ -20,14 +20,7 @@ const arm_jit_log = std.log.scoped(.arm_jit);
 
 const BlockBufferSize = 2 * 1024 * 1024;
 
-const HashMapContext = struct {
-    pub fn hash(_: @This(), addr: u32) u64 {
-        return @as(u64, addr >> 2) * 2654435761;
-    }
-    pub fn eql(_: @This(), a: u32, b: u32) bool {
-        return a == b;
-    }
-};
+const DebugAlwaysFallbackToInterpreter = true;
 
 const BlockCache = struct {
     const BlockEntryCount = 0x200000 >> 2;
@@ -573,8 +566,12 @@ fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) 
     return inst.l == 1 and inst.reg(15);
 }
 
-fn handle_branch(b: *JITBlock, _: *JITContext, instruction: u32) !bool {
+fn handle_branch(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.BranchInstruction = @bitCast(instruction);
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+        return true;
+    }
 
     const offset: u32 = arm7.sign_extend(@TypeOf(inst.offset), inst.offset) << 2;
 
@@ -606,6 +603,10 @@ fn handle_undefined(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+        return inst.l == 1 and inst.rd == 15;
+    }
 
     if (inst.i == 0) {
         const offset: u32 = inst.offset;
@@ -668,6 +669,8 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                         try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .imm32 = rotate_amount } } });
                     try store_register(b, inst.rd, .{ .reg = val });
                 } else {
+                    // FIXME: This changed and is handled in the read/write functions. It should probably be reworked.
+
                     // A word load (LDR) will normally use a word aligned address. However, an address
                     // offset from a word boundary will cause the data to be rotated into the register so that
                     // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
@@ -779,6 +782,13 @@ fn handle_msr(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+        switch (inst.opcode) {
+            .TST, .TEQ, .CMP, .CMN => return false,
+            else => return inst.rd == 15,
+        }
+    }
 
     const sro: arm7.interpreter.ScaledRegisterOffset = @bitCast(inst.operand2);
 
