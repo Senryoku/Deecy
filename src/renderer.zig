@@ -5,7 +5,6 @@ const renderer_log = std.log.scoped(.renderer);
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
 
-const common = @import("common.zig");
 const termcolor = @import("termcolor");
 
 const Colors = @import("colors.zig");
@@ -34,11 +33,11 @@ const moser_de_bruijin_sequence: [1024]u32 = moser: {
 };
 
 // Returns the indice of the z-order curve for the given coordinates.
-pub fn zorder_curve(x: u32, y: u32) u32 {
+pub inline fn zorder_curve(x: u32, y: u32) u32 {
     return (moser_de_bruijin_sequence[x] << 1) | moser_de_bruijin_sequence[y];
 }
 
-pub fn to_twiddled_index(i: u32, w: u32) u32 {
+pub inline fn to_twiddled_index(i: u32, w: u32) u32 {
     return zorder_curve(i % w, i / w);
 }
 
@@ -50,7 +49,7 @@ pub fn to_twiddled_index(i: u32, w: u32) u32 {
 //                  Any extra bits for one coordinate are positioned in order at the high end.
 //                  Example: …… V5 V4 U3 V3 U2 V2 U1 V1 U0 V0
 // The following function attempt to implement the general case - rectangles.
-pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
+pub inline fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
     // This can probably be made more efficient, but it makes sense to me.
     if (h <= w) {
         // Operate in a single square, assuming that, if w != h, then w > h and w is a multiple of h.
@@ -66,13 +65,11 @@ pub fn untwiddle(u: u32, v: u32, w: u32, h: u32) u32 {
     }
 }
 
-fn uv16(val: u16) f32 {
-    return @bitCast(@as(u32, val) << 16);
-}
-
 pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, texture: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
+    std.debug.assert(u_size >= 8 and u_size % 8 == 0);
+    std.debug.assert(v_size >= 8 and v_size % 8 == 0);
     switch (pixel_format) {
-        .ARGB1555, .RGB565, .ARGB4444 => |format| {
+        inline .ARGB1555, .RGB565, .ARGB4444 => |format| {
             const texels = std.mem.bytesAsSlice(Colors.Color16, texture[0..]);
             for (0..v_size) |y| {
                 for (0..u_size) |x| {
@@ -82,7 +79,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                 }
             }
         },
-        .Palette4BPP, .Palette8BPP => |format| {
+        inline .Palette4BPP, .Palette8BPP => |format| {
             std.debug.assert(twiddled);
             for (0..v_size) |v| {
                 for (0..u_size) |u| {
@@ -141,25 +138,20 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
 }
 
 pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32) void {
+    std.debug.assert(u_size >= 8 and u_size % 8 == 0);
+    std.debug.assert(v_size >= 8 and v_size % 8 == 0);
     std.debug.assert(code_book.len >= 8 * 256);
     std.debug.assert(indices.len >= u_size * v_size / 4);
+    std.debug.assert(pixel_format == .ARGB1555 or pixel_format == .RGB565 or pixel_format == .ARGB4444);
     const texels = std.mem.bytesAsSlice([4]Color16, code_book);
     // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
     for (0..v_size / 2) |v| {
         for (0..u_size / 2) |u| {
             const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
             for (0..4) |tidx| {
-                switch (pixel_format) {
-                    .ARGB1555, .RGB565, .ARGB4444 => {
-                        //                  Macro 2*2 Block            Pixel within the block
-                        const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                        dest_bgra[pixel_index] = texels[index][tidx].bgra(pixel_format, true);
-                    },
-                    else => {
-                        renderer_log.err(termcolor.red("Unsupported pixel format in VQ texture {any}"), .{pixel_format});
-                        @panic("Unsupported pixel format in VQ texture");
-                    },
-                }
+                //                  Macro 2*2 Block            Pixel within the block
+                const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
+                dest_bgra[pixel_index] = texels[index][tidx].bgra(pixel_format, true);
             }
         }
     }
@@ -450,12 +442,12 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     }
     if (sprite == .SpriteType1) {
         const v = sprite.SpriteType1;
-        r[0].u = uv16(v.auv.u);
-        r[0].v = uv16(v.auv.v);
-        r[2].u = uv16(v.buv.u);
-        r[2].v = uv16(v.buv.v);
-        r[3].u = uv16(v.cuv.u);
-        r[3].v = uv16(v.cuv.v);
+        r[0].u = v.auv.u_as_f32();
+        r[0].v = v.auv.v_as_f32();
+        r[2].u = v.buv.u_as_f32();
+        r[2].v = v.buv.v_as_f32();
+        r[3].u = v.cuv.u_as_f32();
+        r[3].v = v.cuv.v_as_f32();
     }
 
     // dz have to be deduced from the plane equation
