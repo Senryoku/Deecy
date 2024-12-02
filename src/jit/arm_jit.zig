@@ -645,6 +645,8 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                         try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .imm32 = rotate_amount } } });
                     try store_register(b, inst.rd, .{ .reg = val });
                 } else {
+                    // FIXME: This is not needed anymore, as the load_mem will take care of it.
+
                     // A word load (LDR) will normally use a word aligned address. However, an address
                     // offset from a word boundary will cause the data to be rotated into the register so that
                     // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
