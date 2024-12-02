@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
@@ -44,7 +45,11 @@ const BlockCache = struct {
 
     pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
         const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
-        try std.posix.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
+        if (builtin.os.tag == .linux) {
+            try std.posix.mprotect(buffer, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
+        } else {
+            try std.posix.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
+        }
 
         var r: @This() = .{
             .buffer = buffer,
@@ -112,12 +117,11 @@ const BlockCache = struct {
         arm_jit_log.info(termcolor.blue("Resetting block cache."), .{});
 
         self.cursor = 0;
+        self.min_address = std.math.maxInt(u32);
+        self.max_address = 0;
 
         self.deallocate_blocks();
         try self.allocate_blocks();
-
-        self.min_address = std.math.maxInt(u32);
-        self.max_address = 0;
     }
 
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
