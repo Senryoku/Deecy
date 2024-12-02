@@ -437,10 +437,8 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "c")); // Set carry flag to 'c'.
             var do_label = try b.jmp(.NotCarry);
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
-            var do_label_2 = try b.jmp(.Carry);
-            const skip_label = try b.jmp(.Always);
+            const skip_label = try b.jmp(.NotCarry);
             do_label.patch();
-            do_label_2.patch();
             return skip_label;
         },
         .GE => {
@@ -451,13 +449,8 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 0
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
-            var do_label_1 = try b.jmp(.Equal);
-
-            const skip_label = try b.jmp(.Always);
-
+            const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
-            do_label_1.patch();
-
             return skip_label;
         },
         .LT => {
@@ -468,35 +461,20 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 1
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
-            var do_label_1 = try b.jmp(.Equal);
-
-            const skip_label = try b.jmp(.Always);
-
+            const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
-            do_label_1.patch();
-
             return skip_label;
         },
         .GT => {
             // return !cpu.cpsr.z and (cpu.cpsr.n == cpu.cpsr.v)
-            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
-            try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
-            var do_label_0 = try b.jmp(.NotCarry);
-
-            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
-            // v == 1 and n == 1
+            try extract_cpsr_flags(b, &[_][]const u8{ "z", "n", "v" });
+            // z == 0 and v == 1 and n == 1
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
-            var do_label_1 = try b.jmp(.Equal);
-            // v == 0 and n == 0
+            var do_label_0 = try b.jmp(.Equal);
+            // z == 0 and v == 0 and n == 0
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
-            var do_label_2 = try b.jmp(.Equal);
-
-            const skip_label = try b.jmp(.Always);
-
+            const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
-            do_label_1.patch();
-            do_label_2.patch();
-
             return skip_label;
         },
         .LE => {
@@ -511,13 +489,10 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 1
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
-            var do_label_2 = try b.jmp(.Equal);
-
-            const skip_label = try b.jmp(.Always);
+            const skip_label = try b.jmp(.NotEqual);
 
             do_label_0.patch();
             do_label_1.patch();
-            do_label_2.patch();
 
             return skip_label;
         },
