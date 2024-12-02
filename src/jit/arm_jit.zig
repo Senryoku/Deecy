@@ -20,7 +20,7 @@ const arm_jit_log = std.log.scoped(.arm_jit);
 
 const BlockBufferSize = 2 * 1024 * 1024;
 
-const DebugAlwaysFallbackToInterpreter = true;
+const DebugAlwaysFallbackToInterpreter = false;
 
 const BlockCache = struct {
     const BlockEntryCount = 0x200000 >> 2;
@@ -623,7 +623,7 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
             if (inst.b == 1) {
                 try store_mem(b, ctx, u8, addr, val);
             } else {
-                if (addr.tag() == .imm32) {
+                if (addr == .imm32) {
                     addr.imm32 &= 0xFFFFFFFC;
                 } else {
                     try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0xFFFFFFFC } } });
@@ -637,7 +637,7 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                 try load_mem(b, ctx, u8, val, addr);
                 try store_register(b, inst.rd, .{ .reg = val });
             } else {
-                if (addr.tag() == .imm32) {
+                if (addr == .imm32) {
                     const rotate_amount = (addr.imm32 & 3) * 8;
                     addr.imm32 &= 0xFFFFFFFC;
                     try load_mem(b, ctx, u32, val, addr);
@@ -645,8 +645,6 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
                         try b.append(.{ .Ror = .{ .dst = .{ .reg = val }, .amount = .{ .imm32 = rotate_amount } } });
                     try store_register(b, inst.rd, .{ .reg = val });
                 } else {
-                    // FIXME: This changed and is handled in the read/write functions. It should probably be reworked.
-
                     // A word load (LDR) will normally use a word aligned address. However, an address
                     // offset from a word boundary will cause the data to be rotated into the register so that
                     // the addressed byte occupies bits 0 to 7. This means that half-words accessed at offsets
