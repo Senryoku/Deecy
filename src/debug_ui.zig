@@ -402,7 +402,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("AICA - ARM", .{})) {
-        _ = zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit });
+        if (zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit })) {
+            const was_running = d.running;
+            if (was_running)
+                d.stop();
+            try dc.aica.arm_jit.block_cache.reset();
+            if (was_running)
+                d.start();
+        }
         zgui.sameLine(.{});
         _ = zgui.checkbox("Debug Trace", .{ .v = &dc.aica.arm_debug_trace });
         zgui.sameLine(.{});
