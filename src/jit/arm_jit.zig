@@ -170,9 +170,8 @@ pub const ARM7JIT = struct {
                     } else break :retry err;
                 });
             }
-            // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
+            arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(self.block_cache.buffer, cpu);
-            cpu.check_fiq(); // FIXME: Non-tested.
 
             spent_cycles += @intCast(block.?.cycles);
 
@@ -180,6 +179,8 @@ pub const ARM7JIT = struct {
             // (Right now we're always calling to the interpreter so this should stay in sync, but once
             //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
             cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+
+            cpu.check_fiq(); // FIXME: Non-tested.
 
             if (cpu.pc() > cpu.memory_address_mask) {
                 arm_jit_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{cpu.pc()});
@@ -222,13 +223,13 @@ pub const ARM7JIT = struct {
                 j.patch();
             }
 
+            arm_jit_log.debug("  [{X:0>8}] {s} {s}", .{ ctx.address, if (ctx.did_fallback) "!" else " ", arm7.ARM7.disassemble(instr) });
+
             cycles += 1; // FIXME
             index += 1;
             ctx.address += 4;
 
-            arm_jit_log.debug("  [{X:0>8}] {s} {s}", .{ ctx.address, if (ctx.did_fallback) "!" else " ", arm7.ARM7.disassemble(instr) });
-
-            if (branch)
+            if (branch or cycles > 256)
                 break;
         }
 
@@ -271,16 +272,16 @@ fn store_register(b: *JITBlock, arm_reg: u5, value: JIT.Operand) !void {
     try b.mov(guest_register(arm_reg), value);
 }
 
-fn read8(self: *arm7.ARM7, address: u32) u8 {
+noinline fn read8(self: *arm7.ARM7, address: u32) u8 {
     return self.read(u8, address);
 }
-fn read32(self: *arm7.ARM7, address: u32) u32 {
+noinline fn read32(self: *arm7.ARM7, address: u32) u32 {
     return self.read(u32, address);
 }
-fn write8(self: *arm7.ARM7, address: u32, value: u8) void {
+noinline fn write8(self: *arm7.ARM7, address: u32, value: u8) void {
     self.write(u8, address, value);
 }
-fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
+noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
     self.write(u32, address, value);
 }
 

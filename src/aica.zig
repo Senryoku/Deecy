@@ -498,7 +498,7 @@ pub const AICA = struct {
     pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
 
     arm7: arm7.ARM7 = undefined,
-    enable_arm_jit: bool = false,
+    enable_arm_jit: bool = true,
     arm_jit: ARM7JIT = undefined,
 
     regs: []u32, // All registers are 32-bit afaik
@@ -597,13 +597,16 @@ pub const AICA = struct {
 
     pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x00800000 and addr < 0x01000000);
-        self.arm_jit.block_cache.signal_write(addr - 0x00800000);
+        const local_addr = addr - 0x00800000;
+        const flush_cache = self.enable_arm_jit and local_addr >= self.arm_jit.block_cache.min_address and local_addr <= self.arm_jit.block_cache.max_address;
+        const lock = flush_cache and ExperimentalThreadedARM;
+        if (lock) self.sample_mutex.lock();
+        defer if (lock) self.sample_mutex.unlock();
+        if (flush_cache)
+            self.arm_jit.block_cache.signal_write(local_addr);
 
-        switch (addr) {
-            else => {},
-        }
         // FIXME: No idea if this actually wraps around. Dev kit had 8MB of RAM instead of the final 2MB.
-        @as(*T, @alignCast(@ptrCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).* = value;
+        @as(*T, @alignCast(@ptrCast(&self.wave_memory[(local_addr) % self.wave_memory.len]))).* = value;
     }
 
     pub fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
