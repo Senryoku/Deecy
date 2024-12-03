@@ -688,7 +688,26 @@ fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     std.debug.assert(inst.rd != 15);
     std.debug.assert(inst.rm != 15);
     std.debug.assert(inst.rs != 15);
-    try interpreter_fallback(b, ctx, instruction);
+
+    if (DebugAlwaysFallbackToInterpreter or inst.s == 1) {
+        try interpreter_fallback(b, ctx, instruction);
+        return false;
+    }
+
+    std.debug.assert(inst.s == 0); // TODO
+
+    const rm = ReturnRegister;
+    const rs = ArgRegisters[0];
+    try load_register(b, rm, inst.rm);
+    try load_register(b, rs, inst.rs);
+    try b.append(.{ .Mul = .{ .dst = .{ .reg = rm }, .src = .{ .reg = rs } } });
+    if (inst.a == 1) {
+        const rn = ArgRegisters[1];
+        try load_register(b, rn, inst.rn);
+        try b.append(.{ .Add = .{ .dst = .{ .reg = rm }, .src = .{ .reg = rn } } });
+    }
+    try store_register(b, inst.rd, .{ .reg = rm });
+
     return false;
 }
 
