@@ -861,7 +861,10 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             .RSB => {
                 // cpu.r(inst.rd).* = op2 -% op1;
                 try load_register(b, ReturnRegister, inst.rn);
-                try b.append(.{ .Sub = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = op2 } });
+                if (op2 == .imm32) {
+                    try b.mov(.{ .reg = ArgRegisters[0] }, op2);
+                } else std.debug.assert(op2.reg == ArgRegisters[0]);
+                try b.append(.{ .Sub = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .reg = ReturnRegister } } });
                 try store_register(b, inst.rd, .{ .reg = ArgRegisters[0] });
             },
             .ADD => {
