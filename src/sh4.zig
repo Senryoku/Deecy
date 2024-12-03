@@ -1032,7 +1032,7 @@ pub const SH4 = struct {
             },
             0xE4000000...0xEFFFFFFF => {
                 // Reserved
-                @panic("Reserved");
+                sh4_log.err(termcolor.red("Read from Reserved space in P4 (PC: {X:0>8}): {X:0>8}"), .{ self.pc, virtual_addr });
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
