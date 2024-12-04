@@ -107,6 +107,8 @@ const BlockCache = struct {
     }
 
     pub fn reset(self: *@This()) !void {
+        if (self.cursor == 0) return;
+
         arm_jit_log.info(termcolor.blue("Resetting block cache."), .{});
 
         self.cursor = 0;
@@ -152,6 +154,10 @@ pub const ARM7JIT = struct {
         self.block_cache.deinit();
     }
 
+    pub fn reset(self: *@This()) !void {
+        try self.block_cache.reset();
+    }
+
     pub noinline fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
         if (!cpu.running) return 0;
 
@@ -170,7 +176,7 @@ pub const ARM7JIT = struct {
                     } else break :retry err;
                 });
             }
-            arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
+            // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
             block.?.execute(self.block_cache.buffer, cpu);
 
             spent_cycles += @intCast(block.?.cycles);

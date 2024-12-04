@@ -533,7 +533,7 @@ pub const AICA = struct {
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try ARM7JIT.init(allocator, r.arm7.memory_address_mask);
 
-        r.reset();
+        try r.reset();
 
         return r;
     }
@@ -563,7 +563,7 @@ pub const AICA = struct {
         self._allocator.free(self.wave_memory);
     }
 
-    pub fn reset(self: *@This()) void {
+    pub fn reset(self: *@This()) !void {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
@@ -586,6 +586,8 @@ pub const AICA = struct {
         self.get_reg(u32, .SCILV0).* = 0x18;
         self.get_reg(u32, .SCILV1).* = 0x50;
         self.get_reg(u32, .SCILV2).* = 0x08;
+
+        try self.arm_jit.reset();
     }
 
     // Read/Write from main CPU
