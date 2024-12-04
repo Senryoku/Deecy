@@ -952,7 +952,7 @@ test "IP.bin init boot" {
         std.testing.allocator.destroy(dc);
     }
 
-    dc.skip_bios();
+    dc.skip_bios(true);
 
     // Example IP.bin file
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});

@@ -299,6 +299,7 @@ fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, add
 }
 
 // Loads into ReturnRegister
+// NOTE: Uses ArgRegisters 0 and 1
 fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -334,6 +335,7 @@ fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Reg
     }
 }
 
+// NOTE: Uses ArgRegisters 0, 1 and 2
 fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -677,8 +679,31 @@ fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32)
 }
 
 fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
-    const inst: arm7.MRSInstruction = @bitCast(instruction);
-    try interpreter_fallback(b, ctx, instruction);
+    const inst: arm7.SingleDataSwapInstruction = @bitCast(instruction);
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+        return inst.rd == 15;
+    }
+
+    const addr: JIT.Operand = .{ .reg = ArgRegisters[1] };
+    const reg = ArgRegisters[2];
+    const rd = ReturnRegister;
+    try load_register(b, addr.reg, inst.rn);
+    try load_register(b, reg, inst.rm);
+    if (inst.b == 1) {
+        // cpu.r[inst.rd] = cpu.read(u8, addr);
+        try load_mem(b, ctx, u8, rd, addr);
+        try store_register(b, inst.rd, .{ .reg8 = rd });
+        // cpu.write(u8, addr, @truncate(reg));
+        try store_mem(b, ctx, u8, addr, reg);
+    } else {
+        // cpu.r[inst.rd] = cpu.read(u32, addr);
+        try load_mem(b, ctx, u32, rd, addr);
+        try store_register(b, inst.rd, .{ .reg = rd });
+        // cpu.write(u32, addr, reg);
+        try store_mem(b, ctx, u32, addr, reg);
+    }
+
     return inst.rd == 15;
 }
 

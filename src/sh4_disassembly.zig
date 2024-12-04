@@ -119,13 +119,13 @@ test "Instruction Decoding" {
     try test_decoding(.{ .value = 0b1100_0111_0000_0000 }, "mova @(0,PC),R0");
     try test_decoding(.{ .value = 0b0000_0011_0010_1001 }, "movt R3");
 
-    try test_decoding(.{ .value = 0b1000_1011_0000_0100 }, "bf label");
-    try test_decoding(.{ .value = 0b1000_1111_0000_0100 }, "bf/s label");
-    try test_decoding(.{ .value = 0b1000_1001_0000_0100 }, "bt label");
-    try test_decoding(.{ .value = 0b1000_1101_0000_0100 }, "bt/s label");
-    try test_decoding(.{ .value = 0b1010_0000_0000_0100 }, "bra label");
+    try test_decoding(.{ .value = 0b1000_1011_0000_0100 }, "bf C");
+    try test_decoding(.{ .value = 0b1000_1111_0000_0100 }, "bf/s C");
+    try test_decoding(.{ .value = 0b1000_1001_0000_0100 }, "bt C");
+    try test_decoding(.{ .value = 0b1000_1101_0000_0100 }, "bt/s C");
+    try test_decoding(.{ .value = 0b1010_0000_0000_0100 }, "bra C");
     try test_decoding(.{ .value = 0b0000_0001_0010_0011 }, "braf R1");
-    try test_decoding(.{ .value = 0b1011_0000_0000_0100 }, "bsr label");
+    try test_decoding(.{ .value = 0b1011_0000_0000_0100 }, "bsr C");
     try test_decoding(.{ .value = 0b0000_0001_0000_0011 }, "bsrf R1");
     try test_decoding(.{ .value = 0b0100_0001_0010_1011 }, "jmp @R1");
     try test_decoding(.{ .value = 0b0100_0001_0000_1011 }, "jsr @R1");
