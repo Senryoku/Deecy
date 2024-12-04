@@ -19,7 +19,7 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const arm_jit_log = std.log.scoped(.arm_jit);
 
 const BlockBufferSize = 2 * 1024 * 1024;
-
+const MaxCyclesPerBlock = 32;
 const DebugAlwaysFallbackToInterpreter = false;
 
 const BlockCache = struct {
@@ -61,10 +61,19 @@ const BlockCache = struct {
 
     pub fn signal_write(self: *@This(), addr: u32) void {
         if (addr >= self.min_address and addr <= self.max_address) {
-            self.reset() catch {
-                arm_jit_log.err("Failed to reset block cache.", .{});
-                @panic("Failed to reset block cache.");
-            };
+            arm_jit_log.debug(termcolor.blue("Signal write: {X:0>8} in [{X:0>8}, {X:0>8}]"), .{ addr, self.min_address, self.max_address });
+            // NOTE: Currently cycles are a perfect stand in for instruction count. This might change in the future.
+            //       This should still be a good upper bound though, so it's not critical.
+            // Invalidate blocks containing the address.
+            const from: u32 = @intCast(@max(0, @as(i64, @intCast(addr & 0xFFFFFFFC)) - 4 * MaxCyclesPerBlock));
+            var instr_addr = from;
+            while (instr_addr <= addr) : (instr_addr += 4) {
+                if (self.get(instr_addr)) |block| {
+                    if (instr_addr + 4 * (block.cycles - 1) >= 4 * MaxCyclesPerBlock) {
+                        self.invalidate(instr_addr);
+                    }
+                }
+            }
         }
     }
 
@@ -117,6 +126,10 @@ const BlockCache = struct {
 
         self.deallocate_blocks();
         try self.allocate_blocks();
+    }
+
+    pub fn invalidate(self: *@This(), address: u32) void {
+        self.blocks[(address & self.addr_mask) >> 2] = null;
     }
 
     pub fn get(self: *@This(), address: u32) ?BasicBlock {
@@ -235,7 +248,7 @@ pub const ARM7JIT = struct {
             index += 1;
             ctx.address += 4;
 
-            if (branch or cycles > 256)
+            if (branch or cycles > MaxCyclesPerBlock)
                 break;
         }
 

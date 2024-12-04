@@ -600,7 +600,7 @@ pub const AICA = struct {
     pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
         std.debug.assert(addr >= 0x00800000 and addr < 0x01000000);
         const local_addr = addr - 0x00800000;
-        const flush_cache = self.enable_arm_jit and local_addr >= self.arm_jit.block_cache.min_address and local_addr <= self.arm_jit.block_cache.max_address;
+        const flush_cache = self.enable_arm_jit and local_addr >= self.arm_jit.block_cache.min_address and local_addr <= self.arm_jit.block_cache.max_address and self.read_mem(T, addr) != value;
         const lock = flush_cache and ExperimentalThreadedARM;
         if (lock) self.sample_mutex.lock();
         defer if (lock) self.sample_mutex.unlock();
@@ -803,6 +803,7 @@ pub const AICA = struct {
 
                         self._arm_cycles_counter = 0;
                         self.arm7.reset(value & 1 == 0);
+                        self.arm_jit.reset() catch unreachable;
                         if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
                             aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
                             self.arm7.running = false;
