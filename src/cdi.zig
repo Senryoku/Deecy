@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const FileBacking = @import("file_backing.zig");
 const Track = @import("track.zig");
 
 const log = std.log.scoped(.cdi);
@@ -14,12 +15,15 @@ pub const CDI = struct {
 
     tracks: std.ArrayList(Track),
     _allocator: std.mem.Allocator,
+    _file: FileBacking,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !CDI {
-        const self: @This() = .{
+        var self: @This() = .{
             .tracks = std.ArrayList(Track).init(allocator),
             ._allocator = allocator,
+            ._file = try FileBacking.init(filepath, allocator),
         };
+        errdefer self.deinit();
 
         const file = try std.fs.cwd().openFile(filepath, .{});
         defer file.close();
@@ -129,6 +133,15 @@ pub const CDI = struct {
                     },
                 }
 
+                try self.tracks.append(.{
+                    .num = track_number,
+                    .offset = start_lba, // Start LBA
+                    .track_type = @truncate(sector_type),
+                    .format = sector_size, // Sector size
+                    .pregap = pregap,
+                    .data = try self._file.create_view(track_offset, total_length * sector_size),
+                });
+
                 track_offset += total_length * sector_size;
 
                 try reader.skipBytes(4 + 8, .{});
@@ -143,10 +156,8 @@ pub const CDI = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        for (self.tracks.items) |*track| {
-            track.deinit(self._allocator);
-        }
         self.tracks.deinit();
+        self._file.deinit();
     }
 
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {

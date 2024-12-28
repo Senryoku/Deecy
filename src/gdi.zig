@@ -6,6 +6,7 @@ const termcolor = @import("termcolor");
 const gdi_log = std.log.scoped(.gdi);
 
 const windows = @import("windows.zig");
+const FileBacking = @import("file_backing.zig");
 
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");
@@ -22,11 +23,13 @@ pub const GDI = struct {
     tracks: std.ArrayList(Track),
 
     _allocator: std.mem.Allocator,
+    _files: std.ArrayList(FileBacking),
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !GDI {
         var self: GDI = .{
             .tracks = std.ArrayList(Track).init(allocator),
             ._allocator = allocator,
+            ._files = std.ArrayList(FileBacking).init(allocator),
         };
 
         const file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -59,73 +62,31 @@ pub const GDI = struct {
 
             std.debug.assert(pregap == 0); // FIXME: Not handled.
 
-            // TODO: Use MMAP on non-windows platforms
-            if (builtin.os.tag != .windows) {
-                const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
-                defer self._allocator.free(track_file_path);
-                const track_file = std.fs.cwd().openFile(track_file_path, .{}) catch {
-                    std.debug.print("Track File not found: {s}\n", .{track_file_path});
-                    return error.TrackFileNotFound;
-                };
+            const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
+            defer self._allocator.free(track_file_path);
+            var track_file = try FileBacking.init(track_file_path, allocator);
+            errdefer track_file.deinit();
+            try self._files.append(track_file);
 
-                const track_data = try std.posix.mmap(null, (try track_file.stat()).size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, track_file.handle, 0);
-
-                self.tracks.items[num - 1] = (.{
-                    .num = num,
-                    .offset = offset,
-                    .track_type = track_type,
-                    .format = format,
-                    .pregap = pregap,
-                    .data = track_data,
-                    .platform_specific = .{ .file = track_file },
-                });
-            } else {
-                const track_file_path = try std.fs.path.joinZ(self._allocator, &[_][]const u8{ folder, filename });
-                defer self._allocator.free(track_file_path);
-                var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = .{0} ** (std.fs.max_path_bytes + 1);
-                const track_file_abs_path = try std.fs.cwd().realpathZ(track_file_path, &track_file_abs_path_buffer);
-                const file_path_w = try std.os.windows.cStrToPrefixedFileW(null, @as([*:0]u8, @ptrCast(track_file_abs_path.ptr)));
-
-                const file_handle = try std.os.windows.OpenFile(file_path_w.span(), .{
-                    .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
-                    .creation = std.os.windows.FILE_OPEN,
-                });
-                errdefer std.os.windows.CloseHandle(file_handle);
-
-                const mapping_handle = windows.CreateFileMappingA(file_handle, null, std.os.windows.PAGE_READONLY, 0, 0, null);
-                if (mapping_handle == null) return error.FileMapError;
-                errdefer std.os.windows.CloseHandle(mapping_handle.?);
-
-                const ptr = windows.MapViewOfFile(mapping_handle.?, std.os.windows.SECTION_MAP_READ, 0, 0, 0);
-                if (ptr == null) return error.MapViewOfFileError;
-                errdefer _ = windows.UnmapViewOfFile(ptr.?);
-
-                var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
-                _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
-
-                self.tracks.items[num - 1] = (.{
-                    .num = num,
-                    .offset = offset,
-                    .track_type = track_type,
-                    .format = format,
-                    .pregap = pregap,
-                    .data = @as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(ptr)))[0..info.RegionSize],
-                    .platform_specific = .{
-                        .file_handle = file_handle,
-                        .mapping_handle = mapping_handle.?,
-                    },
-                });
-            }
+            self.tracks.items[num - 1] = (.{
+                .num = num,
+                .offset = offset,
+                .track_type = track_type,
+                .format = format,
+                .pregap = pregap,
+                .data = try track_file.create_full_view(),
+            });
         }
 
         return self;
     }
 
     pub fn deinit(self: *@This()) void {
-        for (self.tracks.items) |*track| {
-            track.deinit(self._allocator);
-        }
         self.tracks.deinit();
+        for (self._files.items) |*file| {
+            file.deinit();
+        }
+        self._files.deinit();
     }
 
     pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {

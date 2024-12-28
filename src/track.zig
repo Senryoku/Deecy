@@ -1,8 +1,5 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const termcolor = @import("termcolor");
-
-const windows = @import("windows.zig");
 
 const CD = @import("iso9660.zig");
 
@@ -14,26 +11,6 @@ track_type: u8,
 format: u32, // Sector size
 pregap: u32,
 data: []align(std.mem.page_size) const u8,
-
-platform_specific: if (builtin.os.tag == .windows) struct {
-    mapping_handle: *anyopaque,
-    file_handle: *anyopaque,
-} else struct {
-    file: std.fs.File,
-},
-
-pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    _ = allocator;
-    if (builtin.os.tag != .windows) {
-        std.posix.munmap(self.data);
-        self.platform_specific.file.close();
-    } else {
-        // TODO:
-        _ = windows.UnmapViewOfFile(self.data.ptr);
-        std.os.windows.CloseHandle(self.platform_specific.mapping_handle);
-        std.os.windows.CloseHandle(self.platform_specific.file_handle);
-    }
-}
 
 pub fn get_directory_record(self: *const @This(), offset: usize) *const CD.DirectoryRecord {
     return @ptrCast(@alignCast(self.data.ptr + offset));
