@@ -117,7 +117,12 @@ pub const CDI = struct {
                 log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Total Length: {X}", .{ session_number, track_number, start_lba, total_length });
 
                 try reader.skipBytes(16, .{});
-                const sector_size = try reader.readInt(u32, .little);
+                const sector_size: u32 = switch (try reader.readInt(u32, .little)) {
+                    0 => 2048,
+                    1 => 2336,
+                    2 => 2352,
+                    else => return error.InvalidSectorSize,
+                };
                 const sector_type = try reader.readInt(u32, .little);
                 log.debug("    Sector Size: {d}, Sector Type: {d}", .{ sector_size, sector_type });
                 try reader.skipBytes(1, .{});
@@ -132,6 +137,8 @@ pub const CDI = struct {
                             try reader.skipBytes(78, .{});
                     },
                 }
+
+                log.debug("Creating view: {X}, length: {X}", .{ track_offset, total_length * sector_size });
 
                 try self.tracks.append(.{
                     .num = track_number,
@@ -162,32 +169,25 @@ pub const CDI = struct {
 
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
         _ = self;
-        _ = lba;
-        _ = count;
-        _ = dest;
+        log.debug("load_sectors: {X} {X} {X}", .{ lba, count, dest.len });
         return 0;
     }
 
     pub fn load_sectors_raw(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
         _ = self;
-        _ = lba;
-        _ = count;
-        _ = dest;
+        log.debug("load_sectors_raw: {X} {X} {X}", .{ lba, count, dest.len });
         return 0;
     }
 
     pub fn load_bytes(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
         _ = self;
-        _ = lba;
-        _ = length;
-        _ = dest;
+        log.debug("load_bytes: {X} {X} {X}", .{ lba, length, dest.len });
         return 0;
     }
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
         _ = self;
-        _ = filename;
-        _ = dest;
+        log.debug("load_file: {s} {X}", .{ filename, dest.len });
         return error.NotImplemented;
     }
 };

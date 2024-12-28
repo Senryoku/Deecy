@@ -45,7 +45,8 @@ pub fn deinit(self: *@This()) void {
         self.file.close();
     } else {
         for (self.views.items) |view| {
-            _ = windows.UnmapViewOfFile(view);
+            if (windows.UnmapViewOfFile(view) == 0)
+                std.debug.print("UnmapViewOfFile failed: {any}\n", .{std.os.windows.GetLastError()});
         }
         std.os.windows.CloseHandle(self.mapping_handle);
         std.os.windows.CloseHandle(self.file);
@@ -64,14 +65,21 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]align(std.mem.page
         try self.views.append(r);
         return r;
     } else {
-        const ptr = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(offset >> 32), @truncate(offset), size);
-        if (ptr == null) return error.MapViewOfFileError;
-        errdefer _ = windows.UnmapViewOfFile(ptr.?);
+        const aligned_offset = std.mem.alignBackward(u64, offset, std.mem.page_size);
+        const adjustment = offset - aligned_offset;
+        const aligned_size = std.mem.alignForward(u64, size, std.mem.page_size);
 
-        try self.views.append(ptr.?);
+        // FIXME: CDI: os.windows.win32error.Win32Error.MAPPED_ALIGNMENT
+        const ptr = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), aligned_size) orelse {
+            std.debug.print("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}\n", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
+            return error.MapViewOfFileError;
+        };
+        errdefer _ = windows.UnmapViewOfFile(ptr);
+
+        try self.views.append(ptr);
 
         var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
         _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
-        return @as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(ptr)))[0..info.RegionSize];
+        return @alignCast(@as([*]const u8, @ptrCast(ptr))[adjustment .. info.RegionSize + adjustment]);
     }
 }
