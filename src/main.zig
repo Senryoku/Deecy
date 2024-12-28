@@ -264,8 +264,8 @@ pub fn main() !void {
             dc.skip_bios(true);
 
             // Load 1STREAD.BIN (Actual name might change)
-            const header_size: u32 = dc.gdrom.disk.?.tracks.items[2].header_size();
-            const first_read_name = dc.gdrom.disk.?.tracks.items[2].data[0x60 + header_size .. 0x70 + header_size];
+            const header_size: u32 = dc.gdrom.disk.?.get_tracks().items[2].header_size();
+            const first_read_name = dc.gdrom.disk.?.get_tracks().items[2].data[0x60 + header_size .. 0x70 + header_size];
             const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
             var first_read: []u8 = try allocator.alloc(u8, name_end + 2);
             defer allocator.free(first_read);

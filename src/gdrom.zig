@@ -3,7 +3,7 @@ const termcolor = @import("termcolor");
 
 const gdrom_log = std.log.scoped(.gdrom);
 
-const GDI = @import("gdi.zig").GDI;
+const Disk = @import("disk.zig").Disk;
 const SH4 = @import("sh4.zig").SH4;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
@@ -177,7 +177,7 @@ pub fn msf_to_lba(minutes: u8, seconds: u8, frame: u8) u32 {
 }
 
 pub const GDROM = struct {
-    disk: ?GDI = null,
+    disk: ?Disk = null,
 
     state: GDROMStatus = GDROMStatus.Standby,
     // LLE
@@ -790,15 +790,15 @@ pub const GDROM = struct {
 
     pub fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
         if (self.disk) |disk| {
-            std.debug.assert(disk.tracks.items.len >= 3);
+            std.debug.assert(disk.get_tracks().items.len >= 3);
 
             const start_track: usize = if (area == .DoubleDensity) 2 else 0;
-            const end_track: usize = if (area == .DoubleDensity) disk.tracks.items.len - 1 else 1;
+            const end_track: usize = if (area == .DoubleDensity) disk.get_tracks().items.len - 1 else 1;
 
             @memset(dest[0..396], 0xFF);
 
             for (start_track..end_track + 1) |i| {
-                const track = disk.tracks.items[i];
+                const track = disk.get_tracks().items[i];
                 const leading_fad = track.offset;
 
                 dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
@@ -808,8 +808,8 @@ pub const GDROM = struct {
             }
 
             @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
-                disk.tracks.items[start_track].adr_ctrl_byte(), @intCast(disk.tracks.items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
-                disk.tracks.items[end_track].adr_ctrl_byte(), @intCast(disk.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
+                disk.get_tracks().items[start_track].adr_ctrl_byte(), @intCast(disk.get_tracks().items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
+                disk.get_tracks().items[end_track].adr_ctrl_byte(), @intCast(disk.get_tracks().items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
             });
 
             if (area == .DoubleDensity) {

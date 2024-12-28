@@ -21,7 +21,7 @@ const termcolor = @import("termcolor");
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
-const GDI = @import("./gdi.zig").GDI;
+const Disk = @import("./disk.zig").Disk;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -654,9 +654,9 @@ pub fn load_disk(self: *@This(), path: []const u8) !void {
         var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
         defer tmp_dir.close();
         try std.zip.extract(tmp_dir, stream, .{});
-        self.dc.gdrom.disk = try GDI.init(tmp_gdi_path, self._allocator);
+        self.dc.gdrom.disk = try Disk.init(tmp_gdi_path, self._allocator);
     } else {
-        self.dc.gdrom.disk = try GDI.init(path, self._allocator);
+        self.dc.gdrom.disk = try Disk.init(path, self._allocator);
     }
 }
 
