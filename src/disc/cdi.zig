@@ -1,7 +1,8 @@
 const std = @import("std");
 
-const FileBacking = @import("file_backing.zig");
+const FileBacking = @import("../file_backing.zig");
 const Track = @import("track.zig");
+const Session = @import("session.zig");
 
 const log = std.log.scoped(.cdi);
 
@@ -14,12 +15,14 @@ pub const CDI = struct {
     };
 
     tracks: std.ArrayList(Track),
+    sessions: std.ArrayList(Session),
     _allocator: std.mem.Allocator,
     _file: FileBacking,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !CDI {
         var self: @This() = .{
             .tracks = std.ArrayList(Track).init(allocator),
+            .sessions = std.ArrayList(Session).init(allocator),
             ._allocator = allocator,
             ._file = try FileBacking.init(filepath, allocator),
         };
@@ -60,7 +63,16 @@ pub const CDI = struct {
 
         var track_offset: u64 = 0;
 
+        std.debug.assert(session_count == 2);
+
         for (0..session_count) |_| {
+            var session = Session{
+                .first_track = @intCast(self.tracks.items.len),
+                .last_track = 0,
+                .start_fad = 0,
+                .end_fad = 0,
+            };
+
             const track_count = try reader.readInt(u16, .little);
             log.debug("  Track Count: {d}", .{track_count});
 
@@ -103,7 +115,7 @@ pub const CDI = struct {
                 try reader.skipBytes(2, .{});
                 const pregap = try reader.readInt(u32, .little);
                 const length = try reader.readInt(u32, .little);
-                log.debug("    Pregap: {d}, Length: {d}", .{ pregap, length });
+                log.debug("    Pregap: {X}, Length: {X}", .{ pregap, length });
 
                 try reader.skipBytes(6, .{});
                 const mode = try reader.readInt(u32, .little);
@@ -113,8 +125,9 @@ pub const CDI = struct {
                 const session_number = try reader.readInt(u32, .little);
                 const track_number = try reader.readInt(u32, .little);
                 const start_lba = try reader.readInt(u32, .little);
-                const total_length = try reader.readInt(u32, .little);
-                log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Total Length: {X}", .{ session_number, track_number, start_lba, total_length });
+                const track_length = try reader.readInt(u32, .little);
+                log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Track Length: {X}", .{ session_number, track_number, start_lba, track_length });
+                std.debug.assert(track_length == length + pregap);
 
                 try reader.skipBytes(16, .{});
                 const sector_size: u32 = switch (try reader.readInt(u32, .little)) {
@@ -126,8 +139,10 @@ pub const CDI = struct {
                 const sector_type = try reader.readInt(u32, .little);
                 log.debug("    Sector Size: {d}, Sector Type: {d}", .{ sector_size, sector_type });
                 try reader.skipBytes(1, .{});
-                const total_length_2 = try reader.readInt(u32, .little);
-                log.debug("    Total Length 2: {d}", .{total_length_2});
+                const total_length = try reader.readInt(u32, .little);
+                log.debug("    Total Length: {d}", .{total_length});
+                std.debug.assert(total_length == length + pregap);
+                std.debug.assert(total_length == track_length);
 
                 try reader.skipBytes(25, .{});
                 switch (version) {
@@ -138,39 +153,58 @@ pub const CDI = struct {
                     },
                 }
 
-                log.debug("Creating view: {X}, length: {X}", .{ track_offset, total_length * sector_size });
+                log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset, track_length * sector_size });
 
                 try self.tracks.append(.{
-                    .num = track_number,
-                    .offset = start_lba, // Start LBA
+                    .num = @truncate(self.tracks.items.len + 1),
+                    .offset = start_lba,
                     .track_type = @truncate(sector_type),
-                    .format = sector_size, // Sector size
+                    .format = sector_size,
                     .pregap = pregap,
-                    .data = try self._file.create_view(track_offset, total_length * sector_size),
+                    .data = try self._file.create_view(track_offset + pregap * sector_size, (track_length - pregap) * sector_size),
                 });
 
-                track_offset += total_length * sector_size;
-
-                try reader.skipBytes(4 + 8, .{});
-                switch (version) {
-                    .V2 => {},
-                    else => try reader.skipBytes(1, .{}),
-                }
+                track_offset += track_length * sector_size;
+                session.end_fad = start_lba + pregap + track_length;
             }
+            const session_type = try reader.readInt(u32, .little);
+            try reader.skipBytes(4, .{});
+            session.start_fad = try reader.readInt(u32, .little);
+            log.debug("Session Type: {X}, Last Session Start LBA: {X}", .{ session_type, session.start_fad });
+            if (version != .V2) try reader.skipBytes(1, .{});
+
+            session.last_track = @intCast(self.tracks.items.len - 1);
+            try self.sessions.append(session);
         }
+        const total_tracks = try reader.readInt(u16, .little);
+        std.debug.assert(total_tracks == 0);
+        const end_lba = try reader.readInt(u32, .little);
+        const volume_name_length = try reader.readInt(u8, .little);
+        var volume_name_buffer: [256]u8 = undefined;
+        const volume_name = volume_name_buffer[0..volume_name_length];
+        _ = try reader.read(volume_name);
+        log.debug("Total Tracks: {d}, End LBA: {X}, Volume Name Length: {d}, Volume Name: {s}", .{ total_tracks, end_lba, volume_name_length, volume_name });
 
         return self;
     }
 
     pub fn deinit(self: *@This()) void {
+        self.sessions.deinit();
         self.tracks.deinit();
         self._file.deinit();
     }
 
+    pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {
+        std.debug.assert(self.tracks.items.len > 0);
+        var idx: u32 = 0;
+        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].offset <= lda) : (idx += 1) {}
+        return &self.tracks.items[idx];
+    }
+
     pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-        _ = self;
         log.debug("load_sectors: {X} {X} {X}", .{ lba, count, dest.len });
-        return 0;
+        const track = try self.get_corresponding_track(lba);
+        return track.load_sectors(lba, count, dest);
     }
 
     pub fn load_sectors_raw(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
@@ -189,5 +223,49 @@ pub const CDI = struct {
         _ = self;
         log.debug("load_file: {s} {X}", .{ filename, dest.len });
         return error.NotImplemented;
+    }
+
+    pub fn get_session_count(self: *const @This()) u32 {
+        return @intCast(self.sessions.items.len);
+    }
+
+    pub fn get_session(self: *const @This(), session_number: u32) Session {
+        return self.sessions.items[session_number - 1];
+    }
+
+    pub fn get_end_fad(self: *const @This()) u32 {
+        const last_track = self.tracks.items[self.tracks.items.len - 1];
+        return @intCast(last_track.offset + last_track.data.len / last_track.format);
+    }
+
+    pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
+        if (area == .DoubleDensity) return 0;
+
+        @memset(dest[0..396], 0xFF);
+
+        for (self.tracks.items) |track| {
+            const leading_fad = track.offset;
+
+            dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
+            dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
+            dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
+            dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
+        }
+
+        const first_track = self.tracks.items[self.sessions.items[0].first_track];
+        const last_track = self.tracks.items[self.sessions.items[self.sessions.items.len - 1].last_track];
+
+        @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
+            first_track.adr_ctrl_byte(), @intCast(first_track.num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
+            last_track.adr_ctrl_byte(), @intCast(last_track.num), 0x00, 0x00, //   End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
+        });
+
+        const end_fad = self.sessions.items[self.sessions.items.len - 1].end_fad;
+
+        @memcpy(dest[404..408], &[_]u8{
+            last_track.adr_ctrl_byte(), @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info: [Control/ADR] [FAD (MSB)] [FAD] [FAD (LSB)]
+        });
+
+        return 408;
     }
 };

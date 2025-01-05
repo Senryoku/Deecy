@@ -11,7 +11,7 @@ const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig");
 const MapleModule = @import("maple.zig");
-const Disk = @import("disk.zig").Disk;
+const Disc = @import("./disc/disc.zig").Disc;
 const Colors = @import("colors.zig");
 const PVRFile = @import("pvr_file.zig");
 
@@ -49,8 +49,8 @@ vmu_displays: [4][2]?struct {
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 display_library: bool = false,
-disk_files: std.ArrayList(GameFile),
-disk_files_mutex: std.Thread.Mutex = .{}, // Used during disk_files population (then assumed to be constant outside of refresh_games)
+disc_files: std.ArrayList(GameFile),
+disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
 deecy: *Deecy,
 allocator: std.mem.Allocator,
@@ -58,7 +58,7 @@ allocator: std.mem.Allocator,
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
-        .disk_files = std.ArrayList(GameFile).init(allocator),
+        .disc_files = std.ArrayList(GameFile).init(allocator),
         .deecy = d,
         .allocator = allocator,
     };
@@ -67,8 +67,8 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
 }
 
 pub fn destroy(self: *@This()) void {
-    for (self.disk_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-    self.disk_files.deinit();
+    for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
+    self.disc_files.deinit();
 
     for (&self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
@@ -175,13 +175,13 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var disk = try Disk.init(path, allocator);
-    defer disk.deinit();
+    var disc = try Disc.init(path, allocator);
+    defer disc.deinit();
 
     const tex_buffer: []u8 = try allocator.alloc(u8, 1024 * 1024);
     defer allocator.free(tex_buffer);
 
-    if (disk.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
+    if (disc.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer result.deinit(allocator);
 
@@ -207,9 +207,9 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
             self.deecy.gctx_queue_mutex.unlock();
 
             {
-                self.disk_files_mutex.lock();
-                defer self.disk_files_mutex.unlock();
-                for (self.disk_files.items) |*entry| {
+                self.disc_files_mutex.lock();
+                defer self.disc_files_mutex.unlock();
+                for (self.disc_files.items) |*entry| {
                     if (std.mem.eql(u8, entry.path, path)) {
                         entry.texture = texture;
                         entry.view = view;
@@ -218,7 +218,7 @@ fn get_game_image(self: *@This(), path: []const u8) !void {
                 }
             }
 
-            ui_log.err("Failed to find disk entry for '{s}'", .{path});
+            ui_log.err("Failed to find disc entry for '{s}'", .{path});
             self.deecy.gctx_queue_mutex.lock();
             defer self.deecy.gctx_queue_mutex.unlock();
             self.deecy.gctx.releaseResource(view);
@@ -239,8 +239,8 @@ pub fn refresh_games(self: *@This()) !void {
         defer threads.deinit();
 
         {
-            for (self.disk_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-            self.disk_files.clearRetainingCapacity();
+            for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
+            self.disc_files.clearRetainingCapacity();
 
             var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {s}"), .{@errorName(err)});
@@ -257,9 +257,9 @@ pub fn refresh_games(self: *@This()) !void {
                     const name = try self.allocator.dupeZ(u8, entry.basename);
                     errdefer self.allocator.free(name);
                     {
-                        self.disk_files_mutex.lock();
-                        defer self.disk_files_mutex.unlock();
-                        try self.disk_files.append(.{
+                        self.disc_files_mutex.lock();
+                        defer self.disc_files_mutex.unlock();
+                        try self.disc_files.append(.{
                             .name = name,
                             .path = path,
                             .texture = null,
@@ -271,9 +271,9 @@ pub fn refresh_games(self: *@This()) !void {
             }
         }
         {
-            self.disk_files_mutex.lock();
-            defer self.disk_files_mutex.unlock();
-            std.mem.sort(GameFile, self.disk_files.items, {}, GameFile.sort);
+            self.disc_files_mutex.lock();
+            defer self.disc_files_mutex.unlock();
+            std.mem.sort(GameFile, self.disc_files.items, {}, GameFile.sort);
         }
 
         for (threads.items) |t| {
@@ -281,7 +281,7 @@ pub fn refresh_games(self: *@This()) !void {
         }
 
         const end = std.time.milliTimestamp();
-        ui_log.info("Checked {d} disk files in {d}ms", .{ self.disk_files.items.len, end - start });
+        ui_log.info("Checked {d} disc files in {d}ms", .{ self.disc_files.items.len, end - start });
     }
 }
 
@@ -291,7 +291,7 @@ pub fn draw(self: *@This()) !void {
 
     if (zgui.beginMainMenuBar()) {
         if (zgui.beginMenu("File", true)) {
-            if (zgui.menuItem("Load Disk", .{})) {
+            if (zgui.menuItem("Load Disc", .{})) {
                 const was_running = d.running;
                 if (was_running) d.stop();
                 const open_path = try nfd.openFileDialog("gdi,cdi", null);
@@ -301,7 +301,7 @@ pub fn draw(self: *@This()) !void {
                         switch (err) {
                             error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
                             else => {
-                                ui_log.err("Failed to load disk: {s}", .{@errorName(err)});
+                                ui_log.err("Failed to load disc: {s}", .{@errorName(err)});
                                 error_popup_to_open = "Unknown error";
                             },
                         }
@@ -380,16 +380,16 @@ pub fn draw(self: *@This()) !void {
         }
         if (zgui.beginMenu("Drive", true)) {
             // TODO
-            if (zgui.menuItem("Swap Disk", .{})) {
+            if (zgui.menuItem("Swap Disc", .{})) {
                 const open_path = try nfd.openFileDialog("gdi,cdi", null);
                 const was_running = d.running;
                 if (was_running) d.stop();
                 if (open_path) |path| err_brk: {
                     defer nfd.freePath(path);
-                    // TODO! Emulate opening the tray and inserting a new disk.
-                    d.load_disk(path) catch |err| {
-                        ui_log.err("Failed to load disk: {s}", .{@errorName(err)});
-                        self.last_error = "Failed to load disk.";
+                    // TODO! Emulate opening the tray and inserting a new disc.
+                    d.load_disc(path) catch |err| {
+                        ui_log.err("Failed to load disc: {s}", .{@errorName(err)});
+                        self.last_error = "Failed to load disc.";
                         zgui.openPopup("ErrorPopup", .{});
                         break :err_brk;
                     };
@@ -401,9 +401,9 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Open Tray", .{})) {
                 d.dc.gdrom.state = .Open;
             }
-            if (zgui.menuItem("Remove Disk", .{ .enabled = d.dc.gdrom.disk != null and d.dc.gdrom.state == .Open })) {
-                d.dc.gdrom.disk.?.deinit();
-                d.dc.gdrom.disk = null;
+            if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null and d.dc.gdrom.state == .Open })) {
+                d.dc.gdrom.disc.?.deinit();
+                d.dc.gdrom.disc = null;
             }
             if (zgui.menuItem("Close Tray", .{})) {
                 d.dc.gdrom.state = .Standby;
@@ -423,7 +423,7 @@ pub fn draw(self: *@This()) !void {
         zgui.endMainMenuBar();
     }
 
-    if (d.dc.gdrom.disk == null or self.display_library)
+    if (d.dc.gdrom.disc == null or self.display_library)
         self.draw_game_library() catch |err| {
             switch (err) {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
@@ -630,8 +630,8 @@ pub fn draw_game_library(self: *@This()) !void {
         }
 
         {
-            self.disk_files_mutex.lock();
-            defer self.disk_files_mutex.unlock();
+            self.disc_files_mutex.lock();
+            defer self.disc_files_mutex.unlock();
 
             _ = zgui.beginChild("Games", .{});
             {
@@ -639,7 +639,7 @@ pub fn draw_game_library(self: *@This()) !void {
                 zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
                 zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
                 defer zgui.popStyleVar(.{ .count = 2 });
-                for (self.disk_files.items, 0..) |entry, idx| {
+                for (self.disc_files.items, 0..) |entry, idx| {
                     var launch = false;
                     zgui.beginGroup();
                     zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });

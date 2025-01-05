@@ -10,7 +10,7 @@ offset: u32, // Start LBA
 track_type: u8,
 format: u32, // Sector size
 pregap: u32,
-data: []align(std.mem.page_size) const u8,
+data: []const u8,
 
 pub fn get_directory_record(self: *const @This(), offset: usize) *const CD.DirectoryRecord {
     return @ptrCast(@alignCast(self.data.ptr + offset));
@@ -30,7 +30,7 @@ pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 
     std.debug.assert(lba >= self.offset);
     var sector_start = (lba - self.offset) * self.format;
     if (sector_start >= self.data.len) {
-        log.warn(termcolor.yellow("lba out of range (track offset: {d}, lba: {d})"), .{ self.offset, lba });
+        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.offset, self.data.len, lba });
         return 0;
     }
 
@@ -39,6 +39,18 @@ pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 
         const to_copy: u32 = @min(@min(dest.len, count * 2048), self.data[sector_start..].len);
         @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
         return to_copy;
+    } else if (self.format == 2336) {
+        var copied: u32 = 0;
+        for (0..count) |_| {
+            if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
+                return copied;
+            if (dest.len <= copied) return copied;
+            const chunk_size = @min(2336, dest.len - copied);
+            @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
+            copied += chunk_size;
+            sector_start += self.format;
+        }
+        return copied;
     } else if (self.format == 2352) {
         var copied: u32 = 0;
         for (0..count) |_| {
@@ -61,6 +73,7 @@ pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 
         }
         return copied;
     } else {
+        log.err(termcolor.red("Unsupported sector format: {d}"), .{self.format});
         @panic("Unimplemented");
     }
 }

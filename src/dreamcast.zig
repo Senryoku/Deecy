@@ -180,7 +180,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disk
+        // Write flash to disc
         if (!@import("builtin").is_test) {
             const filename = get_user_flash_path();
             std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
@@ -400,10 +400,10 @@ pub const Dreamcast = struct {
             self.cpu.write32(p[0], p[1]);
         }
 
-        // Load IP.bin from disk (16 first sectors of the last track)
+        // Load IP.bin from disc (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
-        if (self.gdrom.disk) |disk|
-            _ = disk.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
+        if (self.gdrom.disc) |disc|
+            _ = disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
 
         // IP.bin patches
         inline for (.{

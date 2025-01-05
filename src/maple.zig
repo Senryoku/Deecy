@@ -741,9 +741,9 @@ pub const MapleHost = struct {
         }
     }
 
-    // Checks if we have some unsaved changes in VMUs, and writes them to disk,
+    // Checks if we have some unsaved changes in VMUs, and writes them to disc,
     // only if the last write was more than 5 seconds ago.
-    // Not writing to disk after every single VMU write is not only wasteful,
+    // Not writing to disc after every single VMU write is not only wasteful,
     // it also make backups useless (a backup with half an update is useless).
     // VMU will also flush themselves on exit if needed.
     pub fn flush_vmus(self: *@This()) void {

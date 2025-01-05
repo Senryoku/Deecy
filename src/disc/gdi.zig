@@ -1,15 +1,16 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const common = @import("common.zig");
+const common = @import("../common.zig");
 const termcolor = @import("termcolor");
 
 const gdi_log = std.log.scoped(.gdi);
 
-const windows = @import("windows.zig");
-const FileBacking = @import("file_backing.zig");
+const windows = @import("../windows.zig");
+const FileBacking = @import("../file_backing.zig");
 
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");
+const Session = @import("session.zig");
 
 pub const SectorHeader = extern struct {
     sync_filed: [12]u8,
@@ -76,6 +77,8 @@ pub const GDI = struct {
                 .pregap = pregap,
                 .data = try track_file.create_full_view(),
             });
+
+            std.debug.print("self.tracks.items[num - 1].data.len: {d}\n", .{self.tracks.items[num - 1].data.len});
         }
 
         return self;
@@ -139,5 +142,68 @@ pub const GDI = struct {
         const track = try self.get_corresponding_track(lba);
         @memcpy(dest[0 .. 2352 * count], track.data[(lba - track.offset) * 2352 .. 2352 * ((lba - track.offset) + count)]);
         return 2352 * count;
+    }
+
+    pub fn get_session_count(_: *const @This()) u32 {
+        return 2;
+    }
+
+    pub fn get_session(self: *const @This(), session_number: u32) Session {
+        return switch (session_number) {
+            1 => .{
+                .first_track = 0,
+                .last_track = 1,
+                .start_fad = 0,
+                .end_fad = @intCast(self.tracks.items[1].offset + self.tracks.items[1].data.len / self.tracks.items[1].format),
+            },
+            2 => .{
+                .first_track = 2,
+                .last_track = @intCast(self.tracks.items.len - 1),
+                .start_fad = self.tracks.items[2].offset,
+                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].offset + self.tracks.items[self.tracks.items.len - 1].data.len / self.tracks.items[self.tracks.items.len - 1].format),
+            },
+            else => @panic("GDI: Invalid session number"),
+        };
+    }
+
+    pub fn get_end_fad(self: *const @This()) u32 {
+        const last_track = self.tracks.items[self.tracks.items.len - 1];
+        return @intCast(last_track.offset + last_track.data.len / last_track.format);
+    }
+
+    pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
+        std.debug.assert(self.tracks.items.len >= 3);
+
+        const start_track: usize = if (area == .DoubleDensity) 2 else 0;
+        const end_track: usize = if (area == .DoubleDensity) self.tracks.items.len - 1 else 1;
+
+        @memset(dest[0..396], 0xFF);
+
+        for (start_track..end_track + 1) |i| {
+            const track = self.tracks.items[i];
+            const leading_fad = track.offset;
+
+            dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
+            dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
+            dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
+            dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
+        }
+
+        @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
+            self.tracks.items[start_track].adr_ctrl_byte(), @intCast(self.tracks.items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
+            self.tracks.items[end_track].adr_ctrl_byte(), @intCast(self.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
+        });
+
+        if (area == .DoubleDensity) {
+            @memcpy(dest[404..408], &[_]u8{
+                0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+            });
+        } else {
+            @memcpy(dest[404..408], &[_]u8{
+                0x00, 0x00, 0x33, 0x1D, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+            });
+        }
+
+        return 408;
     }
 };

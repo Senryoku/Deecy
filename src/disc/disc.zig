@@ -3,26 +3,42 @@ const std = @import("std");
 const GDI = @import("gdi.zig").GDI;
 const CDI = @import("cdi.zig").CDI;
 
-const CD = @import("iso9660.zig");
-const Track = @import("track.zig");
+pub const CD = @import("iso9660.zig");
+pub const Track = @import("track.zig");
+pub const Session = @import("session.zig");
 
-const Region = @import("dreamcast.zig").Region;
+const Region = @import("../dreamcast.zig").Region;
 
-pub const Disk = union(enum) {
+pub const DiscFormat = enum(u4) {
+    CDDA = 0,
+    CDROM = 1,
+    CDROM_XA = 2,
+    CDI = 3,
+    GDROM = 8,
+};
+
+pub const Disc = union(enum) {
     GDI: GDI,
     CDI: CDI,
 
-    pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disk {
+    pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
-            return Disk{ .GDI = try GDI.init(filepath, allocator) };
+            return Disc{ .GDI = try GDI.init(filepath, allocator) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
-            return Disk{ .CDI = try CDI.init(filepath, allocator) };
-        } else return error.UnknownDiskFormat;
+            return Disc{ .CDI = try CDI.init(filepath, allocator) };
+        } else return error.UnknownDiscFormat;
     }
 
     pub fn deinit(self: *@This()) void {
         switch (self.*) {
             inline else => |*d| d.deinit(),
+        }
+    }
+
+    pub fn get_format(self: *const @This()) DiscFormat {
+        switch (self.*) {
+            .GDI => return .GDROM,
+            .CDI => return .CDROM_XA,
         }
     }
 
@@ -56,6 +72,24 @@ pub const Disk = union(enum) {
         }
     }
 
+    pub fn get_session_count(self: *const @This()) u32 {
+        switch (self.*) {
+            inline else => |d| return d.get_session_count(),
+        }
+    }
+
+    pub fn get_session(self: *const @This(), session_number: u32) Session {
+        switch (self.*) {
+            inline else => |d| return d.get_session(session_number),
+        }
+    }
+
+    pub fn get_end_fad(self: *const @This()) u32 {
+        switch (self.*) {
+            inline else => |d| return d.get_end_fad(),
+        }
+    }
+
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
         if (self.get_tracks().items.len < 3) return null;
         return self.get_tracks().items[2].data[0x50..0x60];
@@ -80,5 +114,11 @@ pub const Disk = union(enum) {
         var end = name.len - 1;
         while (end > 0 and name[end] == ' ') end -= 1;
         return name[0 .. end + 1];
+    }
+
+    pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
+        switch (self.*) {
+            inline else => |d| return d.write_toc(dest, area),
+        }
     }
 };

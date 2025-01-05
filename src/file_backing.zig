@@ -54,32 +54,49 @@ pub fn deinit(self: *@This()) void {
     self.views.deinit();
 }
 
-pub fn create_full_view(self: *@This()) ![]align(std.mem.page_size) const u8 {
+pub fn create_full_view(self: *@This()) ![]const u8 {
     return try self.create_view(0, if (builtin.os.tag != .windows) (try self.file.stat()).size else 0);
 }
 
-pub fn create_view(self: *@This(), offset: u64, size: u64) ![]align(std.mem.page_size) const u8 {
+pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
     if (builtin.os.tag != .windows) {
         const r = try std.posix.mmap(null, size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.platform_specific.file.handle, offset);
         errdefer std.posix.munmap(r);
         try self.views.append(r);
         return r;
     } else {
-        const aligned_offset = std.mem.alignBackward(u64, offset, std.mem.page_size);
+        const alignment = 64 * 1024;
+        const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
         const adjustment = offset - aligned_offset;
-        const aligned_size = std.mem.alignForward(u64, size, std.mem.page_size);
+        const aligned_size = std.mem.alignForward(u64, size, alignment);
 
-        // FIXME: CDI: os.windows.win32error.Win32Error.MAPPED_ALIGNMENT
-        const ptr = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), aligned_size) orelse {
+        var ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), aligned_size);
+        if (ptr_or_null == null) {
+            switch (std.os.windows.GetLastError()) {
+                // Try mapping to the end, instead of an aligned size.
+                .ACCESS_DENIED => ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), 0),
+                else => {},
+            }
+        }
+
+        if (ptr_or_null) |ptr| {
+            errdefer _ = windows.UnmapViewOfFile(ptr);
+
+            try self.views.append(ptr);
+
+            const final_size = sz: {
+                if (size == 0) {
+                    var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
+                    _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
+                    break :sz info.RegionSize;
+                } else {
+                    break :sz size;
+                }
+            };
+            return @as([*]const u8, @ptrCast(ptr))[adjustment .. adjustment + final_size];
+        } else {
             std.debug.print("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}\n", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
             return error.MapViewOfFileError;
-        };
-        errdefer _ = windows.UnmapViewOfFile(ptr);
-
-        try self.views.append(ptr);
-
-        var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
-        _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
-        return @alignCast(@as([*]const u8, @ptrCast(ptr))[adjustment .. info.RegionSize + adjustment]);
+        }
     }
 }

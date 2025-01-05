@@ -10,7 +10,6 @@ const sh4_disassembly = @import("./sh4_disassembly.zig");
 const HardwareRegisters = @import("./hardware_registers.zig");
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
-const GDI = @import("./gdi.zig").GDI;
 const Holly = @import("./holly.zig");
 const Colors = @import("./colors.zig");
 const MapleModule = @import("./maple.zig");
@@ -167,7 +166,7 @@ pub fn main() !void {
     var binary_path: ?[]const u8 = null;
     var ip_bin_path: ?[]const u8 = null;
 
-    var gdi_path: ?[]const u8 = null;
+    var disc_path: ?[]const u8 = null;
 
     var default_vmu = true;
     var vmu_path = std.ArrayList(u8).init(allocator);
@@ -189,8 +188,8 @@ pub fn main() !void {
             };
         }
         if (std.mem.eql(u8, arg, "-g")) {
-            gdi_path = args.next() orelse {
-                std.log.err(termcolor.red("Expected path to GDI file after -g."), .{});
+            disc_path = args.next() orelse {
+                std.log.err(termcolor.red("Expected path to disc file after -g."), .{});
                 return error.InvalidArguments;
             };
         }
@@ -246,12 +245,12 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
         start_immediately = true;
-    } else if (gdi_path) |path| {
-        std.log.info("Loading GDI: {s}...", .{path});
+    } else if (disc_path) |path| {
+        std.log.info("Loading Disc: {s}...", .{path});
 
-        try d.load_disk(path);
+        try d.load_disc(path);
 
-        const region = dc.gdrom.disk.?.get_region();
+        const region = dc.gdrom.disc.?.get_region();
         std.log.info("  Detected region: {s}", .{@tagName(region)});
         if (region != .Unknown) {
             try dc.set_region(region);
@@ -265,14 +264,14 @@ pub fn main() !void {
             dc.skip_bios(true);
 
             // Load 1STREAD.BIN (Actual name might change)
-            const header_size: u32 = dc.gdrom.disk.?.get_tracks().items[2].header_size();
-            const first_read_name = dc.gdrom.disk.?.get_tracks().items[2].data[0x60 + header_size .. 0x70 + header_size];
+            const header_size: u32 = dc.gdrom.disc.?.get_tracks().items[2].header_size();
+            const first_read_name = dc.gdrom.disc.?.get_tracks().items[2].data[0x60 + header_size .. 0x70 + header_size];
             const name_end = std.mem.indexOfScalar(u8, first_read_name, 0x20) orelse first_read_name.len;
             var first_read: []u8 = try allocator.alloc(u8, name_end + 2);
             defer allocator.free(first_read);
             @memcpy(first_read[0..name_end], first_read_name[0..name_end]);
             @memcpy(first_read[name_end .. name_end + 2], ";1");
-            _ = try dc.gdrom.disk.?.load_file(first_read, dc.ram[0x00010000..]);
+            _ = try dc.gdrom.disc.?.load_file(first_read, dc.ram[0x00010000..]);
         }
 
         for (AvailableHacks) |hack| {
