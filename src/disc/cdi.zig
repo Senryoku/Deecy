@@ -116,6 +116,7 @@ pub const CDI = struct {
                 const pregap = try reader.readInt(u32, .little);
                 const length = try reader.readInt(u32, .little);
                 log.debug("    Pregap: {X}, Length: {X}", .{ pregap, length });
+                std.debug.assert(pregap == 150); // Assumed for the session start fad.
 
                 try reader.skipBytes(6, .{});
                 const mode = try reader.readInt(u32, .little);
@@ -157,23 +158,24 @@ pub const CDI = struct {
 
                 try self.tracks.append(.{
                     .num = @truncate(self.tracks.items.len + 1),
-                    .offset = start_lba,
+                    .fad = start_lba + pregap,
                     .track_type = @truncate(sector_type),
                     .format = sector_size,
                     .pregap = pregap,
-                    .data = try self._file.create_view(track_offset + pregap * sector_size, (track_length - pregap) * sector_size),
+                    .data = try self._file.create_view(track_offset + pregap * sector_size, track_length * sector_size),
                 });
 
                 track_offset += track_length * sector_size;
-                session.end_fad = start_lba + pregap + track_length;
             }
             const session_type = try reader.readInt(u32, .little);
             try reader.skipBytes(4, .{});
-            session.start_fad = try reader.readInt(u32, .little);
+            session.start_fad = try reader.readInt(u32, .little) + 150;
             log.debug("Session Type: {X}, Last Session Start LBA: {X}", .{ session_type, session.start_fad });
+            std.debug.assert(session.start_fad == self.tracks.items[session.first_track].fad);
             if (version != .V2) try reader.skipBytes(1, .{});
 
             session.last_track = @intCast(self.tracks.items.len - 1);
+            session.end_fad = self.tracks.items[session.last_track].get_end_fad();
             try self.sessions.append(session);
         }
         const total_tracks = try reader.readInt(u16, .little);
@@ -194,28 +196,28 @@ pub const CDI = struct {
         self._file.deinit();
     }
 
-    pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {
+    pub fn get_corresponding_track(self: *const @This(), fad: u32) !*const Track {
         std.debug.assert(self.tracks.items.len > 0);
         var idx: u32 = 0;
-        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].offset <= lda) : (idx += 1) {}
+        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].fad <= fad) : (idx += 1) {}
         return &self.tracks.items[idx];
     }
 
-    pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-        log.debug("load_sectors: {X} {X} {X}", .{ lba, count, dest.len });
-        const track = try self.get_corresponding_track(lba);
-        return track.load_sectors(lba, count, dest);
+    pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+        log.debug("load_sectors: {X} {X} {X}", .{ fad, count, dest.len });
+        const track = try self.get_corresponding_track(fad);
+        return track.load_sectors(fad, count, dest);
     }
 
-    pub fn load_sectors_raw(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
+    pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
         _ = self;
-        log.debug("load_sectors_raw: {X} {X} {X}", .{ lba, count, dest.len });
+        log.debug("load_sectors_raw: {X} {X} {X}", .{ fad, count, dest.len });
         return 0;
     }
 
-    pub fn load_bytes(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
+    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
         _ = self;
-        log.debug("load_bytes: {X} {X} {X}", .{ lba, length, dest.len });
+        log.debug("load_bytes: {X} {X} {X}", .{ fad, length, dest.len });
         return 0;
     }
 
@@ -233,18 +235,13 @@ pub const CDI = struct {
         return self.sessions.items[session_number - 1];
     }
 
-    pub fn get_end_fad(self: *const @This()) u32 {
-        const last_track = self.tracks.items[self.tracks.items.len - 1];
-        return @intCast(last_track.offset + last_track.data.len / last_track.format);
-    }
-
     pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
         if (area == .DoubleDensity) return 0;
 
         @memset(dest[0..396], 0xFF);
 
         for (self.tracks.items) |track| {
-            const leading_fad = track.offset;
+            const leading_fad = track.fad;
 
             dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
             dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));

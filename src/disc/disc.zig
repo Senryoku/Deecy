@@ -85,35 +85,47 @@ pub const Disc = union(enum) {
     }
 
     pub fn get_end_fad(self: *const @This()) u32 {
-        switch (self.*) {
-            inline else => |d| return d.get_end_fad(),
-        }
+        return self.get_tracks().items[self.get_tracks().items.len - 1].get_end_fad();
+    }
+
+    // Returns the first track from the high density area if present, or just the first track otherwise.
+    pub fn get_first_data_track(self: @This()) ?Track {
+        const idx: u8 = switch (self) {
+            .GDI => 2,
+            else => 0,
+        };
+        return if (self.get_tracks().items.len > idx)
+            self.get_tracks().items[idx]
+        else
+            null;
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
-        if (self.get_tracks().items.len < 3) return null;
-        return self.get_tracks().items[2].data[0x50..0x60];
+        if (self.get_first_data_track()) |t| return t.data[0x50..0x60];
+        return null;
     }
 
     pub fn get_region(self: *const @This()) Region {
-        if (self.get_tracks().items.len >= 3) {
-            if (self.get_tracks().items[2].data[0x40] == 'J')
+        if (self.get_first_data_track()) |t| {
+            if (t.data[0x40] == 'J')
                 return .Japan;
-            if (self.get_tracks().items[2].data[0x41] == 'U')
+            if (t.data[0x41] == 'U')
                 return .USA;
-            if (self.get_tracks().items[2].data[0x42] == 'E')
+            if (t.data[0x42] == 'E')
                 return .Europe;
         }
         return .Unknown;
     }
 
     pub fn get_product_name(self: *const @This()) ?[]const u8 {
-        if (self.get_tracks().items.len < 3) return null;
-        const name = self.get_tracks().items[2].data[0x90..0x100];
-        // Trim spaces
-        var end = name.len - 1;
-        while (end > 0 and name[end] == ' ') end -= 1;
-        return name[0 .. end + 1];
+        if (self.get_first_data_track()) |t| {
+            const name = t.data[0x90..0x100];
+            // Trim spaces
+            var end = name.len - 1;
+            while (end > 0 and name[end] == ' ') end -= 1;
+            return name[0 .. end + 1];
+        }
+        return null;
     }
 
     pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {

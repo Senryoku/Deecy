@@ -6,7 +6,7 @@ const CD = @import("iso9660.zig");
 const log = std.log.scoped(.track);
 
 num: u32,
-offset: u32, // Start LBA
+fad: u32, // Start FAD
 track_type: u8,
 format: u32, // Sector size
 pregap: u32,
@@ -14,6 +14,10 @@ data: []const u8,
 
 pub fn get_directory_record(self: *const @This(), offset: usize) *const CD.DirectoryRecord {
     return @ptrCast(@alignCast(self.data.ptr + offset));
+}
+
+pub fn get_end_fad(self: *const @This()) u32 {
+    return @intCast(self.fad + self.data.len / self.format);
 }
 
 pub fn header_size(self: *const @This()) u32 {
@@ -27,10 +31,10 @@ pub fn adr_ctrl_byte(self: *const @This()) u8 {
 }
 
 pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-    std.debug.assert(lba >= self.offset);
-    var sector_start = (lba - self.offset) * self.format;
+    std.debug.assert(lba >= self.fad);
+    var sector_start = (lba - self.fad) * self.format;
     if (sector_start >= self.data.len) {
-        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.offset, self.data.len, lba });
+        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.fad, self.data.len, lba });
         return 0;
     }
 

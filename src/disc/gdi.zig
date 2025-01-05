@@ -71,14 +71,12 @@ pub const GDI = struct {
 
             self.tracks.items[num - 1] = (.{
                 .num = num,
-                .offset = offset,
+                .fad = offset,
                 .track_type = track_type,
                 .format = format,
                 .pregap = pregap,
                 .data = try track_file.create_full_view(),
             });
-
-            std.debug.print("self.tracks.items[num - 1].data.len: {d}\n", .{self.tracks.items[num - 1].data.len});
         }
 
         return self;
@@ -92,10 +90,10 @@ pub const GDI = struct {
         self._files.deinit();
     }
 
-    pub fn get_corresponding_track(self: *const @This(), lda: u32) !*const Track {
+    pub fn get_corresponding_track(self: *const @This(), fad: u32) !*const Track {
         std.debug.assert(self.tracks.items.len > 0);
         var idx: u32 = 0;
-        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].offset <= lda) : (idx += 1) {}
+        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].fad <= fad) : (idx += 1) {}
         return &self.tracks.items[idx];
     }
 
@@ -108,7 +106,7 @@ pub const GDI = struct {
         const root_directory_length = root_directory_entry.length;
         const root_directory_lba = root_directory_entry.location + GDI_SECTOR_OFFSET;
         const root_track = try self.get_corresponding_track(root_directory_lba);
-        const sector_start = (root_directory_lba - root_track.offset) * root_track.format;
+        const sector_start = (root_directory_lba - root_track.fad) * root_track.format;
 
         var curr_offset = sector_start + self.tracks.items[2].header_size(); // Skip header if any.
         // TODO: Handle directories, and not just root files.
@@ -122,10 +120,10 @@ pub const GDI = struct {
     }
 
     // Bad wrapper around load_sectors. Don't use that in performance sensisive code :)
-    pub fn load_bytes(self: *const @This(), lba: u32, length: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(lba);
+    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(fad);
         var remaining = length;
-        var curr_sector = lba;
+        var curr_sector = fad;
         while (remaining > 0) {
             remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
             curr_sector += 1;
@@ -133,14 +131,14 @@ pub const GDI = struct {
         return length;
     }
 
-    pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(lba);
-        return track.load_sectors(lba, count, dest);
+    pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(fad);
+        return track.load_sectors(fad, count, dest);
     }
 
-    pub fn load_sectors_raw(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(lba);
-        @memcpy(dest[0 .. 2352 * count], track.data[(lba - track.offset) * 2352 .. 2352 * ((lba - track.offset) + count)]);
+    pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+        const track = try self.get_corresponding_track(fad);
+        @memcpy(dest[0 .. 2352 * count], track.data[(fad - track.fad) * 2352 .. 2352 * ((fad - track.fad) + count)]);
         return 2352 * count;
     }
 
@@ -154,21 +152,16 @@ pub const GDI = struct {
                 .first_track = 0,
                 .last_track = 1,
                 .start_fad = 0,
-                .end_fad = @intCast(self.tracks.items[1].offset + self.tracks.items[1].data.len / self.tracks.items[1].format),
+                .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
             },
             2 => .{
                 .first_track = 2,
                 .last_track = @intCast(self.tracks.items.len - 1),
-                .start_fad = self.tracks.items[2].offset,
-                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].offset + self.tracks.items[self.tracks.items.len - 1].data.len / self.tracks.items[self.tracks.items.len - 1].format),
+                .start_fad = self.tracks.items[2].fad,
+                .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
             },
             else => @panic("GDI: Invalid session number"),
         };
-    }
-
-    pub fn get_end_fad(self: *const @This()) u32 {
-        const last_track = self.tracks.items[self.tracks.items.len - 1];
-        return @intCast(last_track.offset + last_track.data.len / last_track.format);
     }
 
     pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
@@ -181,7 +174,7 @@ pub const GDI = struct {
 
         for (start_track..end_track + 1) |i| {
             const track = self.tracks.items[i];
-            const leading_fad = track.offset;
+            const leading_fad = track.fad;
 
             dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
             dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
@@ -194,15 +187,10 @@ pub const GDI = struct {
             self.tracks.items[end_track].adr_ctrl_byte(), @intCast(self.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
         });
 
-        if (area == .DoubleDensity) {
-            @memcpy(dest[404..408], &[_]u8{
-                0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-            });
-        } else {
-            @memcpy(dest[404..408], &[_]u8{
-                0x00, 0x00, 0x33, 0x1D, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-            });
-        }
+        const end_fad = self.tracks.items[end_track].get_end_fad();
+        @memcpy(dest[404..408], &[_]u8{
+            0x41, @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+        });
 
         return 408;
     }
