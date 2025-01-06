@@ -90,58 +90,6 @@ pub const GDI = struct {
         self._files.deinit();
     }
 
-    pub fn get_corresponding_track(self: *const @This(), fad: u32) !*const Track {
-        std.debug.assert(self.tracks.items.len > 0);
-        var idx: u32 = 0;
-        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].fad <= fad) : (idx += 1) {}
-        return &self.tracks.items[idx];
-    }
-
-    pub fn get_primary_volume_descriptor(self: *const @This()) *const CD.PVD {
-        const offset = 0x10 * self.tracks.items[2].format + self.tracks.items[2].header_size(); // 16th sector + skip sector header
-        return @ptrCast(@alignCast(self.tracks.items[2].data.ptr + offset));
-    }
-    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
-        const root_directory_entry = self.get_primary_volume_descriptor().*.root_directory_entry;
-        const root_directory_length = root_directory_entry.length;
-        const root_directory_fad = root_directory_entry.location + GDI_SECTOR_OFFSET;
-        const root_track = try self.get_corresponding_track(root_directory_fad);
-        const sector_start = (root_directory_fad - root_track.fad) * root_track.format;
-
-        var curr_offset = sector_start + self.tracks.items[2].header_size(); // Skip header if any.
-        // TODO: Handle directories, and not just root files.
-        for (0..root_directory_length) |_| {
-            const dir_record = root_track.get_directory_record(curr_offset);
-            if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
-                return self.load_bytes(dir_record.location + GDI_SECTOR_OFFSET, dir_record.data_length, dest);
-            curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
-        }
-        return error.NotFound;
-    }
-
-    // Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
-        var remaining = length;
-        var curr_sector = fad;
-        while (remaining > 0) {
-            remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
-            curr_sector += 1;
-        }
-        return length;
-    }
-
-    pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
-        return track.load_sectors(fad, count, dest);
-    }
-
-    pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
-        @memcpy(dest[0 .. 2352 * count], track.data[(fad - track.fad) * 2352 .. 2352 * ((fad - track.fad) + count)]);
-        return 2352 * count;
-    }
-
     pub fn get_session_count(_: *const @This()) u32 {
         return 2;
     }
@@ -164,31 +112,10 @@ pub const GDI = struct {
         };
     }
 
-    pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
-        std.debug.assert(self.tracks.items.len >= 3);
-
-        const start_track: usize = if (area == .DoubleDensity) 2 else 0;
-        const end_track: usize = if (area == .DoubleDensity) self.tracks.items.len - 1 else 1;
-
-        @memset(dest[0..396], 0xFF);
-
-        for (self.tracks.items[start_track .. end_track + 1]) |track| {
-            dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-            dest[4 * (track.num - 1) + 1] = (@truncate(track.fad >> 16));
-            dest[4 * (track.num - 1) + 2] = (@truncate(track.fad >> 8));
-            dest[4 * (track.num - 1) + 3] = (@truncate(track.fad >> 0));
-        }
-
-        @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
-            self.tracks.items[start_track].adr_ctrl_byte(), @intCast(self.tracks.items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
-            self.tracks.items[end_track].adr_ctrl_byte(), @intCast(self.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
-        });
-
-        const end_fad = self.tracks.items[end_track].get_end_fad();
-        @memcpy(dest[404..408], &[_]u8{
-            self.tracks.items[end_track].adr_ctrl_byte(), @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-        });
-
-        return 408;
+    pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
+        return switch (area) {
+            .SingleDensity => [2]u32{ 0, 1 },
+            .DoubleDensity => [2]u32{ 2, @intCast(self.tracks.items.len - 1) },
+        };
     }
 };

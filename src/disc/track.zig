@@ -44,6 +44,9 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
         @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
         return to_copy;
     } else if (self.format == 2336) {
+        // Pretty much 2352, but without the header.
+        // FIXME: How to distiguish between Mode 1 and 2?
+        // Mode 1
         var copied: u32 = 0;
         for (0..count) |_| {
             if (sector_start >= self.data.len or dest.len <= copied)
@@ -55,6 +58,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
             sector_start += self.format;
         }
         return copied;
+        // Mode 2
         // const to_copy: u32 = @min(@min(dest.len, count * self.format), self.data[sector_start..].len);
         // @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
         // return to_copy;

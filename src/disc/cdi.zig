@@ -200,37 +200,6 @@ pub const CDI = struct {
         self._file.deinit();
     }
 
-    pub fn get_corresponding_track(self: *const @This(), fad: u32) !*const Track {
-        std.debug.assert(self.tracks.items.len > 0);
-        var idx: u32 = 0;
-        while (idx + 1 < self.tracks.items.len and self.tracks.items[idx + 1].fad <= fad) : (idx += 1) {}
-        return &self.tracks.items[idx];
-    }
-
-    pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        log.debug("load_sectors: {X} {X} {X}", .{ fad, count, dest.len });
-        const track = try self.get_corresponding_track(fad);
-        return track.load_sectors(fad, count, dest);
-    }
-
-    pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        _ = self;
-        log.debug("load_sectors_raw: {X} {X} {X}", .{ fad, count, dest.len });
-        return 0;
-    }
-
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
-        _ = self;
-        log.debug("load_bytes: {X} {X} {X}", .{ fad, length, dest.len });
-        return 0;
-    }
-
-    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
-        _ = self;
-        log.debug("load_file: {s} {X}", .{ filename, dest.len });
-        return error.NotImplemented;
-    }
-
     pub fn get_session_count(self: *const @This()) u32 {
         return @intCast(self.sessions.items.len);
     }
@@ -239,31 +208,8 @@ pub const CDI = struct {
         return self.sessions.items[session_number - 1];
     }
 
-    pub fn write_toc(self: *const @This(), dest: []u8, area: Session.Area) u32 {
-        if (area == .DoubleDensity) return 0;
-
-        @memset(dest[0..396], 0xFF);
-
-        for (self.tracks.items) |track| {
-            dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-            dest[4 * (track.num - 1) + 1] = (@truncate(track.fad >> 16));
-            dest[4 * (track.num - 1) + 2] = (@truncate(track.fad >> 8));
-            dest[4 * (track.num - 1) + 3] = (@truncate(track.fad >> 0));
-        }
-
-        const first_track = self.tracks.items[self.sessions.items[0].first_track];
-        const last_track = self.tracks.items[self.sessions.items[self.sessions.items.len - 1].last_track];
-
-        @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
-            first_track.adr_ctrl_byte(), @intCast(first_track.num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
-            last_track.adr_ctrl_byte(), @intCast(last_track.num), 0x00, 0x00, //   End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
-        });
-
-        const end_fad = self.sessions.items[self.sessions.items.len - 1].end_fad;
-        @memcpy(dest[404..408], &[_]u8{
-            last_track.adr_ctrl_byte(), @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info: [Control/ADR] [FAD (MSB)] [FAD] [FAD (LSB)]
-        });
-
-        return 408;
+    pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
+        std.debug.assert(area == .SingleDensity);
+        return .{ 0, @intCast(self.tracks.items.len - 1) };
     }
 };
