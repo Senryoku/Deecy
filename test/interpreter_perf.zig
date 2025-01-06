@@ -45,9 +45,9 @@ pub fn main() !void {
             common.GeneralAllocator.destroy(dc);
         }
 
-        dc.gdrom.disk = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
-        _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-        _ = try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
+        dc.gdrom.disc = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
+        _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
+        _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;
@@ -67,9 +67,9 @@ pub fn main() !void {
         }
 
         dc.skip_bios(true);
-        dc.gdrom.disk = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
-        _ = dc.gdrom.disk.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
-        _ = try dc.gdrom.disk.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
+        dc.gdrom.disc = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
+        _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
+        _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;

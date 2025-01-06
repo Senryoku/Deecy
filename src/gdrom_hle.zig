@@ -37,7 +37,7 @@ pub fn mainloop(self: *gdrom.GDROM, dc: *Dreamcast) void {
             const dest = self.hle_params[2] & 0x1FFFFFFF;
 
             gdrom_hle_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(self.hle_command), lba, size, dest });
-            const read = self.disk.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0 .. 2352 * size]);
+            const read = self.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0 .. 2352 * size]);
 
             dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 100_000 * size);
             dc.schedule_external_interrupt(.{ .GDRom = 1 }, 100_000 * size);

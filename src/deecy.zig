@@ -21,7 +21,7 @@ const termcolor = @import("termcolor");
 const DreamcastModule = @import("./dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
-const GDI = @import("./gdi.zig").GDI;
+const Disc = @import("./disc/disc.zig").Disc;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -105,7 +105,7 @@ fn glfw_drop_callback(
     if (maybe_app) |app| {
         if (count > 0) {
             app.load_and_start(std.mem.span(paths[0])) catch |err| {
-                deecy_log.err("Failed to load disk: {}\n", .{err});
+                deecy_log.err("Failed to load disc: {}\n", .{err});
             };
         }
         if (count > 1) {
@@ -301,9 +301,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = try UI.create(allocator, self);
-    try self.ui_init();
-
     self.dc = Dreamcast.create(allocator) catch |err| {
         switch (err) {
             error.BiosNotFound => {
@@ -315,6 +312,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         }
         return err;
     };
+
+    self.ui = try UI.create(allocator, self);
+    try self.ui_init();
 
     self.renderer = try Renderer.create(self._allocator, self.gctx);
     self.dc.on_render_start = .{
@@ -613,8 +613,8 @@ pub fn poll_controllers(self: *@This()) void {
 
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.stop();
-    try self.load_disk(path);
-    self.dc.set_region(self.dc.gdrom.disk.?.get_region()) catch |err| {
+    try self.load_disc(path);
+    self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
         switch (err) {
             error.FileNotFound => return error.MissingFlash,
             else => return err,
@@ -626,7 +626,7 @@ pub fn load_and_start(self: *@This(), path: []const u8) !void {
     self.display_ui = false;
 }
 
-pub fn load_disk(self: *@This(), path: []const u8) !void {
+pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (std.mem.endsWith(u8, path, ".zip")) {
         var zip_file = try std.fs.cwd().openFile(path, .{});
         defer zip_file.close();
@@ -654,18 +654,18 @@ pub fn load_disk(self: *@This(), path: []const u8) !void {
         var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
         defer tmp_dir.close();
         try std.zip.extract(tmp_dir, stream, .{});
-        self.dc.gdrom.disk = try GDI.init(tmp_gdi_path, self._allocator);
+        self.dc.gdrom.disc = try Disc.init(tmp_gdi_path, self._allocator);
     } else {
-        self.dc.gdrom.disk = try GDI.init(path, self._allocator);
+        self.dc.gdrom.disc = try Disc.init(path, self._allocator);
     }
 }
 
 pub fn get_product_name(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disk) |disk| disk.get_product_name() else null;
+    return if (self.dc.gdrom.disc) |disc| disc.get_product_name() else null;
 }
 
 pub fn get_product_id(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disk) |disk| disk.get_product_id() else null;
+    return if (self.dc.gdrom.disc) |disc| disc.get_product_id() else null;
 }
 
 pub fn on_game_load(self: *@This()) !void {

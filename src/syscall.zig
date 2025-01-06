@@ -212,10 +212,10 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Returns: zero if successful, nonzero if failure
 
             // TODO: We always return success (i.e. ready) for now.
-            //       Get actual GDROM state and disk type.
+            //       Get actual GDROM state and disc type.
             syscall_log.debug("  GDROM_CHECK_DRIVE", .{});
             dc.cpu.write32(dc.cpu.R(4).*, @intFromEnum(dc.gdrom.state)); // GDROM status. 0x2 => Standby.
-            dc.cpu.write32(dc.cpu.R(4).* + 4, 0x80); // Disk Type. 0x80 => GDROM.
+            dc.cpu.write32(dc.cpu.R(4).* + 4, 0x80); // Disc Type. 0x80 => GDROM.
             dc.cpu.R(0).* = 0;
         },
         5 => {
