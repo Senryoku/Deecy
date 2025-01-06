@@ -301,9 +301,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const scale = self.window.getContentScale();
     self.scale_factor = @max(scale[0], scale[1]);
 
-    self.ui = try UI.create(allocator, self);
-    try self.ui_init();
-
     self.dc = Dreamcast.create(allocator) catch |err| {
         switch (err) {
             error.BiosNotFound => {
@@ -315,6 +312,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         }
         return err;
     };
+
+    self.ui = try UI.create(allocator, self);
+    try self.ui_init();
 
     self.renderer = try Renderer.create(self._allocator, self.gctx);
     self.dc.on_render_start = .{

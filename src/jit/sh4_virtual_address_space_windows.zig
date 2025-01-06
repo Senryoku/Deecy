@@ -28,12 +28,13 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     // Try repeatedly to map the virtual address space.
     // It can technically fail if another thread uses the VirtualAlloc/MapViewOfFile API.
     // We can do better using placeholders: https://devblogs.microsoft.com/oldnewthing/20240201-00/?p=109346
+    //   But... Using VirtualAlloc2/MapViewOfFile3 from zig seems complicated right now.
     var attempts: u32 = 0;
     var mapped = false;
     while (!mapped and attempts < 10) : (attempts += 1) {
         mapped = true;
         vas.try_mapping() catch |err| {
-            std.log.scoped(.sh4_jit).err("Failed to map virtual address space: {s}", .{@errorName(err)});
+            std.log.scoped(.sh4_jit).err(termcolor.red("Failed to map virtual address space: {s} (attempt {d}/10)"), .{ @errorName(err), attempts + 1 });
             mapped = false;
         };
     }
@@ -69,13 +70,13 @@ fn try_mapping(self: *@This()) !void {
             try self.mirror(self.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
         }
 
-        try self.forbid(base + 0x0C00_0000 + 4 * Dreamcast.RAMSize, base + 0x2000_0000);
-
         // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
     }
-
-    // P4
-    try self.forbid(0xE0000000, 0x1_0000_0000);
+    // Forbid everything else.
+    try self.forbid(0x0000_0000 + 0x0C00_0000 + 4 * Dreamcast.RAMSize, 0x8000_0000); // End of P0
+    try self.forbid(0x8000_0000 + 0x0C00_0000 + 4 * Dreamcast.RAMSize, 0xA000_0000); // End of P1
+    try self.forbid(0xA000_0000 + 0x0C00_0000 + 4 * Dreamcast.RAMSize, 0xC000_0000); // End of P2
+    try self.forbid(0xC000_0000 + 0x0C00_0000 + 4 * Dreamcast.RAMSize, 0x1_0000_0000); // Rest
 }
 
 fn release_views(self: *@This()) void {
