@@ -180,7 +180,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disk
+        // Write flash to disc
         if (!@import("builtin").is_test) {
             const filename = get_user_flash_path();
             std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
@@ -400,10 +400,10 @@ pub const Dreamcast = struct {
             self.cpu.write32(p[0], p[1]);
         }
 
-        // Load IP.bin from disk (16 first sectors of the last track)
+        // Load IP.bin from disc (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
-        if (self.gdrom.disk) |disk|
-            _ = disk.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
+        if (self.gdrom.disc) |disc|
+            _ = disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
 
         // IP.bin patches
         inline for (.{
@@ -615,6 +615,12 @@ pub const Dreamcast = struct {
 
             dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
             std.debug.assert(copied == len);
+
+            // FIXME: Volgarr Hack (stays stuck on IP.BIN with data stuck in the queue)
+            if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
+                dc_log.err(termcolor.red("Volgarr Hack: discarding remainding data from gdrom dma data queue."), .{});
+                self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
+            }
 
             // Simulate using ch0
             const chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);

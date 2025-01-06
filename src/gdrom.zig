@@ -3,7 +3,8 @@ const termcolor = @import("termcolor");
 
 const gdrom_log = std.log.scoped(.gdrom);
 
-const GDI = @import("gdi.zig").GDI;
+const Disc = @import("./disc/disc.zig").Disc;
+const Session = @import("./disc/disc.zig").Session;
 const SH4 = @import("sh4.zig").SH4;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
@@ -23,14 +24,6 @@ pub const GDROMStatus = enum(u4) {
     Empty = 7, // No disc
     Retry = 8, // Read retry in progress (option)
     Error = 9, // Reading of disc TOC failed (state does not allow access)
-};
-
-pub const DiscFormat = enum(u4) {
-    CDDA = 0,
-    CDROM = 1,
-    CDROM_XA = 2,
-    CDI = 3,
-    GDROM = 8,
 };
 
 // HLE
@@ -177,7 +170,7 @@ pub fn msf_to_lba(minutes: u8, seconds: u8, frame: u8) u32 {
 }
 
 pub const GDROM = struct {
-    disk: ?GDI = null,
+    disc: ?Disc = null,
 
     state: GDROMStatus = GDROMStatus.Standby,
     // LLE
@@ -352,7 +345,7 @@ pub const GDROM = struct {
         self.audio_state.current_position = 0;
         self.audio_state.samples_in_buffer = 0;
 
-        const count = self.disk.?.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
+        const count = self.disc.?.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
         self.audio_state.samples_in_buffer = count / 2; // 16-bit samples
         self.audio_state.current_addr += 1;
 
@@ -415,8 +408,8 @@ pub const GDROM = struct {
                 //  7  6  5  4  | 3  2  1  0
                 //  Disc Format |   Status
                 var status = self.state;
-                if (status != GDROMStatus.Open and self.disk == null) status = .Empty;
-                const val = (@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4) | @intFromEnum(status);
+                if (status != GDROMStatus.Open and self.disc == null) status = .Empty;
+                const val = (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | @intFromEnum(status);
                 gdrom_log.debug("  GDROM Read to SectorNumber @{X:0>8} = {X:0>2}", .{ addr, val });
                 return val;
             },
@@ -710,8 +703,8 @@ pub const GDROM = struct {
 
             };
 
-            try self.pio_data_queue.writeItem(if (self.disk == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state)); // 0000 | Status
-            try self.pio_data_queue.writeItem(@as(u8, @intFromEnum(DiscFormat.GDROM)) << 4 | self.audio_state.repetitions); // Disc Format | Repeat Count
+            try self.pio_data_queue.writeItem(if (self.disc == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state)); // 0000 | Status
+            try self.pio_data_queue.writeItem((if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | self.audio_state.repetitions); // Disc Format | Repeat Count
             try self.pio_data_queue.writeItem(0x04); // Address | Control
             try self.pio_data_queue.writeItem(0x02); // TNO
             try self.pio_data_queue.writeItem(0x00); // X
@@ -788,47 +781,15 @@ pub const GDROM = struct {
         self.pio_prep_complete();
     }
 
-    pub fn write_toc(self: *@This(), dest: []u8, area: enum { SingleDensity, DoubleDensity }) u32 {
-        if (self.disk) |disk| {
-            std.debug.assert(disk.tracks.items.len >= 3);
-
-            const start_track: usize = if (area == .DoubleDensity) 2 else 0;
-            const end_track: usize = if (area == .DoubleDensity) disk.tracks.items.len - 1 else 1;
-
-            @memset(dest[0..396], 0xFF);
-
-            for (start_track..end_track + 1) |i| {
-                const track = disk.tracks.items[i];
-                const leading_fad = track.offset;
-
-                dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-                dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
-                dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
-                dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
-            }
-
-            @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
-                disk.tracks.items[start_track].adr_ctrl_byte(), @intCast(disk.tracks.items[start_track].num), 0x00, 0x00, // Start track info: [Control/ADR] [Start Track Number] [0  ] [0  ]
-                disk.tracks.items[end_track].adr_ctrl_byte(), @intCast(disk.tracks.items[end_track].num), 0x00, 0x00, //     End track info:   [Control/ADR] [End Track Number  ] [0  ] [0  ]
-            });
-
-            if (area == .DoubleDensity) {
-                @memcpy(dest[404..408], &[_]u8{
-                    0x41, 0x08, 0x61, 0xB4, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-                });
-            } else {
-                @memcpy(dest[404..408], &[_]u8{
-                    0x00, 0x00, 0x33, 0x1D, // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
-                });
-            }
-
+    pub fn write_toc(self: *@This(), dest: []u8, area: Session.Area) u32 {
+        if (self.disc) |disc| {
             self.schedule_event(.{
                 .cycles = 0, // FIXME: Random value
                 .status = .{ .bsy = 0, .drq = 1 },
                 .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
             });
 
-            return 408;
+            return disc.write_toc(dest, area);
         }
         return 0;
     }
@@ -863,26 +824,20 @@ pub const GDROM = struct {
 
         gdrom_log.warn(" GDROM PacketCommand ReqSes - Session Number: {d} (alloc_length: 0x{X:0>4})", .{ session_number, alloc_length });
 
-        var status = self.state;
-        if (status != GDROMStatus.Open and self.disk == null) status = .Empty;
-        try self.pio_data_queue.writeItem(@intFromEnum(status));
-        try self.pio_data_queue.writeItem(0);
-        switch (session_number) {
-            0 => {
-                try self.pio_data_queue.writeItem(2); // Number of Session
-                try self.pio_data_queue.write(&[_]u8{ 0x08, 0x61, 0xB4 }); // End FAD
-            },
-            1 => {
-                try self.pio_data_queue.writeItem(0); // Starting Track Number
-                try self.pio_data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // Start FAD
-            },
-            2 => {
-                try self.pio_data_queue.writeItem(2); // Starting Track Number
-                try self.pio_data_queue.write(&[_]u8{ 0x00, 0xB0, 0x5E }); // Start FAD
-            },
-            else => {
-                gdrom_log.err(termcolor.red("  Unhandled Session Number: {d}"), .{session_number});
-            },
+        if (self.disc) |disc| {
+            try self.pio_data_queue.writeItem(@intFromEnum(self.state));
+            try self.pio_data_queue.writeItem(0);
+
+            const track_number: u8 = @intCast(if (session_number > 0) disc.get_session(session_number).first_track else disc.get_session_count());
+            const fad = if (session_number > 0) disc.get_session(session_number).start_fad else disc.get_end_fad();
+
+            try self.pio_data_queue.writeItem(track_number);
+            try self.pio_data_queue.write(&[_]u8{ @truncate(fad >> 16), @truncate(fad >> 8), @truncate(fad >> 0) });
+        } else {
+            try self.pio_data_queue.writeItem(@intFromEnum(GDROMStatus.Empty));
+            try self.pio_data_queue.writeItem(0);
+            try self.pio_data_queue.writeItem(0); // Number of Session
+            try self.pio_data_queue.write(&[_]u8{ 0x00, 0x00, 0x00 }); // End FAD
         }
         self.pio_prep_complete();
     }
@@ -971,53 +926,66 @@ pub const GDROM = struct {
     }
 
     fn cd_read_fetch(self: *@This(), data_queue: *std.fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
-        if (data_select == 0b0001) {
-            // Raw data (all 2352 bytes of each sector)
-            const bytes_written = self.disk.?.load_sectors_raw(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
-            data_queue.update(bytes_written);
-        } else {
-            // FIXME: Everything else isn't implemented
-            if (data_select != 0b0010) // Data (no header or subheader)
-                gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
+        if (self.disc) |disc| {
+            if (data_select == 0b0001) {
+                // Raw data (all 2352 bytes of each sector)
+                const bytes_written = disc.load_sectors_raw(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
+                data_queue.update(bytes_written);
+            } else {
+                // FIXME: Everything else isn't implemented
+                if (data_select != 0b0010) // Data (no header or subheader)
+                    gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
 
-            switch (expected_data_type) {
-                0b000 => {
-                    // No check for sector type.
-                    // However, if reading of mode 2 track or Form 1/Form 2 is
-                    // attempted in the case of a disc which is not a CD-ROM XA,
-                    // the Mode 2 disc reading will fail.
-                },
-                0b001 => {
-                    // CD-DA
-                    // Error if sector other than CD-DA is read.
-                },
-                0b010 => {
-                    // Mode 1
-                    // Error if sector other than 2048 byte (Yellow Book) is read
-                },
-                0b011 => {
-                    // Mode 2, Form 1 or Mode 2, Form 1
-                    // Error if sector other than 2352 byte (Yellow Book) is read
-                },
-                0b100 => {
-                    // Mode 2, Form 1.
-                    // Error if sector other than 2048 byte (Green Book) is read
-                },
-                0b101 => {
-                    // Mode 2, Form 2
-                    // Error if sector other than 2324 byte (Green Book) is read
-                },
-                0b110 => {
-                    // Mode 2 of non-CD-ROM XA disc
-                    // 2336 bytes are read. No sector type check is performed
-                },
-                else => unreachable,
+                var expected_sector_size: u32 = 2352;
+
+                switch (expected_data_type) {
+                    0b000 => {
+                        // No check for sector type.
+                        // However, if reading of mode 2 track or Form 1/Form 2 is
+                        // attempted in the case of a disc which is not a CD-ROM XA,
+                        // the Mode 2 disc reading will fail.
+                    },
+                    0b001 => {
+                        // CD-DA
+                        // Error if sector other than CD-DA is read.
+                    },
+                    0b010 => {
+                        // Mode 1
+                        // Error if sector other than 2048 byte (Yellow Book) is read
+                        expected_sector_size = 2048;
+                    },
+                    0b011 => {
+                        // Mode 2, Form 1 or Mode 2, Form 1
+                        // Error if sector other than 2352 byte (Yellow Book) is read
+                        expected_sector_size = 2352;
+                    },
+                    0b100 => {
+                        // Mode 2, Form 1.
+                        // Error if sector other than 2048 byte (Green Book) is read
+                        expected_sector_size = 2048;
+                    },
+                    0b101 => {
+                        // Mode 2, Form 2
+                        // Error if sector other than 2324 byte (Green Book) is read
+                        expected_sector_size = 2324;
+                    },
+                    0b110 => {
+                        // Mode 2 of non-CD-ROM XA disc
+                        // 2336 bytes are read. No sector type check is performed
+                        expected_sector_size = 2336;
+                    },
+                    else => unreachable,
+                }
+
+                const bytes_written = disc.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
+                data_queue.update(bytes_written);
+
+                if (bytes_written > transfer_length * expected_sector_size) {
+                    gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
+                }
+
+                gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{data_queue.readableSlice(0)[0..0x20]});
             }
-
-            const bytes_written = self.disk.?.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
-            data_queue.update(bytes_written);
-
-            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{data_queue.readableSlice(0)[0..0x20]});
         }
     }
 
