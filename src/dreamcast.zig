@@ -618,6 +618,7 @@ pub const Dreamcast = struct {
 
             // FIXME: Volgarr Hack (stays stuck on IP.BIN with data stuck in the queue)
             if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
+                dc_log.err(termcolor.red("Volgarr Hack: discarding remainding data from gdrom dma data queue."), .{});
                 self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
             }
 
