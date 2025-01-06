@@ -134,6 +134,11 @@ comptime {
     std.debug.assert(@offsetOf(SH4, "mach") == @offsetOf(SH4, "macl") + 4);
 }
 
+// FIXME: TEMP HACKS
+pub var OIX_CACHE: [256][8]u32 = undefined;
+pub var OIX_ADDR: [256]u32 = undefined;
+pub var OIX_DIRTY: [256]bool = .{false} ** 256;
+
 pub const SH4 = struct {
     pub const EnableTRAPACallback = false;
 
@@ -425,9 +430,36 @@ pub const SH4 = struct {
     }
 
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+        // FIXME: TEMP HACK
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0 and virtual_addr & (@as(u32, 1) << 25) != 0) {
+            const index: u32 = (virtual_addr / 32) & 255;
+            const offset: u32 = virtual_addr & 31;
+
+            std.debug.print("  read_operand_cache virtual_addr = {X:0>8}, index = {X:0>8}, offset = {X:0>8}\n", .{ virtual_addr, index, offset });
+
+            std.debug.assert(OIX_ADDR[index] == virtual_addr & ~@as(u32, 31));
+            // OIX_ADDR[index] = virtual_addr & ~@as(u32, 31);
+
+            return @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
+        }
+
         return @constCast(self).operand_cache(T, virtual_addr).*;
     }
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
+        // FIXME: TEMP HACK
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0 and virtual_addr & (@as(u32, 1) << 25) != 0) {
+            const index: u32 = (virtual_addr / 32) & 255;
+            const offset: u32 = virtual_addr & 31;
+
+            std.debug.print("  operand_cache virtual_addr = {X:0>8}, index = {d}, offset = {d}\n", .{ virtual_addr, index, offset });
+
+            std.debug.assert(OIX_ADDR[index] == virtual_addr & ~@as(u32, 31));
+            // OIX_ADDR[index] = virtual_addr & ~@as(u32, 31);
+
+            OIX_DIRTY[index] = true;
+            return &@as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
+        }
+
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
         std.debug.assert(self.read_p4_register(P4.CCR, .CCR).ora == 1);
         std.debug.assert(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF);

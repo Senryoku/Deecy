@@ -1236,7 +1236,20 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an
     // R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
 
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(0).*);
+    const addr = cpu.R(opcode.nmd.n).*;
+    const data = cpu.R(0).*;
+    if (addr & (@as(u32, 1) << 25) != 0) {
+        std.debug.assert((addr & 3) == 0);
+        const index: u32 = (addr / 32) & 255;
+        const offset: u32 = (addr & 31) / 4;
+
+        sh4.OIX_ADDR[index] = addr & ~@as(u32, 31);
+        @memset(sh4.OIX_CACHE[index][0..], 0);
+        sh4.OIX_CACHE[index][offset] = data;
+        sh4.OIX_DIRTY[index] = true;
+    } else {
+        cpu.write32(addr, data);
+    }
 }
 pub fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
     cpu.set_fpscr(cpu.R(opcode.nmd.n).*);
@@ -1307,13 +1320,27 @@ pub fn ocbp_atRn(_: *SH4, _: Instr) void {
     }
 }
 
-pub fn ocbwb_atRn(_: *SH4, _: Instr) void {
+pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
     const static = struct {
         var once = true;
     };
     if (static.once) {
         static.once = false;
         sh4_log.warn("Note: ocbwb @Rn not implemented", .{});
+    }
+
+    const n = opcode.nmd.n;
+    const addr = cpu.R(n).*;
+    if (addr & (1 << 25) != 0) {
+        const index = (addr / 32) & 255;
+        std.debug.assert(sh4.OIX_ADDR[index] == (addr & ~@as(u32, 31)));
+        if (sh4.OIX_DIRTY[index]) {
+            // FIXME: Can be made more efficient.
+            for (sh4.OIX_CACHE[index]) |val| {
+                cpu._dc.?.gpu.write_ta(sh4.OIX_ADDR[index], val);
+            }
+            sh4.OIX_DIRTY[index] = false;
+        }
     }
 }
 

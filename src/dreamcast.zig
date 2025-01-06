@@ -614,11 +614,17 @@ pub const Dreamcast = struct {
             const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
             dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
-            std.debug.assert(copied == len);
+            if (copied != len)
+                dc_log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
 
             // FIXME: Volgarr Hack (stays stuck on IP.BIN with data stuck in the queue)
-            if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
-                dc_log.err(termcolor.red("Volgarr Hack: discarding remainding data from gdrom dma data queue."), .{});
+            // if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
+            //     dc_log.err(termcolor.red("Volgarr Hack: discarding remainding data from gdrom dma data queue."), .{});
+            //     self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
+            // }
+            // FIXME: DCA3 Hack (stays stuck on IP.BIN with data stuck in the queue)
+            if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x1A0 - 0x20) {
+                dc_log.err(termcolor.red("DCA3 Hack: discarding remainding data from gdrom dma data queue."), .{});
                 self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
             }
 

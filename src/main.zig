@@ -88,7 +88,7 @@ pub const std_options: std.Options = .{
     .log_level = .info,
     .logFn = customLog,
     .log_scope_levels = &[_]std.log.ScopeLevel{
-        .{ .scope = .dc, .level = .info },
+        .{ .scope = .dc, .level = .debug },
         .{ .scope = .sh4, .level = .warn },
         .{ .scope = .sh4_jit, .level = .info },
         .{ .scope = .arm_jit, .level = .info },
@@ -98,7 +98,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .gdrom_hle_log, .level = .info },
-        .{ .scope = .cdi, .level = .info },
+        .{ .scope = .cdi, .level = .debug },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },
