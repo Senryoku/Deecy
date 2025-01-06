@@ -498,7 +498,7 @@ pub const AICA = struct {
     pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
 
     arm7: arm7.ARM7 = undefined,
-    enable_arm_jit: bool = true,
+    enable_arm_jit: bool = false,
     arm_jit: ARM7JIT = undefined,
 
     regs: []u32, // All registers are 32-bit afaik

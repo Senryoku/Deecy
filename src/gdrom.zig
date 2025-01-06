@@ -936,6 +936,8 @@ pub const GDROM = struct {
                 if (data_select != 0b0010) // Data (no header or subheader)
                     gdrom_log.err(termcolor.red("  Unimplemented data_select: {b:0>4}"), .{data_select});
 
+                var expected_sector_size: u32 = 2352;
+
                 switch (expected_data_type) {
                     0b000 => {
                         // No check for sector type.
@@ -950,28 +952,37 @@ pub const GDROM = struct {
                     0b010 => {
                         // Mode 1
                         // Error if sector other than 2048 byte (Yellow Book) is read
+                        expected_sector_size = 2048;
                     },
                     0b011 => {
                         // Mode 2, Form 1 or Mode 2, Form 1
                         // Error if sector other than 2352 byte (Yellow Book) is read
+                        expected_sector_size = 2352;
                     },
                     0b100 => {
                         // Mode 2, Form 1.
                         // Error if sector other than 2048 byte (Green Book) is read
+                        expected_sector_size = 2048;
                     },
                     0b101 => {
                         // Mode 2, Form 2
                         // Error if sector other than 2324 byte (Green Book) is read
+                        expected_sector_size = 2324;
                     },
                     0b110 => {
                         // Mode 2 of non-CD-ROM XA disc
                         // 2336 bytes are read. No sector type check is performed
+                        expected_sector_size = 2336;
                     },
                     else => unreachable,
                 }
 
                 const bytes_written = disc.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
                 data_queue.update(bytes_written);
+
+                if (bytes_written > transfer_length * expected_sector_size) {
+                    gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
+                }
 
                 gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{data_queue.readableSlice(0)[0..0x20]});
             }

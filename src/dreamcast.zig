@@ -616,6 +616,11 @@ pub const Dreamcast = struct {
             dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
             std.debug.assert(copied == len);
 
+            // FIXME: Volgarr Hack (stays stuck on IP.BIN with data stuck in the queue)
+            if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
+                self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
+            }
+
             // Simulate using ch0
             const chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
             chcr.*.sm = 0;

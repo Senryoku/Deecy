@@ -101,17 +101,17 @@ pub const Disc = union(enum) {
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
-        if (self.get_first_data_track()) |t| return t.data[0x50..0x60];
+        if (self.get_first_data_track()) |t| return t.data[t.header_size()..][0x40..0x50];
         return null;
     }
 
     pub fn get_region(self: *const @This()) Region {
         if (self.get_first_data_track()) |t| {
-            if (t.data[0x40] == 'J')
+            if (t.data[t.header_size() + 0x30] == 'J')
                 return .Japan;
-            if (t.data[0x41] == 'U')
+            if (t.data[t.header_size() + 0x31] == 'U')
                 return .USA;
-            if (t.data[0x42] == 'E')
+            if (t.data[t.header_size() + 0x32] == 'E')
                 return .Europe;
         }
         return .Unknown;
@@ -119,7 +119,7 @@ pub const Disc = union(enum) {
 
     pub fn get_product_name(self: *const @This()) ?[]const u8 {
         if (self.get_first_data_track()) |t| {
-            const name = t.data[0x90..0x100];
+            const name = t.data[t.header_size()..][0x80..0x90];
             // Trim spaces
             var end = name.len - 1;
             while (end > 0 and name[end] == ' ') end -= 1;

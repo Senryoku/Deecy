@@ -104,9 +104,9 @@ pub const GDI = struct {
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
         const root_directory_entry = self.get_primary_volume_descriptor().*.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
-        const root_directory_lba = root_directory_entry.location + GDI_SECTOR_OFFSET;
-        const root_track = try self.get_corresponding_track(root_directory_lba);
-        const sector_start = (root_directory_lba - root_track.fad) * root_track.format;
+        const root_directory_fad = root_directory_entry.location + GDI_SECTOR_OFFSET;
+        const root_track = try self.get_corresponding_track(root_directory_fad);
+        const sector_start = (root_directory_fad - root_track.fad) * root_track.format;
 
         var curr_offset = sector_start + self.tracks.items[2].header_size(); // Skip header if any.
         // TODO: Handle directories, and not just root files.
@@ -119,7 +119,7 @@ pub const GDI = struct {
         return error.NotFound;
     }
 
-    // Bad wrapper around load_sectors. Don't use that in performance sensisive code :)
+    // Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
     pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
         const track = try self.get_corresponding_track(fad);
         var remaining = length;
@@ -172,14 +172,11 @@ pub const GDI = struct {
 
         @memset(dest[0..396], 0xFF);
 
-        for (start_track..end_track + 1) |i| {
-            const track = self.tracks.items[i];
-            const leading_fad = track.fad;
-
+        for (self.tracks.items[start_track .. end_track + 1]) |track| {
             dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-            dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
-            dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
-            dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
+            dest[4 * (track.num - 1) + 1] = (@truncate(track.fad >> 16));
+            dest[4 * (track.num - 1) + 2] = (@truncate(track.fad >> 8));
+            dest[4 * (track.num - 1) + 3] = (@truncate(track.fad >> 0));
         }
 
         @memcpy(dest[396 .. 396 + 2 * 4], &[_]u8{
@@ -189,7 +186,7 @@ pub const GDI = struct {
 
         const end_fad = self.tracks.items[end_track].get_end_fad();
         @memcpy(dest[404..408], &[_]u8{
-            0x41, @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
+            self.tracks.items[end_track].adr_ctrl_byte(), @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info:     [Control/ADR] [FAD (MSB)]          [FAD] [FAD (LSB)]
         });
 
         return 408;

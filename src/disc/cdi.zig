@@ -126,9 +126,9 @@ pub const CDI = struct {
                 const session_number = try reader.readInt(u32, .little);
                 const track_number = try reader.readInt(u32, .little);
                 const start_lba = try reader.readInt(u32, .little);
-                const track_length = try reader.readInt(u32, .little);
-                log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Track Length: {X}", .{ session_number, track_number, start_lba, track_length });
-                std.debug.assert(track_length == length + pregap);
+                const total_length = try reader.readInt(u32, .little);
+                log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Track Length: {X}", .{ session_number, track_number, start_lba, total_length });
+                std.debug.assert(total_length == length + pregap);
 
                 try reader.skipBytes(16, .{});
                 const sector_size: u32 = switch (try reader.readInt(u32, .little)) {
@@ -139,11 +139,13 @@ pub const CDI = struct {
                 };
                 const sector_type = try reader.readInt(u32, .little);
                 log.debug("    Sector Size: {d}, Sector Type: {d}", .{ sector_size, sector_type });
+                std.debug.assert(sector_type == 0 or sector_type == 4);
                 try reader.skipBytes(1, .{});
-                const total_length = try reader.readInt(u32, .little);
-                log.debug("    Total Length: {d}", .{total_length});
-                std.debug.assert(total_length == length + pregap);
-                std.debug.assert(total_length == track_length);
+
+                const total_length_2 = try reader.readInt(u32, .little); // Repeated?
+                log.debug("    Total Length: {d}", .{total_length_2});
+                std.debug.assert(total_length_2 == length + pregap);
+                std.debug.assert(total_length_2 == total_length);
 
                 try reader.skipBytes(25, .{});
                 switch (version) {
@@ -154,7 +156,7 @@ pub const CDI = struct {
                     },
                 }
 
-                log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset, track_length * sector_size });
+                log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
 
                 try self.tracks.append(.{
                     .num = @truncate(self.tracks.items.len + 1),
@@ -162,10 +164,12 @@ pub const CDI = struct {
                     .track_type = @truncate(sector_type),
                     .format = sector_size,
                     .pregap = pregap,
-                    .data = try self._file.create_view(track_offset + pregap * sector_size, track_length * sector_size),
+                    .data = try self._file.create_view(track_offset + pregap * sector_size + 8, length * sector_size), // FIXME: +8 Found empirically, no idea if this is correct.
                 });
 
-                track_offset += track_length * sector_size;
+                log.debug("Loaded: {any}", .{self.tracks.items[self.tracks.items.len - 1].data[0..32]});
+
+                track_offset += total_length * sector_size;
             }
             const session_type = try reader.readInt(u32, .little);
             try reader.skipBytes(4, .{});
@@ -241,12 +245,10 @@ pub const CDI = struct {
         @memset(dest[0..396], 0xFF);
 
         for (self.tracks.items) |track| {
-            const leading_fad = track.fad;
-
             dest[4 * (track.num - 1) + 0] = track.adr_ctrl_byte();
-            dest[4 * (track.num - 1) + 1] = (@truncate(leading_fad >> 16));
-            dest[4 * (track.num - 1) + 2] = (@truncate(leading_fad >> 8));
-            dest[4 * (track.num - 1) + 3] = (@truncate(leading_fad >> 0));
+            dest[4 * (track.num - 1) + 1] = (@truncate(track.fad >> 16));
+            dest[4 * (track.num - 1) + 2] = (@truncate(track.fad >> 8));
+            dest[4 * (track.num - 1) + 3] = (@truncate(track.fad >> 0));
         }
 
         const first_track = self.tracks.items[self.sessions.items[0].first_track];
@@ -258,7 +260,6 @@ pub const CDI = struct {
         });
 
         const end_fad = self.sessions.items[self.sessions.items.len - 1].end_fad;
-
         @memcpy(dest[404..408], &[_]u8{
             last_track.adr_ctrl_byte(), @truncate(end_fad >> 16), @truncate(end_fad >> 8), @truncate(end_fad), // Leadout info: [Control/ADR] [FAD (MSB)] [FAD] [FAD (LSB)]
         });

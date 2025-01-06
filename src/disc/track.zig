@@ -30,11 +30,11 @@ pub fn adr_ctrl_byte(self: *const @This()) u8 {
     return (control << 4) | adr;
 }
 
-pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 {
-    std.debug.assert(lba >= self.fad);
-    var sector_start = (lba - self.fad) * self.format;
+pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+    std.debug.assert(fad >= self.fad);
+    var sector_start = (fad - self.fad) * self.format;
     if (sector_start >= self.data.len) {
-        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.fad, self.data.len, lba });
+        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.fad, self.data.len, fad });
         return 0;
     }
 
@@ -46,15 +46,18 @@ pub fn load_sectors(self: *const @This(), lba: u32, count: u32, dest: []u8) u32 
     } else if (self.format == 2336) {
         var copied: u32 = 0;
         for (0..count) |_| {
-            if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
+            if (sector_start >= self.data.len or dest.len <= copied)
                 return copied;
-            if (dest.len <= copied) return copied;
-            const chunk_size = @min(2336, dest.len - copied);
+            const data_size: u32 = 2048;
+            const chunk_size = @min(data_size, dest.len - copied);
             @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
             copied += chunk_size;
             sector_start += self.format;
         }
         return copied;
+        // const to_copy: u32 = @min(@min(dest.len, count * self.format), self.data[sector_start..].len);
+        // @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
+        // return to_copy;
     } else if (self.format == 2352) {
         var copied: u32 = 0;
         for (0..count) |_| {
