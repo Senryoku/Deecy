@@ -6,7 +6,7 @@ const termcolor = @import("termcolor");
 const gdi_log = std.log.scoped(.gdi);
 
 const windows = @import("../windows.zig");
-const FileBacking = @import("../file_backing.zig");
+const MemoryMappedFile = @import("../memory_mapped_file.zig");
 
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");
@@ -23,14 +23,12 @@ const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
 pub const GDI = struct {
     tracks: std.ArrayList(Track),
 
-    _allocator: std.mem.Allocator,
-    _files: std.ArrayList(FileBacking),
+    _files: std.ArrayList(MemoryMappedFile),
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !GDI {
         var self: GDI = .{
             .tracks = std.ArrayList(Track).init(allocator),
-            ._allocator = allocator,
-            ._files = std.ArrayList(FileBacking).init(allocator),
+            ._files = std.ArrayList(MemoryMappedFile).init(allocator),
         };
 
         const file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -39,8 +37,8 @@ pub const GDI = struct {
         };
         defer file.close();
         const folder = std.fs.path.dirname(filepath) orelse ".";
-        const data = try file.readToEndAlloc(self._allocator, 1024 * 1024 * 1024);
-        defer self._allocator.free(data);
+        const data = try file.readToEndAlloc(allocator, 1024 * 1024 * 1024);
+        defer allocator.free(data);
         const end_line = if (std.mem.containsAtLeast(u8, data, 1, "\r\n")) "\r\n" else "\n";
         var lines = std.mem.splitSequence(u8, data, end_line);
 
@@ -63,10 +61,9 @@ pub const GDI = struct {
 
             std.debug.assert(pregap == 0); // FIXME: Not handled.
 
-            const track_file_path = try std.fs.path.join(self._allocator, &[_][]const u8{ folder, filename });
-            defer self._allocator.free(track_file_path);
-            var track_file = try FileBacking.init(track_file_path, allocator);
-            errdefer track_file.deinit();
+            const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
+            defer allocator.free(track_file_path);
+            var track_file = try MemoryMappedFile.init(track_file_path, allocator);
             try self._files.append(track_file);
 
             self.tracks.items[num - 1] = (.{

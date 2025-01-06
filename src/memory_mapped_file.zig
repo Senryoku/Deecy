@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 
 const windows = @import("windows.zig");
 
+const log = std.log.scoped(.memory_mapped_file);
+
 const View = if (builtin.os.tag == .windows) std.os.windows.HANDLE else []align(std.mem.page_size) const u8;
 
 file: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.fs.File,
@@ -13,26 +15,27 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
         .file = undefined,
         .mapping_handle = undefined,
-        .views = std.ArrayList(View).init(allocator),
+        .views = try std.ArrayList(View).initCapacity(allocator, 1),
     };
     if (builtin.os.tag != .windows) {
         self.file = std.fs.cwd().openFile(filepath, .{}) catch {
-            std.debug.print("File not found: {s}\n", .{filepath});
+            log.err("File not found: {s}", .{filepath});
             return error.TrackFileNotFound;
         };
     } else {
+        self.file = std.os.windows.INVALID_HANDLE_VALUE;
+        self.mapping_handle = std.os.windows.INVALID_HANDLE_VALUE;
+
         var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = .{0} ** (std.fs.max_path_bytes + 1);
         const track_file_abs_path = try std.fs.cwd().realpath(filepath, &track_file_abs_path_buffer);
         const file_path_w = try std.os.windows.sliceToPrefixedFileW(null, track_file_abs_path);
 
         self.file = try std.os.windows.OpenFile(file_path_w.span(), .{
             .access_mask = std.os.windows.GENERIC_READ | std.os.windows.SYNCHRONIZE,
-            .creation = std.os.windows.FILE_OPEN,
+            .creation = std.os.windows.FILE_OPEN_IF,
         });
-        errdefer std.os.windows.CloseHandle(self.file);
 
         self.mapping_handle = windows.CreateFileMappingA(self.file, null, std.os.windows.PAGE_READONLY, 0, 0, null) orelse return error.FileMapError;
-        errdefer std.os.windows.CloseHandle(self.mapping_handle);
     }
     return self;
 }
@@ -46,10 +49,12 @@ pub fn deinit(self: *@This()) void {
     } else {
         for (self.views.items) |view| {
             if (windows.UnmapViewOfFile(view) == 0)
-                std.debug.print("UnmapViewOfFile failed: {any}\n", .{std.os.windows.GetLastError()});
+                log.err("UnmapViewOfFile failed: {any}\n", .{std.os.windows.GetLastError()});
         }
-        std.os.windows.CloseHandle(self.mapping_handle);
-        std.os.windows.CloseHandle(self.file);
+        if (self.mapping_handle != std.os.windows.INVALID_HANDLE_VALUE)
+            std.os.windows.CloseHandle(self.mapping_handle);
+        if (self.file != std.os.windows.INVALID_HANDLE_VALUE)
+            std.os.windows.CloseHandle(self.file);
     }
     self.views.deinit();
 }
@@ -71,7 +76,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
         const aligned_size = std.mem.alignForward(u64, size, alignment);
 
         var ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), aligned_size);
-        if (ptr_or_null == null) {
+        if (ptr_or_null == null and aligned_size != 0) {
             switch (std.os.windows.GetLastError()) {
                 // Try mapping to the end, instead of an aligned size.
                 .ACCESS_DENIED => ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), 0),
@@ -80,8 +85,6 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
         }
 
         if (ptr_or_null) |ptr| {
-            errdefer _ = windows.UnmapViewOfFile(ptr);
-
             try self.views.append(ptr);
 
             const final_size = sz: {
@@ -95,7 +98,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
             };
             return @as([*]const u8, @ptrCast(ptr))[adjustment .. adjustment + final_size];
         } else {
-            std.debug.print("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}\n", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
+            log.err("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
             return error.MapViewOfFileError;
         }
     }

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const FileBacking = @import("../file_backing.zig");
+const MemoryMappedFile = @import("../memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
 
@@ -16,15 +16,13 @@ pub const CDI = struct {
 
     tracks: std.ArrayList(Track),
     sessions: std.ArrayList(Session),
-    _allocator: std.mem.Allocator,
-    _file: FileBacking,
+    _file: MemoryMappedFile,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !CDI {
         var self: @This() = .{
             .tracks = std.ArrayList(Track).init(allocator),
             .sessions = std.ArrayList(Session).init(allocator),
-            ._allocator = allocator,
-            ._file = try FileBacking.init(filepath, allocator),
+            ._file = try MemoryMappedFile.init(filepath, allocator),
         };
         errdefer self.deinit();
 
