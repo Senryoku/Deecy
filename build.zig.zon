@@ -33,8 +33,8 @@
         .nfd = .{ .path = "libs/nfd-zig" },
         .arm7 = .{ .path = "libs/arm7" },
         .@"zig-lz4" = .{
-            .url = "https://github.com/SnorlaxAssist/zig-lz4/archive/refs/heads/master.tar.gz",
-            .hash = "1220d6bbca59a59f16bda33b69e140d90bad313d11c07c0e2ab16076c59355845112",
+            .url = "https://github.com/SnorlaxAssist/zig-lz4/archive/dc9fd78b30c9c8155b613fcd1499f4a7b888cda4.tar.gz",
+            .hash = "1220afb45edd635ec8f7ba098379df10c682bfed886bf1239c8f83bf0fc963ac273b",
         },
     },
 }
