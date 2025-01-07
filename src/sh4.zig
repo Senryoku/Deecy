@@ -134,10 +134,12 @@ comptime {
     std.debug.assert(@offsetOf(SH4, "mach") == @offsetOf(SH4, "macl") + 4);
 }
 
-// FIXME: TEMP HACKS
-pub var OIX_CACHE: [256][8]u32 = undefined;
-pub var OIX_ADDR: [256]u32 = undefined;
-pub var OIX_DIRTY: [256]bool = .{false} ** 256;
+// DCA3 Hack
+const OIXCache = struct {
+    cache: [256][8]u32 = undefined,
+    addr: [256]u32 = undefined,
+    dirty: [256]bool = .{false} ** 256,
+};
 
 pub const SH4 = struct {
     pub const EnableTRAPACallback = false;
@@ -170,9 +172,9 @@ pub const SH4 = struct {
     } = undefined,
 
     store_queues: [2][8]u32 align(4) = undefined,
-    _operand_cache: []u8 align(4) = undefined,
-    p4_registers: []u8 align(4) = undefined,
-    utlb: []mmu.UTLBEntry = undefined,
+    _operand_cache: []u8 align(4),
+    p4_registers: []u8 align(4),
+    utlb: []mmu.UTLBEntry,
 
     interrupt_requests: u64 = 0,
 
@@ -190,15 +192,23 @@ pub const SH4 = struct {
     _dc: ?*Dreamcast = null,
     _pending_cycles: u32 = 0,
 
+    _oix_operand_cache: *OIXCache, // DCA3 Hacks
+
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         sh4_instructions.init_table();
 
-        var sh4: SH4 = .{ ._dc = dc, ._allocator = allocator };
+        var sh4: SH4 = .{
+            ._dc = dc,
+            ._operand_cache = try allocator.alloc(u8, 0x2000), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
+            .p4_registers = try allocator.alloc(u8, 0x1000),
+            .utlb = try allocator.alloc(mmu.UTLBEntry, 64),
+            ._allocator = allocator,
+            ._oix_operand_cache = try allocator.create(OIXCache),
+        };
 
-        // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
-        sh4._operand_cache = try sh4._allocator.alloc(u8, 0x2000);
         @memset(sh4._operand_cache, 0);
+        sh4._oix_operand_cache.* = .{};
 
         // P4 registers are remapped on this smaller range. See p4_register_addr.
         //   Addresses starts with FF/1F, this can be ignored.
@@ -211,10 +221,7 @@ pub const SH4 = struct {
         // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
         // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
         //   I ignore them in read16/write16.
-        sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
         @memset(sh4.p4_registers, 0);
-
-        sh4.utlb = try sh4._allocator.alloc(mmu.UTLBEntry, 64);
 
         sh4.reset();
 
@@ -225,6 +232,7 @@ pub const SH4 = struct {
         self._allocator.free(self.utlb);
         self._allocator.free(self.p4_registers);
         self._allocator.free(self._operand_cache);
+        self._allocator.destroy(self._oix_operand_cache);
     }
 
     pub fn reset(self: *@This()) void {
@@ -444,7 +452,7 @@ pub const SH4 = struct {
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
         if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
-            return &@as([*]T, @alignCast(@ptrCast(&OIX_CACHE[0])))[0];
+            return &@as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[0])))[0];
         }
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
@@ -1383,15 +1391,14 @@ pub const SH4 = struct {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, OIX_ADDR[index] });
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, self._oix_operand_cache.addr[index] });
 
-                    std.debug.assert(OIX_ADDR[index] == addr & ~@as(u32, 31));
-                    if (OIX_ADDR[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), OIX_ADDR[index] });
+                    std.debug.assert(self._oix_operand_cache.addr[index] == addr & ~@as(u32, 31));
+                    if (self._oix_operand_cache.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._oix_operand_cache.addr[index] });
                     }
-                    OIX_DIRTY[index] = true;
 
-                    return @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
+                    return @as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[index])))[offset / @sizeOf(T)];
                 }
             },
             else => {},
@@ -1555,15 +1562,15 @@ pub const SH4 = struct {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, OIX_ADDR[index] });
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, self._oix_operand_cache.addr[index] });
 
-                    std.debug.assert(OIX_ADDR[index] == addr & ~@as(u32, 31));
-                    if (OIX_ADDR[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), OIX_ADDR[index] });
+                    std.debug.assert(self._oix_operand_cache.addr[index] == addr & ~@as(u32, 31));
+                    if (self._oix_operand_cache.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._oix_operand_cache.addr[index] });
                     }
-                    OIX_DIRTY[index] = true;
+                    self._oix_operand_cache.dirty[index] = true;
 
-                    @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)] = value;
+                    @as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[index])))[offset / @sizeOf(T)] = value;
                     return;
                 }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });

@@ -1242,12 +1242,12 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
         const index: u32 = (addr / 32) & 255;
         const offset: u32 = (addr & 31) / @sizeOf(u32);
 
-        sh4.OIX_ADDR[index] = addr & ~@as(u32, 31);
-        @memset(sh4.OIX_CACHE[index][0..], 0);
-        sh4.OIX_CACHE[index][offset] = data;
-        sh4.OIX_DIRTY[index] = true;
+        cpu._oix_operand_cache.addr[index] = addr & ~@as(u32, 31);
+        @memset(cpu._oix_operand_cache.cache[index][0..], 0);
+        cpu._oix_operand_cache.cache[index][offset] = data;
+        cpu._oix_operand_cache.dirty[index] = true;
 
-        sh4_log.debug("movcal_R0_atRn addr = {X:0>8}, data = {X:0>8}, index={X:0>8}, offset={X:0>8}", .{ addr, data, index, offset });
+        sh4_log.debug("movcal_R0_atRn addr={X:0>8}, data={X:0>8}, index={X:0>8}, offset={X:0>8}", .{ addr, data, index, offset });
     } else {
         cpu.write32(addr, data);
     }
@@ -1329,14 +1329,13 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
     if (addr & (@as(u32, 1) << 25) != 0) {
         // DCA3 Hack
         const index = (addr / 32) & 255;
-        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>8}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, sh4.OIX_CACHE[index], sh4.OIX_DIRTY[index], sh4.OIX_ADDR[index] });
-        std.debug.assert(sh4.OIX_ADDR[index] == (addr & ~@as(u32, 31)));
-        if (sh4.OIX_DIRTY[index]) {
-            // FIXME: Can be made more efficient.
-            for (sh4.OIX_CACHE[index]) |val| {
-                cpu._dc.?.gpu.write_ta(sh4.OIX_ADDR[index] & 0x1FFF_FFFF, val);
-            }
-            sh4.OIX_DIRTY[index] = false;
+        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>8}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu._oix_operand_cache.cache[index], cpu._oix_operand_cache.dirty[index], cpu._oix_operand_cache.addr[index] });
+        std.debug.assert(cpu._oix_operand_cache.addr[index] == (addr & ~@as(u32, 31)));
+        if (cpu._oix_operand_cache.dirty[index]) {
+            const target = cpu._oix_operand_cache.addr[index] & 0x1FFF_FFFF;
+            std.debug.assert((target >= 0x10000000 and target <= 0x107FFFFF) or (target >= 0x12000000 and target <= 0x127FFFFF));
+            cpu._dc.?.gpu.bulk_write_ta(target, &cpu._oix_operand_cache.cache[index]);
+            cpu._oix_operand_cache.dirty[index] = false;
         }
     }
 }
