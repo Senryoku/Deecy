@@ -136,7 +136,6 @@ comptime {
 
 // DCA3 Hack
 const OIXCache = struct {
-    cache: [256][8]u32 = undefined,
     addr: [256]u32 = undefined,
     dirty: [256]bool = .{false} ** 256,
 };
@@ -449,10 +448,14 @@ pub const SH4 = struct {
         self.operand_cache(T, virtual_addr).* = value;
     }
 
+    pub inline fn operand_cache_lines(self: *const @This()) [][8]u32 {
+        return @as([*][32 / 4]u32, @alignCast(@ptrCast(self._operand_cache.ptr)))[0..256];
+    }
+
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
         if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
-            return &@as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[0])))[0];
+            return &@as([*]T, @alignCast(@ptrCast(&self._operand_cache)))[0];
         }
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
@@ -1398,7 +1401,7 @@ pub const SH4 = struct {
                         sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._oix_operand_cache.addr[index] });
                     }
 
-                    return @as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[index])))[offset / @sizeOf(T)];
+                    return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
                 }
             },
             else => {},
@@ -1570,7 +1573,7 @@ pub const SH4 = struct {
                     }
                     self._oix_operand_cache.dirty[index] = true;
 
-                    @as([*]T, @alignCast(@ptrCast(&self._oix_operand_cache.cache[index])))[offset / @sizeOf(T)] = value;
+                    @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
                     return;
                 }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
