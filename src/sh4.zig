@@ -430,34 +430,21 @@ pub const SH4 = struct {
     }
 
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
-        // FIXME: TEMP HACK
-        if (self.read_p4_register(P4.CCR, .CCR).ora == 0 and virtual_addr & (@as(u32, 1) << 25) != 0) {
-            const index: u32 = (virtual_addr / 32) & 255;
-            const offset: u32 = virtual_addr & 31;
-
-            std.debug.print("  read_operand_cache virtual_addr = {X:0>8}, index = {X:0>8}, offset = {X:0>8}\n", .{ virtual_addr, index, offset });
-
-            std.debug.assert(OIX_ADDR[index] == virtual_addr & ~@as(u32, 31));
-            // OIX_ADDR[index] = virtual_addr & ~@as(u32, 31);
-
-            return @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
-        }
-
         return @constCast(self).operand_cache(T, virtual_addr).*;
     }
+
+    inline fn write_operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
+            sh4_log.err(termcolor.red("Write to operand cache with RAM mode disabled: @{X:0>8} = {X:0>8}"), .{ virtual_addr, value });
+            return;
+        }
+        self.operand_cache(T, virtual_addr).* = value;
+    }
+
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
-        // FIXME: TEMP HACK
-        if (self.read_p4_register(P4.CCR, .CCR).ora == 0 and virtual_addr & (@as(u32, 1) << 25) != 0) {
-            const index: u32 = (virtual_addr / 32) & 255;
-            const offset: u32 = virtual_addr & 31;
-
-            std.debug.print("  operand_cache virtual_addr = {X:0>8}, index = {d}, offset = {d}\n", .{ virtual_addr, index, offset });
-
-            std.debug.assert(OIX_ADDR[index] == virtual_addr & ~@as(u32, 31));
-            // OIX_ADDR[index] = virtual_addr & ~@as(u32, 31);
-
-            OIX_DIRTY[index] = true;
-            return &@as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
+            sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
+            return &@as([*]T, @alignCast(@ptrCast(&OIX_CACHE[0])))[0];
         }
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
@@ -1390,6 +1377,23 @@ pub const SH4 = struct {
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
                 return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
             },
+            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+                // DCA3 Hack
+                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                    const index: u32 = (virtual_addr / 32) & 255;
+                    const offset: u32 = virtual_addr & 31;
+
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, OIX_ADDR[index] });
+
+                    std.debug.assert(OIX_ADDR[index] == addr & ~@as(u32, 31));
+                    if (OIX_ADDR[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), OIX_ADDR[index] });
+                    }
+                    OIX_DIRTY[index] = true;
+
+                    return @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)];
+                }
+            },
             else => {},
         }
 
@@ -1426,7 +1430,7 @@ pub const SH4 = struct {
         }
 
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.operand_cache(T, virtual_addr).* = value;
+            self.write_operand_cache(T, virtual_addr, value);
             return;
         }
 
@@ -1546,6 +1550,22 @@ pub const SH4 = struct {
             },
 
             0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                    const index: u32 = (virtual_addr / 32) & 255;
+                    const offset: u32 = virtual_addr & 31;
+
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, OIX_ADDR[index] });
+
+                    std.debug.assert(OIX_ADDR[index] == addr & ~@as(u32, 31));
+                    if (OIX_ADDR[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), OIX_ADDR[index] });
+                    }
+                    OIX_DIRTY[index] = true;
+
+                    @as([*]T, @alignCast(@ptrCast(&OIX_CACHE[index])))[offset / @sizeOf(T)] = value;
+                    return;
+                }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.gpu.write_ta(addr, value);
             },

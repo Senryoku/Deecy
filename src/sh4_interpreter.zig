@@ -1230,8 +1230,6 @@ pub fn ldtlb(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
-    // TODO: This instruction deals with cache, no idea if this is important to get right.
-
     // Stores the contents of general register R0 in the memory location indicated by effective address Rn.
     // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an
     // R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
@@ -1239,14 +1237,17 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     const data = cpu.R(0).*;
     if (addr & (@as(u32, 1) << 25) != 0) {
+        // DCA3 Hack
         std.debug.assert((addr & 3) == 0);
         const index: u32 = (addr / 32) & 255;
-        const offset: u32 = (addr & 31) / 4;
+        const offset: u32 = (addr & 31) / @sizeOf(u32);
 
         sh4.OIX_ADDR[index] = addr & ~@as(u32, 31);
         @memset(sh4.OIX_CACHE[index][0..], 0);
         sh4.OIX_CACHE[index][offset] = data;
         sh4.OIX_DIRTY[index] = true;
+
+        sh4_log.debug("movcal_R0_atRn addr = {X:0>8}, data = {X:0>8}, index={X:0>8}, offset={X:0>8}", .{ addr, data, index, offset });
     } else {
         cpu.write32(addr, data);
     }
@@ -1321,23 +1322,19 @@ pub fn ocbp_atRn(_: *SH4, _: Instr) void {
 }
 
 pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
-    const static = struct {
-        var once = true;
-    };
-    if (static.once) {
-        static.once = false;
-        sh4_log.warn("Note: ocbwb @Rn not implemented", .{});
-    }
-
-    const n = opcode.nmd.n;
-    const addr = cpu.R(n).*;
-    if (addr & (1 << 25) != 0) {
+    // Accesses data using the contents indicated by effective address Rn. If the cache is hit and there is unwritten information (U bit = 1),
+    // the corresponding cache block is written back to external memory and that block is cleaned (the U bit is cleared to 0).
+    // In other cases (i.e. in the case of a cache miss or an access to a non-cache area, or if the block is already clean), no operation is performed.
+    const addr = cpu.R(opcode.nmd.n).*;
+    if (addr & (@as(u32, 1) << 25) != 0) {
+        // DCA3 Hack
         const index = (addr / 32) & 255;
+        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>8}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, sh4.OIX_CACHE[index], sh4.OIX_DIRTY[index], sh4.OIX_ADDR[index] });
         std.debug.assert(sh4.OIX_ADDR[index] == (addr & ~@as(u32, 31)));
         if (sh4.OIX_DIRTY[index]) {
             // FIXME: Can be made more efficient.
             for (sh4.OIX_CACHE[index]) |val| {
-                cpu._dc.?.gpu.write_ta(sh4.OIX_ADDR[index], val);
+                cpu._dc.?.gpu.write_ta(sh4.OIX_ADDR[index] & 0x1FFF_FFFF, val);
             }
             sh4.OIX_DIRTY[index] = false;
         }

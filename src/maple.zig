@@ -479,9 +479,11 @@ pub const VMU = struct {
             (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
-                std.debug.assert(data.len == BlockSize / 4);
+                if (data.len != BlockSize / 4)
+                    maple_log.warn(termcolor.yellow("  BlockWrite: Unexpected payload length: {d}/{d}"), .{ data.len, BlockSize / 4 });
+                const size = @min(BlockSize, data.len * 4);
                 const bytes: [*]const u8 = @ptrCast(data.ptr);
-                @memcpy(self.blocks[block_num][0..BlockSize], bytes[0..BlockSize]);
+                @memcpy(self.blocks[block_num][0..size], bytes[0..size]);
 
                 self.last_unsaved_change = std.time.timestamp();
             },
