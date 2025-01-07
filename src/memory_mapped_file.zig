@@ -65,7 +65,7 @@ pub fn create_full_view(self: *@This()) ![]const u8 {
 
 pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
     if (builtin.os.tag != .windows) {
-        const r = try std.posix.mmap(null, size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.platform_specific.file.handle, offset);
+        const r = try std.posix.mmap(null, size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.file, offset);
         errdefer std.posix.munmap(r);
         try self.views.append(r);
         return r;
