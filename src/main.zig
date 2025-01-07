@@ -90,7 +90,7 @@ pub const std_options: std.Options = .{
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .warn },
-        .{ .scope = .sh4_jit, .level = .info },
+        .{ .scope = .sh4_jit, .level = .warn },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall_log, .level = .info },

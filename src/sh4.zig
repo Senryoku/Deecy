@@ -1318,16 +1318,24 @@ pub const SH4 = struct {
                         },
                         @intFromEnum(P4Register.CCR) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to CCR\n", .{T});
-                            const ccr: P4.CCR = @bitCast(value);
-                            if (ccr.ici == 1) {
+                            var ccr: P4.CCR = @bitCast(value);
+                            // ICI: IC invalidation bit - When 1 is written to this bit, the V bits of all IC entries are cleared to 0. This bit always returns 0 when read.
+                            // OCI: OC invalidation bit - When 1 is written to this bit, the V and U bits of all OC entries are cleared to 0. This bit always returns 0 when read.
+                            if (ccr.ici == 1 or ccr.oci == 1) {
                                 // Instruction cache invalidation
                                 // We'll use it as a clue to flush our JIT cache.
-                                sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
+                                sh4_log.info("  Instruction cache invalidation - Purging JIT cache (CCR={any}).", .{ccr});
                                 self._dc.?.sh4_jit.block_cache.reset() catch {
                                     sh4_log.err("Failed to purge JIT cache.", .{});
                                     @panic("Failed to purge JIT cache.");
                                 };
                             }
+                            if (ccr.oci == 1)
+                                @memset(&self._operand_cache_state.dirty, false);
+                            ccr.ici = 0;
+                            ccr.oci = 0;
+                            self.p4_register_addr(T, virtual_addr).* = @bitCast(ccr);
+                            return;
                         },
                         @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to 0x{X:0>8}\n", .{ T, virtual_addr });

@@ -137,6 +137,7 @@ const BlockCache = struct {
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
         if (start_addr > self.max_address or end_addr < self.min_address) return;
+        sh4_jit_log.info("Invalidating {X:0>8}..{X:0>8}", .{ start_addr, end_addr });
 
         inline for (0..2) |sz| {
             inline for (0..2) |pr| {
@@ -505,11 +506,11 @@ pub const SH4JIT = struct {
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
             if (block.* == null) {
-                sh4_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
+                sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ pc, cpu.fpscr.sz, cpu.fpscr.pr });
                 block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
                     if (err == error.JITCacheFull) {
+                        sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                         try self.block_cache.reset();
-                        sh4_jit_log.info("JIT cache purged.", .{});
                         break :retry self.compile(JITContext.init(cpu));
                     } else break :retry err;
                 });
