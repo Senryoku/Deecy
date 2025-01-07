@@ -135,9 +135,24 @@ comptime {
 }
 
 // DCA3 Hack
-const OIXCache = struct {
-    addr: [256]u32 = undefined,
-    dirty: [256]bool = .{false} ** 256,
+const OperandCacheState = struct {
+    addr: [256]u32 = undefined, // Tag (19bits)
+    dirty: [256]bool = .{false} ** 256, // U bit
+    // V bit not implemented
+
+    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.sliceAsBytes(self.addr[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.dirty[0..]));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.sliceAsBytes(self.addr[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.dirty[0..]));
+        return bytes;
+    }
 };
 
 pub const SH4 = struct {
@@ -191,7 +206,7 @@ pub const SH4 = struct {
     _dc: ?*Dreamcast = null,
     _pending_cycles: u32 = 0,
 
-    _oix_operand_cache: *OIXCache, // DCA3 Hacks
+    _operand_cache_state: *OperandCacheState, // DCA3 Hacks
 
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
@@ -203,11 +218,11 @@ pub const SH4 = struct {
             .p4_registers = try allocator.alloc(u8, 0x1000),
             .utlb = try allocator.alloc(mmu.UTLBEntry, 64),
             ._allocator = allocator,
-            ._oix_operand_cache = try allocator.create(OIXCache),
+            ._operand_cache_state = try allocator.create(OperandCacheState),
         };
 
         @memset(sh4._operand_cache, 0);
-        sh4._oix_operand_cache.* = .{};
+        sh4._operand_cache_state.* = .{};
 
         // P4 registers are remapped on this smaller range. See p4_register_addr.
         //   Addresses starts with FF/1F, this can be ignored.
@@ -231,7 +246,7 @@ pub const SH4 = struct {
         self._allocator.free(self.utlb);
         self._allocator.free(self.p4_registers);
         self._allocator.free(self._operand_cache);
-        self._allocator.destroy(self._oix_operand_cache);
+        self._allocator.destroy(self._operand_cache_state);
     }
 
     pub fn reset(self: *@This()) void {
@@ -1394,11 +1409,11 @@ pub const SH4 = struct {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, self._oix_operand_cache.addr[index] });
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
-                    std.debug.assert(self._oix_operand_cache.addr[index] == addr & ~@as(u32, 31));
-                    if (self._oix_operand_cache.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._oix_operand_cache.addr[index] });
+                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
+                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
                     }
 
                     return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
@@ -1565,13 +1580,13 @@ pub const SH4 = struct {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, self._oix_operand_cache.addr[index] });
+                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
-                    std.debug.assert(self._oix_operand_cache.addr[index] == addr & ~@as(u32, 31));
-                    if (self._oix_operand_cache.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._oix_operand_cache.addr[index] });
+                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
+                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
                     }
-                    self._oix_operand_cache.dirty[index] = true;
+                    self._operand_cache_state.dirty[index] = true;
 
                     @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
                     return;
@@ -1705,6 +1720,7 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.execution_state));
         bytes += try writer.write(std.mem.asBytes(&self._pending_cycles));
+        bytes += try self._operand_cache_state.serialize(writer);
         return bytes;
     }
 
@@ -1734,6 +1750,7 @@ pub const SH4 = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.execution_state));
         bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
+        bytes += try self._operand_cache_state.deserialize(reader);
         return bytes;
     }
 };
