@@ -60,12 +60,6 @@ fn glfw_key_callback(
                 .d => {
                     app.config.display_debug_ui = !app.config.display_debug_ui;
                 },
-                .l => {
-                    app.set_throttle_method(switch (app.config.cpu_throttling_method) {
-                        .None => .PerFrame,
-                        .PerFrame => .None,
-                    });
-                },
                 .F1, .F2, .F3, .F4 => {
                     const idx: usize = switch (key) {
                         .F1 => 0,
@@ -117,15 +111,6 @@ fn glfw_drop_callback(
 const assets_dir = "assets/";
 const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 
-pub const CPUThrottleMethod = enum { None, PerFrame };
-
-pub fn reset_semaphore(sem: *std.Thread.Semaphore) void {
-    sem.mutex.lock();
-    defer sem.mutex.unlock();
-
-    sem.permits = 0;
-}
-
 // Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
     for (path) |*c| {
@@ -146,7 +131,6 @@ fn file_exists(path: []const u8) !bool {
 
 const Configuration = struct {
     per_game_vmu: bool = true,
-    cpu_throttling_method: CPUThrottleMethod = .PerFrame,
     display_debug_ui: bool = false,
     display_vmus: bool = true,
     game_directory: ?[]const u8 = null,
@@ -160,8 +144,6 @@ const Configuration = struct {
 
 pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
 pub const ConfigPath = "./userdata/config.json";
-
-const ExperimentalThreadedDC = true;
 
 window: *zglfw.Window,
 gctx: *zgpu.GraphicsContext = undefined,
@@ -181,9 +163,7 @@ last_frame_timestamp: i64,
 last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
 
 running: bool = false,
-dc_thread: std.Thread = undefined,
-dc_thread_semaphore: std.Thread.Semaphore = .{},
-dc_last_frame: std.time.Instant = undefined,
+_cycles_to_run: i64 = 0,
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -223,7 +203,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             conf.display_debug_ui = json.value.display_debug_ui;
             conf.per_game_vmu = json.value.per_game_vmu;
             conf.display_vmus = json.value.display_vmus;
-            conf.cpu_throttling_method = json.value.cpu_throttling_method;
             if (json.value.game_directory) |game_directory|
                 conf.game_directory = try allocator.dupe(u8, game_directory);
             conf.audio_volume = json.value.audio_volume;
@@ -721,21 +700,6 @@ fn check_save_state_slots(self: *@This()) !void {
     }
 }
 
-fn reset_per_frame_throttling(self: *@This()) void {
-    reset_semaphore(&self.dc_thread_semaphore);
-    self.dc_last_frame = std.time.Instant.now() catch unreachable;
-}
-
-pub fn set_throttle_method(self: *@This(), method: CPUThrottleMethod) void {
-    if (method == self.config.cpu_throttling_method) return;
-
-    switch (method) {
-        .None => self.dc_thread_semaphore.post(), // Make sure to wake up.
-        .PerFrame => self.reset_per_frame_throttling(),
-    }
-    self.config.cpu_throttling_method = method;
-}
-
 pub fn toggle_fullscreen(self: *@This()) void {
     if (self.fullscreen) {
         self.fullscreen = false;
@@ -756,25 +720,14 @@ pub fn start(self: *@This()) void {
                 @panic("Failed to set default region");
             };
         }
+        self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
         self.running = true;
-        self.reset_per_frame_throttling();
-        if (ExperimentalThreadedDC) {
-            self.dc_thread = std.Thread.spawn(.{}, dreamcast_thread_fn, .{self}) catch |err| {
-                self.running = false;
-                deecy_log.err(termcolor.red("Failed to start dreamcast thread: {s}"), .{@errorName(err)});
-                return undefined;
-            };
-        }
     }
 }
 
 pub fn stop(self: *@This()) void {
     if (self.running) {
         self.running = false;
-        if (ExperimentalThreadedDC) {
-            self.dc_thread_semaphore.post();
-            self.dc_thread.join();
-        }
     }
 }
 
@@ -828,94 +781,6 @@ fn submit_ui(self: *@This()) void {
     self.gctx.submit(&.{commands});
 }
 
-pub fn one_frame(self: *@This()) void {
-    if (ExperimentalThreadedDC) {
-        const target_frame_time = std.time.ns_per_s / 60; // FIXME: Adjust that based on the DC settings...
-
-        // Internal representation of std.time.Instant is plateform dependent. To do arithmetic with it, we need to learn about it.
-        // FIXME: This is not ideal... It is unknown at compile tile, on Windows at least. But it should be constant for the duration of the program, I hope.
-        const static = struct {
-            var frame_time: u64 = 0; // In nanoseconds
-            var timestamp_diff: if (builtin.os.tag == .windows) u64 else std.posix.timespec = undefined; // In platform-dependent units
-        };
-        if (static.frame_time != target_frame_time) {
-            static.frame_time = target_frame_time;
-            if (builtin.os.tag == .windows) {
-                const timestamp_scale = (std.time.Instant{ .timestamp = 1_000_000_000 }).since(std.time.Instant{ .timestamp = 0 });
-                static.timestamp_diff = (target_frame_time * 1_000_000_000) / timestamp_scale;
-            } else {
-                static.timestamp_diff.sec = 0;
-                static.timestamp_diff.nsec = target_frame_time;
-            }
-        }
-
-        if (self.running and self.config.cpu_throttling_method == .PerFrame) {
-            const now = std.time.Instant.now() catch unreachable;
-            const since = now.since(self.dc_last_frame);
-            if (since >= target_frame_time) {
-                self.dc_thread_semaphore.post(); // Schedule a new frame
-
-                // Update last frame timestamp
-                if (since < 1_000_000 + target_frame_time) {
-                    // Adding to the previous timestamp rather than using 'now' will compensate the latency between calls to one_frame().
-                    if (builtin.os.tag == .windows) {
-                        self.dc_last_frame.timestamp += static.timestamp_diff;
-                    } else {
-                        self.dc_last_frame.timestamp.sec += static.timestamp_diff.sec;
-                        self.dc_last_frame.timestamp.nsec += static.timestamp_diff.nsec;
-                        self.dc_last_frame.timestamp.sec += @divTrunc(self.dc_last_frame.timestamp.nsec, std.time.ns_per_s);
-                        self.dc_last_frame.timestamp.nsec = @rem(self.dc_last_frame.timestamp.nsec, std.time.ns_per_s);
-                    }
-                } else {
-                    // We're way too slow, don't try to compensate.
-                    self.dc_last_frame = now;
-                }
-            }
-        }
-    } else {
-        self.run_dreamcast_until_next_frame();
-    }
-}
-
-fn run_dreamcast_until_next_frame(self: *@This()) void {
-    var cycles: u64 = 0;
-    if (!self.enable_jit) {
-        while (self.running and !self.dc.gpu.vblank_signal()) {
-            const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
-
-            cycles += self.dc.tick(max_instructions) catch unreachable;
-
-            // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
-            if (max_instructions == 1) {
-                const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
-                    if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
-                } else null;
-                if (breakpoint != null) {
-                    self.running = false;
-                }
-            }
-        }
-    } else {
-        while (!self.dc.gpu.vblank_signal()) {
-            cycles += self.dc.tick_jit() catch unreachable;
-        }
-    }
-    self.dc.maple.flush_vmus(); // FIXME: Won't flush if paused!
-}
-
-fn dreamcast_thread_fn(self: *@This()) void {
-    deecy_log.info(termcolor.green("Dreamcast thread started."), .{});
-
-    while (self.running) {
-        if (self.config.cpu_throttling_method == .PerFrame) {
-            self.dc_thread_semaphore.wait();
-        }
-        self.run_dreamcast_until_next_frame();
-    }
-
-    deecy_log.info(termcolor.red("Dreamcast thread stopped."), .{});
-}
-
 // Display an error message and wait for the user to close the window.
 fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
     while (!self.window.shouldClose()) {
@@ -941,6 +806,13 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
     }
 }
 
+fn run_for(self: *@This(), sh4_cycles: u64) void {
+    self._cycles_to_run += @intCast(sh4_cycles);
+    while (self._cycles_to_run > 0) {
+        self._cycles_to_run -= self.dc.tick_jit() catch unreachable;
+    }
+}
+
 fn audio_callback(
     device: *zaudio.Device,
     output: ?*anyopaque,
@@ -952,20 +824,8 @@ fn audio_callback(
 
     if (!self.running) return;
 
-    aica.sample_mutex.lock();
-    defer aica.sample_mutex.unlock();
-
-    if (AICA.ExperimentalExternalSampleGeneration) {
-        aica.generate_samples(self.dc, frame_count);
-        aica.update_timers(self.dc, frame_count);
-
-        const sh4_cycles = (AICA.SH4CyclesPerSample + 1) * frame_count;
-        if (AICA.ExperimentalThreadedARM) {
-            aica.run_arm(sh4_cycles) catch |err| {
-                deecy_log.err("Failed to run AICA ARM core: {}\n", .{err});
-            };
-        }
-    }
+    const sh4_cycles = AICA.SH4CyclesPerSample * frame_count;
+    self.run_for(sh4_cycles);
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
 

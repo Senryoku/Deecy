@@ -313,8 +313,6 @@ pub fn main() !void {
             }
         }
 
-        d.one_frame();
-
         d.gctx_queue_mutex.lock();
         defer d.gctx_queue_mutex.unlock();
 

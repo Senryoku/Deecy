@@ -489,13 +489,10 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
 // 00710000 - 00710008        N/A            RTC_REGISTERS
 
 pub const AICA = struct {
-    pub const ExperimentalExternalSampleGeneration = true; // Runs sample generation in a separate thread.
-    pub const ExperimentalThreadedARM = ExperimentalExternalSampleGeneration and true; // Runs the ARM core in the same thread used to generate samples, synched with sample generation, rather than with the SH4.
-
     pub const SampleRate = 44100;
 
     pub const ARM7CycleRatio = 66;
-    pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate);
+    pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate) + 1;
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = true,
@@ -506,7 +503,6 @@ pub const AICA = struct {
 
     channel_states: [64]AICAChannelState = .{.{}} ** 64,
 
-    sample_mutex: std.Thread.Mutex = .{},
     sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
@@ -601,9 +597,6 @@ pub const AICA = struct {
         std.debug.assert(addr >= 0x00800000 and addr < 0x01000000);
         const local_addr = addr - 0x00800000;
         const flush_cache = self.enable_arm_jit and local_addr >= self.arm_jit.block_cache.min_address and local_addr <= self.arm_jit.block_cache.max_address and self.read_mem(T, addr) != value;
-        const lock = flush_cache and ExperimentalThreadedARM;
-        if (lock) self.sample_mutex.lock();
-        defer if (lock) self.sample_mutex.unlock();
         if (flush_cache)
             self.arm_jit.block_cache.signal_write(local_addr);
 
@@ -1041,20 +1034,13 @@ pub const AICA = struct {
     }
 
     pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
-        if (!ExperimentalExternalSampleGeneration or !ExperimentalThreadedARM) {
-            self.sample_mutex.lock();
-            defer self.sample_mutex.unlock();
+        self._timer_cycles_counter += @intCast(sh4_cycles);
+        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
+        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
+        self.generate_samples(dc, sample_count);
+        self.update_timers(dc, sample_count);
 
-            if (!ExperimentalExternalSampleGeneration) {
-                self._timer_cycles_counter += @intCast(sh4_cycles);
-                const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
-                self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
-                self.generate_samples(dc, sample_count);
-                self.update_timers(dc, sample_count); // NOTE: When using ExperimentalExternalSampleGeneration, not sure if I should update the timer externally too or not.
-            }
-
-            try self.run_arm(sh4_cycles);
-        }
+        try self.run_arm(sh4_cycles);
     }
 
     pub fn run_arm(self: *AICA, sh4_cycles: u32) !void {
@@ -1438,9 +1424,6 @@ pub const AICA = struct {
     }
 
     pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        self.sample_mutex.lock();
-        defer self.sample_mutex.unlock();
-
         var bytes: usize = 0;
         bytes += try self.arm7.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
