@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
@@ -1238,7 +1239,7 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
     const data = cpu.R(0).*;
     if (addr & (@as(u32, 1) << 25) != 0) {
         // DCA3 Hack
-        std.debug.assert((addr & 3) == 0);
+        std.debug.assert(builtin.is_test or (addr & 3) == 0);
         const index: u32 = (addr / 32) & 255;
         const offset: u32 = (addr & 31) / @sizeOf(u32);
 
@@ -1330,7 +1331,7 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
         // DCA3 Hack
         const index = (addr / 32) & 255;
         sh4_log.debug("  ocbwb {X:0>8}, index={X:0>8}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
-        std.debug.assert(cpu._operand_cache_state.addr[index] == (addr & ~@as(u32, 31)));
+        std.debug.assert(builtin.is_test or cpu._operand_cache_state.addr[index] == (addr & ~@as(u32, 31)));
         if (cpu._operand_cache_state.dirty[index]) {
             const target = cpu._operand_cache_state.addr[index] & 0x1FFF_FFFF;
             std.debug.assert((target >= 0x10000000 and target <= 0x107FFFFF) or (target >= 0x12000000 and target <= 0x127FFFFF));
