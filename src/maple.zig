@@ -481,8 +481,7 @@ pub const VMU = struct {
 
                 const start = phase * (BlockSize / 4);
                 const size = @min(BlockSize - start, data.len * 4);
-                const bytes: [*]const u8 = @ptrCast(data.ptr);
-                @memcpy(self.blocks[block_num][start .. start + size], bytes[start .. start + size]);
+                @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
                 self.last_unsaved_change = std.time.timestamp();
             },
