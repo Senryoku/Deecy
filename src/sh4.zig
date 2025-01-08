@@ -1319,14 +1319,14 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.CCR) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to CCR\n", .{T});
                             var ccr: P4.CCR = @bitCast(value);
+                            sh4_log.debug("Write to CCR: {any}", .{ccr});
                             // ICI: IC invalidation bit - When 1 is written to this bit, the V bits of all IC entries are cleared to 0. This bit always returns 0 when read.
                             // OCI: OC invalidation bit - When 1 is written to this bit, the V and U bits of all OC entries are cleared to 0. This bit always returns 0 when read.
                             if (ccr.ici == 1 or ccr.oci == 1) {
-                                // Instruction cache invalidation
-                                // We'll use it as a clue to flush our JIT cache.
-                                sh4_log.info("  Instruction cache invalidation - Purging JIT cache (CCR={any}).", .{ccr});
+                                // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
+                                sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
                                 self._dc.?.sh4_jit.block_cache.reset() catch {
-                                    sh4_log.err("Failed to purge JIT cache.", .{});
+                                    sh4_log.err(termcolor.red("Failed to purge JIT cache."), .{});
                                     @panic("Failed to purge JIT cache.");
                                 };
                             }
@@ -1417,11 +1417,11 @@ pub const SH4 = struct {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
                     std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
                     if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
                     }
 
                     return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
@@ -1500,10 +1500,17 @@ pub const SH4 = struct {
                             self._dc.?.aica.start_dma(self._dc.?);
                         }
                     },
+                    .SB_GDEN => {
+                        sh4_log.info("Write to SB_GDEN: {X}", .{value});
+                        if (value == 0) self._dc.?.abort_gd_dma();
+                        self._dc.?.hw_register_addr(T, addr).* = value;
+                    },
                     .SB_GDST => {
                         if (value == 1) {
-                            sh4_log.info("{any} DMA (ch0-DMA) initiation!", .{reg});
+                            sh4_log.info("SB_GDST DMA (ch0-DMA) initiation!", .{});
                             self._dc.?.start_gd_dma();
+                        } else {
+                            sh4_log.warn("Unexpected write to SB_GDST: {X}", .{value});
                         }
                     },
                     .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
@@ -1581,18 +1588,17 @@ pub const SH4 = struct {
             0x04000000...0x07FFFFFF => {
                 return self._dc.?.gpu.write_vram(T, addr, value);
             },
-
             0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
                 if (virtual_addr & (@as(u32, 1) << 25) != 0) {
                     const index: u32 = (virtual_addr / 32) & 255;
                     const offset: u32 = virtual_addr & 31;
 
-                    sh4_log.debug("  operand_cache addr = {X:0>8}, index = {d}, offset = {d} (OIX_ADDR[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
                     std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
                     if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
                     }
                     self._operand_cache_state.dirty[index] = true;
 

@@ -548,9 +548,11 @@ pub const GDROM = struct {
                 gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorNumber @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
             },
             .GD_ByteCountLow => {
+                gdrom_log.debug("  GDROM Write to ByteCountLow @{X:0>8} = 0x{X:0>8}", .{ addr, value });
                 self.byte_count = (self.byte_count & 0xFF00) | value;
             },
             .GD_ByteCountHigh => {
+                gdrom_log.debug("  GDROM Write to ByteCountHigh @{X:0>8} = 0x{X:0>8}", .{ addr, value });
                 self.byte_count = (self.byte_count & 0x00FF) | (@as(u16, @intCast(value)) << @intCast(8));
             },
             .GD_DriveSelect => {

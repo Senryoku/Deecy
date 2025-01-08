@@ -613,9 +613,11 @@ pub const Dreamcast = struct {
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
             const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
 
-            dc_log.debug("First 0x20 bytes copied: {X}", .{@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..0x20]});
-            if (copied != len)
+            if (copied < len) {
                 dc_log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
+                // Pad with zeroes in this case.
+                @memset(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[copied..len], 0);
+            }
 
             // FIXME: Volgarr Hack (stays stuck on IP.BIN with data stuck in the queue)
             // if (len == 0x20 and self.gdrom.dma_data_queue.count == 0x2E0 - 0x20) {
@@ -658,6 +660,12 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_GDLEND).* = len;
         self.hw_register(u32, .SB_GDSTARD).* += len;
         self.gdrom.on_dma_end(self);
+    }
+
+    pub fn abort_gd_dma(self: *@This()) void {
+        if (self.read_hw_register(u32, .SB_GDST) != 0) {
+            self.hw_register(u32, .SB_GDST).* = 0;
+        }
     }
 
     pub fn start_ch2_dma(self: *@This()) void {
