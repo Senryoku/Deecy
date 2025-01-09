@@ -433,14 +433,6 @@ pub fn draw(self: *@This()) !void {
 
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
-            if (zgui.beginTabItem("General", .{})) {
-                var method = d.config.cpu_throttling_method;
-                if (zgui.comboFromEnum("CPU Throttling Method", &method)) {
-                    d.set_throttle_method(method);
-                }
-                zgui.endTabItem();
-            }
-
             if (zgui.beginTabItem("Renderer", .{})) {
                 var fullscreen = self.deecy.fullscreen;
                 if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {

@@ -131,10 +131,11 @@ const InterruptReasonRegister = packed struct(u8) {
 };
 
 const ScheduledEvent = struct {
-    cycles: u32,
+    cycles: i32,
     state: ?GDROMStatus = null,
-    status: StatusRegister,
-    interrupt_reason: ?InterruptReasonRegister,
+    status: ?StatusRegister = null,
+    interrupt_reason: ?InterruptReasonRegister = null,
+    clear_interrupt: bool = false,
 
     fn compare(_: void, a: @This(), b: @This()) std.math.Order {
         return std.math.order(a.cycles, b.cycles);
@@ -300,21 +301,25 @@ pub const GDROM = struct {
 
     pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
         if (self.scheduled_events.peek()) |*event| {
-            if (event.cycles < cycles) {
-                if (event.state) |state| {
+            if (event.cycles <= cycles) {
+                gdrom_log.debug(" Event (/{d}): {any}", .{ self.scheduled_events.count(), event });
+                if (event.state) |state|
                     self.state = state;
-                }
-                self.status_register = event.status;
-                if (self.control_register.nien == 0)
-                    dc.raise_external_interrupt(.{ .GDRom = 1 });
+                if (event.status) |status|
+                    self.status_register = status;
                 if (event.interrupt_reason) |reason| {
                     self.interrupt_reason_register = reason;
+                    if (self.control_register.nien == 0)
+                        dc.raise_external_interrupt(.{ .GDRom = 1 });
                 }
+                if (event.clear_interrupt)
+                    dc.clear_external_interrupt(.{ .GDRom = 1 });
+
                 _ = self.scheduled_events.remove();
             }
         }
         for (self.scheduled_events.items) |*event| {
-            event.cycles = @max(0, @as(i32, @intCast(event.cycles)) - @as(i32, @intCast(cycles)));
+            event.cycles -= @as(i32, @intCast(cycles));
         }
     }
 
@@ -368,7 +373,10 @@ pub const GDROM = struct {
                 const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
                 gdrom_log.debug("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // Clear the pending interrupt signal.
-                self.status_register.drq = 0;
+                self.schedule_event(.{
+                    .cycles = 0,
+                    .clear_interrupt = true,
+                });
                 return val;
             },
             .GD_Data => {
@@ -446,7 +454,7 @@ pub const GDROM = struct {
         self.schedule_event(.{
             .cycles = 0, // FIXME: Random value
             .status = .{ .bsy = 0 },
-            .interrupt_reason = null,
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
         });
     }
 
@@ -548,9 +556,11 @@ pub const GDROM = struct {
                 gdrom_log.warn(termcolor.yellow("  Unhandled GDROM Write to SectorNumber @{X:0>8} = 0x{X:0>8}"), .{ addr, value });
             },
             .GD_ByteCountLow => {
+                gdrom_log.debug("  GDROM Write to ByteCountLow @{X:0>8} = 0x{X:0>8}", .{ addr, value });
                 self.byte_count = (self.byte_count & 0xFF00) | value;
             },
             .GD_ByteCountHigh => {
+                gdrom_log.debug("  GDROM Write to ByteCountHigh @{X:0>8} = 0x{X:0>8}", .{ addr, value });
                 self.byte_count = (self.byte_count & 0x00FF) | (@as(u16, @intCast(value)) << @intCast(8));
             },
             .GD_DriveSelect => {
@@ -641,8 +651,7 @@ pub const GDROM = struct {
             self.status_register.drq = 0;
             self.status_register.bsy = 0;
             self.status_register.drdy = 1;
-            self.interrupt_reason_register.cod = .Command;
-            self.interrupt_reason_register.io = .DeviceToHost;
+            self.interrupt_reason_register = .{ .cod = .Command, .io = .DeviceToHost };
 
             if (self.control_register.nien == 0)
                 dc.raise_external_interrupt(.{ .GDRom = 1 });
@@ -660,8 +669,7 @@ pub const GDROM = struct {
         //   Asserting the INTRQ signal
         self.schedule_event(.{
             .cycles = 0,
-            .status = .{ .check = 1, .bsy = 0 },
-            .interrupt_reason = null,
+            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
         });
     }
 
@@ -980,7 +988,7 @@ pub const GDROM = struct {
                 const bytes_written = disc.load_sectors(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));
                 data_queue.update(bytes_written);
 
-                if (bytes_written > transfer_length * expected_sector_size) {
+                if (bytes_written != transfer_length * expected_sector_size) {
                     gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
                 }
 
@@ -1064,8 +1072,8 @@ pub const GDROM = struct {
     fn chk_secu(self: *@This()) !void {
         self.byte_count = 0;
         self.schedule_event(.{
-            .cycles = 0,
-            .status = .{ .bsy = 0, .drq = 1 },
+            .cycles = 0, // FIXME: Random value
+            .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
             .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
         });
     }

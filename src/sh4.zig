@@ -134,6 +134,27 @@ comptime {
     std.debug.assert(@offsetOf(SH4, "mach") == @offsetOf(SH4, "macl") + 4);
 }
 
+// DCA3 Hack
+const OperandCacheState = struct {
+    addr: [256]u32 = undefined, // Tag (19bits)
+    dirty: [256]bool = .{false} ** 256, // U bit
+    // V bit not implemented
+
+    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try writer.write(std.mem.sliceAsBytes(self.addr[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.dirty[0..]));
+        return bytes;
+    }
+
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
+        bytes += try reader.read(std.mem.sliceAsBytes(self.addr[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.dirty[0..]));
+        return bytes;
+    }
+};
+
 pub const SH4 = struct {
     pub const EnableTRAPACallback = false;
 
@@ -165,9 +186,9 @@ pub const SH4 = struct {
     } = undefined,
 
     store_queues: [2][8]u32 align(4) = undefined,
-    _operand_cache: []u8 align(4) = undefined,
-    p4_registers: []u8 align(4) = undefined,
-    utlb: []mmu.UTLBEntry = undefined,
+    _operand_cache: []u8 align(4),
+    p4_registers: []u8 align(4),
+    utlb: []mmu.UTLBEntry,
 
     interrupt_requests: u64 = 0,
 
@@ -185,15 +206,23 @@ pub const SH4 = struct {
     _dc: ?*Dreamcast = null,
     _pending_cycles: u32 = 0,
 
+    _operand_cache_state: *OperandCacheState, // DCA3 Hacks
+
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         sh4_instructions.init_table();
 
-        var sh4: SH4 = .{ ._dc = dc, ._allocator = allocator };
+        var sh4: SH4 = .{
+            ._dc = dc,
+            ._operand_cache = try allocator.alloc(u8, 0x2000), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
+            .p4_registers = try allocator.alloc(u8, 0x1000),
+            .utlb = try allocator.alloc(mmu.UTLBEntry, 64),
+            ._allocator = allocator,
+            ._operand_cache_state = try allocator.create(OperandCacheState),
+        };
 
-        // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
-        sh4._operand_cache = try sh4._allocator.alloc(u8, 0x2000);
         @memset(sh4._operand_cache, 0);
+        sh4._operand_cache_state.* = .{};
 
         // P4 registers are remapped on this smaller range. See p4_register_addr.
         //   Addresses starts with FF/1F, this can be ignored.
@@ -206,10 +235,7 @@ pub const SH4 = struct {
         // + Operand cache RAM mode also clashes with this, it's also dealt with in read/write functions.
         // + Two performance registers (PMCR1/2, exclusive to SH7091 afaik) also screw this pattern,
         //   I ignore them in read16/write16.
-        sh4.p4_registers = try sh4._allocator.alloc(u8, 0x1000);
         @memset(sh4.p4_registers, 0);
-
-        sh4.utlb = try sh4._allocator.alloc(mmu.UTLBEntry, 64);
 
         sh4.reset();
 
@@ -220,6 +246,7 @@ pub const SH4 = struct {
         self._allocator.free(self.utlb);
         self._allocator.free(self.p4_registers);
         self._allocator.free(self._operand_cache);
+        self._allocator.destroy(self._operand_cache_state);
     }
 
     pub fn reset(self: *@This()) void {
@@ -427,7 +454,25 @@ pub const SH4 = struct {
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         return @constCast(self).operand_cache(T, virtual_addr).*;
     }
+
+    inline fn write_operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
+            sh4_log.err(termcolor.red("Write to operand cache with RAM mode disabled: @{X:0>8} = {X:0>8}"), .{ virtual_addr, value });
+            return;
+        }
+        self.operand_cache(T, virtual_addr).* = value;
+    }
+
+    pub inline fn operand_cache_lines(self: *const @This()) [][8]u32 {
+        return @as([*][32 / 4]u32, @alignCast(@ptrCast(self._operand_cache.ptr)))[0..256];
+    }
+
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
+        if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
+            sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
+            return &@as([*]T, @alignCast(@ptrCast(&self._operand_cache)))[0];
+        }
+
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
         std.debug.assert(self.read_p4_register(P4.CCR, .CCR).ora == 1);
         std.debug.assert(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF);
@@ -1273,16 +1318,24 @@ pub const SH4 = struct {
                         },
                         @intFromEnum(P4Register.CCR) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to CCR\n", .{T});
-                            const ccr: P4.CCR = @bitCast(value);
-                            if (ccr.ici == 1) {
-                                // Instruction cache invalidation
-                                // We'll use it as a clue to flush our JIT cache.
-                                sh4_log.debug("  Instruction cache invalidation - Purging JIT cache.", .{});
+                            var ccr: P4.CCR = @bitCast(value);
+                            sh4_log.debug("Write to CCR: {any}", .{ccr});
+                            // ICI: IC invalidation bit - When 1 is written to this bit, the V bits of all IC entries are cleared to 0. This bit always returns 0 when read.
+                            // OCI: OC invalidation bit - When 1 is written to this bit, the V and U bits of all OC entries are cleared to 0. This bit always returns 0 when read.
+                            if (ccr.ici == 1 or ccr.oci == 1) {
+                                // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
+                                sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
                                 self._dc.?.sh4_jit.block_cache.reset() catch {
-                                    sh4_log.err("Failed to purge JIT cache.", .{});
+                                    sh4_log.err(termcolor.red("Failed to purge JIT cache."), .{});
                                     @panic("Failed to purge JIT cache.");
                                 };
                             }
+                            if (ccr.oci == 1)
+                                @memset(&self._operand_cache_state.dirty, false);
+                            ccr.ici = 0;
+                            ccr.oci = 0;
+                            self.p4_register_addr(T, virtual_addr).* = @bitCast(ccr);
+                            return;
                         },
                         @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
                             check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to 0x{X:0>8}\n", .{ T, virtual_addr });
@@ -1358,6 +1411,22 @@ pub const SH4 = struct {
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
                 return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
             },
+            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+                // DCA3 Hack
+                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                    const index: u32 = (virtual_addr / 32) & 255;
+                    const offset: u32 = virtual_addr & 31;
+
+                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+
+                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
+                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+                    }
+
+                    return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
+                }
+            },
             else => {},
         }
 
@@ -1394,7 +1463,7 @@ pub const SH4 = struct {
         }
 
         if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.operand_cache(T, virtual_addr).* = value;
+            self.write_operand_cache(T, virtual_addr, value);
             return;
         }
 
@@ -1431,10 +1500,17 @@ pub const SH4 = struct {
                             self._dc.?.aica.start_dma(self._dc.?);
                         }
                     },
+                    .SB_GDEN => {
+                        sh4_log.info("Write to SB_GDEN: {X}", .{value});
+                        if (value == 0) self._dc.?.abort_gd_dma();
+                        self._dc.?.hw_register_addr(T, addr).* = value;
+                    },
                     .SB_GDST => {
                         if (value == 1) {
-                            sh4_log.info("{any} DMA (ch0-DMA) initiation!", .{reg});
+                            sh4_log.info("SB_GDST DMA (ch0-DMA) initiation!", .{});
                             self._dc.?.start_gd_dma();
+                        } else {
+                            sh4_log.warn("Unexpected write to SB_GDST: {X}", .{value});
                         }
                     },
                     .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
@@ -1512,8 +1588,23 @@ pub const SH4 = struct {
             0x04000000...0x07FFFFFF => {
                 return self._dc.?.gpu.write_vram(T, addr, value);
             },
-
             0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                    const index: u32 = (virtual_addr / 32) & 255;
+                    const offset: u32 = virtual_addr & 31;
+
+                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+
+                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
+                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
+                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+                    }
+                    self._operand_cache_state.dirty[index] = true;
+
+                    @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
+                    return;
+                }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.gpu.write_ta(addr, value);
             },
@@ -1543,7 +1634,7 @@ pub const SH4 = struct {
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
         if (EnableTRAPACallback) {
-            self.dc.on_trapa = .{ .callback = callback, .userdata = userdata };
+            self.on_trapa = .{ .callback = callback, .userdata = userdata };
         }
     }
 
@@ -1643,6 +1734,7 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.execution_state));
         bytes += try writer.write(std.mem.asBytes(&self._pending_cycles));
+        bytes += try self._operand_cache_state.serialize(writer);
         return bytes;
     }
 
@@ -1672,6 +1764,7 @@ pub const SH4 = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.execution_state));
         bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
+        bytes += try self._operand_cache_state.deserialize(reader);
         return bytes;
     }
 };

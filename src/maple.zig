@@ -477,11 +477,11 @@ pub const VMU = struct {
                 }
             },
             (FunctionCodesMask{ .storage = 1 }).as_u32() => {
-                maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
+                maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data length: {d} bytes)"), .{ partition, block_num, phase, data.len * 4 });
 
-                std.debug.assert(data.len == BlockSize / 4);
-                const bytes: [*]const u8 = @ptrCast(data.ptr);
-                @memcpy(self.blocks[block_num][0..BlockSize], bytes[0..BlockSize]);
+                const start = phase * (BlockSize / 4);
+                const size = @min(BlockSize - start, data.len * 4);
+                @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
                 self.last_unsaved_change = std.time.timestamp();
             },
