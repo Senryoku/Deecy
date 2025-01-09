@@ -1634,7 +1634,7 @@ pub const SH4 = struct {
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
         if (EnableTRAPACallback) {
-            self.dc.on_trapa = .{ .callback = callback, .userdata = userdata };
+            self.on_trapa = .{ .callback = callback, .userdata = userdata };
         }
     }
 
