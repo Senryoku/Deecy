@@ -728,6 +728,7 @@ pub fn start(self: *@This()) void {
 pub fn stop(self: *@This()) void {
     if (self.running) {
         self.running = false;
+        self.dc.maple.flush_vmus();
     }
 }
 
@@ -808,8 +809,26 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
 
 fn run_for(self: *@This(), sh4_cycles: u64) void {
     self._cycles_to_run += @intCast(sh4_cycles);
-    while (self._cycles_to_run > 0) {
-        self._cycles_to_run -= self.dc.tick_jit() catch unreachable;
+    if (self.enable_jit) {
+        while (self._cycles_to_run > 0) {
+            self._cycles_to_run -= self.dc.tick_jit() catch unreachable;
+        }
+    } else {
+        const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
+
+        while (self.running and self._cycles_to_run > 0) {
+            self._cycles_to_run -= self.dc.tick(max_instructions) catch unreachable;
+
+            // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
+            if (max_instructions == 1) {
+                const breakpoint = for (self.breakpoints.items, 0..) |addr, index| {
+                    if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
+                } else null;
+                if (breakpoint != null) {
+                    self.running = false;
+                }
+            }
+        }
     }
 }
 
