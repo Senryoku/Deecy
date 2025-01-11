@@ -43,8 +43,6 @@ pub const CDI = struct {
 
                 try file.seekTo(header_offset);
                 reader = file.reader();
-
-                return error.UnsupportedCDIVersion;
             },
             .V4 => {
                 const header_size = try reader.readInt(u32, .little);
@@ -77,7 +75,7 @@ pub const CDI = struct {
             for (0..track_count) |_| {
                 const null_or_extra = try reader.readInt(u32, .little);
                 if (null_or_extra != 0)
-                    try reader.skipBytes(4, .{});
+                    try reader.skipBytes(8, .{});
                 const track_start_mark = try reader.readInt(u160, .big);
                 if (track_start_mark != 0x0000_0100_0000_FFFF_FFFF_0000_0100_0000_FFFF_FFFF) {
                     log.err("  Invalid Track Start Mark: {X}", .{track_start_mark});
