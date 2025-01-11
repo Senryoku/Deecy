@@ -74,16 +74,20 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
         try self.views.append(r);
         return r[adjustment..];
     } else {
+        var map_to_end = size == 0;
         const alignment = 64 * 1024;
         const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
         const adjustment = offset - aligned_offset;
-        const aligned_size = std.mem.alignForward(u64, size, alignment);
+        const aligned_size = if (map_to_end) 0 else std.mem.alignForward(u64, size + adjustment, alignment);
 
         var ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), aligned_size);
-        if (ptr_or_null == null and aligned_size != 0) {
+        if (ptr_or_null == null and !map_to_end) {
             switch (std.os.windows.GetLastError()) {
                 // Try mapping to the end, instead of an aligned size.
-                .ACCESS_DENIED => ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), 0),
+                .ACCESS_DENIED => {
+                    ptr_or_null = windows.MapViewOfFile(self.mapping_handle, std.os.windows.SECTION_MAP_READ, @truncate(aligned_offset >> 32), @truncate(aligned_offset), 0);
+                    map_to_end = true;
+                },
                 else => {},
             }
         }
@@ -92,10 +96,10 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
             try self.views.append(ptr);
 
             const final_size = sz: {
-                if (size == 0) {
+                if (map_to_end) {
                     var info: std.os.windows.MEMORY_BASIC_INFORMATION = undefined;
                     _ = try std.os.windows.VirtualQuery(ptr, &info, @sizeOf(std.os.windows.MEMORY_BASIC_INFORMATION));
-                    break :sz info.RegionSize;
+                    break :sz if (size > 0) @min(size, info.RegionSize) else info.RegionSize;
                 } else {
                     break :sz size;
                 }
