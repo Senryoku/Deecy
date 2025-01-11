@@ -65,10 +65,14 @@ pub fn create_full_view(self: *@This()) ![]const u8 {
 
 pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
     if (builtin.os.tag != .windows) {
-        const r = try std.posix.mmap(null, size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.file.handle, offset);
+        const alignment = std.mem.page_size;
+        const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
+        const adjustment = offset - aligned_offset;
+        const adjusted_size = size + adjustment;
+        const r = try std.posix.mmap(null, adjusted_size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.file.handle, aligned_offset);
         errdefer std.posix.munmap(r);
         try self.views.append(r);
-        return r;
+        return r[adjustment..];
     } else {
         const alignment = 64 * 1024;
         const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
