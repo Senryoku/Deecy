@@ -44,10 +44,34 @@ jobs:
           uses: mlugg/setup-zig@v1
           with:
             version: ${{ steps.zigversion.outputs.version }}
-        - name: Compile Deecy
+        - name: Compile Deecy (native)
           run: zig build -Doptimize=ReleaseFast
         - uses: actions/upload-artifact@v4
           with: 
+            name: Deecy-x86_64-native-linux
+            path: zig-out/bin/Deecy
+        - name: Compile Deecy (x86_64)
+          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64
+        - uses: actions/upload-artifact@v4
+          with: 
             name: Deecy-x86_64-linux
+            path: zig-out/bin/Deecy
+        - name: Compile Deecy (x86_64_v2)
+          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v2
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v2-linux
+            path: zig-out/bin/Deecy
+        - name: Compile Deecy (x86_64_v3)
+          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v3
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v3-linux
+            path: zig-out/bin/Deecy
+        - name: Compile Deecy (x86_64_v4)
+          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v4
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64_v4-linux
             path: zig-out/bin/Deecy
 
