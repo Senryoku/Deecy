@@ -23,7 +23,7 @@ jobs:
           with:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy
-          run: zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows
+          run: zig build --release=fast -Dtarget=x86_64-windows
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-windows
@@ -45,31 +45,37 @@ jobs:
           with:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy (native)
-          run: zig build -Doptimize=ReleaseFast
+          run: zig build --release=fast
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-native-linux
             path: zig-out/bin/Deecy
         - name: Compile Deecy (x86_64)
-          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64
+          run: zig build --release=fast -Dtarget=x86_64-linux
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-linux
             path: zig-out/bin/Deecy
+        - name: Compile Deecy (x86_64-musl)
+          run: zig build --release=fast -Dtarget=x86_64-linux-musl
+        - uses: actions/upload-artifact@v4
+          with: 
+            name: Deecy-x86_64-linux-musl
+            path: zig-out/bin/Deecy
         - name: Compile Deecy (x86_64_v2)
-          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v2
+          run: zig build --release=fast -Dtarget=x86_64_v2-linux
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64_v2-linux
             path: zig-out/bin/Deecy
         - name: Compile Deecy (x86_64_v3)
-          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v3
+          run: zig build --release=fast -Dtarget=x86_64_v3-linux
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64_v3-linux
             path: zig-out/bin/Deecy
         - name: Compile Deecy (x86_64_v4)
-          run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v4
+          run: zig build --release=fast -Dtarget=x86_64_v4-linux
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64_v4-linux
