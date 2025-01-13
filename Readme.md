@@ -12,11 +12,13 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 
 ## Build and Run
 
-Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions.
+Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/
 
 ```sh
 zigup 0.14.0-dev.1911+3bf89f55c
 ```
+
+Make sure [Git LFS](https://git-lfs.com/) is installed (needed by zig-gamedev to get some bundled binaries).
 
 ```sh
 git clone --recurse-submodules https://github.com/Senryoku/Deecy     # Clone the repo and its submodules
