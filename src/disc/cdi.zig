@@ -73,40 +73,7 @@ pub const CDI = struct {
             log.debug("  Track Count: {d}", .{track_count});
 
             for (0..track_count) |_| {
-                const null_or_extra = try reader.readInt(u32, .little);
-                if (null_or_extra != 0)
-                    try reader.skipBytes(8, .{});
-                const track_start_mark = try reader.readInt(u160, .big);
-                if (track_start_mark != 0x0000_0100_0000_FFFF_FFFF_0000_0100_0000_FFFF_FFFF) {
-                    log.err("  Invalid Track Start Mark: {X}", .{track_start_mark});
-                    return error.InvalidCDI;
-                }
-                try reader.skipBytes(4, .{});
-                const filename_length = try reader.readInt(u8, .little);
-                var buffer: [256]u8 = undefined;
-                const filename = buffer[0..filename_length];
-                _ = try reader.read(filename);
-                log.debug("    Filename: {s}", .{filename});
-                try reader.skipBytes(1 + 10 + 4 + 4, .{});
-                const v4_mark = try reader.readInt(u32, .little);
-                const max_cd_length = mcl: {
-                    if (v4_mark != 0x80000000) {
-                        break :mcl v4_mark;
-                    } else {
-                        const max_cd_length = try reader.readInt(u32, .little);
-                        const v4_mark_2 = try reader.readInt(u32, .little);
-                        if (v4_mark_2 != 0x980000) {
-                            log.debug("  V4 Mark 2: {X}", .{v4_mark_2});
-                            return error.InvalidCDI;
-                        }
-                        break :mcl max_cd_length;
-                    }
-                };
-                if (max_cd_length != 0x514C8 and max_cd_length != 0x57E40) {
-                    log.err("  Invalid max_cd_length: {X}", .{max_cd_length});
-                    return error.InvalidCDI;
-                }
-                log.debug("    Max CD Length: {X}", .{max_cd_length});
+                try track_header(reader);
 
                 try reader.skipBytes(2, .{});
                 const pregap = try reader.readInt(u32, .little);
@@ -179,15 +146,56 @@ pub const CDI = struct {
             try self.sessions.append(session);
         }
         const total_tracks = try reader.readInt(u16, .little);
-        std.debug.assert(total_tracks == 0);
-        const end_lba = try reader.readInt(u32, .little);
+        std.debug.assert(total_tracks == 0); // Marks the end of sessions.
+        try track_header(reader);
+
+        const total_number_of_sectors = try reader.readInt(u32, .little);
         const volume_name_length = try reader.readInt(u8, .little);
         var volume_name_buffer: [256]u8 = undefined;
         const volume_name = volume_name_buffer[0..volume_name_length];
         _ = try reader.read(volume_name);
-        log.debug("Total Tracks: {d}, End LBA: {X}, Volume Name Length: {d}, Volume Name: {s}", .{ total_tracks, end_lba, volume_name_length, volume_name });
+        log.debug("Sector count: {X}, Volume Name Length: {d}, Volume Name: {s}", .{ total_number_of_sectors, volume_name_length, volume_name });
 
         return self;
+    }
+
+    fn track_header(reader: anytype) !void {
+        const null_or_extra = try reader.readInt(u32, .little);
+        if (null_or_extra != 0)
+            try reader.skipBytes(8, .{});
+        const track_start_mark = try reader.readInt(u160, .big);
+        if (track_start_mark != 0x0000_0100_0000_FFFF_FFFF_0000_0100_0000_FFFF_FFFF) {
+            log.err("  Invalid Track Start Mark: {X}", .{track_start_mark});
+            return error.InvalidCDI;
+        }
+        try reader.skipBytes(4, .{});
+
+        const filename_length = try reader.readInt(u8, .little);
+        var buffer: [256]u8 = undefined;
+        const filename = buffer[0..filename_length];
+        _ = try reader.read(filename);
+        log.debug("    Filename: {s}", .{filename});
+        try reader.skipBytes(1 + 10 + 4 + 4, .{});
+
+        const v4_mark = try reader.readInt(u32, .little);
+        const max_cd_length = mcl: {
+            if (v4_mark != 0x80000000) {
+                break :mcl v4_mark;
+            } else {
+                const max_cd_length = try reader.readInt(u32, .little);
+                const v4_mark_2 = try reader.readInt(u32, .little);
+                if (v4_mark_2 != 0x980000) {
+                    log.debug("  V4 Mark 2: {X}", .{v4_mark_2});
+                    return error.InvalidCDI;
+                }
+                break :mcl max_cd_length;
+            }
+        };
+        if (max_cd_length != 0x514C8 and max_cd_length != 0x57E40) {
+            log.err("  Invalid max_cd_length: {X}", .{max_cd_length});
+            return error.InvalidCDI;
+        }
+        log.debug("    Max CD Length: {X}", .{max_cd_length});
     }
 
     pub fn deinit(self: *@This()) void {
