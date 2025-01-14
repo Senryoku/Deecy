@@ -619,26 +619,6 @@ pub const Dreamcast = struct {
                 @memset(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[copied..len], 0);
             }
 
-            // FIXME: Volgarr/DCA3 Hack (stays stuck on IP.BIN with data stuck in the queue)
-            //        AFAIK the buffer is filled with the requested amount of sectors. The program leaves it with less than a sector of data left.
-            //        It then spins forever in the Boot ROM checking for GDROM Alternate Status (5F7018), checking drq and bsy.
-            if (len == 0x20) {
-                if (self.gdrom.disc) |disc| {
-                    const product_name = disc.get_product_name().?;
-                    const product_id = disc.get_product_id().?;
-                    // std.debug.print("GDROM: Product Name: '{any}', Product ID: '{any}'\n", .{ product_name, product_id });
-                    if (self.gdrom.dma_data_queue.count == 0x2E0 - 0x20 and std.mem.startsWith(u8, product_name, "VOLGARR") and std.mem.startsWith(u8, product_id, "T0000     V1.000")) {
-                        // Volgarr
-                        dc_log.err(termcolor.red("Volgarr Hack: discarding remaining data from gdrom dma data queue."), .{});
-                        self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
-                    } else if (self.gdrom.dma_data_queue.count == 0x1A0 - 0x20 and std.mem.eql(u8, product_name, &([_]u8{0} ** 16)) and std.mem.eql(u8, product_id, &([_]u8{0} ** 16))) {
-                        // DCA3
-                        dc_log.err(termcolor.red("DCA3 Hack: discarding remaining data from gdrom dma data queue."), .{});
-                        self.gdrom.dma_data_queue.discard(self.gdrom.dma_data_queue.count);
-                    }
-                }
-            }
-
             // Simulate using ch0
             const chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
             chcr.*.sm = 0;
