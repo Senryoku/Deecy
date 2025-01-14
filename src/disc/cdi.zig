@@ -127,7 +127,7 @@ pub const CDI = struct {
                     .track_type = @truncate(sector_type),
                     .format = sector_size,
                     .pregap = pregap,
-                    .data = try self._file.create_view(track_offset + pregap * sector_size + 8, length * sector_size), // FIXME: +8 Found empirically, no idea if this is correct.
+                    .data = try self._file.create_view(track_offset + pregap * sector_size, length * sector_size),
                 });
 
                 log.debug("Loaded: {any}", .{self.tracks.items[self.tracks.items.len - 1].data[0..32]});

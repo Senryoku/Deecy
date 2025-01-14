@@ -130,24 +130,24 @@ pub const Disc = union(enum) {
 
     pub fn get_primary_volume_descriptor(self: *const @This()) *const CD.PVD {
         if (self.get_first_data_track()) |t| {
-            const offset = 0x10 * t.format + t.header_size(); // 16th sector + skip sector header
+            const offset = 0x10 * t.format + t.sector_data_offset(); // 16th sector + skip sector header
             return @ptrCast(@alignCast(t.data.ptr + offset));
         }
         @panic("Failed to get primary volume descriptor");
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
-        if (self.get_first_data_track()) |t| return t.data[t.header_size()..][0x40..0x50];
+        if (self.get_first_data_track()) |t| return t.data[t.sector_data_offset()..][0x40..0x50];
         return null;
     }
 
     pub fn get_region(self: *const @This()) Region {
         if (self.get_first_data_track()) |t| {
-            if (t.data[t.header_size() + 0x30] == 'J')
+            if (t.data[t.sector_data_offset() + 0x30] == 'J')
                 return .Japan;
-            if (t.data[t.header_size() + 0x31] == 'U')
+            if (t.data[t.sector_data_offset() + 0x31] == 'U')
                 return .USA;
-            if (t.data[t.header_size() + 0x32] == 'E')
+            if (t.data[t.sector_data_offset() + 0x32] == 'E')
                 return .Europe;
         }
         return .Unknown;
@@ -155,7 +155,7 @@ pub const Disc = union(enum) {
 
     pub fn get_product_name(self: *const @This()) ?[]const u8 {
         if (self.get_first_data_track()) |t| {
-            const name = t.data[t.header_size()..][0x80..0x90];
+            const name = t.data[t.sector_data_offset()..][0x80..0x90];
             // Trim spaces
             var end = name.len - 1;
             while (end > 0 and name[end] == ' ') end -= 1;

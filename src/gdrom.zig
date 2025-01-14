@@ -836,10 +836,10 @@ pub const GDROM = struct {
             try self.pio_data_queue.writeItem(@intFromEnum(self.state));
             try self.pio_data_queue.writeItem(0);
 
-            const track_number: u8 = @intCast(if (session_number > 0) disc.get_session(session_number).first_track else disc.get_session_count());
+            const track_number_or_session_count: u8 = @intCast(if (session_number > 0) disc.get_session(session_number).first_track + 1 else disc.get_session_count());
             const fad = if (session_number > 0) disc.get_session(session_number).start_fad else disc.get_end_fad();
 
-            try self.pio_data_queue.writeItem(track_number);
+            try self.pio_data_queue.writeItem(track_number_or_session_count);
             try self.pio_data_queue.write(&[_]u8{ @truncate(fad >> 16), @truncate(fad >> 8), @truncate(fad >> 0) });
         } else {
             try self.pio_data_queue.writeItem(@intFromEnum(GDROMStatus.Empty));

@@ -23,6 +23,12 @@ pub fn get_end_fad(self: *const @This()) u32 {
 pub fn header_size(self: *const @This()) u32 {
     return if (self.format == 2352) 0x10 else 0;
 }
+pub fn subheader_size(self: *const @This()) u32 {
+    return if (self.format == 2336) 8 else 0;
+}
+pub fn sector_data_offset(self: *const @This()) u32 {
+    return self.header_size() + self.subheader_size();
+}
 
 pub fn adr_ctrl_byte(self: *const @This()) u8 {
     const adr: u4 = 1;
@@ -45,23 +51,19 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
         return to_copy;
     } else if (self.format == 2336) {
         // Pretty much 2352, but without the header.
-        // FIXME: How to distiguish between Mode 1 and 2?
-        // Mode 1
+        // Mode 2, Form 1 (Data)
+        std.debug.assert(self.track_type == 4);
+        const data_size: u32 = 2048;
         var copied: u32 = 0;
         for (0..count) |_| {
             if (sector_start >= self.data.len or dest.len <= copied)
                 return copied;
-            const data_size: u32 = 2048;
-            const chunk_size = @min(data_size, dest.len - copied);
-            @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start .. sector_start + chunk_size]);
+            const chunk_size = @min(data_size, dest.len - copied, self.data[sector_start + self.subheader_size() ..].len);
+            @memcpy(dest[copied .. copied + chunk_size], self.data[sector_start + self.subheader_size() .. sector_start + self.subheader_size() + chunk_size]);
             copied += chunk_size;
             sector_start += self.format;
         }
         return copied;
-        // Mode 2
-        // const to_copy: u32 = @min(@min(dest.len, count * self.format), self.data[sector_start..].len);
-        // @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
-        // return to_copy;
     } else if (self.format == 2352) {
         var copied: u32 = 0;
         for (0..count) |_| {
