@@ -12,19 +12,16 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 
 ## Build and Run
 
-Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/
-
+Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/)). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
 ```sh
-zigup 0.14.0-dev.1911+3bf89f55c
+zigup 0.14.0-dev.2577+271452d22
 ```
 
-Make sure [Git LFS](https://git-lfs.com/) is installed (needed by zig-gamedev to get some bundled binaries).
-
 ```sh
-git clone --recurse-submodules https://github.com/Senryoku/Deecy     # Clone the repo and its submodules
+git clone https://github.com/Senryoku/Deecy               # Clone the repo
 cd Deecy
-zig build run                                                        # Build and run in debug mode without any argument
-zig build run -Doptimize=ReleaseFast -- -g game/game.gdi             # Build and run in release mode and loads a gdi
+zig build run                                             # Build and run in debug mode without any argument
+zig build run -Doptimize=ReleaseFast -- -g game/game.gdi  # Build and run in release mode and loads a gdi
 ```
 
 You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `data/` directory.
