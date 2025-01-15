@@ -1,6 +1,7 @@
 .{
     .name = "Deecy",
     .version = "0.1.0-dev",
+    .minimum_zig_version = "0.14.0-dev.2577+271452d22",
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
@@ -47,8 +48,14 @@
             .url = "https://github.com/zig-gamedev/zpool/archive/820e0e59dc415d9784004464a6cf52223fbce126.tar.gz",
             .hash = "1220e600a92d73dc8c3b5303351dcc67352114c975e59ae55de11b637ec173e75455",
         },
-        .nfd = .{ .path = "libs/nfd-zig" },
-        .arm7 = .{ .path = "libs/arm7" },
+        .nfd = .{
+            .url = "https://github.com/Senryoku/nfd-zig/archive/ad81729d33da30d5f4fd23718debec48245121ca.tar.gz",
+            .hash = "1220a679380847513262c8c5c474d4a415f9ecc4921c8c6aefbdbdce66cf2aa19ceb",
+        },
+        .arm7 = .{
+            .url = "https://github.com/Senryoku/arm7/archive/4f74ceaf9100b699e805395d19508aa59fd7ca10.tar.gz",
+            .hash = "12201a8bcd8f34769117e59ae9d6e86104285c61828fdf981069206aabe1ea24cc49",
+        },
         .@"zig-lz4" = .{
             .url = "https://github.com/SnorlaxAssist/zig-lz4/archive/dc9fd78b30c9c8155b613fcd1499f4a7b888cda4.tar.gz",
             .hash = "1220afb45edd635ec8f7ba098379df10c682bfed886bf1239c8f83bf0fc963ac273b",
