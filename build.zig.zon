@@ -33,8 +33,8 @@
             .hash = "1220021bcbe652b78931e3d58268fb5254cc95b6d8d3544886e722b8871654222e4d",
         },
         .zgui = .{
-            .url = "https://github.com/zig-gamedev/zgui/archive/5fb1c3b935b311e88352b0ffee29e7ad56da9722.tar.gz",
-            .hash = "12204f82e0475ddfd6a57d97f74bcf9052452c0eb2fa863cf0e3bce1071d2603e9f4",
+            .url = "https://github.com/Senryoku/zgui/archive/a622b1956a74a7e7d2a74570b16408188304c3ea.tar.gz",
+            .hash = "1220d4e364077d6344b54e0d86240b194b3721e169c2b9a6db35d79ab90a573db317",
         },
         .zaudio = .{
             .url = "https://github.com/zig-gamedev/zaudio/archive/496da32757767b31f389554e1e5c668796755fe2.tar.gz",
