@@ -1,15 +1,12 @@
 .{
     .name = "Deecy",
-    .version = "0.0.1-dev",
+    .version = "0.1.0-dev",
     .paths = .{""},
     .dependencies = .{
-        .zgpu = .{ .path = "libs/zig-gamedev/libs/zgpu" },
-        .zglfw = .{ .path = "libs/zig-gamedev/libs/zglfw" },
-        .zgui = .{ .path = "libs/zig-gamedev/libs/zgui" },
-        .zaudio = .{ .path = "libs/zig-gamedev/libs/zaudio" },
-        .common = .{ .path = "libs/zig-gamedev/libs/common" },
-        .system_sdk = .{ .path = "libs/zig-gamedev/libs/system-sdk" },
-        .zpool = .{ .path = "libs/zig-gamedev/libs/zpool" },
+        .zgpu = .{
+            .url = "https://github.com/zig-gamedev/zgpu/archive/987809eff7cb47901192a6d41dc67486e3211f21.tar.gz",
+            .hash = "1220777b1f964f666f5e990412f34c7dd36b6c399ff15920754f842df297425dffa5",
+        },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
             .hash = "1220f9448cde02ef3cd51bde2e0850d4489daa0541571d748154e89c6eb46c76a267",
@@ -29,6 +26,26 @@
         .dawn_x86_64_macos = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-macos/archive/901716b10b31ce3e0d3fe479326b41e91d59c661.tar.gz",
             .hash = "1220b1f02f2f7edd98a078c64e3100907d90311d94880a3cc5927e1ac009d002667a",
+        },
+        .zglfw = .{
+            .url = "https://github.com/Senryoku/zglfw/archive/a7d7ef627aeaab604eeb22237214fb13dc7d8aa2.tar.gz",
+            .hash = "1220021bcbe652b78931e3d58268fb5254cc95b6d8d3544886e722b8871654222e4d",
+        },
+        .zgui = .{
+            .url = "https://github.com/zig-gamedev/zgui/archive/5fb1c3b935b311e88352b0ffee29e7ad56da9722.tar.gz",
+            .hash = "12204f82e0475ddfd6a57d97f74bcf9052452c0eb2fa863cf0e3bce1071d2603e9f4",
+        },
+        .zaudio = .{
+            .url = "https://github.com/zig-gamedev/zaudio/archive/496da32757767b31f389554e1e5c668796755fe2.tar.gz",
+            .hash = "12203f6ab72861cd7e36ebd1590f9cc7fd036366e2ff96122002a395f628e813d999",
+        },
+        .system_sdk = .{
+            .url = "https://github.com/zig-gamedev/system_sdk/archive/bf49d627a191e339f70e72668c8333717fb969b0.tar.gz",
+            .hash = "122047a9298c4c9dd43389d418d6826d469b192246ba0944102964cdc57f94c562df",
+        },
+        .zpool = .{
+            .url = "https://github.com/zig-gamedev/zpool/archive/820e0e59dc415d9784004464a6cf52223fbce126.tar.gz",
+            .hash = "1220e600a92d73dc8c3b5303351dcc67352114c975e59ae55de11b637ec173e75455",
         },
         .nfd = .{ .path = "libs/nfd-zig" },
         .arm7 = .{ .path = "libs/arm7" },

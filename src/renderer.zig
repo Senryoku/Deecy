@@ -2571,7 +2571,7 @@ pub const Renderer = struct {
                     .stencil_load_op = .clear,
                     .stencil_store_op = .discard,
                     .stencil_clear_value = 0,
-                    .stencil_read_only = false,
+                    .stencil_read_only = .false,
                 };
                 const render_pass_info = wgpu.RenderPassDescriptor{
                     .label = "Opaque pass",
@@ -2653,11 +2653,11 @@ pub const Renderer = struct {
                         .depth_load_op = .load,
                         .depth_store_op = .store,
                         .depth_clear_value = DepthClearValue,
-                        .depth_read_only = false,
+                        .depth_read_only = .false,
                         .stencil_load_op = .clear,
                         .stencil_store_op = .store,
                         .stencil_clear_value = 0,
-                        .stencil_read_only = false,
+                        .stencil_read_only = .false,
                     };
                     const render_pass_info = wgpu.RenderPassDescriptor{
                         .label = "Modifier Volume Stencil",
@@ -2710,11 +2710,11 @@ pub const Renderer = struct {
                         .depth_load_op = .undef,
                         .depth_store_op = .undef,
                         .depth_clear_value = DepthClearValue,
-                        .depth_read_only = true,
+                        .depth_read_only = .true,
                         .stencil_load_op = .undef,
                         .stencil_store_op = .undef,
                         .stencil_clear_value = 0,
-                        .stencil_read_only = true,
+                        .stencil_read_only = .true,
                     };
                     const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                         .view = dest_view,
@@ -2795,8 +2795,8 @@ pub const Renderer = struct {
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
-                        .depth_read_only = true,
-                        .stencil_read_only = true,
+                        .depth_read_only = .true,
+                        .stencil_read_only = .true,
                     };
                     const render_pass_info = wgpu.RenderPassDescriptor{
                         .label = "Translucent Modifier Volumes",
@@ -3263,7 +3263,7 @@ pub const Renderer = struct {
             self.list_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
                 .size = self.get_linked_list_heads_size(),
-                .mapped_at_creation = true,
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.list_heads_buffer).?.setLabel("OIT List Heads Buffer");
             const init_buffer = self._gctx.lookupResourceInfo(self.list_heads_buffer).?.gpuobj.?;
@@ -3284,7 +3284,7 @@ pub const Renderer = struct {
             self.modvol_list_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
                 .size = self.get_linked_list_heads_size(),
-                .mapped_at_creation = true,
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.modvol_list_heads_buffer).?.setLabel("ModVol List Heads Buffer");
             {
@@ -3303,7 +3303,7 @@ pub const Renderer = struct {
             self.modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_modvol_volumes_size(),
-                .mapped_at_creation = true,
+                .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.modvol_volumes_buffer).?.setLabel("ModVol Volumes Buffer");
 

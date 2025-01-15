@@ -168,7 +168,7 @@ _cycles_to_run: i64 = 0,
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
 
-controllers: [4]?struct { id: zglfw.Joystick.Id, deadzone: f32 = 0.1 } = .{null} ** 4,
+controllers: [4]?struct { id: zglfw.Joystick, deadzone: f32 = 0.1 } = .{null} ** 4,
 
 display_ui: bool = true,
 ui: *UI = undefined,
@@ -216,7 +216,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     try zglfw.init();
 
     // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
-    zglfw.windowHintTyped(.client_api, .no_api);
+    zglfw.windowHint(.client_api, .no_api);
 
     // TODO: Load from config.
     const default_resolution = Renderer.Resolution{ .width = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), .height = 2 * Renderer.NativeResolution.height };
@@ -240,7 +240,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     self.window.setUserPointer(self);
     _ = self.window.setKeyCallback(glfw_key_callback);
-    _ = self.window.setDropCallback(glfw_drop_callback);
+    _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
 
     {
         const gctx_start_time = std.time.milliTimestamp();
@@ -357,10 +357,10 @@ fn auto_populate_joysticks(self: *@This()) !void {
     defer deecy_log.info("Joysticks initialized in {d}ms", .{std.time.milliTimestamp() - start_time});
     var curr_pad: usize = 0;
     for (0..zglfw.Joystick.maximum_supported) |idx| {
-        const jid: zglfw.Joystick.Id = @intCast(idx);
-        if (zglfw.Joystick.get(jid)) |joystick| {
+        const joystick: zglfw.Joystick = @enumFromInt(idx);
+        if (joystick.isPresent()) {
             if (joystick.asGamepad()) |_| {
-                self.controllers[curr_pad] = .{ .id = jid };
+                self.controllers[curr_pad] = .{ .id = joystick };
                 curr_pad += 1;
                 if (curr_pad >= 4)
                     break;
@@ -540,9 +540,9 @@ pub fn poll_controllers(self: *@This()) void {
 
                     if (!any_keyboard_key_pressed) {
                         if (self.controllers[controller_idx]) |host_controller| {
-                            if (zglfw.Joystick.get(host_controller.id)) |joystick| {
-                                if (joystick.asGamepad()) |gamepad| {
-                                    const gamepad_state = gamepad.getState();
+                            if (host_controller.id.isPresent()) {
+                                if (host_controller.id.asGamepad()) |gamepad| {
+                                    const gamepad_state = gamepad.getState() catch continue;
                                     const gamepad_binds: [9]struct { zglfw.Gamepad.Button, DreamcastModule.Maple.ControllerButtons } = .{
                                         .{ .start, .{ .start = 0 } },
                                         .{ .dpad_up, .{ .up = 0 } },
@@ -796,7 +796,7 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
         if (zgui.beginPopupModal("Error##Modal", .{})) {
             zgui.text(msg, .{});
             if (zgui.button("OK", .{})) {
-                self.window.setShouldClose(true);
+                zglfw.setWindowShouldClose(self.window, true);
             }
             zgui.endPopup();
         }
