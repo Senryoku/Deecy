@@ -63,9 +63,7 @@ pub fn build(b: *std.Build) void {
         exe_check.root_module.addImport("zgui", zgui.module("root"));
         exe_check.linkLibrary(zgui.artifact("imgui"));
 
-        @import("system_sdk").addLibraryPathsTo(exe);
         @import("zgpu").addLibraryPathsTo(exe);
-        @import("system_sdk").addLibraryPathsTo(exe_check);
         @import("zgpu").addLibraryPathsTo(exe_check);
 
         const zglfw = b.dependency("zglfw", .{});

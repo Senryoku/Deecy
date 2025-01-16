@@ -12,27 +12,24 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 
 ## Build and Run
 
-Install the correct zig version (see `.zigversion`). You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/
-
+Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/)). 
+You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
 ```sh
-zigup 0.14.0-dev.1911+3bf89f55c
+zigup 0.14.0-dev.2577+271452d22
 ```
-
-Make sure [Git LFS](https://git-lfs.com/) is installed (needed by zig-gamedev to get some bundled binaries).
-
+Clone and build. Zig will fetch all dependencies automatically.
 ```sh
-git clone --recurse-submodules https://github.com/Senryoku/Deecy     # Clone the repo and its submodules
+git clone https://github.com/Senryoku/Deecy               # Clone the repo
 cd Deecy
-zig build run                                                        # Build and run in debug mode without any argument
-zig build run -Doptimize=ReleaseFast -- -g game/game.gdi             # Build and run in release mode and loads a gdi
+zig build run                                             # Build and run in debug mode without any argument
+zig build run -Doptimize=ReleaseFast -- -g game/game.gdi  # Build and run in release mode and loads a gdi
 ```
 
 You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `data/` directory.
 
 ### Linux 
 
-Linux isn't fully supported yet.
-nfd-zig (native file dialog) needs these additional dependencies on Linux:
+`nfd-zig` (native file dialog) needs these additional dependencies on Linux:
 ```sh
 sudo apt install libgtk-3-dev
 ```
@@ -40,17 +37,12 @@ sudo apt install libgtk-3-dev
 ## Things I know I have to do
 
 -   Debug, debug, debug.
--   Better low level emulation: Most games do not work as well when not using the HLE'd syscalls.
--   ch0-DMA and ch1-DMA?
--   What's "Maple V blank over interrupt"?
-    "This interrupt is generated when a Maple interface transmission/reception operation spans V-Blank_In."
+-   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)
 -   AICA:
-    -   Stereo debugging
     -   DSP
-    -   More debug
 -   Renderer:
     -   Framebuffer:
-        -   Somehow detect writes to framebuffer and display it.
+        -   Improve detection of writes to framebuffer (false positives?)
         -   Write back for games that need it.
     -   Modifier Volumes.
         -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
@@ -58,21 +50,16 @@ sudo apt install libgtk-3-dev
         -   "Region Array Data Configuration" (written by the CPU directly to VRAM) are completely ignored. I don't know if it's actually used much.
     -   Fog LUT Mode 2.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
+    -   User Tile Clip, only the simplest version is supported.
     -   Bump mapping.
     -   Mipmaps for palette textures?
     -   Sort-DMA?
-    -   User Tile Clip, only the simplest version is supported.
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
--   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)  
 
 ### Nice to have
 
 -   Some (rendering) performance metrics directly in the emulator?
 -   GDROM-DMA: Uses a superfluous memcpy (gdrom -> dma-queue -> ram). Not a huge deal on my main system, but I bet it's noticeable on lower end devices.
-
-## Things I don't know I have to do
-
--   A lot more than the previous list
 
 ## Some sources
 
@@ -86,7 +73,9 @@ sudo apt install libgtk-3-dev
 
 ## Dependencies
 
--   Multiple libraries from https://github.com/michal-z/zig-gamedev (MIT), included in libs/ as a submodule.
+Dependencies are managed by the `build.zig.zon` file.
+
+-   Multiple libraries from https://github.com/zig-gamedev (MIT)
 -   ndf-zig: https://github.com/fabioarnold/nfd-zig (MIT)
 -   zig-lz4: https://github.com/SnorlaxAssist/zig-lz4 (MIT), bindings for LZ4 https://github.com/lz4/lz4 (BSD 2-Clause)
 

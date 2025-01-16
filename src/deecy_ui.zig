@@ -311,7 +311,7 @@ pub fn draw(self: *@This()) !void {
             zgui.separator();
             if (zgui.menuItem("Exit", .{})) {
                 d.stop();
-                d.window.setShouldClose(true);
+                zglfw.setWindowShouldClose(d.window, true);
             }
             zgui.endMenu();
         }
@@ -451,16 +451,16 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Controls", .{})) {
-                var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick.Id, name: [:0]const u8 }).init(d._allocator);
+                var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }).init(d._allocator);
                 defer available_controllers.deinit();
 
                 try available_controllers.append(.{ .id = null, .name = "None" });
 
                 for (0..zglfw.Joystick.maximum_supported) |idx| {
-                    const jid: zglfw.Joystick.Id = @intCast(idx);
-                    if (zglfw.Joystick.get(jid)) |joystick| {
+                    const joystick: zglfw.Joystick = @enumFromInt(idx);
+                    if (joystick.isPresent()) {
                         if (joystick.asGamepad()) |gamepad| {
-                            try available_controllers.append(.{ .id = jid, .name = gamepad.getName() });
+                            try available_controllers.append(.{ .id = joystick, .name = gamepad.getName() });
                         }
                     }
                 }
@@ -481,8 +481,8 @@ pub fn draw(self: *@This()) !void {
                         }
                     }
                     const name = if (d.controllers[i]) |j|
-                        (if (zglfw.Joystick.get(j.id)) |joystick|
-                            (if (joystick.asGamepad()) |gamepad| gamepad.getName() else "None")
+                        (if (j.id.isPresent())
+                            (if (j.id.asGamepad()) |gamepad| gamepad.getName() else "None")
                         else
                             "None")
                     else
