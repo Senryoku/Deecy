@@ -69,7 +69,7 @@ fn glfw_key_callback(
                         else => unreachable,
                     };
                     app.save_state(idx) catch |err| {
-                        deecy_log.err("Failed to save state #{d}: {}\n", .{ idx, err });
+                        deecy_log.err(termcolor.red("Failed to save state #{d}: {}"), .{ idx, err });
                     };
                 },
                 .F5, .F6, .F7, .F8 => {
@@ -81,7 +81,7 @@ fn glfw_key_callback(
                         else => unreachable,
                     };
                     app.load_state(idx) catch |err| {
-                        deecy_log.err("Failed to load state #{d}: {}\n", .{ idx, err });
+                        deecy_log.err(termcolor.red("Failed to load state #{d}: {}"), .{ idx, err });
                     };
                 },
                 else => {},
@@ -164,6 +164,7 @@ last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
 
 running: bool = false,
 _cycles_to_run: i64 = 0,
+_dc_mutex: std.Thread.Mutex = .{},
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -808,6 +809,9 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
 }
 
 fn run_for(self: *@This(), sh4_cycles: u64) void {
+    self._dc_mutex.lock(); // This is called mostly from the audio thread, but can also be called by start() on the main thread.
+    defer self._dc_mutex.unlock();
+
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
@@ -860,6 +864,25 @@ fn audio_callback(
     }
 }
 
+const SaveStateHeader = extern struct {
+    const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
+    const Version: u32 = 1;
+
+    signature: [Signature.len]u8 = Signature,
+    version: u16 = Version,
+    _reserved: [2]u8 = .{0} ** 2, // Could have reserved more here, for a disc ID for example, but I don't care about backward compatibility for now.
+    uncompressed_size: u32, // Allocation optimisation and easy integrity check.
+    compressed_size: u32, // Same.
+
+    pub fn validate(self: *const SaveStateHeader) !void {
+        if (!std.mem.eql(u8, &self.signature, &SaveStateHeader.Signature)) return error.InvalidSaveState;
+        if (self.version != SaveStateHeader.Version) return error.InvalidSaveStateVersion;
+        if (!std.mem.eql(u8, &self._reserved, &[2]u8{ 0, 0 })) return error.InvalidSaveState;
+        if (self.uncompressed_size == 0) return error.InvalidSaveState;
+        if (self.compressed_size == 0) return error.InvalidSaveState;
+    }
+};
+
 pub fn save_state(self: *@This(), index: usize) !void {
     const was_running = self.running;
     if (was_running) self.stop();
@@ -871,6 +894,7 @@ pub fn save_state(self: *@This(), index: usize) !void {
     deecy_log.info("Saving State #{d}...", .{index});
 
     var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+
     _ = try self.dc.serialize(uncompressed_array.writer());
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
@@ -889,7 +913,10 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
     defer save_slot_path.deinit();
     var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
     defer file.close();
-    _ = try file.write(std.mem.asBytes(&uncompressed_array.items.len));
+    _ = try file.write(std.mem.asBytes(&SaveStateHeader{
+        .uncompressed_size = @intCast(uncompressed_array.items.len),
+        .compressed_size = @intCast(compressed.len),
+    }));
     _ = try file.write(compressed);
 
     self.save_state_slots[index] = true;
@@ -914,13 +941,17 @@ pub fn load_state(self: *@This(), index: usize) !void {
     var file = try std.fs.cwd().openFile(save_slot_path.items, .{});
     defer file.close();
 
-    var expected_size: usize = 0;
-    _ = try file.read(std.mem.asBytes(&expected_size));
+    var header: SaveStateHeader = undefined;
+    const header_size = try file.read(std.mem.asBytes(&header));
+    if (header_size != @sizeOf(SaveStateHeader)) return error.InvalidSaveState;
+    try header.validate();
 
-    const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, null, 8, null);
+    const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, header.compressed_size, 8, null);
     defer self._allocator.free(compressed);
 
-    const decompressed = try lz4.Standard.decompress(self._allocator, compressed, expected_size);
+    if (header.compressed_size != compressed.len) return error.UnexpectedSaveStateSize;
+
+    const decompressed = try lz4.Standard.decompress(self._allocator, compressed, header.uncompressed_size);
     defer self._allocator.free(decompressed);
 
     var uncompressed_stream = std.io.fixedBufferStream(decompressed);

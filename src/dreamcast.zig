@@ -699,6 +699,7 @@ pub const Dreamcast = struct {
 
     pub fn serialize(self: *@This(), writer: anytype) !usize {
         var bytes: usize = 0;
+
         bytes += try self.cpu.serialize(writer);
         bytes += try self.gpu.serialize(writer);
         bytes += try self.aica.serialize(writer);
@@ -728,6 +729,7 @@ pub const Dreamcast = struct {
 
     pub fn deserialize(self: *@This(), reader: anytype) !usize {
         var bytes: usize = 0;
+
         bytes += try self.cpu.deserialize(reader);
         bytes += try self.gpu.deserialize(reader);
         bytes += try self.aica.deserialize(reader);
