@@ -367,6 +367,22 @@ pub const GDROM = struct {
             .GD_AlternateStatus_DeviceControl => {
                 gdrom_log.debug("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
+
+                // FIXME: CDI Hack
+                const static = struct {
+                    var consecutive_busy_reads: u64 = 0;
+                    var last_dma_data_queue_count: u64 = 0;
+                };
+                if (self.status_register.bsy == 1 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
+                    static.consecutive_busy_reads += 1;
+                    if (static.consecutive_busy_reads >= 10_000) {
+                        gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
+                        self.dma_data_queue.discard(self.dma_data_queue.count);
+                        self.status_register.bsy = 0;
+                    }
+                } else static.consecutive_busy_reads = 0;
+                static.last_dma_data_queue_count = self.dma_data_queue.count;
+
                 return @intCast(@as(u8, @bitCast(self.status_register)));
             },
             .GD_Status_Command => {
