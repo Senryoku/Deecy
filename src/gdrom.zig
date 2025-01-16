@@ -368,7 +368,8 @@ pub const GDROM = struct {
                 gdrom_log.debug("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
                 // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
 
-                // FIXME: CDI Hack
+                // FIXME: CDI Hack - See issue #70
+                //        IP.BIN (using boot ROM syscalls) is stuck waiting for the GD drive with data in DMA queue.
                 const static = struct {
                     var consecutive_busy_reads: u64 = 0;
                     var last_dma_data_queue_count: u64 = 0;
