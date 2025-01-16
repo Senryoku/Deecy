@@ -530,8 +530,8 @@ pub fn poll_controllers(self: *@This()) void {
                                 c.release_buttons(keybind[1]);
                             }
                         }
-                        c.axis[1] = if (self.window.getKey(.x) == .press) 255 else 0;
-                        c.axis[0] = if (self.window.getKey(.z) == .press) 255 else 0;
+                        c.axis[0] = if (self.window.getKey(.x) == .press) 255 else 0;
+                        c.axis[1] = if (self.window.getKey(.z) == .press) 255 else 0;
                         c.axis[2] = if (self.window.getKey(.kp_4) == .press) 0 else if (self.window.getKey(.kp_6) == .press) 255 else 128;
                         c.axis[3] = if (self.window.getKey(.kp_8) == .press) 0 else if (self.window.getKey(.kp_5) == .press) 255 else 128;
 
