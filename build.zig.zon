@@ -53,8 +53,8 @@
             .hash = "1220a679380847513262c8c5c474d4a415f9ecc4921c8c6aefbdbdce66cf2aa19ceb",
         },
         .arm7 = .{
-            .url = "https://github.com/Senryoku/arm7/archive/4f74ceaf9100b699e805395d19508aa59fd7ca10.tar.gz",
-            .hash = "12201a8bcd8f34769117e59ae9d6e86104285c61828fdf981069206aabe1ea24cc49",
+            .url = "https://github.com/Senryoku/arm7/archive/d1fc040edc19b5600bf6b2a33e9d0d5073bec396.tar.gz",
+            .hash = "1220114381dbbd447377b4b463804873bd6542d7c31db3a3bc278bd4b6f63c0c8c36",
         },
         .@"zig-lz4" = .{
             .url = "https://github.com/SnorlaxAssist/zig-lz4/archive/dc9fd78b30c9c8155b613fcd1499f4a7b888cda4.tar.gz",
