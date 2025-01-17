@@ -741,9 +741,11 @@ pub const Dreamcast = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
+        while (self.scheduled_interrupts.count() > 0)
+            _ = self.scheduled_interrupts.remove();
         var event_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&event_count));
-        if (event_count > 0) {
+        for (0..event_count) |_| {
             var event: ScheduledInterrupt = undefined;
             bytes += try reader.read(std.mem.asBytes(&event.trigger_cycle));
             bytes += try reader.read(std.mem.asBytes(&event.interrupt));
