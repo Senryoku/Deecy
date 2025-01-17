@@ -716,6 +716,9 @@ pub fn toggle_fullscreen(self: *@This()) void {
 
 pub fn start(self: *@This()) void {
     if (!self.running) {
+        self._dc_mutex.lock();
+        defer self._dc_mutex.unlock();
+
         if (self.dc.region == .Unknown) {
             self.dc.set_region(.USA) catch {
                 @panic("Failed to set default region");
@@ -728,6 +731,9 @@ pub fn start(self: *@This()) void {
 
 pub fn stop(self: *@This()) void {
     if (self.running) {
+        self._dc_mutex.lock();
+        defer self._dc_mutex.unlock();
+
         self.running = false;
         self.dc.maple.flush_vmus();
     }
@@ -809,9 +815,6 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
 }
 
 fn run_for(self: *@This(), sh4_cycles: u64) void {
-    self._dc_mutex.lock(); // This is called mostly from the audio thread, but can also be called by start() on the main thread.
-    defer self._dc_mutex.unlock();
-
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
@@ -845,6 +848,9 @@ fn audio_callback(
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
+    self._dc_mutex.lock();
+    defer self._dc_mutex.unlock();
+
     if (!self.running) return;
 
     const sh4_cycles = AICA.SH4CyclesPerSample * frame_count;
@@ -866,7 +872,7 @@ fn audio_callback(
 
 const SaveStateHeader = extern struct {
     const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
-    const Version: u32 = 1;
+    const Version: u32 = 2;
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,
@@ -889,6 +895,8 @@ pub fn save_state(self: *@This(), index: usize) !void {
     defer {
         if (was_running) self.start();
     }
+    self._dc_mutex.lock();
+    defer self._dc_mutex.unlock();
 
     const start_time = std.time.milliTimestamp();
     deecy_log.info("Saving State #{d}...", .{index});
@@ -930,6 +938,8 @@ pub fn load_state(self: *@This(), index: usize) !void {
     defer {
         if (was_running) self.start();
     }
+    self._dc_mutex.lock();
+    defer self._dc_mutex.unlock();
 
     var save_slot_path = try self.save_state_path(index);
     defer save_slot_path.deinit();

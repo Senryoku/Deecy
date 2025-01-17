@@ -215,6 +215,14 @@ pub const GDROM = struct {
             bytes += try writer.write(std.mem.asBytes(&self.end_addr));
             bytes += try writer.write(std.mem.asBytes(&self.current_addr));
             bytes += try writer.write(std.mem.asBytes(&self.repetitions));
+
+            bytes += try writer.write(std.mem.asBytes(&self.samples_in_buffer));
+            if (self.current_position + self.samples_in_buffer > self.buffer.len) {
+                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[self.current_position..]));
+                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[0 .. self.samples_in_buffer - (self.buffer.len - self.current_position)]));
+            } else {
+                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[self.current_position..][0..self.samples_in_buffer]));
+            }
             return bytes;
         }
 
@@ -230,7 +238,8 @@ pub const GDROM = struct {
             bytes += try reader.read(std.mem.asBytes(&self.repetitions));
 
             self.current_position = 0;
-            self.samples_in_buffer = 0;
+            bytes += try reader.read(std.mem.asBytes(&self.samples_in_buffer));
+            bytes += try reader.read(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
 
             return bytes;
         }
@@ -1115,13 +1124,12 @@ pub const GDROM = struct {
         bytes += try writer.write(std.mem.asBytes(&self.byte_count));
 
         bytes += try writer.write(std.mem.asBytes(&self.pio_data_queue.count));
-        if (self.pio_data_queue.count > 0) {
-            bytes += try writer.write(std.mem.sliceAsBytes(self.pio_data_queue.buf[0..self.pio_data_queue.count]));
-        }
+        if (self.pio_data_queue.count > 0)
+            bytes += try writer.write(self.pio_data_queue.readableSlice(0));
+
         bytes += try writer.write(std.mem.asBytes(&self.dma_data_queue.count));
-        if (self.dma_data_queue.count > 0) {
-            bytes += try writer.write(std.mem.sliceAsBytes(self.dma_data_queue.buf[0..self.dma_data_queue.count]));
-        }
+        if (self.dma_data_queue.count > 0)
+            bytes += try writer.write(self.dma_data_queue.readableSlice(0));
 
         bytes += try writer.write(std.mem.asBytes(&self.packet_command_idx));
         bytes += try writer.write(std.mem.sliceAsBytes(&self.packet_command));
@@ -1131,9 +1139,8 @@ pub const GDROM = struct {
         bytes += try writer.write(std.mem.asBytes(&self.cd_read_state));
 
         bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
-        for (0..self.scheduled_events.count()) |i| {
-            bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.items[i]));
-        }
+        if (self.scheduled_events.count() > 0)
+            bytes += try writer.write(std.mem.sliceAsBytes(self.scheduled_events.items[0..self.scheduled_events.count()]));
 
         // NOTE: HLE state isn't serialized
 
@@ -1173,6 +1180,8 @@ pub const GDROM = struct {
 
         bytes += try reader.read(std.mem.asBytes(&self.cd_read_state));
 
+        while (self.scheduled_events.count() > 0)
+            _ = self.scheduled_events.remove();
         var event_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
