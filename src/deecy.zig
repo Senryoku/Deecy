@@ -969,7 +969,10 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     try self.reset();
 
-    _ = try self.dc.deserialize(&reader);
+    const bytes = try self.dc.deserialize(&reader);
+    if (bytes != header.uncompressed_size)
+        deecy_log.err(termcolor.red("Loading save state used {d} bytes, expected {d}"), .{ bytes, header.uncompressed_size });
+
     deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
 }
 
