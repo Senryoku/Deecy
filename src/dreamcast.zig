@@ -218,6 +218,7 @@ pub const Dreamcast = struct {
         self.gpu.reset();
         self.gdrom.reset();
         try self.aica.reset();
+        self.flash.reset();
         while (self.scheduled_interrupts.removeOrNull() != null) {}
 
         try self.sh4_jit.block_cache.reset();
