@@ -1425,6 +1425,9 @@ pub const AICA = struct {
 
     pub fn deserialize(self: *@This(), reader: anytype) !usize {
         var bytes: usize = 0;
+
+        try self.arm_jit.reset();
+
         bytes += try self.arm7.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.wave_memory[0..]));

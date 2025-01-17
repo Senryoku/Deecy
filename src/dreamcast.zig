@@ -717,10 +717,14 @@ pub const Dreamcast = struct {
             while (it.next()) |entry| {
                 bytes += try writer.write(std.mem.asBytes(&entry.trigger_cycle));
                 bytes += try writer.write(std.mem.asBytes(&entry.interrupt));
-                const cb: SerializedCallbacks = if (entry.callback) |callback|
-                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) .EndGDDMA else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) .EndAICADMA else @panic("Serialization: Unhandled callback function")
-                else
-                    .None;
+                var cb: SerializedCallbacks = .None;
+                if (entry.callback) |callback| {
+                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) {
+                        cb = .EndGDDMA;
+                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) {
+                        cb = .EndAICADMA;
+                    } else @panic("Serialization: Unhandled callback function");
+                }
                 bytes += try writer.write(std.mem.asBytes(&cb));
             }
         }
@@ -734,7 +738,7 @@ pub const Dreamcast = struct {
         bytes += try self.cpu.deserialize(reader);
         bytes += try self.gpu.deserialize(reader);
         bytes += try self.aica.deserialize(reader);
-        try self.maple.deserialize(reader);
+        bytes += try self.maple.deserialize(reader);
         bytes += try self.gdrom.deserialize(reader);
         bytes += try self.flash.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
@@ -760,7 +764,7 @@ pub const Dreamcast = struct {
                     .context = &self.aica,
                     .function = @ptrCast(&AICAModule.AICA.end_dma),
                 },
-                else => null,
+                .None => null,
             };
             try self.scheduled_interrupts.add(event);
         }

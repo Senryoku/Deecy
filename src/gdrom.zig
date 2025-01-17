@@ -216,13 +216,10 @@ pub const GDROM = struct {
             bytes += try writer.write(std.mem.asBytes(&self.current_addr));
             bytes += try writer.write(std.mem.asBytes(&self.repetitions));
 
+            bytes += try writer.write(std.mem.asBytes(&self.current_position));
             bytes += try writer.write(std.mem.asBytes(&self.samples_in_buffer));
-            if (self.current_position + self.samples_in_buffer > self.buffer.len) {
-                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[self.current_position..]));
-                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[0 .. self.samples_in_buffer - (self.buffer.len - self.current_position)]));
-            } else {
-                bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[self.current_position..][0..self.samples_in_buffer]));
-            }
+            bytes += try writer.write(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
+
             return bytes;
         }
 
@@ -237,7 +234,7 @@ pub const GDROM = struct {
             bytes += try reader.read(std.mem.asBytes(&self.current_addr));
             bytes += try reader.read(std.mem.asBytes(&self.repetitions));
 
-            self.current_position = 0;
+            bytes += try reader.read(std.mem.asBytes(&self.current_position));
             bytes += try reader.read(std.mem.asBytes(&self.samples_in_buffer));
             bytes += try reader.read(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
 
@@ -1162,7 +1159,7 @@ pub const GDROM = struct {
         bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
         if (pio_data_queue_count > 0) {
             bytes += try reader.read(try self.pio_data_queue.writableWithSize(pio_data_queue_count));
-            self.dma_data_queue.update(pio_data_queue_count);
+            self.pio_data_queue.update(pio_data_queue_count);
         }
 
         self.dma_data_queue.discard(self.dma_data_queue.count);
