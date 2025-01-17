@@ -164,7 +164,7 @@ last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
 
 running: bool = false,
 _cycles_to_run: i64 = 0,
-_dc_mutex: std.Thread.Mutex = .{},
+_stop_request: bool = false,
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -314,7 +314,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
     try self.audio_device.setMasterVolume(config.audio_volume);
-    try self.audio_device.start();
 
     self.debug_ui = try DebugUI.init(self);
 
@@ -492,9 +491,18 @@ fn ui_deinit(_: *@This()) void {
 fn reset(self: *@This()) !void {
     try self.dc.reset();
     self.renderer.reset();
+    self._cycles_to_run = 0;
     self.last_frame_timestamp = std.time.microTimestamp();
     self.last_n_frametimes.discard(self.last_n_frametimes.count);
     try self.check_save_state_slots();
+}
+
+pub fn update(self: *@This()) void {
+    self.poll_controllers();
+    if (self._stop_request) {
+        self.stop();
+        self._stop_request = false;
+    }
 }
 
 pub fn poll_controllers(self: *@This()) void {
@@ -716,24 +724,26 @@ pub fn toggle_fullscreen(self: *@This()) void {
 
 pub fn start(self: *@This()) void {
     if (!self.running) {
-        self._dc_mutex.lock();
-        defer self._dc_mutex.unlock();
-
         if (self.dc.region == .Unknown) {
             self.dc.set_region(.USA) catch {
                 @panic("Failed to set default region");
             };
         }
         self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+        self.audio_device.start() catch |err| {
+            deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
+            return;
+        };
         self.running = true;
     }
 }
 
 pub fn stop(self: *@This()) void {
     if (self.running) {
-        self._dc_mutex.lock();
-        defer self._dc_mutex.unlock();
-
+        self.audio_device.stop() catch |err| {
+            deecy_log.err(termcolor.red("Failed to stop audio device: {any}"), .{err});
+            return;
+        };
         self.running = false;
         self.dc.maple.flush_vmus();
     }
@@ -832,7 +842,8 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
                     if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
-                    self.running = false;
+                    self._stop_request = true; // Can't stop the audio device from inside the audio callback.
+                    return;
                 }
             }
         }
@@ -847,9 +858,6 @@ fn audio_callback(
 ) callconv(.C) void {
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
-
-    self._dc_mutex.lock();
-    defer self._dc_mutex.unlock();
 
     if (!self.running) return;
 
@@ -895,15 +903,14 @@ pub fn save_state(self: *@This(), index: usize) !void {
     defer {
         if (was_running) self.start();
     }
-    self._dc_mutex.lock();
-    defer self._dc_mutex.unlock();
 
     const start_time = std.time.milliTimestamp();
     deecy_log.info("Saving State #{d}...", .{index});
 
     var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-
-    _ = try self.dc.serialize(uncompressed_array.writer());
+    var writer = uncompressed_array.writer();
+    _ = try self.dc.serialize(writer);
+    _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
@@ -938,8 +945,6 @@ pub fn load_state(self: *@This(), index: usize) !void {
     defer {
         if (was_running) self.start();
     }
-    self._dc_mutex.lock();
-    defer self._dc_mutex.unlock();
 
     var save_slot_path = try self.save_state_path(index);
     defer save_slot_path.deinit();
@@ -969,7 +974,9 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     try self.reset();
 
-    const bytes = try self.dc.deserialize(&reader);
+    var bytes = try self.dc.deserialize(&reader);
+    bytes += try reader.read(std.mem.asBytes(&self._cycles_to_run));
+
     if (bytes != header.uncompressed_size)
         deecy_log.err(termcolor.red("Loading save state used {d} bytes, expected {d}"), .{ bytes, header.uncompressed_size });
 

@@ -301,7 +301,7 @@ pub fn main() !void {
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
-        d.poll_controllers();
+        d.update();
 
         if (EnabledHacks) |hacks| {
             for (hacks) |hack| {
