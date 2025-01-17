@@ -705,8 +705,9 @@ pub const Dreamcast = struct {
         bytes += try self.aica.serialize(writer);
         bytes += try self.maple.serialize(writer);
         bytes += try self.gdrom.serialize(writer);
-        bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
         bytes += try self.flash.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.vram));
         bytes += try writer.write(std.mem.sliceAsBytes(self.hardware_registers));
 
         // Yes, this is pretty stupid.
@@ -735,8 +736,9 @@ pub const Dreamcast = struct {
         bytes += try self.aica.deserialize(reader);
         try self.maple.deserialize(reader);
         bytes += try self.gdrom.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
         bytes += try self.flash.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
         var event_count: usize = 0;

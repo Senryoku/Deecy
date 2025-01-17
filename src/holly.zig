@@ -2058,7 +2058,6 @@ pub const Holly = struct {
 
     pub fn serialize(self: *const @This(), writer: anytype) !usize {
         var bytes: usize = 0;
-        bytes += try writer.write(std.mem.sliceAsBytes(self.vram[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.registers[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.dirty_framebuffer));
         bytes += try writer.write(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
@@ -2079,7 +2078,6 @@ pub const Holly = struct {
 
     pub fn deserialize(self: *@This(), reader: anytype) !usize {
         var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.vram[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.registers[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.dirty_framebuffer));
         bytes += try reader.read(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
