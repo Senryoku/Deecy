@@ -93,11 +93,11 @@ pub const std_options: std.Options = .{
         .{ .scope = .sh4_jit, .level = .warn },
         .{ .scope = .arm_jit, .level = .info },
         .{ .scope = .x86_64_emitter, .level = .info },
-        .{ .scope = .syscall_log, .level = .info },
+        .{ .scope = .syscall, .level = .debug },
         .{ .scope = .aica, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
-        .{ .scope = .gdrom_hle_log, .level = .info },
+        .{ .scope = .gdrom_hle, .level = .debug },
         .{ .scope = .cdi, .level = .info },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
@@ -301,7 +301,7 @@ pub fn main() !void {
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();
-        d.poll_controllers();
+        d.update();
 
         if (EnabledHacks) |hacks| {
             for (hacks) |hack| {

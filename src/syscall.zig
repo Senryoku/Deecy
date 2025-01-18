@@ -7,7 +7,7 @@ const HardwareRegister = HardwareRegisters.HardwareRegister;
 const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const gdrom_hle = @import("gdrom_hle.zig");
 
-const syscall_log = std.log.scoped(.syscall_log);
+const syscall_log = std.log.scoped(.syscall);
 
 // HLE Re-Implementations of syscalls normally provided by the Boot ROM
 
@@ -74,6 +74,7 @@ pub fn syscall_romfont(dc: *Dreamcast) void {
 pub fn syscall_flashrom(dc: *Dreamcast) void {
     switch (dc.cpu.R(7).*) {
         0 => {
+            syscall_log.debug("FLASHROM_INFO  (R4={X:0>8}, R5={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
             // Queries the extent of a single partition in the system flashrom.
             // Args: r4 = partition number (0-4)
             //       r5 = pointer to two 32 bit integers to receive the result. The first will be the offset of the partition start, in bytes from the start of the flashrom. The second will be the size of the partition, in bytes.
@@ -108,6 +109,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             }
         },
         1 => {
+            syscall_log.debug("FLASHROM_READ  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
             // Read data from the system flashrom.
             // Args: r4 = read start position, in bytes from the start of the flashrom
             //       r5 = pointer to destination buffer
@@ -121,6 +123,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = len;
         },
         2 => {
+            syscall_log.debug("FLASHROM_WRITE  (R4={X:0>8}, R5={X:0>8}, R6={X:0>8})", .{ dc.cpu.R(4).*, dc.cpu.R(5).*, dc.cpu.R(6).* });
             // Write data to the system flashrom.
             //   r4 = write start position, in bytes from the start of the flashrom
             //   r5 = pointer to source buffer
@@ -133,11 +136,10 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             dc.cpu.R(0).* = len;
         },
         3 => {
+            syscall_log.warn(termcolor.yellow("Unimplemented FLASHROM_DELETE (R4={X:0>8})"), .{dc.cpu.R(4).*});
             // FlashROM Delete - Return a flashrom partition to all ones, so that it may be rewritten. Danger: ALL data in the entire partition will be lost.
             //     r4 = offset of the start of the partition you want to delete, in bytes from the start of the flashrom
             // Returns: zero if successful, -1 if delete failed
-            const start = dc.cpu.R(4).*;
-            syscall_log.warn("  Unimplemented FLASHROM_DELETE (R4={X:0>8})", .{start});
             dc.cpu.R(0).* = 0xFFFFFFFF;
         },
         else => {

@@ -50,6 +50,11 @@ pub fn deinit(self: *@This()) void {
     self._allocator.free(self.data);
 }
 
+pub fn reset(self: *@This()) void {
+    self.mode = .Normal;
+    self.write_cycle = 0;
+}
+
 pub fn write(self: *@This(), addr: u32, data: u8) void {
     flash_log.debug("Write: @{X:0>8}, 0x{X:0>2}", .{ addr, data });
     std.debug.assert(addr <= 0x1FFFF);
@@ -171,6 +176,7 @@ fn unexpected_write(self: *@This(), addr: u32, data: u16) void {
 
 pub fn serialize(self: @This(), writer: anytype) !usize {
     var bytes: usize = 0;
+    bytes += try writer.write(std.mem.asBytes(&self.mode));
     bytes += try writer.write(std.mem.asBytes(&self.write_cycle));
     bytes += try writer.write(std.mem.sliceAsBytes(self.data[0..]));
     return bytes;
@@ -178,6 +184,7 @@ pub fn serialize(self: @This(), writer: anytype) !usize {
 
 pub fn deserialize(self: *@This(), reader: anytype) !usize {
     var bytes: usize = 0;
+    bytes += try reader.read(std.mem.asBytes(&self.mode));
     bytes += try reader.read(std.mem.asBytes(&self.write_cycle));
     bytes += try reader.read(std.mem.sliceAsBytes(self.data[0..]));
     return bytes;

@@ -164,7 +164,7 @@ last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
 
 running: bool = false,
 _cycles_to_run: i64 = 0,
-_dc_mutex: std.Thread.Mutex = .{},
+_stop_request: bool = false,
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -314,7 +314,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     self.audio_device = try zaudio.Device.create(null, audio_device_config);
 
     try self.audio_device.setMasterVolume(config.audio_volume);
-    try self.audio_device.start();
 
     self.debug_ui = try DebugUI.init(self);
 
@@ -489,12 +488,28 @@ fn ui_deinit(_: *@This()) void {
     zgui.deinit();
 }
 
-fn reset(self: *@This()) !void {
+pub fn reset(self: *@This()) !void {
+    const was_running = self.running;
+    if (was_running) self.stop();
+    defer {
+        if (was_running) self.start();
+    }
+
     try self.dc.reset();
     self.renderer.reset();
+    self._cycles_to_run = 0;
     self.last_frame_timestamp = std.time.microTimestamp();
     self.last_n_frametimes.discard(self.last_n_frametimes.count);
     try self.check_save_state_slots();
+}
+
+pub fn update(self: *@This()) void {
+    self.poll_controllers();
+    self.dc.maple.flush_vmus();
+    if (self._stop_request) {
+        self.stop();
+        self._stop_request = false;
+    }
 }
 
 pub fn poll_controllers(self: *@This()) void {
@@ -721,13 +736,24 @@ pub fn start(self: *@This()) void {
                 @panic("Failed to set default region");
             };
         }
-        self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+
+        if (self.dc.aica.available_samples() <= 32)
+            self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+
+        self.audio_device.start() catch |err| {
+            deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
+            return;
+        };
         self.running = true;
     }
 }
 
 pub fn stop(self: *@This()) void {
     if (self.running) {
+        self.audio_device.stop() catch |err| {
+            deecy_log.err(termcolor.red("Failed to stop audio device: {any}"), .{err});
+            return;
+        };
         self.running = false;
         self.dc.maple.flush_vmus();
     }
@@ -809,9 +835,6 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
 }
 
 fn run_for(self: *@This(), sh4_cycles: u64) void {
-    self._dc_mutex.lock(); // This is called mostly from the audio thread, but can also be called by start() on the main thread.
-    defer self._dc_mutex.unlock();
-
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
@@ -829,7 +852,8 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
                     if (addr & 0x1FFFFFFF == self.dc.cpu.pc & 0x1FFFFFFF) break index;
                 } else null;
                 if (breakpoint != null) {
-                    self.running = false;
+                    self._stop_request = true; // Can't stop the audio device from inside the audio callback.
+                    return;
                 }
             }
         }
@@ -845,15 +869,14 @@ fn audio_callback(
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
-    if (!self.running) return;
+    if (!self.running or self._stop_request) return;
 
     const sh4_cycles = AICA.SH4CyclesPerSample * frame_count;
     self.run_for(sh4_cycles);
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
 
-    var available: i64 = @as(i64, @intCast(aica.sample_write_offset)) - @as(i64, @intCast(aica.sample_read_offset));
-    if (available < 0) available += aica.sample_buffer.len;
+    const available = aica.available_samples();
     if (available <= 0) return;
 
     // std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });
@@ -866,7 +889,7 @@ fn audio_callback(
 
 const SaveStateHeader = extern struct {
     const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
-    const Version: u32 = 1;
+    const Version: u32 = 2;
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,
@@ -894,8 +917,9 @@ pub fn save_state(self: *@This(), index: usize) !void {
     deecy_log.info("Saving State #{d}...", .{index});
 
     var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-
-    _ = try self.dc.serialize(uncompressed_array.writer());
+    var writer = uncompressed_array.writer();
+    _ = try self.dc.serialize(writer);
+    _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
@@ -959,7 +983,12 @@ pub fn load_state(self: *@This(), index: usize) !void {
 
     try self.reset();
 
-    _ = try self.dc.deserialize(&reader);
+    var bytes = try self.dc.deserialize(&reader);
+    bytes += try reader.read(std.mem.asBytes(&self._cycles_to_run));
+
+    if (bytes != header.uncompressed_size)
+        deecy_log.err(termcolor.red("Loading save state used {d} bytes, expected {d}"), .{ bytes, header.uncompressed_size });
+
     deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
 }
 

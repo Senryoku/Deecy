@@ -672,7 +672,9 @@ const MaplePort = struct {
         }
     }
 
-    pub fn deserialize(_: @This(), _: anytype) !void {}
+    pub fn deserialize(_: @This(), _: anytype) !usize {
+        return 0;
+    }
 };
 
 pub const MapleHost = struct {
@@ -773,9 +775,11 @@ pub const MapleHost = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !void {
+    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+        var bytes: usize = 0;
         for (&self.ports) |*port| {
-            try port.deserialize(reader);
+            bytes += try port.deserialize(reader);
         }
+        return bytes;
     }
 };

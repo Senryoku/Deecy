@@ -834,6 +834,7 @@ pub const AICA = struct {
 
     pub fn read_rtc_register(self: *const AICA, addr: u32) u32 {
         _ = self;
+        aica_log.debug("Read from RTC register at 0x{X:0>8}", .{addr});
         std.debug.assert(addr >= 0x00710000);
         const dc_timestamp: u32 = timestamp();
         return switch (addr - 0x00710000) {
@@ -844,6 +845,7 @@ pub const AICA = struct {
     }
 
     pub fn write_rtc_register(self: *AICA, addr: u32, value: u32) void {
+        aica_log.debug("Write to RTC register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
         // RTC[31:0] is normally write protected, but can be written when a "1" is written to the EN bit.
         // Furthermore, when RTC[15:0] is written, the counter below one second is cleared. When RTC[31:16] is
         // written, write protection is enabled again.
@@ -1294,6 +1296,12 @@ pub const AICA = struct {
         }
     }
 
+    pub fn available_samples(self: *const @This()) u64 {
+        var available: i64 = @as(i64, @intCast(self.sample_write_offset)) - @as(i64, @intCast(self.sample_read_offset));
+        if (available < 0) available += self.sample_buffer.len;
+        return @intCast(available);
+    }
+
     // TODO: Move these DMA functions to the Dreamcast module? Make them generic for the other G2 DMAs ?
     // NOTE: AD: AICA-DMA (ch0), E1: Ext1-DMA (ch1), E2: Ext2-DMA (ch2), DD: Dev-DMA (ch3)
 
@@ -1425,6 +1433,9 @@ pub const AICA = struct {
 
     pub fn deserialize(self: *@This(), reader: anytype) !usize {
         var bytes: usize = 0;
+
+        try self.arm_jit.reset();
+
         bytes += try self.arm7.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.wave_memory[0..]));

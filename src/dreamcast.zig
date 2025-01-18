@@ -218,6 +218,7 @@ pub const Dreamcast = struct {
         self.gpu.reset();
         self.gdrom.reset();
         try self.aica.reset();
+        self.flash.reset();
         while (self.scheduled_interrupts.removeOrNull() != null) {}
 
         try self.sh4_jit.block_cache.reset();
@@ -705,8 +706,9 @@ pub const Dreamcast = struct {
         bytes += try self.aica.serialize(writer);
         bytes += try self.maple.serialize(writer);
         bytes += try self.gdrom.serialize(writer);
-        bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
         bytes += try self.flash.serialize(writer);
+        bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.vram));
         bytes += try writer.write(std.mem.sliceAsBytes(self.hardware_registers));
 
         // Yes, this is pretty stupid.
@@ -716,10 +718,14 @@ pub const Dreamcast = struct {
             while (it.next()) |entry| {
                 bytes += try writer.write(std.mem.asBytes(&entry.trigger_cycle));
                 bytes += try writer.write(std.mem.asBytes(&entry.interrupt));
-                const cb: SerializedCallbacks = if (entry.callback) |callback|
-                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) .EndGDDMA else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) .EndAICADMA else @panic("Serialization: Unhandled callback function")
-                else
-                    .None;
+                var cb: SerializedCallbacks = .None;
+                if (entry.callback) |callback| {
+                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) {
+                        cb = .EndGDDMA;
+                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) {
+                        cb = .EndAICADMA;
+                    } else @panic("Serialization: Unhandled callback function");
+                }
                 bytes += try writer.write(std.mem.asBytes(&cb));
             }
         }
@@ -733,15 +739,18 @@ pub const Dreamcast = struct {
         bytes += try self.cpu.deserialize(reader);
         bytes += try self.gpu.deserialize(reader);
         bytes += try self.aica.deserialize(reader);
-        try self.maple.deserialize(reader);
+        bytes += try self.maple.deserialize(reader);
         bytes += try self.gdrom.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
         bytes += try self.flash.deserialize(reader);
+        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
+        while (self.scheduled_interrupts.count() > 0)
+            _ = self.scheduled_interrupts.remove();
         var event_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&event_count));
-        if (event_count > 0) {
+        for (0..event_count) |_| {
             var event: ScheduledInterrupt = undefined;
             bytes += try reader.read(std.mem.asBytes(&event.trigger_cycle));
             bytes += try reader.read(std.mem.asBytes(&event.interrupt));
@@ -756,7 +765,7 @@ pub const Dreamcast = struct {
                     .context = &self.aica,
                     .function = @ptrCast(&AICAModule.AICA.end_dma),
                 },
-                else => null,
+                .None => null,
             };
             try self.scheduled_interrupts.add(event);
         }
