@@ -499,6 +499,7 @@ fn reset(self: *@This()) !void {
 
 pub fn update(self: *@This()) void {
     self.poll_controllers();
+    self.dc.maple.flush_vmus();
     if (self._stop_request) {
         self.stop();
         self._stop_request = false;
@@ -729,7 +730,10 @@ pub fn start(self: *@This()) void {
                 @panic("Failed to set default region");
             };
         }
-        self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+
+        if (self.dc.aica.available_samples() <= 32)
+            self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+
         self.audio_device.start() catch |err| {
             deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
             return;
@@ -859,15 +863,14 @@ fn audio_callback(
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
-    if (!self.running) return;
+    if (!self.running or self._stop_request) return;
 
     const sh4_cycles = AICA.SH4CyclesPerSample * frame_count;
     self.run_for(sh4_cycles);
 
     var out: [*]i32 = @ptrCast(@alignCast(output));
 
-    var available: i64 = @as(i64, @intCast(aica.sample_write_offset)) - @as(i64, @intCast(aica.sample_read_offset));
-    if (available < 0) available += aica.sample_buffer.len;
+    const available = aica.available_samples();
     if (available <= 0) return;
 
     // std.debug.print("audio_callback: frame_count={d}, available={d}\n", .{ frame_count, available });

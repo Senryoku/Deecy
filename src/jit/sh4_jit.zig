@@ -127,6 +127,8 @@ const BlockCache = struct {
     }
 
     pub fn reset(self: *@This()) !void {
+        if (self.cursor == 0) return;
+
         self.cursor = 0;
         self.min_address = 0xFFFFFFFF;
         self.max_address = 0;
