@@ -325,10 +325,7 @@ pub fn draw(self: *@This()) !void {
                     d.stop();
             }
             if (zgui.menuItem("Reset", .{})) {
-                const was_running = d.running;
-                if (was_running) d.stop();
-                try d.dc.reset();
-                if (was_running) d.start();
+                try d.reset();
             }
             zgui.separator();
             if (zgui.beginMenu("Region", !d.running)) {

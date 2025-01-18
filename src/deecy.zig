@@ -488,7 +488,13 @@ fn ui_deinit(_: *@This()) void {
     zgui.deinit();
 }
 
-fn reset(self: *@This()) !void {
+pub fn reset(self: *@This()) !void {
+    const was_running = self.running;
+    if (was_running) self.stop();
+    defer {
+        if (was_running) self.start();
+    }
+
     try self.dc.reset();
     self.renderer.reset();
     self._cycles_to_run = 0;
