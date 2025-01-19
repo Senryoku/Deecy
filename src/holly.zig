@@ -191,6 +191,15 @@ pub const ISP_BACKGND_T = packed struct(u32) {
     _: u3,
 };
 
+pub const ISP_FEED_CFG = packed struct(u32) {
+    presort_mode: bool, // This field specifies the Translucent polygon sort mode. Only valid when the region header type bit (bit 21) in the FPU_PARAM_CFG register is "0".
+    r: u2,
+    discard_mode: bool, // This field specifies whether to perform discard processing or not when processing Punch Through polygons and Translucent polygons.
+    punchthrough_chunk_size: u10,
+    cache_size_for_translucency: u10,
+    _: u8,
+};
+
 pub const SCALER_CTL = packed struct(u32) {
     vertical_scale_factor: u16, // This field specifies the scale factor in the vertical direction. (default = 0x0400)
     // This value consists of a 6-bit integer portion and a 10-bit decimal portion, and
@@ -235,6 +244,34 @@ pub const FPU_SHAD_SCALE = packed struct(u32) {
     pub fn get_factor(self: @This()) f32 {
         return if (self.enable) @as(f32, @floatFromInt(self.factor)) / 256.0 else 1.0;
     }
+};
+
+pub const FPU_PARAM_CFG = packed struct(u32) {
+    pointer_first_burst_size: u4,
+    pointer_burst_size: u4,
+    isp_parameter_burst_trigger_threshold: u6,
+    tsp_parameter_burst_trigger_threshold: u6,
+    r: u1,
+    region_header_type: u1,
+    // 0: 5 × 32bit/Tile Type 1 (default)
+    //   The Translucent polygon sort mode is specified by the
+    //   ISP_FEED_CFG register.
+    // 1: 6 × 32bit/Tile Type 2
+    //   The Translucent polygon sort mode is specified by the
+    //   pre-sort bit within the Region Array data.
+    _: u10,
+};
+
+pub const HALF_OFFSET = packed struct(u32) {
+    const SamplingPosition = enum(u1) {
+        UpperLeft = 0,
+        Center = 1,
+    };
+
+    fpu_pixel_sampling_position: SamplingPosition,
+    tsp_pixel_sampling_position: SamplingPosition,
+    tsp_texel_sampling_position: SamplingPosition,
+    _: u29,
 };
 
 pub const FB_R_CTRL = packed struct(u32) {
@@ -1954,6 +1991,14 @@ pub const Holly = struct {
             .translucent_modifier_volume_pointer = @bitCast(r[4]),
             .punch_through_list_pointer = @bitCast(r[5]),
         };
+    }
+
+    pub inline fn auto_sort(self: *const @This()) bool {
+        if (self._get_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type == 0) {
+            return self._get_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
+        } else {
+            return self.get_region_array_data_config().settings.pre_sort;
+        }
     }
 
     fn check_framebuffer_write(self: *@This(), addr: u32) void {
