@@ -7,7 +7,7 @@ struct OITUniforms {
 struct LinkedListElement {
   next: u32,
   depth: f32,
-  index_and_blend_modes: u32, // I hope 24 bits for the index is enough!
+  index_and_blend_modes: u32, // I hope 23 bits for the index is enough!
   color_area0: u32,
   color_area1: u32,
 };

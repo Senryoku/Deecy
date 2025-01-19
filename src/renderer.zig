@@ -179,7 +179,9 @@ const ShadingInstructions = packed struct(u32) {
     gouraud_bit: u1,
     volume_bit: u1,
     mipmap_bit: u1,
-    _: u6 = 0,
+    pre_sort: u1,
+    z_write: u1,
+    _: u4 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1803,6 +1805,8 @@ pub const Renderer = struct {
                 .gouraud_bit = isp_tsp_instruction.gouraud,
                 .volume_bit = 0,
                 .mipmap_bit = 0,
+                .pre_sort = 0,
+                .z_write = 0,
             },
         };
 
@@ -2067,6 +2071,8 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .mipmap_bit = texture_control.mip_mapped,
+                        .pre_sort = if (display_list.pre_sort) 1 else 0,
+                        .z_write = if (isp_tsp_instruction.z_write_disable == 0) 1 else 0,
                     },
                 };
 
@@ -2092,6 +2098,8 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
+                        .pre_sort = if (display_list.pre_sort) 1 else 0,
+                        .z_write = if (isp_tsp_instruction.z_write_disable == 0) 1 else 0,
                     },
                 } else VertexTextureInfo.invalid();
 

@@ -66,6 +66,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     layers[0] = linked_list.data[element_index];
     element_index = layers[0].next;
 
+    var min_depth: f32 = -3.40282e+38;
+    if ((layers[0].index_and_blend_modes >> 12) & 1) == 1 {
+        min_depth = max(min_depth, layers[0].depth);
+    }
+
     // Follow the linked list of fragments, inserting them in our sorted array as we go.
     while element_index != 0xFFFFFFFFu && layer_count < MaxLayers {
         layers[layer_count] = linked_list.data[element_index];
@@ -76,12 +81,17 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
         while j > 0u && (to_insert.depth < layers[j - 1u].depth || // If the depths are equal, use the draw order (vertex index) as a tie breaker.
-             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_modes >> 12) < (layers[j - 1u].index_and_blend_modes >> 12))) {
+             (to_insert.depth == layers[j - 1u].depth && (to_insert.index_and_blend_modes >> 13) < (layers[j - 1u].index_and_blend_modes >> 13))) {
             layers[j] = layers[j - 1u];
             j--;
         }
 
         layers[j] = to_insert;
+
+        // z-write
+        if ((to_insert.index_and_blend_modes >> 12) & 1) == 1 {
+            min_depth = max(min_depth, to_insert.depth);
+        }
 
         layer_count++;
     }
@@ -106,11 +116,13 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             curr_depth_interface++;
         }
 
-        let src = unpack4x8unorm(select(layers[i].color_area0, layers[i].color_area1, use_area1));
-        let dst = color;
-        let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
-        color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
-        color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+        if layers[i].depth >= min_depth {
+            let src = unpack4x8unorm(select(layers[i].color_area0, layers[i].color_area1, use_area1));
+            let dst = color;
+            let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
+            color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
+            color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
+        }
     }
 
     textureStore(output_texture, frag_coords, color);

@@ -1170,6 +1170,8 @@ pub const DisplayList = struct {
     vertex_parameters: std.ArrayList(VertexParameter),
     next_first_vertex_parameters_index: usize = 0,
 
+    pre_sort: bool = false,
+
     pub fn init(allocator: std.mem.Allocator) DisplayList {
         return .{
             .vertex_strips = std.ArrayList(VertexStrip).init(allocator),
@@ -1633,6 +1635,10 @@ pub const Holly = struct {
                             @panic("Unimplemented List Type");
                         },
                     }, 800);
+
+                    if (list == .Translucent) {
+                        self.ta_current_lists().translucent_list.pre_sort = self.pre_sort();
+                    }
                 }
                 self._ta_current_polygon = null;
                 self._ta_list_type = null;
@@ -1993,11 +1999,11 @@ pub const Holly = struct {
         };
     }
 
-    pub inline fn auto_sort(self: *const @This()) bool {
-        if (self._get_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type == 0) {
-            return self._get_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
+    pub inline fn pre_sort(self: *const @This()) bool {
+        if (self.read_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type == 0) {
+            return self.read_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
         } else {
-            return self.get_region_array_data_config().settings.pre_sort;
+            return self.get_region_array_data_config().settings.pre_sort == 1;
         }
     }
 

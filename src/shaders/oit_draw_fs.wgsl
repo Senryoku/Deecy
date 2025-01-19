@@ -31,10 +31,11 @@ fn main(
     let frag_coords = vec2<i32>(position_clip.xy);
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
+    let pre_sort = ((tex_idx_shading_instr[1] >> 26) & 1) == 1;
+    let z_write = ((tex_idx_shading_instr[1] >> 27) & 1) == 1;
     // This setting is ignored for Translucent polygons in Auto-sort mode;
     // the comparison must be made on a "Greater or Equal" basis.
-    // TODO: Handle pre-sorted mode.
-    let depth_compare = 6u; // (tex_idx_shading_instr[1] >> 16) & 0x7;
+    let depth_compare = select(6u, (tex_idx_shading_instr[1] >> 16) & 0x7, pre_sort);
 
     // NOTE: The label denotes when the fragment is kept, not when it's discarded.
     switch(depth_compare) {
@@ -60,7 +61,6 @@ fn main(
         case 7u: {} // Always
         default: {}
     }
-
 
     var final_color = fragment_color(
         base_color,
@@ -105,7 +105,10 @@ fn main(
         if shadow_bit && volume_bit {
             blend_modes_area1 = ((area1_tex_idx_shading_instr[1] >> 10) & 0x3F);
         }
-        linked_list.data[frag_index].index_and_blend_modes = (index << (2 * 6)) | (blend_modes_area1 << 6) | blend_modes_area0;
+        linked_list.data[frag_index].index_and_blend_modes = (index << (2 * 6 + 1)) | (blend_modes_area1 << 6) | blend_modes_area0;
+        if z_write {
+            linked_list.data[frag_index].index_and_blend_modes |= (1 << 12);
+        }
         linked_list.data[frag_index].next = last_head;
     }
 }
