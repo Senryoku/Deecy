@@ -47,11 +47,15 @@ sudo apt install libgtk-3-dev
     -   Modifier Volumes.
         -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
         -   Missing: Exclusion volumes.
-        -   "Region Array Data Configuration" (written by the CPU directly to VRAM) are completely ignored. I don't know if it's actually used much.
+    -   "Region Array Data Configuration" (written by the CPU directly to VRAM) are completely ignored.
+        - Z Clear bit.
+        - Flush Accumulate?
+    -   Pre sort mode.
     -   Fog LUT Mode 2.
-    -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   User Tile Clip, only the simplest version is supported.
     -   Bump mapping.
+    -   Z-Write bit, especially for transculent polygons.
+    -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Mipmaps for palette textures?
     -   Sort-DMA?
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
