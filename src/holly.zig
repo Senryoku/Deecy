@@ -1163,14 +1163,13 @@ pub const VertexStrip = struct {
     user_clip: ?UserTileClipInfo,
     vertex_parameter_index: usize = 0,
     vertex_parameter_count: usize = 0,
+    pre_sort: bool = false,
 };
 
 pub const DisplayList = struct {
     vertex_strips: std.ArrayList(VertexStrip),
     vertex_parameters: std.ArrayList(VertexParameter),
     next_first_vertex_parameters_index: usize = 0,
-
-    pre_sort: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) DisplayList {
         return .{
@@ -1635,10 +1634,6 @@ pub const Holly = struct {
                             @panic("Unimplemented List Type");
                         },
                     }, 800);
-
-                    if (list == .Translucent) {
-                        self.ta_current_lists().translucent_list.pre_sort = self.pre_sort();
-                    }
                 }
                 self._ta_current_polygon = null;
                 self._ta_list_type = null;
@@ -1768,6 +1763,7 @@ pub const Holly = struct {
                                     .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
                                     .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
                                     .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
+                                    .pre_sort = if (list_type == .Translucent) self.pre_sort() else false,
                                 }) catch unreachable;
 
                                 display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;

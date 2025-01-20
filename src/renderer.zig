@@ -2071,7 +2071,7 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .mipmap_bit = texture_control.mip_mapped,
-                        .pre_sort = if (display_list.pre_sort) 1 else 0,
+                        .pre_sort = if (display_list.vertex_strips.items[idx].pre_sort) 1 else 0,
                         .z_write = if (isp_tsp_instruction.z_write_disable == 0) 1 else 0,
                     },
                 };
@@ -2098,7 +2098,7 @@ pub const Renderer = struct {
                         .gouraud_bit = isp_tsp_instruction.gouraud,
                         .volume_bit = parameter_control_word.obj_control.volume,
                         .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
-                        .pre_sort = if (display_list.pre_sort) 1 else 0,
+                        .pre_sort = if (display_list.vertex_strips.items[idx].pre_sort) 1 else 0,
                         .z_write = if (isp_tsp_instruction.z_write_disable == 0) 1 else 0,
                     },
                 } else VertexTextureInfo.invalid();
