@@ -305,23 +305,25 @@ noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
 }
 
 fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
+    const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
-    try b.mov(.{ .reg = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
+    try b.mov(.{ .reg = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
     try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = dst, .displacement = 0, .size = @bitSizeOf(T) } });
     // Apply rotate on non-aligned read
-    if (true and addr & 3 != 0)
+    if (T == u32 and addr & 3 != 0)
         try b.append(.{ .Ror = .{ .dst = .{ .reg = dst }, .amount = .{ .imm8 = @truncate(8 * (addr & 3)) } } });
 }
 
 // NOTE: Uses ReturnRegister as a temporary!
 fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
+    const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
-    try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + addr });
+    try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
     try b.mov(.{ .mem = .{ .base = ReturnRegister, .displacement = 0, .size = @bitSizeOf(T) } }, .{ .reg = value });
 }
 
-// Loads into ReturnRegister
-// NOTE: Uses ArgRegisters 0 and 1
+/// Loads into ReturnRegister
+/// NOTE: Uses ArgRegisters 0 and 1
 fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -357,7 +359,7 @@ fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Reg
     }
 }
 
-// NOTE: Uses ArgRegisters 0, 1 and 2
+/// NOTE: Uses ArgRegisters 0, 1 and 2
 fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -682,15 +684,19 @@ fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bo
         return inst.rd == 15;
     }
 
-    const addr: JIT.Operand = .{ .reg = ArgRegisters[1] };
-    const reg = ArgRegisters[2];
+    std.debug.assert(inst.rd != 15);
+    std.debug.assert(inst.rn != 15);
+    std.debug.assert(inst.rm != 15);
+
+    const addr: JIT.Operand = .{ .reg = ArgRegisters[2] };
+    const reg = ArgRegisters[3];
     const rd = ReturnRegister;
     try load_register(b, addr.reg, inst.rn);
     try load_register(b, reg, inst.rm);
     if (inst.b == 1) {
         // cpu.r[inst.rd] = cpu.read(u8, addr);
         try load_mem(b, ctx, u8, rd, addr);
-        try store_register(b, inst.rd, .{ .reg8 = rd });
+        try store_register(b, inst.rd, .{ .reg = rd }); // rd is 0 extended
         // cpu.write(u8, addr, @truncate(reg));
         try store_mem(b, ctx, u8, addr, reg);
     } else {
@@ -701,7 +707,7 @@ fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bo
         try store_mem(b, ctx, u32, addr, reg);
     }
 
-    return inst.rd == 15;
+    return inst.rd == 15; // Illegal?
 }
 
 fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
