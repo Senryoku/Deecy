@@ -57,9 +57,8 @@ fn glfw_key_callback(
                         app.start();
                     }
                 },
-                .d => {
-                    app.config.display_debug_ui = !app.config.display_debug_ui;
-                },
+                .d => app.config.display_debug_ui = !app.config.display_debug_ui,
+                .l => app.set_realtime(!app.realtime),
                 .F1, .F2, .F3, .F4 => {
                     const idx: usize = switch (key) {
                         .F1 => 0,
@@ -165,6 +164,8 @@ last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
 running: bool = false,
 _cycles_to_run: i64 = 0,
 _stop_request: bool = false,
+realtime: bool = true, // By default, emulation is driven by the audio thread.
+_dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when realtime == false
 
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
@@ -737,25 +738,55 @@ pub fn start(self: *@This()) void {
             };
         }
 
-        if (self.dc.aica.available_samples() <= 32)
-            self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
+        if (!self.realtime) {
+            self.running = true;
+            self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop, .{self}) catch |err| {
+                deecy_log.err(termcolor.red("Failed to spawn DC thread: {any}"), .{err});
+                self.running = false;
+                return;
+            };
+        } else {
+            if (self.dc.aica.available_samples() <= 32)
+                self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
 
-        self.audio_device.start() catch |err| {
-            deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
-            return;
-        };
-        self.running = true;
+            self.audio_device.start() catch |err| {
+                deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
+                return;
+            };
+            self.running = true;
+        }
     }
 }
 
 pub fn stop(self: *@This()) void {
     if (self.running) {
-        self.audio_device.stop() catch |err| {
-            deecy_log.err(termcolor.red("Failed to stop audio device: {any}"), .{err});
-            return;
-        };
-        self.running = false;
-        self.dc.maple.flush_vmus();
+        if (!self.realtime) {
+            self.running = false;
+            if (self._dc_thread) |dc_thread| dc_thread.join();
+            self._dc_thread = null;
+        } else {
+            self.audio_device.stop() catch |err| {
+                deecy_log.err(termcolor.red("Failed to stop audio device: {any}"), .{err});
+                return;
+            };
+            self.running = false;
+            self.dc.maple.flush_vmus();
+        }
+    }
+}
+
+pub fn set_realtime(self: *@This(), realtime: bool) void {
+    if (self.realtime == realtime) return;
+    const was_running = self.running;
+    if (was_running) self.stop();
+    defer if (was_running) self.start();
+    self.realtime = realtime;
+}
+
+// Used for uncapped framerate (no audio output)
+pub fn dc_thread_loop(self: *@This()) void {
+    while (self.running) {
+        self.run_for(128);
     }
 }
 

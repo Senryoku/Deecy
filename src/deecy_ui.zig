@@ -324,9 +324,11 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("Stop", .{}))
                     d.stop();
             }
-            if (zgui.menuItem("Reset", .{})) {
+            if (zgui.menuItem("Reset", .{}))
                 try d.reset();
-            }
+            var realtime = self.deecy.realtime;
+            if (zgui.checkbox("Realtime", .{ .v = &realtime }))
+                self.deecy.set_realtime(realtime);
             zgui.separator();
             if (zgui.beginMenu("Region", !d.running)) {
                 if (zgui.menuItem("USA", .{ .selected = d.dc.region == .USA })) {
