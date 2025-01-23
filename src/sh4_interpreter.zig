@@ -1335,7 +1335,8 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
         if (cpu._operand_cache_state.dirty[index]) {
             const target = cpu._operand_cache_state.addr[index] & 0x1FFF_FFFF;
             std.debug.assert((target >= 0x10000000 and target <= 0x107FFFFF) or (target >= 0x12000000 and target <= 0x127FFFFF));
-            cpu._dc.?.gpu.bulk_write_ta(target, &cpu.operand_cache_lines()[index]);
+            if (cpu._dc) |dc|
+                dc.gpu.bulk_write_ta(target, &cpu.operand_cache_lines()[index]);
             cpu._operand_cache_state.dirty[index] = false;
         }
     }
@@ -1386,11 +1387,10 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
 
         // pref is often used to send commands to the GPU, we can optimize this use case.
         if (ext_addr >= 0x10000000 and ext_addr < 0x10800000 or ext_addr >= 0x12000000 and ext_addr < 0x12800000) {
-            cpu._dc.?.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
+            if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
         } else {
-            inline for (0..8) |i| {
+            inline for (0..8) |i|
                 cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
-            }
         }
     } else {
         const static = struct {
