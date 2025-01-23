@@ -1,8 +1,7 @@
 const std = @import("std");
 
-const common = @import("../src/common.zig");
-const GDI = @import("../src/gdi.zig").GDI;
-const Dreamcast = @import("dreamcast").Dreamcast;
+const DreamcastModule = @import("dreamcast");
+const Dreamcast = DreamcastModule.Dreamcast;
 
 // Very quick and dirty perf test to avoid doing random optimisation completely blindly.
 
@@ -11,14 +10,17 @@ pub const std_options: std.Options = .{
 };
 
 pub fn main() !void {
-    const cycles_target = 5 * 200_000_000;
+    const cycles_target = 10 * 200_000_000;
     var total_time: u64 = 0;
 
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var allocator = gpa.allocator();
+
     {
-        var dc = try Dreamcast.create(common.GeneralAllocator);
+        var dc = try Dreamcast.create(allocator);
         defer {
             dc.deinit();
-            common.GeneralAllocator.destroy(dc);
+            allocator.destroy(dc);
         }
 
         dc.skip_bios(true);
@@ -36,13 +38,13 @@ pub fn main() !void {
     }
 
     {
-        var dc = try Dreamcast.create(common.GeneralAllocator);
+        var dc = try Dreamcast.create(allocator);
         defer {
             dc.deinit();
-            common.GeneralAllocator.destroy(dc);
+            allocator.destroy(dc);
         }
 
-        dc.gdrom.disc = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
         _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
@@ -57,14 +59,14 @@ pub fn main() !void {
     }
 
     {
-        var dc = try Dreamcast.create(common.GeneralAllocator);
+        var dc = try Dreamcast.create(allocator);
         defer {
             dc.deinit();
-            common.GeneralAllocator.destroy(dc);
+            allocator.destroy(dc);
         }
 
         dc.skip_bios(true);
-        dc.gdrom.disc = try GDI.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", common.GeneralAllocator);
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
         _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 

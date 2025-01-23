@@ -22,7 +22,8 @@ pub const AICAModule = @import("aica.zig");
 const AICA = AICAModule.AICA;
 pub const Maple = @import("maple.zig");
 const MapleHost = Maple.MapleHost;
-const GDROM = @import("gdrom.zig").GDROM;
+pub const GDROM = @import("gdrom.zig");
+pub const GDROM_HLE = @import("gdrom_hle.zig");
 
 const dc_log = std.log.scoped(.dc);
 
@@ -110,6 +111,7 @@ pub const Dreamcast = struct {
     aica: AICA,
     maple: MapleHost,
     gdrom: GDROM,
+    gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
 
     sh4_jit: SH4JIT,
 
@@ -217,6 +219,7 @@ pub const Dreamcast = struct {
         self.cpu.reset();
         self.gpu.reset();
         self.gdrom.reset();
+        self.gdrom_hle.reset();
         try self.aica.reset();
         self.flash.reset();
         while (self.scheduled_interrupts.removeOrNull() != null) {}

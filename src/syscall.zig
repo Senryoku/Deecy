@@ -168,7 +168,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
                 }
             }
 
-            dc.cpu.R(0).* = gdrom_hle.send_command(&dc.gdrom, dc.cpu.R(4).*, params);
+            dc.cpu.R(0).* = gdrom_hle.send_command(dc, dc.cpu.R(4).*, params);
         },
         1 => {
             // GDROM_CHECK_COMMAND
@@ -180,18 +180,18 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             //          2 - request has completed (if queried again, you will get a 0)
             //          3 - request was aborted(?)
             //         -1 - request has failed (examine extended status information for cause of failure)
-            dc.cpu.R(0).* = gdrom_hle.check_command(&dc.gdrom, dc.cpu.R(4).*);
+            dc.cpu.R(0).* = gdrom_hle.check_command(dc, dc.cpu.R(4).*);
             for (0..4) |i| {
-                dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom.hle_result[i]);
+                dc.cpu.write32(@intCast(dc.cpu.R(5).* + 4 * i), dc.gdrom_hle.result[i]);
             }
             syscall_log.info("  GDROM_CHECK_COMMAND R4={d} R5={X:0>8} | Ret : {X:0>8}, Result: {X:0>8} {X:0>8} {X:0>8} {X:0>8}", .{
                 dc.cpu.R(4).*,
                 dc.cpu.R(5).*,
                 dc.cpu.R(0).*,
-                dc.gdrom.hle_result[0],
-                dc.gdrom.hle_result[1],
-                dc.gdrom.hle_result[2],
-                dc.gdrom.hle_result[3],
+                dc.gdrom_hle.result[0],
+                dc.gdrom_hle.result[1],
+                dc.gdrom_hle.result[2],
+                dc.gdrom_hle.result[3],
             });
         },
         2 => {
@@ -200,7 +200,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // It can be called from a periodic interrupt, or just keep calling it manually until GDROM_CHECK_COMMAND says that your command has stopped processing.
             // Args: none
             // Returns: no return value
-            gdrom_hle.mainloop(&dc.gdrom, dc);
+            gdrom_hle.mainloop(dc);
         },
         3 => {
             // GDROM_INIT
