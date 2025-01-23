@@ -490,6 +490,7 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
 
 pub const AICA = struct {
     pub const SampleRate = 44100;
+    pub const RAMSize = 0x200000;
 
     pub const ARM7CycleRatio = 66;
     pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate) + 1;
@@ -499,7 +500,7 @@ pub const AICA = struct {
     arm_jit: ARM7JIT = undefined,
 
     regs: []u32, // All registers are 32-bit afaik
-    wave_memory: []u8 align(4),
+    wave_memory: []u8 align(4), // Not owned.
 
     channel_states: [64]AICAChannelState = .{.{}} ** 64,
 
@@ -520,10 +521,10 @@ pub const AICA = struct {
     _allocator: std.mem.Allocator,
 
     // NOTE: Call setup_arm after!
-    pub fn init(allocator: std.mem.Allocator) !AICA {
+    pub fn init(allocator: std.mem.Allocator, memory: []u8) !AICA {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),
-            .wave_memory = try allocator.alloc(u8, 0x200000),
+            .wave_memory = memory,
             ._allocator = allocator,
         };
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
@@ -556,7 +557,6 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self.arm_jit.deinit();
         self._allocator.free(self.regs);
-        self._allocator.free(self.wave_memory);
     }
 
     pub fn reset(self: *@This()) !void {
@@ -1411,7 +1411,6 @@ pub const AICA = struct {
         var bytes: usize = 0;
         bytes += try self.arm7.serialize(writer);
         bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.wave_memory[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
@@ -1438,7 +1437,6 @@ pub const AICA = struct {
 
         bytes += try self.arm7.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.wave_memory[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));

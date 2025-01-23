@@ -889,7 +889,7 @@ fn audio_callback(
 
 const SaveStateHeader = extern struct {
     const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
-    const Version: u32 = 2;
+    const Version: u32 = 3;
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,

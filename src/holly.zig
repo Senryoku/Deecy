@@ -1270,7 +1270,7 @@ pub const Holly = struct {
     pub const VRAMSize = 8 * 1024 * 1024;
     pub const RegistersSize = 0x2000;
 
-    vram: []align(32) u8,
+    vram: []align(32) u8, // Not owned.
     registers: []u8,
 
     dirty_framebuffer: bool = false,

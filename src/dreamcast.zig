@@ -105,10 +105,11 @@ pub const Dreamcast = struct {
     pub const BootSize = 0x20_0000;
     pub const RAMSize = 0x100_0000;
     pub const VRAMSize = Holly.VRAMSize;
+    pub const ARAMSize = AICA.RAMSize;
 
     cpu: SH4,
     gpu: Holly = undefined,
-    aica: AICA,
+    aica: AICA = undefined,
     maple: MapleHost,
     gdrom: GDROM,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
@@ -122,6 +123,7 @@ pub const Dreamcast = struct {
     flash: Flash,
     ram: []align(4) u8 = undefined,
     vram: []align(32) u8 = undefined,
+    aram: []align(4) u8 = undefined,
     hardware_registers: []align(4) u8,
 
     scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
@@ -137,7 +139,6 @@ pub const Dreamcast = struct {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
             .cpu = try SH4.init(allocator, dc),
-            .aica = try AICA.init(allocator),
             .maple = try MapleHost.init(allocator),
             .gdrom = try GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
@@ -151,13 +152,16 @@ pub const Dreamcast = struct {
             dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
+            dc.aram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {
             dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
             dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
+            dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
         }
 
         dc.gpu = try Holly.init(allocator, dc);
+        dc.aica = try AICA.init(allocator, dc.aram);
         dc.aica.setup_arm();
 
         // Create 'userdata' folder if it doesn't exist
@@ -208,6 +212,7 @@ pub const Dreamcast = struct {
         self.flash.deinit();
 
         if (!SH4JITModule.ExperimentalFastMem) {
+            self._allocator.free(self.aram);
             self._allocator.free(self.vram);
             self._allocator.free(self.ram);
             self._allocator.free(self.boot);
@@ -712,6 +717,7 @@ pub const Dreamcast = struct {
         bytes += try self.flash.serialize(writer);
         bytes += try writer.write(std.mem.sliceAsBytes(self.ram));
         bytes += try writer.write(std.mem.sliceAsBytes(self.vram));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.aram));
         bytes += try writer.write(std.mem.sliceAsBytes(self.hardware_registers));
 
         // Yes, this is pretty stupid.
@@ -747,6 +753,7 @@ pub const Dreamcast = struct {
         bytes += try self.flash.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.aram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
         while (self.scheduled_interrupts.count() > 0)
