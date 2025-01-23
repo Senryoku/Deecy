@@ -420,7 +420,7 @@ pub fn draw(self: *@This()) !void {
         zgui.endMainMenuBar();
     }
 
-    if (d.dc.gdrom.disc == null or self.display_library)
+    if (!d.running and d.dc.gdrom.disc == null or self.display_library)
         self.draw_game_library() catch |err| {
             switch (err) {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
