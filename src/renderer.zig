@@ -1297,10 +1297,13 @@ pub const Renderer = struct {
             gctx.createComputePipelineAsync(allocator, translucent_modvol_merge_pipeline_layout, translucent_modvol_merge_pipeline_descriptor, &renderer.translucent_modvol_merge_pipeline);
         }
 
+        // Ensure capacity for opaque pipelines: Async creation needs pointer stability.
+        try renderer.opaque_pipelines.ensureTotalCapacity(std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
+
         // Asyncronously create some common opaque pipelines ahead of time
-        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, true);
-        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, true);
-        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, true);
+        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, .Async); // Background
+        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
+        _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
 
         renderer.on_inner_resolution_change();
 
@@ -2596,7 +2599,7 @@ pub const Renderer = struct {
                     .dst_blend_factor = .zero,
                     .depth_compare = .always,
                     .depth_write_enabled = false,
-                }, false);
+                }, .Async);
                 const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
                 pass.setPipeline(bg_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
@@ -2608,7 +2611,7 @@ pub const Renderer = struct {
                     while (it.next()) |entry| {
                         // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                         if (entry.value_ptr.*.draw_calls.count() > 0) {
-                            const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, false);
+                            const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
                             const pipeline = gctx.lookupResource(pl) orelse break;
                             pass.setPipeline(pipeline);
 
@@ -3020,7 +3023,7 @@ pub const Renderer = struct {
         }
     }
 
-    fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey, async_: bool) !zgpu.RenderPipelineHandle {
+    fn get_or_put_opaque_pipeline(self: *Renderer, key: PipelineKey, sync: enum { Sync, Async }) !zgpu.RenderPipelineHandle {
         if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
@@ -3070,24 +3073,27 @@ pub const Renderer = struct {
             },
         };
 
-        if (async_) {
-            // Experiment: Asynchronous pipeline creation
-            try self.opaque_pipelines.putNoClobber(key, .{});
-            const ptr = self.opaque_pipelines.getPtr(key).?;
-            self._gctx.createRenderPipelineAsync(self._allocator, self.opaque_pipeline_layout, pipeline_descriptor, ptr);
-            return ptr.*;
-        } else {
-            defer renderer_log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
-            const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
+        switch (sync) {
+            .Async => {
+                // Experiment: Asynchronous pipeline creation
+                self.opaque_pipelines.putAssumeCapacityNoClobber(key, .{});
+                const ptr = self.opaque_pipelines.getPtr(key).?;
+                self._gctx.createRenderPipelineAsync(self._allocator, self.opaque_pipeline_layout, pipeline_descriptor, ptr);
+                return ptr.*;
+            },
+            else => {
+                defer renderer_log.info("Pipeline created in {d}ms", .{std.time.milliTimestamp() - start});
+                const pl = self._gctx.createRenderPipeline(self.opaque_pipeline_layout, pipeline_descriptor);
 
-            if (!self._gctx.isResourceValid(pl)) {
-                renderer_log.err("Error creating pipeline.", .{});
-                renderer_log.err("{any}", .{pipeline_descriptor});
-            }
+                if (!self._gctx.isResourceValid(pl)) {
+                    renderer_log.err("Error creating pipeline.", .{});
+                    renderer_log.err("{any}", .{pipeline_descriptor});
+                }
 
-            try self.opaque_pipelines.putNoClobber(key, pl);
+                self.opaque_pipelines.putAssumeCapacityNoClobber(key, pl);
 
-            return pl;
+                return pl;
+            },
         }
     }
 
