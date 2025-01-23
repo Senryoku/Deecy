@@ -1765,6 +1765,9 @@ pub const SH4 = struct {
         bytes += try reader.read(std.mem.asBytes(&self.execution_state));
         bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
         bytes += try self._operand_cache_state.deserialize(reader);
+
+        self.compute_interrupt_priorities();
+
         return bytes;
     }
 };
