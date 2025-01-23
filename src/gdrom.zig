@@ -380,7 +380,7 @@ pub const GDROM = struct {
                     var consecutive_busy_reads: u64 = 0;
                     var last_dma_data_queue_count: u64 = 0;
                 };
-                if (self.status_register.bsy == 1 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
+                if (self.status_register.bsy == 1 and self.dma_data_queue.count > 0 and self.dma_data_queue.count == static.last_dma_data_queue_count) {
                     static.consecutive_busy_reads += 1;
                     if (static.consecutive_busy_reads >= 10_000) {
                         gdrom_log.err(termcolor.red("CDI Hack: Stuck with data in dma queue, discarding."), .{});
