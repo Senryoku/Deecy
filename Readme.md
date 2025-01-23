@@ -54,7 +54,7 @@ sudo apt install libgtk-3-dev
     -   Fog LUT Mode 2.
     -   User Tile Clip, only the simplest version is supported.
     -   Bump mapping.
-    -   Z-Write bit, especially for transculent polygons.
+    -   Z-Write bit, especially for translucent polygons.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Mipmaps for palette textures?
     -   Sort-DMA?
