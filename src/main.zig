@@ -208,18 +208,16 @@ pub fn main() !void {
             try vmu_path.appendSlice(path);
             default_vmu = false;
         }
-        if (std.mem.eql(u8, arg, "-d")) {
+        if (std.mem.eql(u8, arg, "-d"))
             dc.cpu.debug_trace = true;
-        }
-        if (std.mem.eql(u8, arg, "--skip-bios")) {
+        if (std.mem.eql(u8, arg, "--skip-bios"))
             skip_bios = true;
-        }
-        if (std.mem.eql(u8, arg, "--stop")) {
+        if (std.mem.eql(u8, arg, "--stop"))
             force_stop = true;
-        }
-        if (std.mem.eql(u8, arg, "--force-render")) {
+        if (std.mem.eql(u8, arg, "--force-render"))
             force_render = true;
-        }
+        if (std.mem.eql(u8, arg, "--no-realtime"))
+            d.realtime = false;
     }
 
     dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(allocator, vmu_path.items) };
