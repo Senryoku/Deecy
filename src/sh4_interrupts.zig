@@ -48,54 +48,6 @@ pub const Interrupt = enum {
     ROVI,
 };
 
-// Interrupts ordered by their current priority.
-pub var SortedInterrupts: [41]Interrupt = .{
-    .NMI,
-    .IRL0,
-    .IRL1,
-    .IRL2,
-    .IRL3,
-    .IRL4,
-    .IRL5,
-    .IRL6,
-    .IRL7,
-    .IRL8,
-    .IRL9,
-    .IRL10,
-    .IRL11,
-    .IRL12,
-    .IRL13,
-    .IRL14,
-    // Configurable priorities
-    .HitachiUDI,
-    .GPIO,
-    .DMTE0,
-    .DMTE1,
-    .DMTE2,
-    .DMTE3,
-    .DMAE,
-    .TUNI0,
-    .TUNI1,
-    .TUNI2,
-    .TICPI2,
-    .ATI,
-    .PRI,
-    .CUI,
-    .SCI1_ERI,
-    .SCI1_RXI,
-    .SCI1_TXI,
-    .SCI1_TEI,
-    .SCIF_ERI,
-    .SCIF_RXI,
-    .SCIF_TXI,
-    .SCIF_TEI,
-    .ITI,
-    .RCMI,
-    .ROVI,
-};
-// Inverse mapping of SortedInterrupts
-pub var InterruptsIndices: [41]u8 = .{0} ** 41;
-
 pub const InterruptINTEVTCodes: [41]u32 = .{
     0x1C0, // NMI
     0x200, // IRL0
@@ -140,7 +92,52 @@ pub const InterruptINTEVTCodes: [41]u32 = .{
     0x5A0, // ROVI
 };
 
-pub var InterruptLevels: [41]u32 = .{
+pub const DefaultInterruptPriorities: [41]Interrupt = .{
+    .NMI,
+    .IRL0,
+    .IRL1,
+    .IRL2,
+    .IRL3,
+    .IRL4,
+    .IRL5,
+    .IRL6,
+    .IRL7,
+    .IRL8,
+    .IRL9,
+    .IRL10,
+    .IRL11,
+    .IRL12,
+    .IRL13,
+    .IRL14,
+    // Configurable priorities
+    .HitachiUDI,
+    .GPIO,
+    .DMTE0,
+    .DMTE1,
+    .DMTE2,
+    .DMTE3,
+    .DMAE,
+    .TUNI0,
+    .TUNI1,
+    .TUNI2,
+    .TICPI2,
+    .ATI,
+    .PRI,
+    .CUI,
+    .SCI1_ERI,
+    .SCI1_RXI,
+    .SCI1_TXI,
+    .SCI1_TEI,
+    .SCIF_ERI,
+    .SCIF_RXI,
+    .SCIF_TXI,
+    .SCIF_TEI,
+    .ITI,
+    .RCMI,
+    .ROVI,
+};
+
+pub const DefaultInterruptLevels: [41]u32 = .{
     16, // NMI
     15, // IRL0
     14, // IRL1
@@ -184,10 +181,3 @@ pub var InterruptLevels: [41]u32 = .{
     0, // RCMI
     0, // ROVI
 };
-
-pub fn order_interrupt(ctx: void, lhs: Interrupt, rhs: Interrupt) bool {
-    _ = ctx;
-    if (InterruptLevels[@intFromEnum(lhs)] == InterruptLevels[@intFromEnum(rhs)])
-        return @intFromEnum(lhs) < @intFromEnum(rhs);
-    return InterruptLevels[@intFromEnum(lhs)] > InterruptLevels[@intFromEnum(rhs)];
-}

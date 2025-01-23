@@ -191,6 +191,10 @@ pub const SH4 = struct {
     utlb: []mmu.UTLBEntry,
 
     interrupt_requests: u64 = 0,
+    // NOTE: These are not serialized as they can easily be computed from P4 registers IPRA/B/C. See compute_interrupt_priorities.
+    _sorted_interrupts: [41]Interrupt = Interrupts.DefaultInterruptPriorities, // Interrupts ordered by their current priority.
+    _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
+    _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
     timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
 
@@ -605,9 +609,9 @@ pub const SH4 = struct {
         if (!self.sr.bl or self.execution_state != .Running) {
             if (self.interrupt_requests != 0) {
                 const int_index = @ctz(self.interrupt_requests);
-                const interrupt = Interrupts.SortedInterrupts[int_index];
+                const interrupt = self._sorted_interrupts[int_index];
                 // Check it against the cpu interrupt mask
-                if (Interrupts.InterruptLevels[@intFromEnum(interrupt)] > self.sr.imask) {
+                if (self._interrupt_levels[@intFromEnum(interrupt)] > self.sr.imask) {
                     self.interrupt_requests &= ~(@as(u64, 1) << @truncate(int_index)); // Clear the request
                     self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@intFromEnum(interrupt)];
                     self.jump_to_interrupt();
@@ -655,7 +659,13 @@ pub const SH4 = struct {
 
     pub fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
-        self.interrupt_requests |= @as(u64, 1) << @intCast(Interrupts.InterruptsIndices[@intFromEnum(int)]);
+        self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]);
+    }
+
+    pub fn order_interrupt(ctx: *const @This(), lhs: Interrupt, rhs: Interrupt) bool {
+        if (ctx._interrupt_levels[@intFromEnum(lhs)] == ctx._interrupt_levels[@intFromEnum(rhs)])
+            return @intFromEnum(lhs) < @intFromEnum(rhs);
+        return ctx._interrupt_levels[@intFromEnum(lhs)] > ctx._interrupt_levels[@intFromEnum(rhs)];
     }
 
     pub fn compute_interrupt_priorities(self: *@This()) void {
@@ -663,9 +673,9 @@ pub const SH4 = struct {
         var saved_requests: u64 = 0;
         if (self.interrupt_requests != 0) {
             // Convert priority indices to the base enum
-            for (0..Interrupts.SortedInterrupts.len) |i| {
+            for (0..self._sorted_interrupts.len) |i| {
                 if ((self.interrupt_requests >> @intCast(i)) & 1 == 1) {
-                    saved_requests |= (@as(u64, 1) << @intFromEnum(Interrupts.SortedInterrupts[i]));
+                    saved_requests |= (@as(u64, 1) << @intFromEnum(self._sorted_interrupts[i]));
                 }
             }
         }
@@ -674,44 +684,44 @@ pub const SH4 = struct {
         const IPRB = self.read_p4_register(P4.IPRB, .IPRB);
         const IPRC = self.read_p4_register(P4.IPRC, .IPRC);
 
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.HitachiUDI)] = IPRC.hitachiudi;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.GPIO)] = IPRC.gpio;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE0)] = IPRC.dmac;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE1)] = IPRC.dmac;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE2)] = IPRC.dmac;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMTE3)] = IPRC.dmac;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.DMAE)] = IPRC.dmac;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI0)] = IPRA.tmu0;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI1)] = IPRA.tmu1;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TUNI2)] = IPRA.tmu2;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.TICPI2)] = IPRA.tmu2;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ATI)] = IPRA.rtc;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.PRI)] = IPRA.rtc;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.CUI)] = IPRA.rtc;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_ERI)] = IPRB.sci1;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_RXI)] = IPRB.sci1;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_TXI)] = IPRB.sci1;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.SCIF_TEI)] = IPRC.scif;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
-        Interrupts.InterruptLevels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
+        self._interrupt_levels[@intFromEnum(Interrupt.HitachiUDI)] = IPRC.hitachiudi;
+        self._interrupt_levels[@intFromEnum(Interrupt.GPIO)] = IPRC.gpio;
+        self._interrupt_levels[@intFromEnum(Interrupt.DMTE0)] = IPRC.dmac;
+        self._interrupt_levels[@intFromEnum(Interrupt.DMTE1)] = IPRC.dmac;
+        self._interrupt_levels[@intFromEnum(Interrupt.DMTE2)] = IPRC.dmac;
+        self._interrupt_levels[@intFromEnum(Interrupt.DMTE3)] = IPRC.dmac;
+        self._interrupt_levels[@intFromEnum(Interrupt.DMAE)] = IPRC.dmac;
+        self._interrupt_levels[@intFromEnum(Interrupt.TUNI0)] = IPRA.tmu0;
+        self._interrupt_levels[@intFromEnum(Interrupt.TUNI1)] = IPRA.tmu1;
+        self._interrupt_levels[@intFromEnum(Interrupt.TUNI2)] = IPRA.tmu2;
+        self._interrupt_levels[@intFromEnum(Interrupt.TICPI2)] = IPRA.tmu2;
+        self._interrupt_levels[@intFromEnum(Interrupt.ATI)] = IPRA.rtc;
+        self._interrupt_levels[@intFromEnum(Interrupt.PRI)] = IPRA.rtc;
+        self._interrupt_levels[@intFromEnum(Interrupt.CUI)] = IPRA.rtc;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_ERI)] = IPRB.sci1;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_RXI)] = IPRB.sci1;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TXI)] = IPRB.sci1;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCI1_TEI)] = IPRB.sci1;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_ERI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_RXI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TXI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.SCIF_TEI)] = IPRC.scif;
+        self._interrupt_levels[@intFromEnum(Interrupt.ITI)] = IPRB.wdt;
+        self._interrupt_levels[@intFromEnum(Interrupt.RCMI)] = IPRB.ref;
+        self._interrupt_levels[@intFromEnum(Interrupt.ROVI)] = IPRB.ref;
 
-        std.sort.insertion(Interrupt, &Interrupts.SortedInterrupts, {}, Interrupts.order_interrupt);
+        std.sort.insertion(Interrupt, &self._sorted_interrupts, self, order_interrupt);
         // Update reverse mapping (Interrupt enum to its index in the interrupt_requests bitfield)
-        for (0..Interrupts.SortedInterrupts.len) |i| {
-            Interrupts.InterruptsIndices[@intFromEnum(Interrupts.SortedInterrupts[i])] = @intCast(i);
+        for (0..self._sorted_interrupts.len) |i| {
+            self._interrupts_indices[@intFromEnum(self._sorted_interrupts[i])] = @intCast(i);
         }
 
         if (saved_requests != 0) {
             self.interrupt_requests = 0;
             // Interrupt enum to new priority indices.
-            for (0..Interrupts.InterruptsIndices.len) |i| {
+            for (0..self._interrupts_indices.len) |i| {
                 if ((saved_requests >> @intCast(i)) & 1 == 1) {
-                    self.interrupt_requests |= (@as(u64, 1) << @intCast(Interrupts.InterruptsIndices[i]));
+                    self.interrupt_requests |= (@as(u64, 1) << @intCast(self._interrupts_indices[i]));
                 }
             }
         }
