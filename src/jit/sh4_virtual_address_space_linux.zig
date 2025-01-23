@@ -35,7 +35,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
             try vas.mirror(vas.aram, Dreamcast.ARAMSize, @intCast(base + 0x0080_0000 + i * Dreamcast.ARAMSize));
         try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0400_0000);
         try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0600_0000);
-        for (0..(0x1000_000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
+        for (0..(0x1000_0000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
             try vas.mirror(vas.ram, Dreamcast.RAMSize, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
     }
 
