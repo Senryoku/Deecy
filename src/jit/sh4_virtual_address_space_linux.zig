@@ -28,21 +28,16 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
         .aram = try allocate_backing_memory("aram", Dreamcast.ARAMSize),
     };
 
-    // U0/P0, P1, P2, P3
-    for ([_]u32{ 0x0000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
+    //           U0/P0 and mirrors,                                  P1,          P2,          P3
+    for ([_]u32{ 0x0000_0000, 0x2000_0000, 0x4000_0000, 0x6000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
         try vas.mirror(vas.boot, Dreamcast.BootSize, base + 0x0000_0000);
         for (0..(0x0100_0000 - 0x0080_0000) / Dreamcast.ARAMSize) |i|
             try vas.mirror(vas.aram, Dreamcast.ARAMSize, @intCast(base + 0x0080_0000 + i * Dreamcast.ARAMSize));
         try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0400_0000);
         try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0600_0000);
-
         for (0..(0x1000_000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
             try vas.mirror(vas.ram, Dreamcast.RAMSize, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
-
-        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
     }
-    // Wave memory mirror
-    try vas.mirror(vas.aram, Dreamcast.ARAMSize, 0x2000_0000);
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
     var act = std.posix.Sigaction{

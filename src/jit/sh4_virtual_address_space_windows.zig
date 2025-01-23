@@ -56,12 +56,11 @@ fn try_mapping(self: *@This()) !void {
 
     errdefer self.release_views();
 
-    // U0/P0, P1, P2, P3
-    for ([_]u32{ 0x0000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
+    //           U0/P0 and mirrors,                                  P1,          P2,          P3
+    for ([_]u32{ 0x0000_0000, 0x2000_0000, 0x4000_0000, 0x6000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
         try self.mirror(self.boot, base + 0x0000_0000);
-        try self.forbid(base + Dreamcast.BootSize, base + 0x0080_0000);
 
-        // Wave Memory mirrors
+        try self.forbid(base + Dreamcast.BootSize, base + 0x0080_0000);
         for (0..(0x0100_0000 - 0x0080_0000) / Dreamcast.ARAMSize) |i|
             try self.mirror(self.aram, base + 0x0080_0000 + i * Dreamcast.ARAMSize);
         try self.forbid(base + 0x0100_0000, base + 0x0400_0000);
@@ -69,25 +68,14 @@ fn try_mapping(self: *@This()) !void {
         try self.mirror(self.vram, base + 0x0400_0000);
         try self.forbid(base + 0x0500_0000, base + 0x0600_0000);
         try self.mirror(self.vram, base + 0x0600_0000);
-
         try self.forbid(base + 0x0700_0000, base + 0x0C00_0000);
 
         for (0..(0x1000_0000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
             try self.mirror(self.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
 
-        // 0x2000_0000 Wave memory mirror
-        if (base == 0x0000_0000) {
-            try self.forbid(base + 0x10000000, 0x2000_0000);
-            try self.mirror(self.aram, base + 0x2000_0000);
-        }
-
-        // TODO: Operand Cache? This is tricky because mirrors are smaller than the minimal page alignment.
+        try self.forbid(base + 0x1000_0000, base + 0x2000_0000);
     }
-    // Forbid everything else.
-    try self.forbid(0x0000_0000 + 0x2000_0000 + Dreamcast.ARAMSize, 0x8000_0000); // End of P0
-    try self.forbid(0x8000_0000 + 0x1000_0000, 0xA000_0000); // End of P1
-    try self.forbid(0xA000_0000 + 0x1000_0000, 0xC000_0000); // End of P2
-    try self.forbid(0xC000_0000 + 0x1000_0000, 0x1_0000_0000); // Rest
+    try self.forbid(0xE000_0000, 0x1_0000_0000); // Forbid P4
 }
 
 fn release_views(self: *@This()) void {
