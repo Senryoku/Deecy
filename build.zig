@@ -34,6 +34,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+
+    // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
+    // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
+    // See https://github.com/ziglang/zig/issues/20724
+    // Also https://nullprogram.com/blog/2024/02/05/ for more info.
+    exe.root_module.stack_check = false;
+
     exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
