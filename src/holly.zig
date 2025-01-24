@@ -327,19 +327,58 @@ pub const VO_CONTROL = packed struct(u32) {
     _r1: u10,
 };
 
+pub const TA_GLOB_TILE_CLIP = packed struct(u32) {
+    /// This field specifies the Tile number in the X direction (0 to 39) for the lower right corner of the Global Tile Clip. (default = 0x00) Set [the number of Tiles in the X direction in the valid area] - 1. "40" (0x28) through "63" (0x3F) must not be specified.
+    tile_x_num: u6,
+    _0: u10,
+    /// This field specifies the Tile number in the Y direction (0 to 14) for the lower right corner of the Global Tile Clip. (default = 0x0) Set [the number of Tiles in the Y direction in the valid area] - 1. "15" (0xF) must not be specified.
+    tile_y_num: u6,
+    _1: u10,
+};
+
+/// This register must be set before the lists are initialized through the TA_LIST_INIT register.
 pub const TA_ALLOC_CTRL = packed struct(u32) {
-    O_OPB: u2,
+    /// These fields specify the Object Pointer Block unit size for each type of list (Opaque, etc.).
+    /// Specify "No List" for a list that is not used in the screen. For the Pointer Burst Size value
+    /// in the FPU_PARAM_CFG register, set a value that is less than or equal to the Object Pointer Block size specified here.
+    const UnitSize = enum(u2) {
+        NoList = 0,
+        _8x32 = 1,
+        _16x32 = 2,
+        _32x32 = 3,
+
+        pub fn byteSize(self: @This()) u32 {
+            return switch (self) {
+                .NoList => 0,
+                ._8x32 => 8,
+                ._16x32 => 16,
+                ._32x32 => 32,
+            };
+        }
+    };
+
+    /// This field specifies the unit size of an Object Pointer Block for an Opaque list.
+    O_OPB: UnitSize,
     _r0: u2,
-    OM_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for an Opaque Modifier Volume list.
+    OM_OPB: UnitSize,
     _r1: u2,
-    T_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for a Translucent list.
+    T_OPB: UnitSize,
     _r2: u2,
-    TM_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for a Translucent Modifier Volume list.
+    TM_OPB: UnitSize,
     _r3: u2,
-    PT_OPB: u2,
+    /// This field specifies the unit size for the Object Pointer Block of the Punch Through list.
+    PT_OPB: UnitSize,
     _r4: u2,
-    OPB_Mode: u1,
-    _r5: u15,
+    /// This field specifies the address direction when storing the next Object Pointer Block (OPB) in texture memory,
+    /// in the event that the specified Object Pointer Block size has been exceeded.
+    OPB_Mode: enum(u1) {
+        Increasing = 0,
+        Decreasing = 1,
+    },
+    _r5: u11,
 };
 
 pub const TA_YUV_TEX_CTRL = packed struct(u32) {
@@ -359,6 +398,10 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         pointer_to_object_list: u22,
         _1: u7 = 0,
         empty: bool,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{s}{X:<8}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
+        }
     };
 
     settings: packed struct(u32) {
@@ -366,16 +409,44 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         tile_x_position: u6,
         tile_y_position: u6,
         _r1: u14,
-        flush_accumulate: u1,
-        pre_sort: u1, // Forced 0 for Type 1
-        z_clear: u1,
-        last_region: u1,
+        flush_accumulate: bool,
+        pre_sort: bool, // Forced 0 for Type 1
+        z_clear: bool,
+        last_region: bool,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("X:{d:<2} Y:{d:<2} {s}Flush-Accumulate\u{001b}[0m {s}Pre-Sort\u{001b}[0m {s}Z-Clear\u{001b}[0m {s}Last Region\u{001b}[0m", .{
+                self.tile_x_position,
+                self.tile_y_position,
+                termcolor.colored_bool(self.flush_accumulate),
+                termcolor.colored_bool(self.pre_sort),
+                termcolor.colored_bool(self.z_clear),
+                termcolor.colored_bool(self.last_region),
+            });
+        }
     },
     opaque_list_pointer: ListPointer,
     opaque_modifier_volume_pointer: ListPointer,
     translucent_list_pointer: ListPointer,
     translucent_modifier_volume_pointer: ListPointer,
     punch_through_list_pointer: ListPointer, // Absent for Type 1
+
+    pub fn format(self: @This(), comptime _: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        if (opt.width == 0) {
+            try writer.print("{any}", .{self.settings});
+            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
+            try writer.print(" | Opaque Modifier Volume: {any}", .{self.opaque_modifier_volume_pointer});
+            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
+            try writer.print(" | Translucent Modifier Volume: {any}", .{self.translucent_modifier_volume_pointer});
+        } else {
+            try writer.print("{any}", .{self.settings});
+            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
+            try writer.print(" | Opaque Modifier Volume: {any}", .{self.opaque_modifier_volume_pointer});
+            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
+            try writer.print(" | Translucent Modifier Volume: {any}", .{self.translucent_modifier_volume_pointer});
+            try writer.print(" | Punch Through: {any}", .{self.punch_through_list_pointer});
+        }
+    }
 };
 
 pub const ParameterType = enum(u3) {
@@ -1170,6 +1241,9 @@ pub const DisplayList = struct {
     vertex_parameters: std.ArrayList(VertexParameter),
     next_first_vertex_parameters_index: usize = 0,
 
+    zclear: bool = true,
+    presort: bool = false,
+
     pub fn init(allocator: std.mem.Allocator) DisplayList {
         return .{
             .vertex_strips = std.ArrayList(VertexStrip).init(allocator),
@@ -1285,6 +1359,7 @@ pub const Holly = struct {
     _ta_user_tile_clip: ?UserTileClipInfo = null,
     _ta_current_volume: ?ModifierVolume = null,
     _ta_volume_next_polygon_is_last: bool = false,
+    _ta_opb_index: u32 = 0,
 
     // When starting a render, the user can select where to get the parameters from using
     // the PARAM_BASE register. It is specified in 1MB blocks, meaning it can take at most
@@ -1523,6 +1598,14 @@ pub const Holly = struct {
                     self._get_register(u32, .TA_NEXT_OPB).* = self.read_register(u32, .TA_NEXT_OPB_INIT);
                     self._get_register(u32, .TA_ITP_CURRENT).* = self.read_register(u32, .TA_ISP_BASE);
 
+                    self._ta_opb_index = self.read_register(u32, .TA_NEXT_OPB_INIT);
+                    holly_log.info("PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
+                        self.read_register(u32, .PARAM_BASE),
+                        self.read_register(u32, .TA_OL_BASE),
+                        self.read_register(u32, .TA_ISP_BASE),
+                        self.read_register(u32, .TA_NEXT_OPB_INIT),
+                    });
+
                     self.ta_current_lists().mark_reset();
                 }
                 return;
@@ -1636,7 +1719,19 @@ pub const Holly = struct {
                             @panic("Unimplemented List Type");
                         },
                     }, 800);
+
+                    const global_tile_clip = self.read_register(TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+                    const alloc_ctrl = self.read_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL);
+                    self._ta_opb_index += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
+                        .Opaque => alloc_ctrl.O_OPB.byteSize(),
+                        .OpaqueModifierVolume => alloc_ctrl.OM_OPB.byteSize(),
+                        .Translucent => alloc_ctrl.T_OPB.byteSize(),
+                        .TranslucentModifierVolume => alloc_ctrl.TM_OPB.byteSize(),
+                        .PunchThrough => alloc_ctrl.PT_OPB.byteSize(),
+                        else => unreachable,
+                    }));
                 }
+
                 self._ta_current_polygon = null;
                 self._ta_list_type = null;
             },
@@ -1657,6 +1752,12 @@ pub const Holly = struct {
             .PolygonOrModifierVolume => {
                 if (self._ta_list_type == null) {
                     self._ta_list_type = parameter_control_word.list_type;
+
+                    holly_log.info("Starting List {s} - OPB addr: {X:0>8}", .{
+                        @tagName(parameter_control_word.list_type),
+                        self._ta_opb_index,
+                    });
+
                     self.ta_current_lists().check_reset();
                 }
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
@@ -1804,7 +1905,7 @@ pub const Holly = struct {
                     // I don't know if I'm the one misinterpreting the doc, but how the triangles are grouped doesn't really matter anyway.
 
                     if (volume.triangle_count > 0) {
-                        const config = self.get_region_array_data_config();
+                        const config = self.get_region_array_data_config(0);
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convenience.
                             self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch unreachable;
@@ -1983,9 +2084,14 @@ pub const Holly = struct {
         return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
-    pub inline fn get_region_array_data_config(self: *const @This()) RegionArrayDataConfiguration {
+    pub inline fn get_region_header_type(self: *const @This()) u1 {
+        return self.read_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type;
+    }
+
+    pub inline fn get_region_array_data_config(self: *const @This(), idx: usize) RegionArrayDataConfiguration {
+        const stride: usize = if (self.get_region_header_type() == 0) 4 * 5 else @sizeOf(RegionArrayDataConfiguration);
         // Sadly we can't just return a pointer to the RegionArrayDataConfiguration directly in VRAM because of alignment.
-        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[@constCast(self)._get_register(u32, .REGION_BASE).*]));
+        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[@constCast(self)._get_register(u32, .REGION_BASE).* + idx * stride]));
         return .{
             .settings = @bitCast(r[0]),
             .opaque_list_pointer = @bitCast(r[1]),
@@ -1996,11 +2102,11 @@ pub const Holly = struct {
         };
     }
 
-    pub inline fn auto_sort(self: *const @This()) bool {
-        if (self._get_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type == 0) {
-            return self._get_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
+    pub inline fn pre_sort(self: *const @This(), pass: usize) bool {
+        if (self.get_region_header_type() == 0) {
+            return self.read_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
         } else {
-            return self.get_region_array_data_config().settings.pre_sort;
+            return self.get_region_array_data_config(pass).settings.pre_sort == 1;
         }
     }
 

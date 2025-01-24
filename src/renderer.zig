@@ -1428,8 +1428,20 @@ pub const Renderer = struct {
 
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
+        const header_type = dc.gpu.get_region_header_type();
+        var ra_idx: usize = 0;
+        var ra = dc.gpu.get_region_array_data_config(ra_idx);
+        if (header_type == 0) std.debug.print("[{d}] ({d}) {any:0}\n", .{ header_type, ra_idx, ra }) else std.debug.print("[{d}] ({d}) {any:1}\n", .{ header_type, ra_idx, ra });
+
+        while (ra_idx < 8 and !ra.settings.last_region) {
+            ra_idx += 1;
+            ra = dc.gpu.get_region_array_data_config(ra_idx);
+            if (header_type == 0) std.debug.print("[{d}] ({d}) {any:0}\n", .{ header_type, ra_idx, ra }) else std.debug.print("[{d}] ({d}) {any:1}\n", .{ header_type, ra_idx, ra });
+        }
+        std.debug.print("\n", .{});
+
         // Clear the previous used TA lists and swap it with the one submitted by the game.
-        // NOTE: Clearing the lists here means the game cannot render lists more than once (e.i. starting a render without
+        // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
         //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
         self.ta_lists.clearRetainingCapacity();
         const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);

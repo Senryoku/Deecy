@@ -17,3 +17,11 @@ pub fn blue(comptime str: []const u8) []const u8 {
 pub fn grey(comptime str: []const u8) []const u8 {
     return "\u{001b}[90m" ++ str ++ "\u{001b}[0m";
 }
+
+pub fn reset() []const u8 {
+    return "\u{001b}[0m";
+}
+
+pub fn colored_bool(value: bool) []const u8 {
+    return if (value) "\u{001b}[32m" else "\u{001b}[31m";
+}
