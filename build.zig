@@ -28,33 +28,37 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const exe = b.addExecutable(.{
-        .name = "Deecy",
-        .root_source_file = b.path("src/main.zig"),
+    const deecy_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
+        .root_source_file = b.path("src/main.zig"),
+        .imports = &.{
+            .{ .name = "arm7", .module = arm7_module },
+            .{ .name = "termcolor", .module = termcolor_module },
+        },
+        // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
+        // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
+        // See https://github.com/ziglang/zig/issues/20724
+        // Also https://nullprogram.com/blog/2024/02/05/ for more info.
+        .stack_check = false,
     });
 
-    // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
-    // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
-    // See https://github.com/ziglang/zig/issues/20724
-    // Also https://nullprogram.com/blog/2024/02/05/ for more info.
-    exe.root_module.stack_check = false;
-
+    const exe = b.addExecutable(.{
+        .name = "Deecy",
+        .root_module = deecy_module,
+    });
     exe.addWin32ResourceFile(.{ .file = b.path("src/assets/resource.rc") });
+
     // Check target for IDE support
     const exe_check = b.addExecutable(.{
         .name = "DeecyCheck",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = deecy_module,
     });
 
     switch (target.result.os.tag) {
         .windows => {
             // DwmSetWindowAttribute
-            exe.linkSystemLibrary("dwmapi");
-            exe_check.linkSystemLibrary("dwmapi");
+            deecy_module.linkSystemLibrary("dwmapi", .{});
         },
         else => {},
     }
@@ -65,52 +69,37 @@ pub fn build(b: *std.Build) void {
             .with_implot = true,
             .backend = .glfw_wgpu,
         });
-        exe.root_module.addImport("zgui", zgui.module("root"));
-        exe.linkLibrary(zgui.artifact("imgui"));
-        exe_check.root_module.addImport("zgui", zgui.module("root"));
-        exe_check.linkLibrary(zgui.artifact("imgui"));
+        deecy_module.addImport("zgui", zgui.module("root"));
+        deecy_module.linkLibrary(zgui.artifact("imgui"));
 
         @import("zgpu").addLibraryPathsTo(exe);
         @import("zgpu").addLibraryPathsTo(exe_check);
 
         const zglfw = b.dependency("zglfw", .{});
-        exe.root_module.addImport("zglfw", zglfw.module("root"));
-        exe.linkLibrary(zglfw.artifact("glfw"));
-        exe_check.root_module.addImport("zglfw", zglfw.module("root"));
-        exe_check.linkLibrary(zglfw.artifact("glfw"));
+        deecy_module.addImport("zglfw", zglfw.module("root"));
+        deecy_module.linkLibrary(zglfw.artifact("glfw"));
 
         const zpool = b.dependency("zpool", .{});
-        exe.root_module.addImport("zpool", zpool.module("root"));
-        exe_check.root_module.addImport("zpool", zpool.module("root"));
+        deecy_module.addImport("zpool", zpool.module("root"));
 
         const zgpu = b.dependency("zgpu", .{ .max_num_bindings_per_group = 12 });
-        exe.root_module.addImport("zgpu", zgpu.module("root"));
-        exe.linkLibrary(zgpu.artifact("zdawn"));
-        exe_check.root_module.addImport("zgpu", zgpu.module("root"));
-        exe_check.linkLibrary(zgpu.artifact("zdawn"));
+        deecy_module.addImport("zgpu", zgpu.module("root"));
+        deecy_module.linkLibrary(zgpu.artifact("zdawn"));
 
         const zaudio = b.dependency("zaudio", .{});
-        exe.root_module.addImport("zaudio", zaudio.module("root"));
-        exe.linkLibrary(zaudio.artifact("miniaudio"));
-        exe_check.root_module.addImport("zaudio", zaudio.module("root"));
-        exe_check.linkLibrary(zaudio.artifact("miniaudio"));
+        deecy_module.addImport("zaudio", zaudio.module("root"));
+        deecy_module.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
     const ziglz4 = b.dependency("zig-lz4", .{
         .target = target,
         .optimize = optimize,
     });
-    exe.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
-
-    exe.root_module.addImport("arm7", arm7_module);
-    exe.root_module.addImport("termcolor", termcolor_module);
-    exe_check.root_module.addImport("arm7", arm7_module);
-    exe_check.root_module.addImport("termcolor", termcolor_module);
+    deecy_module.addImport("lz4", ziglz4.module("zig-lz4"));
 
     const nfd = b.dependency("nfd", .{});
     const nfd_mod = nfd.module("nfd");
-    exe.root_module.addImport("nfd", nfd_mod);
-    exe_check.root_module.addImport("nfd", nfd_mod);
+    deecy_module.addImport("nfd", nfd_mod);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

@@ -10,6 +10,7 @@ call_count: if (EnableInstrumentation) u64 else void = if (EnableInstrumentation
 start_addr: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
 len: if (EnableInstrumentation) u32 else void = if (EnableInstrumentation) 0 else {},
 
-pub fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
+pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
+    @setRuntimeSafety(false);
     @as(*const fn (*anyopaque) void, @ptrCast(&buffer[self.offset]))(user_data);
 }
