@@ -39,6 +39,7 @@ const Optimizations = .{
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = true,
     .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
+    .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
 
 pub const ExperimentalFastMem = true;
@@ -287,17 +288,18 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 
 pub const JITContext = struct {
     cpu: *sh4.SH4,
-    address: u32,
+    entry_point_address: u32,
 
     instructions: [*]u16 = undefined,
 
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
 
-    start_address: u32 = undefined,
+    start_address: u32, // Adress of the first instruction in the instructions array.
     start_index: u32 = undefined, // Index in the block corresponding to the first guest instruction.
 
-    index: u32 = 0,
+    address: u32, // Address of the current instruction.
+    index: u32 = 0, // Index in the instructions array of the current instruction.
     cycles: u32 = 0,
 
     fpscr_sz: FPPrecision,
@@ -347,6 +349,7 @@ pub const JITContext = struct {
         return .{
             .cpu = cpu,
             .address = pc,
+            .entry_point_address = pc,
             .start_address = pc,
             .instructions = @alignCast(@ptrCast(cpu._get_memory(pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
@@ -667,7 +670,7 @@ pub const SH4JIT = struct {
             .cycles = ctx.cycles,
         };
         if (BasicBlock.EnableInstrumentation) {
-            block.start_addr = ctx.start_address;
+            block.start_addr = ctx.entry_point_address;
             block.len = ctx.index;
         }
         self.block_cache.cursor += block_size;
@@ -2273,7 +2276,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
 
     // Jump back at the start of this block
-    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.start_address) {
+    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.entry_point_address) {
         if (delay_slot) {
             // Delay slot might change the T bit, push it.
             try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
@@ -2407,6 +2410,16 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (dest > ctx.address) {
         try ctx.compile_delay_slot(block);
         ctx.skip_instructions((dest - ctx.address) / 2 - 1);
+        return false;
+    } else if (Optimizations.inline_backwards_bra and dest < ctx.start_address) {
+        try ctx.compile_delay_slot(block);
+        // FIXME: Very hackish. We don't normally have access to previous instructions. May lead to infinite loops?
+        sh4_jit_log.info("(Unstable) Inlining backwards bra instruction: {X:0>8} -> {X:0>8}", .{ ctx.address, dest });
+        // ctx.index and ctx.address will be incremented right after, so point to one instruction before.
+        ctx.instructions = @ptrFromInt(@intFromPtr(ctx.instructions) - (ctx.start_address - dest + 2));
+        ctx.index = 0;
+        ctx.address = dest - 2;
+        ctx.start_address = dest - 2;
         return false;
     } else {
         try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
