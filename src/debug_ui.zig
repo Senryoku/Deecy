@@ -84,6 +84,16 @@ fn display(self: anytype) void {
     }
 }
 
+fn inline_bool(value: bool, comptime fmt: []const u8) void {
+    zgui.sameLine(.{});
+    zgui.textColored(if (value) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, fmt, .{});
+}
+
+fn inline_colored(value: bool, comptime fmt: []const u8, args: anytype) void {
+    zgui.sameLine(.{});
+    zgui.textColored(if (value) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, fmt, args);
+}
+
 pub fn init(d: *Deecy) !@This() {
     var self = @This(){
         ._allocator = d._allocator,
@@ -665,6 +675,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const FB_X_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_X_CLIP).*;
         const FB_Y_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_Y_CLIP).*;
         const VO_CONTROL = dc.gpu._get_register(Holly.VO_CONTROL, .VO_CONTROL).*;
+        const FPU_PARAM_CFG = dc.gpu._get_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG).*;
+        const TA_ALLOC_CTRL = dc.gpu._get_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*;
         zgui.text("FB_C_SOF:  0x{X:0>8}", .{FB_C_SOF});
         zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
         zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
@@ -677,6 +689,36 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
         zgui.text("FB_R_SIZE: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
         zgui.text("VO_CONTROL: {any}", .{VO_CONTROL});
+        zgui.text("FPU_PARAM_CFG: {any}", .{FPU_PARAM_CFG});
+        zgui.text("TA_ALLOC_CTRL: {any}", .{TA_ALLOC_CTRL});
+
+        if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            const region_base = dc.gpu.read_register(u32, .REGION_BASE);
+            zgui.text("REGION_BASE:  0x{X:0>8}", .{region_base});
+            const static = struct {
+                var view_all: bool = false;
+            };
+            _ = zgui.checkbox("View All", .{ .v = &static.view_all });
+            var region = dc.gpu.get_region_array_data_config(0);
+            var idx: usize = 1;
+            while (idx < 512) : (idx += 1) {
+                zgui.text("[{d:<3}] {d:<2} {d:<2}", .{ idx, region.settings.tile_x_position, region.settings.tile_y_position });
+                inline_bool(region.settings.flush_accumulate, "Flush-Accumulate ");
+                inline_bool(region.settings.z_clear, "Z-Clear ");
+                inline_bool(region.settings.pre_sort, "Pre-Sort ");
+                inline_bool(region.settings.last_region, "Last-Region ");
+                zgui.text("      ", .{});
+                inline_colored(!region.opaque_list_pointer.empty, "{X:<8} ", .{region.opaque_list_pointer.pointer_to_object_list});
+                inline_colored(!region.opaque_modifier_volume_pointer.empty, "{X:<8} ", .{region.opaque_modifier_volume_pointer.pointer_to_object_list});
+                inline_colored(!region.translucent_list_pointer.empty, "{X:<8} ", .{region.translucent_list_pointer.pointer_to_object_list});
+                inline_colored(!region.translucent_modifier_volume_pointer.empty, "{X:<8} ", .{region.translucent_modifier_volume_pointer.pointer_to_object_list});
+                inline_colored(!region.punch_through_list_pointer.empty, "{X:<8} ", .{region.punch_through_list_pointer.pointer_to_object_list});
+                if (!static.view_all and region.settings.last_region) break;
+                region = dc.gpu.get_region_array_data_config(idx);
+            }
+        }
 
         var buffer: [256]u8 = .{0} ** 256;
 

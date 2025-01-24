@@ -1006,11 +1006,11 @@ pub const SH4 = struct {
                         @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
                     },
                     0x00800000...0x009FFFFF => { // G2 Wave Memory
-                        sh4_log.warn("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
+                        sh4_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
                         return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x00800000]);
                     },
                     0x02800000...0x029FFFFF => { // G2 Wave Memory - Mirror
-                        sh4_log.warn("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
+                        sh4_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
                         return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x02800000]);
                     },
                     0x01000000...0x01FFFFFF => { // Expansion Devices

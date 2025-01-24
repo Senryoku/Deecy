@@ -22,8 +22,10 @@ pub const HollyRegister = enum(u32) {
     STARTRENDER = 0x005F8014,
     TEST_SELECT = 0x005F8018,
 
+    /// Base address for ISP parameters
     PARAM_BASE = 0x005F8020,
 
+    /// Base address for Region Array
     REGION_BASE = 0x005F802C,
     SPAN_SOFT_CFG = 0x005F8030,
 
@@ -193,7 +195,7 @@ pub const ISP_BACKGND_T = packed struct(u32) {
 
 pub const ISP_FEED_CFG = packed struct(u32) {
     presort_mode: bool, // This field specifies the Translucent polygon sort mode. Only valid when the region header type bit (bit 21) in the FPU_PARAM_CFG register is "0".
-    r: u2,
+    _r: u2,
     discard_mode: bool, // This field specifies whether to perform discard processing or not when processing Punch Through polygons and Translucent polygons.
     punchthrough_chunk_size: u10,
     cache_size_for_translucency: u10,
@@ -2089,9 +2091,18 @@ pub const Holly = struct {
     }
 
     pub inline fn get_region_array_data_config(self: *const @This(), idx: usize) RegionArrayDataConfiguration {
+        const first: [*]u32 = @alignCast(@ptrCast(&self.vram[self.read_register(u32, .REGION_BASE)]));
+        var first_valid = false;
+        for (0..if (self.get_region_header_type() == 0) 4 else 5) |pointer_idx| {
+            if (!@as(RegionArrayDataConfiguration.ListPointer, @bitCast(first[1 + pointer_idx])).empty) {
+                first_valid = true;
+                break;
+            }
+        }
         const stride: usize = if (self.get_region_header_type() == 0) 4 * 5 else @sizeOf(RegionArrayDataConfiguration);
+        const offset = if (first_valid) 0 else stride;
         // Sadly we can't just return a pointer to the RegionArrayDataConfiguration directly in VRAM because of alignment.
-        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[@constCast(self)._get_register(u32, .REGION_BASE).* + idx * stride]));
+        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[self.read_register(u32, .REGION_BASE) + offset + idx * stride]));
         return .{
             .settings = @bitCast(r[0]),
             .opaque_list_pointer = @bitCast(r[1]),
