@@ -185,7 +185,7 @@ pub const SH4 = struct {
         qf: [4]f128,
     } = undefined,
 
-    store_queues: [2][8]u32 align(4) = undefined,
+    store_queues: [2][8]u32 align(32) = undefined,
     _operand_cache: []u8 align(4),
     p4_registers: []u8 align(4),
     utlb: []mmu.UTLBEntry,

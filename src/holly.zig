@@ -1278,7 +1278,7 @@ pub const Holly = struct {
     _allocator: std.mem.Allocator,
     _dc: *Dreamcast,
 
-    _ta_command_buffer: [16]u32 align(16) = .{0} ** 16,
+    _ta_command_buffer: [16]u32 align(32) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
     _ta_current_polygon: ?Polygon = null,
@@ -1583,17 +1583,20 @@ pub const Holly = struct {
         }
     }
 
-    pub fn write_ta_fifo_polygon_path(self: *@This(), v: []u32) void {
+    pub fn write_ta_fifo_polygon_path(self: *@This(), v: []const u32) void {
         std.debug.assert(v.len >= 8 and v.len % 8 == 0);
         std.debug.assert(self._ta_command_buffer_index % 8 == 0);
+        for (0..v.len / 8) |i|
+            self.write_ta_fifo_polygon_path_command(v[8 * i ..][0..8].*);
+    }
 
-        for (0..v.len / 8) |i| {
-            @memcpy(self._ta_command_buffer[self._ta_command_buffer_index .. self._ta_command_buffer_index + 8], v[8 * i .. 8 * (i + 1)]);
-
-            self._ta_command_buffer_index += 8;
-
-            self.handle_command();
-        }
+    pub fn write_ta_fifo_polygon_path_command(self: *@This(), v: @Vector(8, u32)) void {
+        std.debug.assert(self._ta_command_buffer_index % 8 == 0);
+        @setRuntimeSafety(false);
+        const dst: *@Vector(8, u32) = @alignCast(@ptrCast(&self._ta_command_buffer[self._ta_command_buffer_index]));
+        dst.* = v;
+        self._ta_command_buffer_index += 8;
+        self.handle_command();
     }
 
     fn ta_list_index(self: *const @This()) u4 {

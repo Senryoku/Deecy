@@ -1386,11 +1386,18 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         sh4_log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
 
         // pref is often used to send commands to the GPU, we can optimize this use case.
-        if (ext_addr >= 0x10000000 and ext_addr < 0x10800000 or ext_addr >= 0x12000000 and ext_addr < 0x12800000) {
-            if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path(&cpu.store_queues[sq_addr.sq]);
-        } else {
-            inline for (0..8) |i|
-                cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+        switch (ext_addr) {
+            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path_command(cpu.store_queues[sq_addr.sq]),
+            0x0C000000...0x0FFFFFFF => {
+                @setRuntimeSafety(false);
+                const dst: *@Vector(8, u32) = @alignCast(@ptrCast(cpu._get_memory(ext_addr)));
+                dst.* = cpu.store_queues[sq_addr.sq];
+            },
+            else => {
+                sh4_log.warn("pref: Slow store queue write back to {X:0>8}", .{ext_addr});
+                inline for (0..8) |i|
+                    cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+            },
         }
     } else {
         const static = struct {
