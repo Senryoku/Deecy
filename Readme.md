@@ -19,10 +19,10 @@ zigup 0.14.0-dev.2577+271452d22
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh
-git clone https://github.com/Senryoku/Deecy               # Clone the repo
+git clone https://github.com/Senryoku/Deecy         # Clone the repo
 cd Deecy
-zig build run                                             # Build and run in debug mode without any argument
-zig build run -Doptimize=ReleaseFast -- -g game/game.gdi  # Build and run in release mode and loads a gdi
+zig build run                                       # Build and run in debug mode without any argument
+zig build run --release=fast -- -g "path/game.gdi"  # Build and run in release mode and loads a disc
 ```
 
 You will also need to provide copies of `dc_boot.bin` and `dc_flash.bin` files in the `data/` directory.
