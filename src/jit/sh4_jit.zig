@@ -1847,7 +1847,7 @@ pub fn movw_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
     const addr = ctx.address + 4 + d;
     if (addr < 0x00200000) { // We're in ROM.
-        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read16(addr))) });
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read(u16, addr))) });
     } else { // Load from RAM and sign extend
         const offset = if (ExperimentalFastMem) 0x0C00_0000 else 0;
         try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
@@ -1862,7 +1862,7 @@ pub fn movl_atDispPC_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !b
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
     const addr = (ctx.address & 0xFFFFFFFC) + 4 + d;
     if (addr < 0x00200000) { // We're in ROM.
-        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read32(addr) });
+        try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read(u32, addr) });
     } else {
         const offset = if (ExperimentalFastMem) 0x0C00_0000 else 0;
         try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 32 } });

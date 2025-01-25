@@ -1667,11 +1667,19 @@ pub const Holly = struct {
         }
     }
 
-    pub fn bulk_write_ta(self: *@This(), addr: u32, v: []u32) void {
+    pub fn bulk_write_ta(self: *@This(), addr: u32, v: []const u32) void {
         holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => write_ta_fifo_polygon_path(self, v),
+            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
+            0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
+                // Direct Texture Path - TODO: Enforce SB_LMMODE0/SB_LMMODE1?
+                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
+                for (v, 0..) |w, idx| {
+                    @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
+                }
+            },
             else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
         }
     }

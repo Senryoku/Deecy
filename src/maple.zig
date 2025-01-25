@@ -563,7 +563,7 @@ const MaplePort = struct {
             switch (command.command) {
                 .DeviceInfoRequest => {
                     const identity = target.get_identity();
-                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
+                    dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
                     const ptr = dc.cpu._get_memory(return_addr + 4);
                     @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                 },
@@ -573,7 +573,7 @@ const MaplePort = struct {
                             std.debug.assert(command.payload_length == 1);
                             std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
+                            dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
                             const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                         },
@@ -593,15 +593,15 @@ const MaplePort = struct {
                             const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
-                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
-                                dc.cpu.write32(return_addr + 4, function_type);
+                                dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                                dc.cpu.write(u32, return_addr + 4, function_type);
                             } else {
-                                dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                             }
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
-                            dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                         },
                     }
                 },
@@ -616,11 +616,11 @@ const MaplePort = struct {
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
-                        dc.cpu.write32(return_addr + 4, function_type);
-                        dc.cpu.write32(return_addr + 8, data[3]); // Header repeating the location.
+                        dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                        dc.cpu.write(u32, return_addr + 4, function_type);
+                        dc.cpu.write(u32, return_addr + 8, data[3]); // Header repeating the location.
                     } else {
-                        dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     }
                 },
                 .BlockWrite => {
@@ -629,18 +629,18 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
                     target.block_write(function_type, partition, phase, block_num, write_data);
-                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
                 .GetLastError => {
-                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
                 else => {
                     maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command) });
-                    dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
             }
         } else {
-            dc.cpu.write32(return_addr, 0xFFFFFFFF); // "No connection"
+            dc.cpu.write(u32, return_addr, 0xFFFFFFFF); // "No connection"
         }
 
         return 2 + command.payload_length;

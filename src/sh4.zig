@@ -796,7 +796,7 @@ pub const SH4 = struct {
         if (!comptime builtin.is_test)
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
 
-        const opcode = self.read16(physical_addr);
+        const opcode = self.read(u16, physical_addr);
         const instr = Instr{ .value = opcode };
         const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
 
@@ -887,7 +887,7 @@ pub const SH4 = struct {
                         var curr_dst: i32 = @intCast(dst_addr);
                         var curr_src: i32 = @intCast(src_addr);
                         for (0..byte_len / 4) |_| {
-                            self.write32(@intCast(curr_dst), self.read32(@intCast(curr_src)));
+                            self.write(u32, @intCast(curr_dst), self.read(u32, @intCast(curr_src)));
                             curr_dst += 4 * dst_stride;
                             curr_src += 4 * src_stride;
                         }
@@ -907,7 +907,7 @@ pub const SH4 = struct {
             var curr_dst: i32 = @intCast(dst_addr);
             var curr_src: i32 = @intCast(src_addr);
             for (0..byte_len / 4) |_| {
-                self.write32(@intCast(curr_dst), self.read32(@intCast(curr_src)));
+                self.write(u32, @intCast(curr_dst), self.read(u32, @intCast(curr_src)));
                 curr_dst += 4 * dst_stride;
                 curr_src += 4 * src_stride;
             }
@@ -1364,7 +1364,7 @@ pub const SH4 = struct {
 
     const ExpSplit64bitsRW = true; // FIXME: TEMP Experiment
 
-    pub inline fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+    pub fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.read8.?(virtual_addr),
@@ -1425,15 +1425,13 @@ pub const SH4 = struct {
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 // DCA3 Hack
                 if (virtual_addr & (@as(u32, 1) << 25) != 0) {
-                    const index: u32 = (virtual_addr / 32) & 255;
-                    const offset: u32 = virtual_addr & 31;
+                    const index: u32 = (addr / 32) & 255;
+                    const offset: u32 = addr & 31;
 
                     sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
-                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
-                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-                    }
+                    if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+                        sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
 
                     return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
                 }
@@ -1446,23 +1444,7 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub inline fn read8(self: *const @This(), virtual_addr: addr_t) u8 {
-        return self.read(u8, virtual_addr);
-    }
-
-    pub inline fn read16(self: *const @This(), virtual_addr: addr_t) u16 {
-        return self.read(u16, virtual_addr);
-    }
-
-    pub inline fn read32(self: *const @This(), virtual_addr: addr_t) u32 {
-        return self.read(u32, virtual_addr);
-    }
-
-    pub inline fn read64(self: *const @This(), virtual_addr: addr_t) u64 {
-        return self.read(u64, virtual_addr);
-    }
-
-    pub inline fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    pub fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.write8.?(virtual_addr, value),
@@ -1612,15 +1594,13 @@ pub const SH4 = struct {
             0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
                 if (virtual_addr & (@as(u32, 1) << 25) != 0) {
-                    const index: u32 = (virtual_addr / 32) & 255;
-                    const offset: u32 = virtual_addr & 31;
+                    const index: u32 = (addr / 32) & 255;
+                    const offset: u32 = addr & 31;
 
                     sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
 
-                    std.debug.assert(self._operand_cache_state.addr[index] == addr & ~@as(u32, 31));
-                    if (self._operand_cache_state.addr[index] != virtual_addr & ~@as(u32, 31)) {
-                        sh4_log.warn("    Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ virtual_addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-                    }
+                    if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+                        sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
                     self._operand_cache_state.dirty[index] = true;
 
                     @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
@@ -1635,22 +1615,6 @@ pub const SH4 = struct {
         @as(*T, @alignCast(@ptrCast(
             self._get_memory(addr),
         ))).* = value;
-    }
-
-    pub inline fn write8(self: *@This(), virtual_addr: addr_t, value: u8) void {
-        self.write(u8, virtual_addr, value);
-    }
-
-    pub inline fn write16(self: *@This(), virtual_addr: addr_t, value: u16) void {
-        self.write(u16, virtual_addr, value);
-    }
-
-    pub inline fn write32(self: *@This(), virtual_addr: addr_t, value: u32) void {
-        self.write(u32, virtual_addr, value);
-    }
-
-    pub inline fn write64(self: *@This(), virtual_addr: addr_t, value: u64) void {
-        self.write(u64, virtual_addr, value);
     }
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
