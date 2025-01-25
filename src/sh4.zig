@@ -867,26 +867,39 @@ pub const SH4 = struct {
             std.debug.assert(src_stride > 0);
             std.debug.assert(transfer_size == 32); // We'll copy 32-bytes blocks
             std.debug.assert(chcr.ts == 0b100); // We'll copy 32-bytes blocks
-            // Polygon Path
-            if (dst_addr >= 0x10000000 and dst_addr < 0x10800000 or dst_addr >= 0x12000000 and dst_addr < 0x12800000) {
-                var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(src_addr)));
-                for (0..len) |_| {
-                    self._dc.?.gpu.write_ta_fifo_polygon_path(src[0..8]);
-                    src += 8;
-                }
-            }
-            // YUV Converter Path
-            if (dst_addr >= 0x10800000 and dst_addr < 0x11000000 or dst_addr >= 0x12800000 and dst_addr < 0x13000000) {
-                var src: [*]u8 = @alignCast(@ptrCast(self._get_memory(src_addr)));
-                self._dc.?.gpu.ta_fifo_yuv_converter_path(src[0..byte_len]);
-            }
-            // Direct Texture Path
-            if (dst_addr >= 0x11000000 and dst_addr < 0x12000000 or dst_addr >= 0x13000000 and dst_addr < 0x14000000) {
-                self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._get_memory(src_addr)))[0..byte_len]);
+            switch (dst_addr) {
+                // Polygon Path
+                0x10000000...0x10800000 - 1, 0x12000000...0x12800000 - 1 => {
+                    var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                    self._dc.?.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * len]);
+                },
+                // YUV Converter Path
+                0x10800000...0x11000000 - 1, 0x12800000...0x13000000 - 1 => {
+                    var src: [*]u8 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                    self._dc.?.gpu.ta_fifo_yuv_converter_path(src[0..byte_len]);
+                },
+                // Direct Texture Path
+                0x11000000...0x12000000 - 1, 0x13000000...0x14000000 - 1 => {
+                    const LMMode0 = self._dc.?.read_hw_register(u32, .SB_LMMODE0);
+                    const LMMode1 = self._dc.?.read_hw_register(u32, .SB_LMMODE1);
+                    const access_32bit = (LMMode0 == 1 and dst_addr >= 0x11000000 and dst_addr < 0x12000000) or (LMMode1 == 1 and dst_addr >= 0x13000000 and dst_addr < 0x14000000);
+                    if (access_32bit) {
+                        var curr_dst: i32 = @intCast(dst_addr);
+                        var curr_src: i32 = @intCast(src_addr);
+                        for (0..byte_len / 4) |_| {
+                            self.write32(@intCast(curr_dst), self.read32(@intCast(curr_src)));
+                            curr_dst += 4 * dst_stride;
+                            curr_src += 4 * src_stride;
+                        }
+                    } else {
+                        self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._get_memory(src_addr)))[0..byte_len]);
+                    }
+                },
+                else => unreachable,
             }
         } else if (is_memcpy_safe) {
             std.debug.assert(dst_stride == src_stride);
-            // FIXME: When can we safely memset?
+            // FIXME: When can we safely memcpy?
             const src = @as([*]u8, @ptrCast(self._get_memory(src_addr)));
             const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)));
             @memcpy(dst[0..byte_len], src[0..byte_len]);
@@ -954,40 +967,20 @@ pub const SH4 = struct {
         //       Empirically tested on interpreter_perf (i.e. 200_000_000 first 'ticks' of Sonic Adventure and the Boot ROM).
         //       The compiler seems to like really having equal length ranges (and also easily maskable, I guess)!
         switch (addr) {
-            0x0C000000...0x0FFFFFFF => { // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times, I think.
-                return &dc.ram[addr & 0x00FFFFFF];
-            },
-            0x04000000...0x07FFFFFF => {
-                return dc.gpu._get_vram(addr);
-            },
-
+            // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times.
+            0x0C000000...0x0FFFFFFF => return &dc.ram[addr & 0x00FFFFFF],
+            // Area 1 - 64bit path
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => return &dc.gpu.vram[addr & (Dreamcast.VRAMSize - 1)],
             0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-                // NOTE: I think 0x02000000-0x03FFFFFF is a mirror of 0x00000000-0x01FFFFFF
-                //       0x03000000-0x03FFFFFF is definitely a mirror of 0x01000000-0x01FFFFFF
-                //       See page 232 of DreamcastDevBoxSystemArchitecture.pdf for the peripheral registers.
                 const area_0_addr = addr & 0x01FFFFFF;
                 switch (area_0_addr) {
-                    0x00000000...0x001FFFFF => {
-                        return &dc.boot[area_0_addr];
-                    },
-                    0x00200000...0x0021FFFF => {
-                        return &dc.flash.data[area_0_addr - 0x200000];
-                    },
-                    0x005F6800...0x005F6FFF => {
-                        return dc.hw_register_addr(u8, area_0_addr);
-                    },
-                    0x005F7000...0x005F709C => {
-                        @panic("_get_memory to GDROM Register. This should be handled in read/write functions.");
-                    },
-                    0x005F709D...0x005F7FFF => {
-                        return dc.hw_register_addr(u8, area_0_addr);
-                    },
-                    0x005F8000...0x005F9FFF => {
-                        return dc.gpu._get_register_from_addr(u8, area_0_addr);
-                    },
-                    0x005FA000...0x005FFFFF => {
-                        return dc.hw_register_addr(u8, area_0_addr);
-                    },
+                    0x00000000...0x001FFFFF => return &dc.boot[area_0_addr],
+                    0x00200000...0x0021FFFF => return &dc.flash.data[area_0_addr - 0x200000],
+                    0x005F6800...0x005F6FFF => return dc.hw_register_addr(u8, area_0_addr),
+                    0x005F7000...0x005F709C => @panic("_get_memory to GDROM Register. This should be handled in read/write functions."),
+                    0x005F709D...0x005F7FFF => return dc.hw_register_addr(u8, area_0_addr),
+                    0x005F8000...0x005F9FFF => return dc.gpu._get_register_from_addr(u8, area_0_addr),
+                    0x005FA000...0x005FFFFF => return dc.hw_register_addr(u8, area_0_addr),
                     0x00600000...0x006007FF => {
                         const static = struct {
                             var once = false;
@@ -999,19 +992,13 @@ pub const SH4 = struct {
                         dc._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&dc._dummy);
                     },
-                    0x00700000...0x00707FFF => { // G2 AICA Register
-                        @panic("_get_memory to AICA Register. This should be handled in read/write functions.");
-                    },
-                    0x00710000...0x00710008 => { // G2 AICA RTC Registers
-                        @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions.");
-                    },
-                    0x00800000...0x009FFFFF => { // G2 Wave Memory
+                    // G2 AICA Register
+                    0x00700000...0x00707FFF => @panic("_get_memory to AICA Register. This should be handled in read/write functions."),
+                    // G2 AICA RTC Registers
+                    0x00710000...0x00710008 => @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions."),
+                    0x00800000...0x009FFFFF, 0x02800000...0x029FFFFF => { // G2 Wave Memory and Mirror
                         sh4_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
-                        return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x00800000]);
-                    },
-                    0x02800000...0x029FFFFF => { // G2 Wave Memory - Mirror
-                        sh4_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
-                        return @ptrCast(&dc.aica.wave_memory[area_0_addr - 0x02800000]);
+                        return @ptrCast(&dc.aica.wave_memory[area_0_addr & (dc.aica.wave_memory.len - 1)]);
                     },
                     0x01000000...0x01FFFFFF => { // Expansion Devices
                         sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
@@ -1375,6 +1362,8 @@ pub const SH4 = struct {
         }
     }
 
+    const ExpSplit64bitsRW = true; // FIXME: TEMP Experiment
+
     pub inline fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
@@ -1420,6 +1409,18 @@ pub const SH4 = struct {
             },
             0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
                 return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
+            },
+            // Area 1 - 64bit access
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
+                return @as(*T, @alignCast(@ptrCast(&self._dc.?.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
+            },
+            // Area 1 - 32bit access
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                if (T == u64 and ExpSplit64bitsRW) {
+                    sh4_log.warn("Read(64) from 0x{X:0>8}", .{virtual_addr});
+                    return @as(u64, self.read(u32, virtual_addr + 4)) << 32 | self.read(u32, virtual_addr);
+                }
+                return self._dc.?.gpu.read_vram(T, addr);
             },
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 // DCA3 Hack
@@ -1482,6 +1483,11 @@ pub const SH4 = struct {
 
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
+            0x00200000...0x0021FFFF => {
+                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
+                self._dc.?.flash.write(addr & 0x1FFFF, value);
+                return;
+            },
             0x005F6800...0x005F7FFF => {
                 const reg: HardwareRegister = @enumFromInt(addr);
                 if (addr >= 0x005F7000 and addr <= 0x005F709C) {
@@ -1566,11 +1572,6 @@ pub const SH4 = struct {
                 }
                 return;
             },
-            0x00200000...0x0021FFFF => {
-                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
-                self._dc.?.flash.write(addr & 0x1FFFF, value);
-                return;
-            },
             0x005F8000...0x005F9FFF => {
                 if (T == u64) {
                     // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
@@ -1592,10 +1593,20 @@ pub const SH4 = struct {
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
                 return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
             },
-            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value);
+            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value),
+            // Area 1 - 64bit access
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
+                @as(*T, @alignCast(@ptrCast(&self._dc.?.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
+                return;
             },
-            0x04000000...0x07FFFFFF => {
+            // Area 1 - 32bit access
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                if (T == u64 and ExpSplit64bitsRW) {
+                    sh4_log.warn("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ virtual_addr, value });
+                    self.write(u32, virtual_addr, @truncate(value));
+                    self.write(u32, virtual_addr + 4, @truncate(value >> 32));
+                    return;
+                }
                 return self._dc.?.gpu.write_vram(T, addr, value);
             },
             0x10000000...0x13FFFFFF => {

@@ -1389,10 +1389,15 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         switch (ext_addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path_command(cpu.store_queues[sq_addr.sq]),
             // AICA Memory           System RAM               Texture Memory
-            0x00800000...0x009FFFFF, 0x0C000000...0x0FFFFFFF, 0x05000000...0x057FFFFF => {
+            0x00800000...0x009FFFFF, 0x0C000000...0x0FFFFFFF, 0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
                 @setRuntimeSafety(false);
                 const dst: *@Vector(8, u32) = @alignCast(@ptrCast(cpu._get_memory(ext_addr)));
                 dst.* = cpu.store_queues[sq_addr.sq];
+            },
+            // Texture memory, 32bit path
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                inline for (0..8) |i|
+                    cpu._dc.?.gpu.write_vram(u32, @intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             },
             else => {
                 sh4_log.warn("pref: Slow store queue write back to {X:0>8}", .{ext_addr});

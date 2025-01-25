@@ -1438,15 +1438,15 @@ pub const Renderer = struct {
         const header_type = dc.gpu.get_region_header_type();
         var ra_idx: usize = 0;
         var ra = dc.gpu.get_region_array_data_config(ra_idx);
-        if (header_type == 0) std.debug.print("[{d}] ({d}) {any:0}\n", .{ header_type, ra_idx, ra }) else std.debug.print("[{d}] ({d}) {any:1}\n", .{ header_type, ra_idx, ra });
+        if (header_type == 0) renderer_log.info("[{d}] ({d}) {any:0}", .{ header_type, ra_idx, ra }) else renderer_log.info("[{d}] ({d}) {any:1}", .{ header_type, ra_idx, ra });
         self.render_passes[0] = .{ .z_clear = ra.settings.z_clear, .pre_sort = ra.settings.pre_sort };
 
         while (ra_idx < 8 and !ra.settings.last_region) {
             ra_idx += 1;
             ra = dc.gpu.get_region_array_data_config(ra_idx);
-            if (header_type == 0) std.debug.print("[{d}] ({d}) {any:0}\n", .{ header_type, ra_idx, ra }) else std.debug.print("[{d}] ({d}) {any:1}\n", .{ header_type, ra_idx, ra });
+            if (header_type == 0) renderer_log.info("[{d}] ({d}) {any:0}", .{ header_type, ra_idx, ra }) else renderer_log.info("[{d}] ({d}) {any:1}", .{ header_type, ra_idx, ra });
         }
-        std.debug.print("\n", .{});
+        renderer_log.info("", .{});
 
         // Clear the previous used TA lists and swap it with the one submitted by the game.
         // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
@@ -1715,34 +1715,46 @@ pub const Renderer = struct {
             const addr = (if (interlaced and (y % 2) == 1) FB_R_SOF2 else FB_R_SOF1) + line_in_field * (line_size + line_padding);
             for (0..x_size) |x| {
                 const pixel_idx = x_size * y + x;
-                const pixel_addr = addr + bytes_per_pixels * x;
+                const pixel_addr: u32 = @intCast(addr + bytes_per_pixels * x);
                 switch (FB_R_CTRL.format) {
                     0x0 => { // 0555 RGB 16 bit
-                        const pixel = std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
+                        const pixel = holly.read_vram(Color16, pixel_addr); //std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.argb1555.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.argb1555.g) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.argb1555.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x1 => { // 565 RGB
-                        const pixel = std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
+                        const pixel = holly.read_vram(Color16, pixel_addr); //std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x2 => { // 888 RGB 24 bit packed
-                        const pixel = vram[pixel_addr .. pixel_addr + 3];
-                        self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
-                        self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                        self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
+                        if (true) {
+                            self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 2);
+                            self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
+                            self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 0);
+                        } else {
+                            const pixel = vram[pixel_addr .. pixel_addr + 3];
+                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
+                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
+                        }
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x3 => { // 0888 RGB 32 bit
-                        const pixel = vram[pixel_addr .. pixel_addr + 3];
-                        self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
-                        self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                        self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
+                        if (true) {
+                            self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 0);
+                            self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
+                            self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 2);
+                        } else {
+                            const pixel = vram[pixel_addr .. pixel_addr + 3];
+                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
+                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
+                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
+                        }
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                 }
@@ -1768,9 +1780,9 @@ pub const Renderer = struct {
         const tags = gpu.read_register(HollyModule.ISP_BACKGND_T, .ISP_BACKGND_T);
         const param_base: u32 = self.on_render_start_param_base;
         const addr = param_base + 4 * @as(u32, tags.tag_address);
-        const isp_tsp_instruction = std.mem.bytesAsValue(HollyModule.ISPTSPInstructionWord, gpu.vram[addr..]);
-        const tsp_instruction = std.mem.bytesAsValue(HollyModule.TSPInstructionWord, gpu.vram[addr + 4 ..]).*;
-        const texture_control = std.mem.bytesAsValue(HollyModule.TextureControlWord, gpu.vram[addr + 8 ..]).*;
+        const isp_tsp_instruction = gpu.read_vram(HollyModule.ISPTSPInstructionWord, addr);
+        const tsp_instruction = gpu.read_vram(HollyModule.TSPInstructionWord, addr + 4);
+        const texture_control = gpu.read_vram(HollyModule.TextureControlWord, addr + 8);
         const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
 
         // FIXME: I don't understand. In the boot menu for example, this depth value is 0.0,
@@ -1830,7 +1842,15 @@ pub const Renderer = struct {
         };
 
         for (0..3) |i| {
-            const vp = @as([*]const u32, @alignCast(@ptrCast(&gpu.vram[start + i * vertex_byte_size])));
+            const vp = [_]u32{
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 0)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 4)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 8)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 12)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 16)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 20)),
+                gpu.read_vram(u32, @intCast(start + i * vertex_byte_size + 24)),
+            };
             var u: f32 = 0;
             var v: f32 = 0;
             var base_color: PackedColor = @bitCast(vp[3]);

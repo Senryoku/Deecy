@@ -635,7 +635,7 @@ const MaplePort = struct {
                     dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
                 else => {
-                    maple_log.warn(termcolor.yellow("Unimplemented command: {}"), .{command.command});
+                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command) });
                     dc.cpu.write32(return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                 },
             }

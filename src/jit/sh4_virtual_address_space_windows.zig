@@ -65,10 +65,10 @@ fn try_mapping(self: *@This()) !void {
             try self.mirror(self.aram, base + 0x0080_0000 + i * Dreamcast.ARAMSize);
         try self.forbid(base + 0x0100_0000, base + 0x0400_0000);
 
-        try self.mirror(self.vram, base + 0x0400_0000);
-        try self.forbid(base + 0x0500_0000, base + 0x0600_0000);
-        try self.mirror(self.vram, base + 0x0600_0000);
-        try self.forbid(base + 0x0700_0000, base + 0x0C00_0000);
+        try self.mirror(self.vram, base + 0x0400_0000); // 64-bit path
+        try self.forbid(base + 0x0500_0000, base + 0x0600_0000); // 32-bit path
+        try self.mirror(self.vram, base + 0x0600_0000); // 64-bit path mirror
+        try self.forbid(base + 0x0700_0000, base + 0x0C00_0000); // 32-bit path mirror and more
 
         for (0..(0x1000_0000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
             try self.mirror(self.ram, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
