@@ -675,8 +675,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const FB_X_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_X_CLIP).*;
         const FB_Y_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_Y_CLIP).*;
         const VO_CONTROL = dc.gpu._get_register(Holly.VO_CONTROL, .VO_CONTROL).*;
-        const FPU_PARAM_CFG = dc.gpu._get_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG).*;
-        const TA_ALLOC_CTRL = dc.gpu._get_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*;
         zgui.text("FB_C_SOF:  0x{X:0>8}", .{FB_C_SOF});
         zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
         zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
@@ -689,8 +687,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
         zgui.text("FB_R_SIZE: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
         zgui.text("VO_CONTROL: {any}", .{VO_CONTROL});
-        zgui.text("FPU_PARAM_CFG: {any}", .{FPU_PARAM_CFG});
-        zgui.text("TA_ALLOC_CTRL: {any}", .{TA_ALLOC_CTRL});
+        if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = true }))
+            display(dc.gpu._get_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG).*);
+        if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = true }))
+            display(dc.gpu._get_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*);
 
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});

@@ -1436,17 +1436,18 @@ pub const Renderer = struct {
         self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
         const header_type = dc.gpu.get_region_header_type();
-        var ra_idx: usize = 0;
-        var ra = dc.gpu.get_region_array_data_config(ra_idx);
-        if (header_type == 0) renderer_log.info("[{d}] ({d}) {any:0}", .{ header_type, ra_idx, ra }) else renderer_log.info("[{d}] ({d}) {any:1}", .{ header_type, ra_idx, ra });
+        var region_array_idx: usize = 0;
+        var ra = dc.gpu.get_region_array_data_config(region_array_idx);
+        if (header_type == 0) renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, ra }) else renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, ra });
+
         self.render_passes[0] = .{ .z_clear = ra.settings.z_clear, .pre_sort = ra.settings.pre_sort };
 
-        while (ra_idx < 8 and !ra.settings.last_region) {
-            ra_idx += 1;
-            ra = dc.gpu.get_region_array_data_config(ra_idx);
-            if (header_type == 0) renderer_log.info("[{d}] ({d}) {any:0}", .{ header_type, ra_idx, ra }) else renderer_log.info("[{d}] ({d}) {any:1}", .{ header_type, ra_idx, ra });
+        while (region_array_idx < 8 and !ra.settings.last_region) {
+            region_array_idx += 1;
+            ra = dc.gpu.get_region_array_data_config(region_array_idx);
+            if (header_type == 0) renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, ra }) else renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, ra });
         }
-        renderer_log.info("", .{});
+        renderer_log.debug("", .{});
 
         // Clear the previous used TA lists and swap it with the one submitted by the game.
         // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without

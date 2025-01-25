@@ -266,7 +266,7 @@ pub const FPU_PARAM_CFG = packed struct(u32) {
     pointer_burst_size: u4,
     isp_parameter_burst_trigger_threshold: u6,
     tsp_parameter_burst_trigger_threshold: u6,
-    r: u1,
+    _r: u1,
     region_header_type: u1,
     // 0: 5 × 32bit/Tile Type 1 (default)
     //   The Translucent polygon sort mode is specified by the
@@ -415,7 +415,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         empty: bool,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            try writer.print("{s}{X:<8}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
+            try writer.print("{s}{X:<6}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
         }
     };
 
@@ -1375,7 +1375,6 @@ pub const Holly = struct {
     _ta_user_tile_clip: ?UserTileClipInfo = null,
     _ta_current_volume: ?ModifierVolume = null,
     _ta_volume_next_polygon_is_last: bool = false,
-    _ta_opb_index: u32 = 0,
 
     // When starting a render, the user can select where to get the parameters from using
     // the PARAM_BASE register. It is specified in 1MB blocks, meaning it can take at most
@@ -1605,7 +1604,6 @@ pub const Holly = struct {
             },
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
-                    holly_log.debug("TA_LIST_INIT: {X:0>8}", .{v});
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1614,8 +1612,7 @@ pub const Holly = struct {
                     self._get_register(u32, .TA_NEXT_OPB).* = self.read_register(u32, .TA_NEXT_OPB_INIT);
                     self._get_register(u32, .TA_ITP_CURRENT).* = self.read_register(u32, .TA_ISP_BASE);
 
-                    self._ta_opb_index = self.read_register(u32, .TA_NEXT_OPB_INIT);
-                    holly_log.info("TA_LIST_INIT: PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
+                    holly_log.debug("TA_LIST_INIT: PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
                         self.read_register(u32, .PARAM_BASE),
                         self.read_register(u32, .TA_OL_BASE),
                         self.read_register(u32, .TA_ISP_BASE),
@@ -1628,7 +1625,7 @@ pub const Holly = struct {
             },
             .TA_LIST_CONT => {
                 holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
-                // TODO: Same thing as TA_LIST_INIT, but without reseting the list?
+                // TODO: Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers?
                 if (v == 0x80000000) {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
@@ -1705,6 +1702,12 @@ pub const Holly = struct {
         return &self._ta_lists[self.ta_list_index()];
     }
 
+    fn start_list(self: *@This(), list_type: ListType) void {
+        self._ta_list_type = list_type;
+        holly_log.debug("Starting List {s} - TA_NEXT_OPB: {X:0>6}", .{ @tagName(list_type), self._get_register(u32, .TA_NEXT_OPB).* });
+        self.ta_current_lists().check_reset();
+    }
+
     pub fn handle_command(self: *@This()) void {
         if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 bytes long
 
@@ -1733,9 +1736,10 @@ pub const Holly = struct {
                         },
                     }, 800);
 
+                    // NOTE: Probably not actually usefull, more of a debugging tool for now.
                     const global_tile_clip = self.read_register(TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
                     const alloc_ctrl = self.read_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL);
-                    self._ta_opb_index += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
+                    self._get_register(u32, .TA_NEXT_OPB).* += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
                         .Opaque => alloc_ctrl.O_OPB.byteSize(),
                         .OpaqueModifierVolume => alloc_ctrl.OM_OPB.byteSize(),
                         .Translucent => alloc_ctrl.T_OPB.byteSize(),
@@ -1761,16 +1765,9 @@ pub const Holly = struct {
             .ObjectListSet => holly_log.err(termcolor.red("Unhandled ObjectListSet"), .{}),
             // Global Parameters
             .PolygonOrModifierVolume => {
-                if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.list_type;
+                if (self._ta_list_type == null)
+                    self.start_list(parameter_control_word.list_type);
 
-                    holly_log.info("Starting List {s} - OPB addr: {X:0>8}", .{
-                        @tagName(parameter_control_word.list_type),
-                        self._ta_opb_index,
-                    });
-
-                    self.ta_current_lists().check_reset();
-                }
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
                 // if (self._ta_list_type != parameter_control_word.list_type) {
@@ -1820,10 +1817,8 @@ pub const Holly = struct {
                 }
             },
             .SpriteList => {
-                if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_current_lists().check_reset();
-                }
+                if (self._ta_list_type == null)
+                    self.start_list(parameter_control_word.list_type);
 
                 if (parameter_control_word.group_control.en == 1) {
                     if (self._ta_user_tile_clip) |*uc| {
