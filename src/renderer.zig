@@ -1437,15 +1437,21 @@ pub const Renderer = struct {
 
         const header_type = dc.gpu.get_region_header_type();
         var region_array_idx: usize = 0;
-        var ra = dc.gpu.get_region_array_data_config(region_array_idx);
-        if (header_type == 0) renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, ra }) else renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, ra });
+        var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+        switch (header_type) {
+            .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
+            .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
+        }
 
-        self.render_passes[0] = .{ .z_clear = ra.settings.z_clear, .pre_sort = ra.settings.pre_sort };
+        self.render_passes[0] = .{ .z_clear = region_config.settings.z_clear, .pre_sort = region_config.settings.pre_sort };
 
-        while (region_array_idx < 8 and !ra.settings.last_region) {
+        while (region_array_idx < 8 and !region_config.settings.last_region) {
             region_array_idx += 1;
-            ra = dc.gpu.get_region_array_data_config(region_array_idx);
-            if (header_type == 0) renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, ra }) else renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, ra });
+            region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+            switch (header_type) {
+                .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
+                .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
+            }
         }
         renderer_log.debug("", .{});
 

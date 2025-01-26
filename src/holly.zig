@@ -262,12 +262,23 @@ pub const FPU_SHAD_SCALE = packed struct(u32) {
 };
 
 pub const FPU_PARAM_CFG = packed struct(u32) {
+    const RegionHeaderType = enum(u1) {
+        Type1 = 0,
+        Type2 = 1,
+        pub fn word_size(self: @This()) u32 {
+            return switch (self) {
+                .Type1 => 5,
+                .Type2 => 6,
+            };
+        }
+    };
+
     pointer_first_burst_size: u4,
     pointer_burst_size: u4,
     isp_parameter_burst_trigger_threshold: u6,
     tsp_parameter_burst_trigger_threshold: u6,
     _r: u1,
-    region_header_type: u1,
+    region_header_type: RegionHeaderType,
     // 0: 5 × 32bit/Tile Type 1 (default)
     //   The Translucent polygon sort mode is specified by the
     //   ISP_FEED_CFG register.
@@ -2045,25 +2056,24 @@ pub const Holly = struct {
         return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
-    pub inline fn get_region_header_type(self: *const @This()) u1 {
+    pub inline fn get_region_header_type(self: *const @This()) FPU_PARAM_CFG.RegionHeaderType {
         return self.read_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type;
     }
 
     pub inline fn get_region_array_data_config(self: *const @This(), idx: usize) RegionArrayDataConfiguration {
         const region_base = self.read_register(u32, .REGION_BASE);
         // Should we skip the first one when it's empty?
-        // var first_valid = false;
-        // for (1..if (self.get_region_header_type() == 0) 5 else 6) |pointer_idx| {
-        //     if (!self.read_vram(RegionArrayDataConfiguration.ListPointer, region_base + i * 4)).empty) {
-        //         first_valid = true;
-        //         break;
-        //     }
-        // }
-        const stride: u32 = if (self.get_region_header_type() == 0) 4 * 5 else @sizeOf(RegionArrayDataConfiguration);
-        // const offset = if (first_valid) 0 else stride;
+        var first_valid = false;
+        for (1..self.get_region_header_type().word_size()) |pointer_idx| {
+            if (!self.read_vram(RegionArrayDataConfiguration.ListPointer, @intCast(region_base + pointer_idx * 4)).empty) {
+                first_valid = true;
+                break;
+            }
+        }
+        const stride: u32 = 4 * self.get_region_header_type().word_size();
+        const offset = if (first_valid) 0 else stride;
 
-        const region_addr: u32 = @intCast(region_base + idx * stride);
-        // const region_addr: u32 = @intCast(region_base + offset + idx * stride);
+        const region_addr: u32 = @intCast(region_base + offset + idx * stride);
         return .{
             .settings = @bitCast(self.read_vram(u32, region_addr + 0 * 4)),
             .opaque_list_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 1 * 4),
