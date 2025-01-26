@@ -22,8 +22,10 @@ pub const HollyRegister = enum(u32) {
     STARTRENDER = 0x005F8014,
     TEST_SELECT = 0x005F8018,
 
+    /// Base address for ISP parameters
     PARAM_BASE = 0x005F8020,
 
+    /// Base address for Region Array
     REGION_BASE = 0x005F802C,
     SPAN_SOFT_CFG = 0x005F8030,
 
@@ -31,11 +33,17 @@ pub const HollyRegister = enum(u32) {
     FB_R_CTRL = 0x005F8044,
     FB_W_CTRL = 0x005F8048,
     FB_W_LINESTRIDE = 0x005F804C,
+    /// Starting address, in 32-bit units, for reads from the field-1 frame buffer. (default = 0x000000)
     FB_R_SOF1 = 0x005F8050,
+    /// Starting address, in 32-bit units, for reads from the field-2 frame buffer. (default = 0x000000)
     FB_R_SOF2 = 0x005F8054,
 
     FB_R_SIZE = 0x005F805C,
+    /// Specifies, in 32-bit units, the starting address for writes to the field-1 or strip-1 frame buffer. (default = 0x000000)
+    /// In the texture map, 0x00000000 to 0x0FFFFFFC is a 32-bit access area and 0x10000000 to 0x1FFFFFFC is a 64-bit access area.
     FB_W_SOF1 = 0x005F8060,
+    /// Specifies, in 32-bit units, the starting address for writes to the field-1 or strip-2 frame buffer. (default = 0x000000)
+    /// In the texture map, 0x00000000 to 0x0FFFFFFC is a 32-bit access area (frame/strip buffer) and 0x10000000 to 0x1FFFFFFC is a 64-bit access area.
     FB_W_SOF2 = 0x005F8064,
     FB_X_CLIP = 0x005F8068,
     FB_Y_CLIP = 0x005F806C,
@@ -77,15 +85,22 @@ pub const HollyRegister = enum(u32) {
     PAL_RAM_CTRL = 0x005F8108,
     SPG_STATUS = 0x005F810C,
     FB_BURSTCTRL = 0x005F8110,
-    FB_C_SOF = 0x005F8114, // Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
+    /// Specify the starting address, in 32-bit units, for the frame that is currently being sent to the DAC.
+    FB_C_SOF = 0x005F8114,
     Y_COEFF = 0x005F8118,
     PT_ALPHA_REF = 0x005F811C,
 
+    /// Specifies (in 8 x 32-bit units) the starting address for storing Object Lists as a relative address, assuming the start of texture memory (32-bit area) as "0." (default = 0x0 0000)
     TA_OL_BASE = 0x005F8124,
+    /// Specifies (in 32-bit units) the starting address for storing the ISP/TSP Parameters as a relative address, assuming the start of texture memory (32-bit area) as "0." (default = 0x00 0000)
     TA_ISP_BASE = 0x005F8128,
+    /// Specifies (in 8 x 32-bit units) the limit address for storing Object Lists as a relative address, assuming the start of texture memory (32-bit area) as "0." (default = 0x0 0000)
     TA_OL_LIMIT = 0x005F812C,
+    /// Specifies (in 32-bit units) the limit address for storing ISP/TSP Parameters as a relative address, assuming the start of texture memory (32-bit area) as "0." (default = 0x0 0000)
     TA_ISP_LIMIT = 0x005F8130,
+    /// Indicates (in 8 x 32-bit units) the starting address for the Object Pointer Block that the TA will use next as a relative address, assuming the start of texture memory (32-bit area) as "0."
     TA_NEXT_OPB = 0x005F8134,
+    /// Indicates (in 8 x 32-bit units) the starting address for the Object Pointer Block that the TA will use next as a relative address, assuming the start of texture memory (32-bit area) as "0."
     TA_ITP_CURRENT = 0x005F8138,
     TA_GLOB_TILE_CLIP = 0x005F813C,
     TA_ALLOC_CTRL = 0x005F8140,
@@ -193,7 +208,7 @@ pub const ISP_BACKGND_T = packed struct(u32) {
 
 pub const ISP_FEED_CFG = packed struct(u32) {
     presort_mode: bool, // This field specifies the Translucent polygon sort mode. Only valid when the region header type bit (bit 21) in the FPU_PARAM_CFG register is "0".
-    r: u2,
+    _r: u2,
     discard_mode: bool, // This field specifies whether to perform discard processing or not when processing Punch Through polygons and Translucent polygons.
     punchthrough_chunk_size: u10,
     cache_size_for_translucency: u10,
@@ -247,12 +262,23 @@ pub const FPU_SHAD_SCALE = packed struct(u32) {
 };
 
 pub const FPU_PARAM_CFG = packed struct(u32) {
+    const RegionHeaderType = enum(u1) {
+        Type1 = 0,
+        Type2 = 1,
+        pub fn word_size(self: @This()) u32 {
+            return switch (self) {
+                .Type1 => 5,
+                .Type2 => 6,
+            };
+        }
+    };
+
     pointer_first_burst_size: u4,
     pointer_burst_size: u4,
     isp_parameter_burst_trigger_threshold: u6,
     tsp_parameter_burst_trigger_threshold: u6,
-    r: u1,
-    region_header_type: u1,
+    _r: u1,
+    region_header_type: RegionHeaderType,
     // 0: 5 × 32bit/Tile Type 1 (default)
     //   The Translucent polygon sort mode is specified by the
     //   ISP_FEED_CFG register.
@@ -327,19 +353,58 @@ pub const VO_CONTROL = packed struct(u32) {
     _r1: u10,
 };
 
+pub const TA_GLOB_TILE_CLIP = packed struct(u32) {
+    /// This field specifies the Tile number in the X direction (0 to 39) for the lower right corner of the Global Tile Clip. (default = 0x00) Set [the number of Tiles in the X direction in the valid area] - 1. "40" (0x28) through "63" (0x3F) must not be specified.
+    tile_x_num: u6,
+    _0: u10,
+    /// This field specifies the Tile number in the Y direction (0 to 14) for the lower right corner of the Global Tile Clip. (default = 0x0) Set [the number of Tiles in the Y direction in the valid area] - 1. "15" (0xF) must not be specified.
+    tile_y_num: u6,
+    _1: u10,
+};
+
+/// This register must be set before the lists are initialized through the TA_LIST_INIT register.
 pub const TA_ALLOC_CTRL = packed struct(u32) {
-    O_OPB: u2,
+    /// These fields specify the Object Pointer Block unit size for each type of list (Opaque, etc.).
+    /// Specify "No List" for a list that is not used in the screen. For the Pointer Burst Size value
+    /// in the FPU_PARAM_CFG register, set a value that is less than or equal to the Object Pointer Block size specified here.
+    const UnitSize = enum(u2) {
+        NoList = 0,
+        _8x32 = 1,
+        _16x32 = 2,
+        _32x32 = 3,
+
+        pub fn byteSize(self: @This()) u32 {
+            return switch (self) {
+                .NoList => 0,
+                ._8x32 => 8,
+                ._16x32 => 16,
+                ._32x32 => 32,
+            };
+        }
+    };
+
+    /// This field specifies the unit size of an Object Pointer Block for an Opaque list.
+    O_OPB: UnitSize,
     _r0: u2,
-    OM_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for an Opaque Modifier Volume list.
+    OM_OPB: UnitSize,
     _r1: u2,
-    T_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for a Translucent list.
+    T_OPB: UnitSize,
     _r2: u2,
-    TM_OPB: u2,
+    /// This field specifies the unit size of an Object Pointer Block for a Translucent Modifier Volume list.
+    TM_OPB: UnitSize,
     _r3: u2,
-    PT_OPB: u2,
+    /// This field specifies the unit size for the Object Pointer Block of the Punch Through list.
+    PT_OPB: UnitSize,
     _r4: u2,
-    OPB_Mode: u1,
-    _r5: u15,
+    /// This field specifies the address direction when storing the next Object Pointer Block (OPB) in texture memory,
+    /// in the event that the specified Object Pointer Block size has been exceeded.
+    OPB_Mode: enum(u1) {
+        Increasing = 0,
+        Decreasing = 1,
+    },
+    _r5: u11,
 };
 
 pub const TA_YUV_TEX_CTRL = packed struct(u32) {
@@ -359,6 +424,10 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         pointer_to_object_list: u22,
         _1: u7 = 0,
         empty: bool,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("{s}{X:<6}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
+        }
     };
 
     settings: packed struct(u32) {
@@ -366,16 +435,44 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         tile_x_position: u6,
         tile_y_position: u6,
         _r1: u14,
-        flush_accumulate: u1,
-        pre_sort: u1, // Forced 0 for Type 1
-        z_clear: u1,
-        last_region: u1,
+        flush_accumulate: bool,
+        pre_sort: bool, // Forced 0 for Type 1
+        z_clear: bool,
+        last_region: bool,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("X:{d:<2} Y:{d:<2} {s}Flush-Accumulate\u{001b}[0m {s}Pre-Sort\u{001b}[0m {s}Z-Clear\u{001b}[0m {s}Last Region\u{001b}[0m", .{
+                self.tile_x_position,
+                self.tile_y_position,
+                termcolor.colored_bool(self.flush_accumulate),
+                termcolor.colored_bool(self.pre_sort),
+                termcolor.colored_bool(self.z_clear),
+                termcolor.colored_bool(self.last_region),
+            });
+        }
     },
     opaque_list_pointer: ListPointer,
     opaque_modifier_volume_pointer: ListPointer,
     translucent_list_pointer: ListPointer,
     translucent_modifier_volume_pointer: ListPointer,
     punch_through_list_pointer: ListPointer, // Absent for Type 1
+
+    pub fn format(self: @This(), comptime _: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
+        if (opt.width == 0) {
+            try writer.print("{any}", .{self.settings});
+            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
+            try writer.print(" | Opaque MV: {any}", .{self.opaque_modifier_volume_pointer});
+            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
+            try writer.print(" | Translucent MV: {any}", .{self.translucent_modifier_volume_pointer});
+        } else {
+            try writer.print("{any}", .{self.settings});
+            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
+            try writer.print(" | Opaque MV: {any}", .{self.opaque_modifier_volume_pointer});
+            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
+            try writer.print(" | Translucent MV: {any}", .{self.translucent_modifier_volume_pointer});
+            try writer.print(" | PunchThrough: {any}", .{self.punch_through_list_pointer});
+        }
+    }
 };
 
 pub const ParameterType = enum(u3) {
@@ -1170,6 +1267,9 @@ pub const DisplayList = struct {
     vertex_parameters: std.ArrayList(VertexParameter),
     next_first_vertex_parameters_index: usize = 0,
 
+    zclear: bool = true,
+    presort: bool = false,
+
     pub fn init(allocator: std.mem.Allocator) DisplayList {
         return .{
             .vertex_strips = std.ArrayList(VertexStrip).init(allocator),
@@ -1268,6 +1368,7 @@ pub const TALists = struct {
 
 pub const Holly = struct {
     pub const VRAMSize = 8 * 1024 * 1024;
+    pub const VRAMMask = VRAMSize - 1;
     pub const RegistersSize = 0x2000;
 
     vram: []align(32) u8, // Not owned.
@@ -1514,7 +1615,6 @@ pub const Holly = struct {
             },
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
-                    holly_log.debug("TA_LIST_INIT: {X:0>8}", .{v});
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1523,13 +1623,20 @@ pub const Holly = struct {
                     self._get_register(u32, .TA_NEXT_OPB).* = self.read_register(u32, .TA_NEXT_OPB_INIT);
                     self._get_register(u32, .TA_ITP_CURRENT).* = self.read_register(u32, .TA_ISP_BASE);
 
+                    holly_log.debug("TA_LIST_INIT: PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
+                        self.read_register(u32, .PARAM_BASE),
+                        self.read_register(u32, .TA_OL_BASE),
+                        self.read_register(u32, .TA_ISP_BASE),
+                        self.read_register(u32, .TA_NEXT_OPB_INIT),
+                    });
+
                     self.ta_current_lists().mark_reset();
                 }
                 return;
             },
             .TA_LIST_CONT => {
                 holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
-                // TODO: Same thing as TA_LIST_INIT, but without reseting the list?
+                // TODO: Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers?
                 if (v == 0x80000000) {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
@@ -1550,35 +1657,33 @@ pub const Holly = struct {
         self._get_register_from_addr(u32, addr).* = v;
     }
 
-    // Write to the Tile Accelerator
-    pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
-        holly_log.debug("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
+    /// Write to the Tile Accelerator
+    pub fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
+        holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
-            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => {
-                // Commands
-                self._ta_command_buffer[self._ta_command_buffer_index] = v;
-                self._ta_command_buffer_index += 1;
-                self.handle_command();
+            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (v.len % 8 == 0) self.write_ta_fifo_polygon_path(v) else {
+                for (v) |w| {
+                    self._ta_command_buffer[self._ta_command_buffer_index] = w;
+                    self._ta_command_buffer_index += 1;
+                    self.handle_command();
+                }
             },
             0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 // Direct Texture Path
-                if (addr & 0x00FFFFFF > 0x00800000) {
-                    holly_log.warn(termcolor.yellow("  Direct Texture Path write out of bounds? {X:0>8} = {X:0>8}"), .{ addr, v });
-                    return;
+                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
+                switch (access_type) {
+                    .b64 => {
+                        for (v, 0..) |w, idx|
+                            @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
+                    },
+                    .b32 => {
+                        for (v, 0..) |w, idx|
+                            self.write_vram(u32, @intCast(addr + 4 * idx), w);
+                    },
                 }
-                @as(*u32, @alignCast(@ptrCast(&self.vram[addr & 0x00FFFFFF]))).* = v;
             },
-            else => holly_log.err(termcolor.red("  Unhandled TA Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
-        }
-    }
-
-    pub fn bulk_write_ta(self: *@This(), addr: u32, v: []u32) void {
-        holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
-        std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
-        switch (addr) {
-            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => write_ta_fifo_polygon_path(self, v),
             else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
         }
     }
@@ -1609,6 +1714,12 @@ pub const Holly = struct {
         return &self._ta_lists[self.ta_list_index()];
     }
 
+    fn start_list(self: *@This(), list_type: ListType) void {
+        self._ta_list_type = list_type;
+        holly_log.debug("Starting List {s} - TA_NEXT_OPB: {X:0>6}", .{ @tagName(list_type), self._get_register(u32, .TA_NEXT_OPB).* });
+        self.ta_current_lists().check_reset();
+    }
+
     pub fn handle_command(self: *@This()) void {
         if (self._ta_command_buffer_index % 8 != 0) return; // All commands are 8 or 16 bytes long
 
@@ -1636,7 +1747,20 @@ pub const Holly = struct {
                             @panic("Unimplemented List Type");
                         },
                     }, 800);
+
+                    // NOTE: Probably not actually usefull, more of a debugging tool for now.
+                    const global_tile_clip = self.read_register(TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+                    const alloc_ctrl = self.read_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL);
+                    self._get_register(u32, .TA_NEXT_OPB).* += @intCast(@as(u32, 4) * @as(u32, global_tile_clip.tile_x_num + 1) * @as(u32, global_tile_clip.tile_y_num + 1) * (switch (list) {
+                        .Opaque => alloc_ctrl.O_OPB.byteSize(),
+                        .OpaqueModifierVolume => alloc_ctrl.OM_OPB.byteSize(),
+                        .Translucent => alloc_ctrl.T_OPB.byteSize(),
+                        .TranslucentModifierVolume => alloc_ctrl.TM_OPB.byteSize(),
+                        .PunchThrough => alloc_ctrl.PT_OPB.byteSize(),
+                        else => unreachable,
+                    }));
                 }
+
                 self._ta_current_polygon = null;
                 self._ta_list_type = null;
             },
@@ -1650,15 +1774,12 @@ pub const Holly = struct {
                     .height = 32 * (1 + user_tile_clip.user_clip_y_max - user_tile_clip.user_clip_y_min),
                 };
             },
-            .ObjectListSet => {
-                self.handle_object_list_set();
-            },
+            .ObjectListSet => holly_log.err(termcolor.red("Unhandled ObjectListSet"), .{}),
             // Global Parameters
             .PolygonOrModifierVolume => {
-                if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_current_lists().check_reset();
-                }
+                if (self._ta_list_type == null)
+                    self.start_list(parameter_control_word.list_type);
+
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
                 // if (self._ta_list_type != parameter_control_word.list_type) {
@@ -1708,10 +1829,8 @@ pub const Holly = struct {
                 }
             },
             .SpriteList => {
-                if (self._ta_list_type == null) {
-                    self._ta_list_type = parameter_control_word.list_type;
-                    self.ta_current_lists().check_reset();
-                }
+                if (self._ta_list_type == null)
+                    self.start_list(parameter_control_word.list_type);
 
                 if (parameter_control_word.group_control.en == 1) {
                     if (self._ta_user_tile_clip) |*uc| {
@@ -1804,7 +1923,7 @@ pub const Holly = struct {
                     // I don't know if I'm the one misinterpreting the doc, but how the triangles are grouped doesn't really matter anyway.
 
                     if (volume.triangle_count > 0) {
-                        const config = self.get_region_array_data_config();
+                        const config = self.get_region_array_data_config(0);
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convenience.
                             self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch unreachable;
@@ -1823,59 +1942,6 @@ pub const Holly = struct {
 
                     self._ta_volume_next_polygon_is_last = false;
                 }
-            }
-        }
-    }
-
-    fn handle_object_list_set(self: *@This()) void {
-        const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
-        std.debug.assert(parameter_control_word.parameter_type == .ObjectListSet);
-
-        if (self._ta_list_type == null) {
-            self._ta_list_type = parameter_control_word.list_type;
-            self.ta_current_lists().check_reset();
-        }
-        holly_log.err(termcolor.red("  Unimplemented ObjectListSet"), .{});
-        // FIXME: Really not sure if I need to do any thing here...
-        //        Is it meant to separate objects by tiles? Are they already submitted elsewhere anyway?
-        if (false) {
-            const object_list_set = @as(*ObjectListSet, @ptrCast(&self._ta_command_buffer)).*;
-            const param_base = self._get_register(u32, .PARAM_BASE).*;
-            const ta_alloc_ctrl = self._get_register(TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*;
-            std.debug.assert(ta_alloc_ctrl.OPB_Mode == 0);
-            const addr = 4 * object_list_set.object_pointer; // 32bit word address
-            while (true) {
-                const object = @as(*u32, @ptrCast(&self.vram[addr])).*;
-                if (object & 0x80000000 == 0) {
-                    // Triangle Strip
-                    const strip_addr = param_base + 4 * (object & 0x1FFFFF);
-                    _ = strip_addr;
-                } else {
-                    switch ((object >> 29) & 0b11) {
-                        0b00 => {
-                            // Triangle Array
-                            @panic("Unimplemented Triangle Array");
-                        },
-                        0b01 => {
-                            // Quad Array
-                            @panic("Unimplemented Quad Array");
-                        },
-                        0b11 => {
-                            std.debug.assert(object & 0b11 == 0);
-                            // Object Pointer Block Link
-                            if (object & 0x10000000 == 0x10000000) {
-                                // End of list
-                                break;
-                            } else {
-                                @panic("Unimplemented Object Pointer Block Link");
-                            }
-                        },
-                        else => {
-                            @panic("Invalid Object type");
-                        },
-                    }
-                }
-                addr += 4;
             }
         }
     }
@@ -1959,7 +2025,7 @@ pub const Holly = struct {
 
     pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
         holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
-        @memcpy(self.vram[addr & 0x00FFFFFF .. (addr & 0x00FFFFFF) + value.len], value);
+        @memcpy(self.vram[addr & VRAMMask .. (addr & VRAMMask) + value.len], value);
     }
 
     pub inline fn read_register(self: *const @This(), comptime T: type, r: HollyRegister) T {
@@ -1983,36 +2049,50 @@ pub const Holly = struct {
         return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
-    pub inline fn get_region_array_data_config(self: *const @This()) RegionArrayDataConfiguration {
-        // Sadly we can't just return a pointer to the RegionArrayDataConfiguration directly in VRAM because of alignment.
-        const r: [*]u32 = @alignCast(@ptrCast(&self.vram[@constCast(self)._get_register(u32, .REGION_BASE).*]));
+    pub inline fn get_region_header_type(self: *const @This()) FPU_PARAM_CFG.RegionHeaderType {
+        return self.read_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type;
+    }
+
+    pub inline fn get_region_array_data_config(self: *const @This(), idx: usize) RegionArrayDataConfiguration {
+        const region_base = self.read_register(u32, .REGION_BASE);
+        // Should we skip the first one when it's empty?
+        var first_valid = false;
+        for (1..self.get_region_header_type().word_size()) |pointer_idx| {
+            if (!self.read_vram(RegionArrayDataConfiguration.ListPointer, @intCast(region_base + pointer_idx * 4)).empty) {
+                first_valid = true;
+                break;
+            }
+        }
+        const stride: u32 = 4 * self.get_region_header_type().word_size();
+        const offset = if (first_valid) 0 else stride;
+
+        const region_addr: u32 = @intCast(region_base + offset + idx * stride);
         return .{
-            .settings = @bitCast(r[0]),
-            .opaque_list_pointer = @bitCast(r[1]),
-            .opaque_modifier_volume_pointer = @bitCast(r[2]),
-            .translucent_list_pointer = @bitCast(r[3]),
-            .translucent_modifier_volume_pointer = @bitCast(r[4]),
-            .punch_through_list_pointer = @bitCast(r[5]),
+            .settings = @bitCast(self.read_vram(u32, region_addr + 0 * 4)),
+            .opaque_list_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 1 * 4),
+            .opaque_modifier_volume_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 2 * 4),
+            .translucent_list_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 3 * 4),
+            .translucent_modifier_volume_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 4 * 4),
+            .punch_through_list_pointer = self.read_vram(RegionArrayDataConfiguration.ListPointer, region_addr + 5 * 4),
         };
     }
 
-    pub inline fn auto_sort(self: *const @This()) bool {
-        if (self._get_register(FPU_PARAM_CFG, .FPU_PARAM_CFG).region_header_type == 0) {
-            return self._get_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
+    pub inline fn pre_sort(self: *const @This(), pass: usize) bool {
+        if (self.get_region_header_type() == 0) {
+            return self.read_register(ISP_FEED_CFG, .ISP_FEED_CFG).presort_mode;
         } else {
-            return self.get_region_array_data_config().settings.pre_sort;
+            return self.get_region_array_data_config(pass).settings.pre_sort == 1;
         }
     }
 
     fn check_framebuffer_write(self: *@This(), addr: u32) void {
         if (self.dirty_framebuffer) return;
 
-        const mask: u32 = 0x007FFFFF;
-        const local_addr = addr & mask;
+        const local_addr = addr & VRAMMask;
 
         const spg_control = self.read_register(SPG_CONTROL, .SPG_CONTROL);
-        const fb1_start_addr = self.read_register(u32, .FB_R_SOF1) & mask;
-        const fb2_start_addr = self.read_register(u32, .FB_R_SOF2) & mask;
+        const fb1_start_addr = self.read_register(u32, .FB_R_SOF1) & VRAMMask;
+        const fb2_start_addr = self.read_register(u32, .FB_R_SOF2) & VRAMMask;
         const fb_r_size = self.read_register(FB_R_SIZE, .FB_R_SIZE);
         const line_size: u32 = 4 * (@as(u32, fb_r_size.x_size) + @as(u32, fb_r_size.modulus)); // From 32-bit units to bytes.
         const line_count: u32 = @as(u32, fb_r_size.y_size) + 1; // Number of lines
@@ -2027,12 +2107,42 @@ pub const Holly = struct {
         }
     }
 
+    /// 32-bit path read (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
+    pub inline fn read_vram(self: *const @This(), comptime T: type, addr: u32) T {
+        std.debug.assert(@sizeOf(T) <= 4);
+        return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*;
+    }
+    /// 32-bit path write (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
     pub inline fn write_vram(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        std.debug.assert(@sizeOf(T) <= 4);
         self.check_framebuffer_write(addr);
+        @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).* = value;
+    }
+    inline fn translate_32bit_path_addr(offset: u32) u32 {
+        //   64bit access             32bit access
+        //  Bus A      Bus B         Bus A      Bus B
+        // 0x00000000 0x00000004    0x00000000 0x00400000
+        // 0x00000008 0x0000000c    0x00000004 0x00400004
+        // 0x00000010 0x00000014    0x00000008 0x00400008
+        // 0x00000018 0x0000001c    0x0000000c 0x0040000c
+        // 0x00000020 0x00000024    0x00000010 0x00400010
+        // 0x00000028 0x0000002c    0x00000014 0x00400014
+        // ...                      ...
+        // 0x007ffff8 0x007ffffc    0x003ffffc 0x007ffffc
+        // ----------------------- ----------------------
+        // 0x00800000 0x00800004    0x00800000 0x00c00000 (Extented?)
+        // 0x00800008 0x0080000c    0x00800004 0x00c00004
+        // 0x00800010 0x00800014    0x00800008 0x00c00008
+        // 0x00800018 0x0080001c    0x0080000c 0x00c0000c
+        // 0x00800020 0x00800024    0x00800010 0x00c00010
+        // 0x00800028 0x0080002c    0x00800014 0x00c00014
+        // ...                      ...
+        // 0x00fffff8 0x00fffffc    0x00bffffc 0x00fffffc
 
-        @as(*T, @alignCast(@ptrCast(
-            self._get_vram(addr),
-        ))).* = value;
+        var addr = (((offset & 0xFFFFFFFC) << 1) & VRAMMask) | (offset & 0x3);
+        if (offset & 0x400000 != 0) addr += 4;
+        if (offset & 0x800000 != 0) addr |= 0x800000;
+        return addr;
     }
 
     pub fn write_framebuffer(self: *@This(), pixels: []const u8) void {
@@ -2049,10 +2159,7 @@ pub const Holly = struct {
         const interlaced = false; // TODO: Support interlacing?
         const field = if (interlaced and false) 1 else 0; // TODO
         const FB_W_SOF = self._get_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2).*; // TODO: Support interlacing?
-        if (FB_W_SOF & 0x1000000 != 0) {
-            std.log.warn(termcolor.yellow("TODO: Write to texture! FB_W_SOF:{X:0>8}"), .{FB_W_SOF});
-            return;
-        }
+        const access_32bit = !(FB_W_SOF & 0x1000000 != 0);
 
         const resolution = struct {
             const width = 640;
@@ -2067,40 +2174,25 @@ pub const Holly = struct {
                 const idx = ((2 * y + line_offset) * resolution.width + x) * 4;
                 switch (w_ctrl.fb_packmode) {
                     .RGB565 => {
-                        const addr = FB_W_SOF + y * FB_W_LINESTRIDE + 2 * x;
+                        var addr = (FB_W_SOF & VRAMMask) + y * FB_W_LINESTRIDE + 2 * x;
+                        if (access_32bit) addr = translate_32bit_path_addr(addr);
                         var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
                         pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
                         pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
                         pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
                     },
                     .RGB888 => {
-                        const addr = FB_W_SOF + y * FB_W_LINESTRIDE + 3 * x;
+                        var addr = (FB_W_SOF & VRAMMask) + y * FB_W_LINESTRIDE + 3 * x;
+                        if (access_32bit) addr = translate_32bit_path_addr(addr);
                         self.vram[addr + 0] = pixels[idx + 2];
                         self.vram[addr + 1] = pixels[idx + 1];
                         self.vram[addr + 2] = pixels[idx + 0];
                     },
                     else => {
-                        std.log.warn("TODO: {}", .{w_ctrl.fb_packmode});
+                        std.log.warn("TODO: {s}", .{@tagName(w_ctrl.fb_packmode)});
                     },
                 }
             }
-        }
-    }
-
-    pub inline fn _get_vram(self: *@This(), addr: u32) *u8 {
-        // VRAM - 8MB, Mirrored at 0x06000000
-        const local_addr = addr - (if (addr >= 0x06000000) @as(u32, 0x06000000) else 0x04000000);
-
-        if (local_addr < 0x0080_0000) { // 64-bit access area
-            return &self.vram[local_addr];
-        } else if (local_addr < 0x0100_0000) { // Unused
-            holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
-            @panic("Out of bounds access to Area 1 (VRAM)");
-        } else if (local_addr < 0x0180_0000) { // 32-bit access area
-            return &self.vram[local_addr - 0x0100_0000];
-        } else { // Unused
-            holly_log.err(termcolor.red(" Out of bounds access to Area 1 (VRAM): {X:0>8}"), .{addr});
-            @panic("Out of bounds access to Area 1 (VRAM)");
         }
     }
 
@@ -2144,3 +2236,40 @@ pub const Holly = struct {
         return bytes;
     }
 };
+
+comptime {
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000000) == 0x00000000);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000004) == 0x00000008);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000008) == 0x00000010);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x0000000c) == 0x00000018);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000010) == 0x00000020);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000014) == 0x00000028);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x003ffffc) == 0x007ffff8);
+
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400000) == 0x00000004);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400004) == 0x0000000c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400008) == 0x00000014);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x0040000c) == 0x0000001c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400010) == 0x00000024);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400014) == 0x0000002c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x007ffffc) == 0x007ffffc);
+
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00800000) == 0x00800000);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00800004) == 0x00800008);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00800008) == 0x00800010);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x0080000c) == 0x00800018);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00800010) == 0x00800020);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00800014) == 0x00800028);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00bffffc) == 0x00fffff8);
+
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c00000) == 0x00800004);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c00004) == 0x0080000c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c00008) == 0x00800014);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c0000c) == 0x0080001c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c00010) == 0x00800024);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00c00014) == 0x0080002c);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00fffffc) == 0x00fffffc);
+
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00000002) == 0x00000002);
+    std.debug.assert(Holly.translate_32bit_path_addr(0x00400002) == 0x00000006);
+}

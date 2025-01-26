@@ -305,7 +305,7 @@ pub fn main() !void {
             for (hacks) |hack| {
                 var addr = hack.addr;
                 for (hack.instr) |instr| {
-                    dc.cpu.write16(addr, instr);
+                    dc.cpu.write(u16, addr, instr);
                     addr += 2;
                 }
             }

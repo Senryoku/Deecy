@@ -85,7 +85,7 @@ pub fn mova_atDispPC_R0(cpu: *SH4, opcode: Instr) void {
 pub fn movw_atDispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 1;
-    cpu.R(n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.pc + 4 + d)));
+    cpu.R(n).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.pc + 4 + d)));
 }
 
 // The 8-bit displacement is multiplied by four after zero-extension, and so the relative distance from the operand is in the range up to PC + 4 + 1020 bytes.
@@ -93,11 +93,11 @@ pub fn movw_atDispPC_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn movl_atDispPC_Rn(cpu: *SH4, opcode: Instr) void {
     const n = opcode.nd8.n;
     const d = zero_extend(opcode.nd8.d) << 2;
-    cpu.R(n).* = cpu.read32((cpu.pc & 0xFFFFFFFC) + 4 + d);
+    cpu.R(n).* = cpu.read(u32, (cpu.pc & 0xFFFFFFFC) + 4 + d);
 }
 
 pub fn movb_atRm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read(u8, cpu.R(opcode.nmd.m).*)));
 }
 
 test "mov Rm,Rn" {
@@ -114,27 +114,27 @@ test "mov Rm,Rn" {
 }
 
 pub fn movw_atRm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.R(opcode.nmd.m).*)));
 }
 
 pub fn movl_atRm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu.read(u32, cpu.R(opcode.nmd.m).*);
 }
 
 pub fn movb_Rm_atRn(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write(u8, cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 pub fn movw_Rm_atRn(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write(u16, cpu.R(opcode.nmd.n).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 pub fn movl_Rm_atRn(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.R(opcode.nmd.m).*);
 }
 
 pub fn movb_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read(u8, cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 1;
     }
@@ -142,14 +142,14 @@ pub fn movb_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
 
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 pub fn movw_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.R(opcode.nmd.m).*)));
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 2;
     }
 }
 
 pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).*);
+    cpu.R(opcode.nmd.n).* = cpu.read(u32, cpu.R(opcode.nmd.m).*);
     if (opcode.nmd.n != opcode.nmd.m) {
         cpu.R(opcode.nmd.m).* += 4;
     }
@@ -174,80 +174,80 @@ pub fn movl_Rm_atDecRn(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn movb_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read(u8, cpu.R(opcode.nmd.m).* + opcode.nmd.d)));
 }
 
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 // The loaded data is sign-extended to 32 bit before being stored in the destination register.
 pub fn movw_atDispRm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1))));
 }
 
 pub fn movl_at_dispRm_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(0).* = cpu.read(u32, cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // Transfers the source operand to the destination. The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 pub fn movl_atDispRm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
+    cpu.R(opcode.nmd.n).* = cpu.read(u32, cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 2));
 }
 
 // The 4-bit displacement is only zero-extended, so a range up to +15 bytes can be specified.
 pub fn movb_R0_atDispRm(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
+    cpu.write(u8, cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d)), @truncate(cpu.R(0).*));
 }
 // The 4-bit displacement is multiplied by two after zero-extension, enabling a range up to +30 bytes to be specified.
 pub fn movw_R0_atDispRm(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
+    cpu.write(u16, cpu.R(opcode.nmd.m).* + (zero_extend(opcode.nmd.d) << 1), @truncate(cpu.R(0).*));
 }
 
 // Transfers the source operand to the destination.
 // The 4-bit displacement is multiplied by four after zero-extension, enabling a range up to +60 bytes to be specified.
 pub fn movl_Rm_atDispRn(cpu: *SH4, opcode: Instr) void {
     const d = zero_extend(opcode.nmd.d) << 2;
-    cpu.write32(cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
+    cpu.write(u32, cpu.R(opcode.nmd.n).* +% d, cpu.R(opcode.nmd.m).*);
 }
 
 pub fn movb_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read8(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u8(cpu.read(u8, cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 pub fn movw_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read16(cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
+    cpu.R(opcode.nmd.n).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.R(opcode.nmd.m).* +% cpu.R(0).*)));
 }
 
 pub fn movl_atR0Rm_Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.R(opcode.nmd.n).* = cpu.read32(cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
+    cpu.R(opcode.nmd.n).* = cpu.read(u32, cpu.R(opcode.nmd.m).* +% cpu.R(0).*);
 }
 
 pub fn movb_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write(u8, cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 pub fn movw_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write(u16, cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 pub fn movl_Rm_atR0Rn(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
+    cpu.write(u32, cpu.R(opcode.nmd.n).* +% cpu.R(0).*, @truncate(cpu.R(opcode.nmd.m).*));
 }
 
 pub fn movb_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read8(cpu.gbr + zero_extend(opcode.nd8.d))));
+    cpu.R(0).* = @bitCast(sign_extension_u8(cpu.read(u8, cpu.gbr + zero_extend(opcode.nd8.d))));
 }
 pub fn movw_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
+    cpu.R(0).* = @bitCast(sign_extension_u16(cpu.read(u16, cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
 }
 pub fn movl_atDispGBR_R0(cpu: *SH4, opcode: Instr) void {
-    cpu.R(0).* = cpu.read32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2));
+    cpu.R(0).* = cpu.read(u32, cpu.gbr + (zero_extend(opcode.nd8.d) << 2));
 }
 
 pub fn movb_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
+    cpu.write(u8, cpu.gbr + opcode.nd8.d, @truncate(cpu.R(0).*));
 }
 pub fn movw_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write16(cpu.gbr + (zero_extend(opcode.nd8.d) << 1), @truncate(cpu.R(0).*));
+    cpu.write(u16, cpu.gbr + (zero_extend(opcode.nd8.d) << 1), @truncate(cpu.R(0).*));
 }
 pub fn movl_R0_atDispGBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write32(cpu.gbr + (zero_extend(opcode.nd8.d) << 2), cpu.R(0).*);
+    cpu.write(u32, cpu.gbr + (zero_extend(opcode.nd8.d) << 2), cpu.R(0).*);
 }
 
 pub fn movt_Rn(cpu: *SH4, opcode: Instr) void {
@@ -619,8 +619,8 @@ pub fn extuw_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn macl_atRmInc_atRnInc(cpu: *SH4, opcode: Instr) void {
-    const rn: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
-    const rm: i32 = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+    const rn: i32 = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
+    const rm: i32 = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.m).*));
 
     var m: i64 = @as(i64, rn) * @as(i64, rm);
     m += @as(i64, @bitCast(@as(u64, cpu.mach) << 32 | @as(u64, cpu.macl)));
@@ -640,8 +640,8 @@ pub fn macl_atRmInc_atRnInc(cpu: *SH4, opcode: Instr) void {
 }
 
 pub fn macw_atRmInc_atRnInc(cpu: *SH4, opcode: Instr) void {
-    const rn: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.n).*));
-    const rm: i16 = @bitCast(cpu.read16(cpu.R(opcode.nmd.m).*));
+    const rn: i16 = @bitCast(cpu.read(u16, cpu.R(opcode.nmd.n).*));
+    const rm: i16 = @bitCast(cpu.read(u16, cpu.R(opcode.nmd.m).*));
 
     var m: i64 = @as(i32, rn) * @as(i32, rm);
     m += @as(i64, @bitCast(@as(u64, cpu.mach) << 32 | @as(u64, cpu.macl)));
@@ -762,8 +762,8 @@ pub fn and_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* &= zero_extend(opcode.nd8.d);
 }
 pub fn andb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    const temp = cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d;
-    cpu.write8(cpu.gbr +% cpu.R(0).*, temp);
+    const temp = cpu.read(u8, cpu.gbr +% cpu.R(0).*) & opcode.nd8.d;
+    cpu.write(u8, cpu.gbr +% cpu.R(0).*, temp);
 }
 
 pub fn not_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -776,16 +776,16 @@ pub fn or_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* |= zero_extend(opcode.nd8.d);
 }
 pub fn orb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    const val: u8 = cpu.read8(cpu.gbr +% cpu.R(0).*) | opcode.nd8.d;
-    cpu.write8(cpu.gbr +% cpu.R(0).*, val);
+    const val: u8 = cpu.read(u8, cpu.gbr +% cpu.R(0).*) | opcode.nd8.d;
+    cpu.write(u8, cpu.gbr +% cpu.R(0).*, val);
 }
 
 pub fn tasb_atRn(cpu: *SH4, opcode: Instr) void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
     // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
-    const tmp = cpu.read8(cpu.R(opcode.nmd.n).*);
+    const tmp = cpu.read(u8, cpu.R(opcode.nmd.n).*);
     cpu.sr.t = (tmp == 0);
-    cpu.write8(cpu.R(opcode.nmd.n).*, tmp | 0x80);
+    cpu.write(u8, cpu.R(opcode.nmd.n).*, tmp | 0x80);
 }
 pub fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
@@ -794,7 +794,7 @@ pub fn tst_imm_R0(cpu: *SH4, opcode: Instr) void {
     cpu.sr.t = (cpu.R(0).* & zero_extend(opcode.nd8.d)) == 0;
 }
 pub fn tstb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.sr.t = (cpu.read8(cpu.gbr +% cpu.R(0).*) & opcode.nd8.d) == 0;
+    cpu.sr.t = (cpu.read(u8, cpu.gbr +% cpu.R(0).*) & opcode.nd8.d) == 0;
 }
 
 pub fn xorRmRn(cpu: *SH4, opcode: Instr) void {
@@ -804,7 +804,7 @@ pub fn xorImmR0(cpu: *SH4, opcode: Instr) void {
     cpu.R(0).* ^= zero_extend(opcode.nd8.d);
 }
 pub fn xorb_imm_atR0GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.write8(cpu.gbr +% cpu.R(0).*, cpu.read8(cpu.gbr +% cpu.R(0).*) ^ opcode.nd8.d);
+    cpu.write(u8, cpu.gbr +% cpu.R(0).*, cpu.read(u8, cpu.gbr +% cpu.R(0).*) ^ opcode.nd8.d);
 }
 
 pub fn rotcl_Rn(cpu: *SH4, opcode: Instr) void {
@@ -1152,69 +1152,69 @@ test "ldc Rn,SR" {
 pub fn ldcl_atRnInc_SR(cpu: *SH4, opcode: Instr) void {
     const addr = cpu.R(opcode.nmd.n).*;
     cpu.R(opcode.nmd.n).* += 4;
-    cpu.set_sr(@bitCast(cpu.read32(addr)));
+    cpu.set_sr(@bitCast(cpu.read(u32, addr)));
 }
 pub fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) void {
     cpu.gbr = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_GBR(cpu: *SH4, opcode: Instr) void {
-    cpu.gbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.gbr = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) void {
     cpu.vbr = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_VBR(cpu: *SH4, opcode: Instr) void {
-    cpu.vbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.vbr = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_SSR(cpu: *SH4, opcode: Instr) void {
     cpu.ssr = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_SSR(cpu: *SH4, opcode: Instr) void {
-    cpu.ssr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.ssr = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_SPC(cpu: *SH4, opcode: Instr) void {
     cpu.spc = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_SPC(cpu: *SH4, opcode: Instr) void {
-    cpu.spc = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.spc = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) void {
     cpu.dbr = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_DBR(cpu: *SH4, opcode: Instr) void {
-    cpu.dbr = @bitCast(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.dbr = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) void {
     cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldcl_atRnInc_Rm_BANK(cpu: *SH4, opcode: Instr) void {
-    cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) void {
     cpu.mach = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldsl_atRnInc_MACH(cpu: *SH4, opcode: Instr) void {
-    cpu.mach = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.mach = cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_MACL(cpu: *SH4, opcode: Instr) void {
     cpu.macl = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldsl_atRnInc_MACL(cpu: *SH4, opcode: Instr) void {
-    cpu.macl = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.macl = cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn lds_Rn_PR(cpu: *SH4, opcode: Instr) void {
     cpu.pr = cpu.R(opcode.nmd.n).*;
 }
 pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) void {
-    cpu.pr = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.pr = cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 
@@ -1244,13 +1244,14 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
         const offset: u32 = (addr & 31) / @sizeOf(u32);
 
         cpu._operand_cache_state.addr[index] = addr & ~@as(u32, 31);
+        cpu._operand_cache_state.addr[index] &= 0x1FFFFFFF; // FIXME: Not sure about that.
         @memset(cpu.operand_cache_lines()[index][0..], 0);
         cpu.operand_cache_lines()[index][offset] = data;
         cpu._operand_cache_state.dirty[index] = true;
 
         sh4_log.debug("movcal_R0_atRn addr={X:0>8}, data={X:0>8}, index={X:0>8}, offset={X:0>8}", .{ addr, data, index, offset });
     } else {
-        cpu.write32(addr, data);
+        cpu.write(u32, addr, data);
     }
 }
 pub fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) void {
@@ -1260,12 +1261,12 @@ pub fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
 pub fn ldsl_atRnInc_FPSCR(cpu: *SH4, opcode: Instr) void {
-    cpu.set_fpscr(cpu.read32(cpu.R(opcode.nmd.n).*));
+    cpu.set_fpscr(cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn stsl_FPSCR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
 }
 pub fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) void {
     cpu.fpul = cpu.R(opcode.nmd.n).*;
@@ -1274,12 +1275,12 @@ pub fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
 pub fn ldsl_atRnInc_FPUL(cpu: *SH4, opcode: Instr) void {
-    cpu.fpul = cpu.read32(cpu.R(opcode.nmd.n).*);
+    cpu.fpul = cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn stsl_FPUL_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.fpul);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.fpul);
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
@@ -1330,13 +1331,16 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
     if (addr & (@as(u32, 1) << 25) != 0) {
         // DCA3 Hack
         const index = (addr / 32) & 255;
-        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>8}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
-        std.debug.assert(builtin.is_test or cpu._operand_cache_state.addr[index] == (addr & ~@as(u32, 31)));
+        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>2}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
+        if (cpu._operand_cache_state.addr[index] != ((addr & 0x1FFF_FFFF) & ~@as(u32, 31)))
+            sh4_log.warn("  (ocbwb_atRn) Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ cpu._operand_cache_state.addr[index], (addr & 0x1FFF_FFFF) & ~@as(u32, 31) });
         if (cpu._operand_cache_state.dirty[index]) {
             const target = cpu._operand_cache_state.addr[index] & 0x1FFF_FFFF;
-            std.debug.assert((target >= 0x10000000 and target <= 0x107FFFFF) or (target >= 0x12000000 and target <= 0x127FFFFF));
-            if (cpu._dc) |dc|
-                dc.gpu.bulk_write_ta(target, &cpu.operand_cache_lines()[index]);
+            if (cpu._dc) |dc| {
+                const LMMode = dc.read_hw_register(u32, if (target >= 0x11000000 and target < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                const access_32bit = LMMode != 0;
+                dc.gpu.write_ta(target, &cpu.operand_cache_lines()[index], if (access_32bit) .b32 else .b64);
+            }
             cpu._operand_cache_state.dirty[index] = false;
         }
     }
@@ -1388,15 +1392,21 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         // pref is often used to send commands to the GPU, we can optimize this use case.
         switch (ext_addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path_command(cpu.store_queues[sq_addr.sq]),
-            0x0C000000...0x0FFFFFFF => {
+            // AICA Memory           System RAM               Texture Memory
+            0x00800000...0x009FFFFF, 0x0C000000...0x0FFFFFFF, 0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
                 @setRuntimeSafety(false);
                 const dst: *@Vector(8, u32) = @alignCast(@ptrCast(cpu._get_memory(ext_addr)));
                 dst.* = cpu.store_queues[sq_addr.sq];
             },
+            // Texture memory, 32bit path
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                inline for (0..8) |i|
+                    cpu._dc.?.gpu.write_vram(u32, @intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+            },
             else => {
                 sh4_log.warn("pref: Slow store queue write back to {X:0>8}", .{ext_addr});
                 inline for (0..8) |i|
-                    cpu.write32(@intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+                    cpu.write(u32, @intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             },
         }
     } else {
@@ -1464,7 +1474,7 @@ pub fn stc_SR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn stcl_SR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
 }
 pub fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.tbr;
@@ -1474,70 +1484,70 @@ pub fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn stcl_GBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.gbr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.gbr);
 }
 pub fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.vbr;
 }
 pub fn stcl_VBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.vbr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.vbr);
 }
 pub fn stc_SGR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.sgr;
 }
 pub fn stcl_SGR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.sgr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.sgr);
 }
 pub fn stc_SSR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.ssr;
 }
 pub fn stcl_SSR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.ssr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.ssr);
 }
 pub fn stc_SPC_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.spc;
 }
 pub fn stcl_SPC_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.spc);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.spc);
 }
 pub fn stc_DBR_rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.dbr;
 }
 pub fn stcl_DBR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.dbr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.dbr);
 }
 pub fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.r_bank[opcode.nmd.m & 0b0111];
 }
 pub fn stcl_Rm_BANK_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.r_bank[opcode.nmd.m & 0b0111]);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.r_bank[opcode.nmd.m & 0b0111]);
 }
 pub fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.mach;
 }
 pub fn stsl_MACH_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.mach);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.mach);
 }
 pub fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.macl;
 }
 pub fn stsl_MACL_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.macl);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.macl);
 }
 pub fn sts_PR_Rn(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* = cpu.pr;
 }
 pub fn stsl_PR_atRnDec(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* -= 4;
-    cpu.write32(cpu.R(opcode.nmd.n).*, cpu.pr);
+    cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.pr);
 }
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) void {
@@ -1568,42 +1578,42 @@ pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) void {
 }
 pub fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d @Rm,DRn
-            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d @Rm,XDn
-            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(opcode.nmd.m).*));
         }
     }
 }
 pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d DRm,@Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d XDm,@Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }
 pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read(u32, cpu.R(opcode.nmd.m).*));
         cpu.R(opcode.nmd.m).* += 4;
     } else { // Double-precision
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d @Rm+,DRn
-            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d @Rm+,XDn
-            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(opcode.nmd.m).*));
         }
         cpu.R(opcode.nmd.m).* += 8;
     }
@@ -1612,41 +1622,41 @@ pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.R(opcode.nmd.n).* -= 4;
-        cpu.write32(cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else { // Double-precision
         cpu.R(opcode.nmd.n).* -= 8;
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d DRm,@-Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d XDm,@-Rn
-            cpu.write64(cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }
 pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read32(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+        cpu.FR(opcode.nmd.n).* = @bitCast(cpu.read(u32, cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.n & 0x1 == 0) {
             // fmov.d @(R0,Rm),DRn
-            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+            cpu.getDRPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
         } else {
             // fmov.d @(R0,Rm),XDn
-            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read64(cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
+            cpu.getXDPtr(opcode.nmd.n).* = @bitCast(cpu.read(u64, cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
         }
     }
 }
 pub fn fmovs_FRm_atR0Rn(cpu: *SH4, opcode: Instr) void {
     if (cpu.fpscr.sz == 0) {
-        cpu.write32(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.write(u32, cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d DRm,@(R0,Rn)
-            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d XDm,@(R0,Rn)
-            cpu.write64(cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
+            cpu.write(u64, cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
     }
 }

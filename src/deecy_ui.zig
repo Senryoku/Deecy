@@ -146,13 +146,14 @@ pub fn upload_vmu_texture(self: *@This(), controller: u8, index: u8) void {
 }
 
 pub fn draw_vmus(self: *@This(), editable: bool) void {
-    if (!editable and !self.deecy.config.display_vmus) return;
+    if ((editable and self.deecy.config.display_debug_ui) or (!editable and !self.deecy.config.display_vmus)) return;
 
     zgui.setNextWindowSize(.{ .w = 4 * 48, .h = 2 * 4 * 32, .cond = .first_use_ever });
+    zgui.setNextWindowPos(.{ .x = 32, .y = 32, .cond = .first_use_ever });
 
     zgui.pushStyleVar2f(.{ .idx = .window_padding, .v = .{ 0.0, 0.0 } });
 
-    if (zgui.begin("VMUs", .{ .flags = .{ .no_resize = !editable, .no_move = !editable, .no_title_bar = !editable, .no_mouse_inputs = !editable, .no_nav_inputs = !editable, .no_nav_focus = !editable, .no_background = !editable } })) {
+    if (zgui.begin("VMUs", .{ .flags = .{ .no_resize = !editable, .no_move = !editable, .no_title_bar = !editable, .no_mouse_inputs = !editable, .no_nav_inputs = !editable, .no_nav_focus = !editable, .no_background = !editable, .no_docking = true } })) {
         const win_width = zgui.getWindowSize()[0];
         for (0..self.vmu_displays.len) |controller| {
             for (0..2) |index| {

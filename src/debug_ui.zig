@@ -84,6 +84,26 @@ fn display(self: anytype) void {
     }
 }
 
+const Green: [4]f32 = .{ 0.51, 0.71, 0.212, 1.0 };
+const Red: [4]f32 = .{ 0.973, 0.443, 0.408, 1.0 };
+
+fn inline_bool(value: bool, comptime fmt: []const u8) void {
+    inline_colored(value, fmt, .{});
+}
+
+fn inline_colored(value: bool, comptime fmt: []const u8, args: anytype) void {
+    zgui.sameLine(.{});
+    colored(value, fmt, args);
+}
+
+fn colored(value: bool, comptime fmt: []const u8, args: anytype) void {
+    zgui.textColored(if (value) Green else Red, fmt, args);
+}
+
+fn text_highlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
+    zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
+}
+
 pub fn init(d: *Deecy) !@This() {
     var self = @This(){
         ._allocator = d._allocator,
@@ -163,10 +183,6 @@ fn reset_hover(self: *@This()) void {
     }
 }
 
-fn text_highlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
-    zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
-}
-
 fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
     return std.math.order(a.time_spent, b.time_spent);
 }
@@ -220,7 +236,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
         const end_addr = addr + range;
         while (addr < end_addr) {
-            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read16(@intCast(addr)) }, self._allocator);
+            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read(u16, @intCast(addr)) }, self._allocator);
             zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
             addr += 2;
         }
@@ -357,7 +373,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 });
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
-                    const instr = dc.cpu.read16(addr);
+                    const instr = dc.cpu.read(u16, addr);
                     const op = sh4.sh4_instructions.Opcodes[sh4.sh4_instructions.JumpTable[instr]];
                     zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
@@ -462,9 +478,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 const mask: u32 = @as(u32, 1) << @intCast(6 + i);
                 const interrupt_enabled = (dc.aica.debug_read_reg(u32, .SCIEB) & mask) != 0;
                 if (interrupt_enabled) {
-                    zgui.textColored(.{ 0.0, 1.0, 0.0, 1.0 }, "!", .{});
+                    zgui.textColored(Green, "!", .{});
                 } else {
-                    zgui.textColored(.{ 1.0, 0.0, 0.0, 1.0 }, ".", .{});
+                    zgui.textColored(Red, ".", .{});
                 }
                 zgui.sameLine(.{});
                 zgui.text("Timer " ++ number ++ ": Prescale: {X:0>1} - Value: {X:0>2}", .{ timer.prescale, timer.value });
@@ -495,11 +511,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                     const start_addr = channel.sample_address();
 
-                    zgui.textColored(if (channel.play_control.key_on_bit) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
-                    zgui.sameLine(.{});
+                    inline_colored(channel.play_control.key_on_bit, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
                     zgui.text(" - {s} - ", .{@tagName(channel.play_control.sample_format)});
                     zgui.sameLine(.{});
-                    zgui.textColored(if (channel.play_control.sample_loop) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
+                    colored(channel.play_control.sample_loop, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
                     zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
                         start_addr,
                         channel.loop_start,
@@ -508,22 +523,19 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     zgui.text("FNS: {X:0>3} - Oct: {X:0>2}", .{ channel.sample_pitch_rate.fns, channel.sample_pitch_rate.oct });
                     zgui.text("DIPAN: {X:0>2} - DISDL: {X:0>1}", .{ channel.direct_pan_vol_send.pan, channel.direct_pan_vol_send.volume });
                     zgui.text("DSP Vol: {X:0>1} - DSP Chan: {X:0>1}", .{ channel.dps_channel_send.level, channel.dps_channel_send.channel });
-                    zgui.textColored(if (state.playing) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
-                    zgui.sameLine(.{});
+                    inline_colored(state.playing, "{s: >7}", .{if (state.playing) "Playing" else "Stopped"});
                     zgui.text("PlayPos: {X: >6} - ", .{state.play_position});
                     zgui.sameLine(.{});
-                    zgui.textColored(if (state.loop_end_flag) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "LoodEnd: {s: >3}", .{if (state.loop_end_flag) "Yes" else "No"});
+                    inline_colored(state.loop_end_flag, "LoodEnd: {s: >3}", .{if (state.loop_end_flag) "Yes" else "No"});
                     const effective_rate = AICAModule.AICAChannelState.compute_effective_rate(channel, switch (state.amp_env_state) {
                         .Attack => channel.amp_env_1.attack_rate,
                         .Decay => channel.amp_env_1.decay_rate,
                         .Sustain => channel.amp_env_1.sustain_rate,
                         .Release => channel.amp_env_2.release_rate,
                     });
-                    zgui.textColored(if (!channel.env_settings.voff) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "AmpEnv ", .{});
-                    zgui.sameLine(.{});
+                    inline_colored(!channel.env_settings.voff, "AmpEnv ", .{});
                     zgui.text("{s: >7} - level: {X: >4} - rate: {X: >2}", .{ @tagName(state.amp_env_state), state.amp_env_level, effective_rate });
-                    zgui.textColored(if (!channel.env_settings.lpoff) .{ 0.0, 1.0, 0.0, 1.0 } else .{ 1.0, 0.0, 0.0, 1.0 }, "FilEnv ", .{});
-                    zgui.sameLine(.{});
+                    inline_colored(!channel.env_settings.lpoff, "FilEnv ", .{});
                     zgui.text("{s: >7} - level: {X: >4}", .{ @tagName(state.filter_env_state), state.filter_env_level });
                     zgui.text("ALFOS {X: >1} ALFOWS {X: >1} PLFOS {X: >1} PLFOWS {X: >1} F {X: >2} R {any}", .{
                         channel.lfo_control.amplitude_modulation_depth,
@@ -602,22 +614,22 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         while (addr < end_addr) {
             zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}  {c}{c}{c}{c}{c}{c}{c}{c}", .{
                 addr,
-                dc.cpu.read8(@intCast(addr)),
-                dc.cpu.read8(@intCast(addr + 1)),
-                dc.cpu.read8(@intCast(addr + 2)),
-                dc.cpu.read8(@intCast(addr + 3)),
-                dc.cpu.read8(@intCast(addr + 4)),
-                dc.cpu.read8(@intCast(addr + 5)),
-                dc.cpu.read8(@intCast(addr + 6)),
-                dc.cpu.read8(@intCast(addr + 7)),
-                printable_ascii(dc.cpu.read8(@intCast(addr))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 1))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 2))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 3))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 4))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 5))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 6))),
-                printable_ascii(dc.cpu.read8(@intCast(addr + 7))),
+                dc.cpu.read(u8, @intCast(addr)),
+                dc.cpu.read(u8, @intCast(addr + 1)),
+                dc.cpu.read(u8, @intCast(addr + 2)),
+                dc.cpu.read(u8, @intCast(addr + 3)),
+                dc.cpu.read(u8, @intCast(addr + 4)),
+                dc.cpu.read(u8, @intCast(addr + 5)),
+                dc.cpu.read(u8, @intCast(addr + 6)),
+                dc.cpu.read(u8, @intCast(addr + 7)),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 1))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 2))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 3))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 4))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 5))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 6))),
+                printable_ascii(dc.cpu.read(u8, @intCast(addr + 7))),
             });
             addr += 8;
         }
@@ -677,6 +689,38 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
         zgui.text("FB_R_SIZE: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
         zgui.text("VO_CONTROL: {any}", .{VO_CONTROL});
+        if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = true }))
+            display(dc.gpu._get_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG).*);
+        if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = true }))
+            display(dc.gpu._get_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*);
+
+        if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            const region_base = dc.gpu.read_register(u32, .REGION_BASE);
+            zgui.text("REGION_BASE:  0x{X:0>8}", .{region_base});
+            const static = struct {
+                var view_all: bool = false;
+            };
+            _ = zgui.checkbox("View All", .{ .v = &static.view_all });
+            var region = dc.gpu.get_region_array_data_config(0);
+            var idx: usize = 1;
+            while (idx < 512) : (idx += 1) {
+                zgui.text("[{d:<3}] {d:<2} {d:<2}", .{ idx, region.settings.tile_x_position, region.settings.tile_y_position });
+                inline_bool(region.settings.flush_accumulate, "Flush-Accumulate ");
+                inline_bool(region.settings.z_clear, "Z-Clear ");
+                inline_bool(region.settings.pre_sort, "Pre-Sort ");
+                inline_bool(region.settings.last_region, "Last-Region ");
+                zgui.text("      ", .{});
+                inline_colored(!region.opaque_list_pointer.empty, "{X:<8} ", .{region.opaque_list_pointer.pointer_to_object_list});
+                inline_colored(!region.opaque_modifier_volume_pointer.empty, "{X:<8} ", .{region.opaque_modifier_volume_pointer.pointer_to_object_list});
+                inline_colored(!region.translucent_list_pointer.empty, "{X:<8} ", .{region.translucent_list_pointer.pointer_to_object_list});
+                inline_colored(!region.translucent_modifier_volume_pointer.empty, "{X:<8} ", .{region.translucent_modifier_volume_pointer.pointer_to_object_list});
+                inline_colored(!region.punch_through_list_pointer.empty, "{X:<8} ", .{region.punch_through_list_pointer.pointer_to_object_list});
+                if (!static.view_all and region.settings.last_region) break;
+                region = dc.gpu.get_region_array_data_config(idx);
+            }
+        }
 
         var buffer: [256]u8 = .{0} ** 256;
 
@@ -806,7 +850,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 if (addr >= 0x04800000 - bytes_per_pixels) break;
                 switch (static.format & 0b111) {
                     0x0, 0x3 => { // 0555 KRGB 16 bits
-                        const color: Color16 = .{ .value = dc.cpu.read16(addr) };
+                        const color: Color16 = .{ .value = dc.cpu.read(u16, addr) };
                         self.pixels[4 * i + 0] = @as(u8, @intCast(color.argb1555.r)) << 3;
                         self.pixels[4 * i + 1] = @as(u8, @intCast(color.argb1555.g)) << 3;
                         self.pixels[4 * i + 2] = @as(u8, @intCast(color.argb1555.b)) << 3;
@@ -814,7 +858,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         i += 1;
                     },
                     0x1 => { // 565 RGB 16 bit
-                        const color: Color16 = .{ .value = dc.cpu.read16(addr) };
+                        const color: Color16 = .{ .value = dc.cpu.read(u16, addr) };
                         self.pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                         self.pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                         self.pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
@@ -823,10 +867,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     },
                     // ARGB 32-Bits
                     0x6 => {
-                        self.pixels[4 * i + 0] = dc.cpu.read8(@intCast(addr + 3));
-                        self.pixels[4 * i + 1] = dc.cpu.read8(@intCast(addr + 2));
-                        self.pixels[4 * i + 2] = dc.cpu.read8(@intCast(addr + 1));
-                        self.pixels[4 * i + 3] = dc.cpu.read8(@intCast(addr + 0));
+                        self.pixels[4 * i + 0] = dc.cpu.read(u8, @intCast(addr + 3));
+                        self.pixels[4 * i + 1] = dc.cpu.read(u8, @intCast(addr + 2));
+                        self.pixels[4 * i + 2] = dc.cpu.read(u8, @intCast(addr + 1));
+                        self.pixels[4 * i + 3] = dc.cpu.read(u8, @intCast(addr + 0));
                         i += 1;
                     },
                     else => {
