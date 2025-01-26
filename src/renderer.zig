@@ -2830,8 +2830,9 @@ pub const Renderer = struct {
 
             if (self.render_passes[0].pre_sort) {
                 // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
-                uniform_mem.slice[0].pt_alpha_ref = -1.0;
-                defer uniform_mem.slice[0].pt_alpha_ref = self.pt_alpha_ref;
+                const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
+                pre_sort_uniform_mem.slice[0] = uniform_mem.slice[0];
+                pre_sort_uniform_mem.slice[0].pt_alpha_ref = -1.0;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
@@ -2869,7 +2870,7 @@ pub const Renderer = struct {
                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
 
                 var current_pipeline: ?PipelineKey = null;
                 var current_sampler: ?u8 = null;
