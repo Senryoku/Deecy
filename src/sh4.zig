@@ -974,7 +974,7 @@ pub const SH4 = struct {
                 const area_0_addr = addr & 0x01FFFFFF;
                 switch (area_0_addr) {
                     0x00000000...0x001FFFFF => return &dc.boot[area_0_addr],
-                    0x00200000...0x0021FFFF => return &dc.flash.data[area_0_addr - 0x200000],
+                    0x00200000...0x0021FFFF => return &dc.flash.data[area_0_addr & 0x1FFFF],
                     0x005F6800...0x005F6FFF => return dc.hw_register_addr(u8, area_0_addr),
                     0x005F7000...0x005F709C => @panic("_get_memory to GDROM Register. This should be handled in read/write functions."),
                     0x005F709D...0x005F7FFF => return dc.hw_register_addr(u8, area_0_addr),
@@ -1019,12 +1019,10 @@ pub const SH4 = struct {
                     },
                 }
             },
-            0x08000000...0x0BFFFFFF => { // Area 2 - Nothing
-                self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr});
-            },
+            // Area 2 - Nothing
+            0x08000000...0x0BFFFFFF => self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr}),
             0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
                 // self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
-
                 // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
                 sh4_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.pc, addr });
                 dc._dummy = .{ 0, 0, 0, 0 };
@@ -1035,9 +1033,8 @@ pub const SH4 = struct {
                 dc._dummy = .{ 0, 0, 0, 0 };
                 return @ptrCast(&dc._dummy);
             },
-            0x18000000...0x1BFFFFFF => { // Area 6 - Nothing
-                self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr});
-            },
+            // Area 6 - Nothing
+            0x18000000...0x1BFFFFFF => self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr}),
             // Area 7 - Internal I/O registers (same as P4)
             0x1F000000...0x1FFFFFFF => {
                 std.debug.assert(self.sr.md == 1);
@@ -1382,32 +1379,39 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xE0000000) return self.read_p4(T, virtual_addr);
 
         switch (addr) {
-            0x005F6800...0x005F7FFF => {
+            // Area 0
+            0x00000000...0x01FFFFFF, 0x02000000...0x02FFFFFF => {
                 switch (addr) {
-                    0x005F7000...0x005F709C => {
-                        check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
-                        return self._dc.?.gdrom.read_register(T, addr);
+                    0x005F6800...0x005F7FFF => {
+                        switch (addr) {
+                            0x005F7000...0x005F709C => {
+                                check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
+                                return self._dc.?.gdrom.read_register(T, addr);
+                            },
+                            else => {
+                                // Too spammy even for debugging.
+                                if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
+                                    sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
+                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(@constCast(self)._get_memory(addr)))).*,
+                                    });
+                                return self._dc.?.hw_register_addr(T, addr).*;
+                            },
+                        }
                     },
-                    @intFromEnum(HardwareRegister.SB_ISTNRM), @intFromEnum(HardwareRegister.SB_FFST) => return self._dc.?.hw_register_addr(T, addr).*, // Too spammy even for debugging.
-                    else => {
-                        sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(
-                            @constCast(self)._get_memory(addr),
-                        ))).* });
-                        return self._dc.?.hw_register_addr(T, addr).*;
+                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+                    0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
+                        check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        return self._dc.?.aica.read_register(T, addr & 0x00FFFFFF);
                     },
+                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
+                        check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        return @truncate(self._dc.?.aica.read_rtc_register(addr & 0x00FFFFFF));
+                    },
+                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
+                        return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
+                    },
+                    else => {},
                 }
-            },
-            // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
-            0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return self._dc.?.aica.read_register(T, addr & 0x00FFFFFF);
-            },
-            0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                return @truncate(self._dc.?.aica.read_rtc_register(addr & 0x00FFFFFF));
-            },
-            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
-                return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
             },
             // Area 1 - 64bit access
             0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
@@ -1421,7 +1425,8 @@ pub const SH4 = struct {
                 }
                 return self._dc.?.gpu.read_vram(T, addr);
             },
-            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+            // Area 4 - Tile accelerator command input
+            0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
                 if (virtual_addr & (@as(u32, 1) << 25) != 0) {
                     const index: u32 = (addr / 32) & 255;
@@ -1454,127 +1459,131 @@ pub const SH4 = struct {
             }
         }
 
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF) {
-            self.write_operand_cache(T, virtual_addr, value);
-            return;
-        }
+        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
+            return self.write_operand_cache(T, virtual_addr, value);
 
         if (virtual_addr >= 0xE0000000)
             return write_p4(self, T, virtual_addr, value);
 
         const addr = virtual_addr & 0x1FFFFFFF;
         switch (addr) {
-            0x00200000...0x0021FFFF => {
-                check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
-                self._dc.?.flash.write(addr & 0x1FFFF, value);
-                return;
-            },
-            0x005F6800...0x005F7FFF => {
-                const reg: HardwareRegister = @enumFromInt(addr);
-                if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                    check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
-                    return self._dc.?.gdrom.write_register(T, addr, value);
-                }
-                // Hardware registers
-                switch (reg) {
-                    .SB_SFRES => { // Software Reset
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
-                        if (value == 0x00007611)
-                            self.software_reset();
+            // Area 0, and mirrors
+            0x00000000...0x01FFFFFF, 0x02000000...0x03FFFFFF => {
+                switch (addr) {
+                    0x00200000...0x0021FFFF => {
+                        check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
+                        self._dc.?.flash.write(addr & 0x1FFFF, value);
+                        return;
                     },
-                    .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
-                        if (value == 1)
-                            sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
-                    },
-                    .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
-                        if ((value & 1) == 1) {
-                            sh4_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+                    0x005F6800...0x005F7FFF => {
+                        const reg: HardwareRegister = @enumFromInt(addr);
+                        if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+                            check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
+                            return self._dc.?.gdrom.write_register(T, addr, value);
+                        }
+                        // Hardware registers
+                        switch (reg) {
+                            .SB_SFRES => { // Software Reset
+                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
+                                if (value == 0x00007611)
+                                    self.software_reset();
+                            },
+                            .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
+                                if (value == 1)
+                                    sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
+                            },
+                            .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
+                                if ((value & 1) == 1) {
+                                    sh4_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+                                }
+                                return;
+                            },
+                            .SB_ADST => {
+                                if (value == 1) {
+                                    self._dc.?.aica.start_dma(self._dc.?);
+                                }
+                            },
+                            .SB_GDEN => {
+                                sh4_log.info("Write to SB_GDEN: {X}", .{value});
+                                if (value == 0) self._dc.?.abort_gd_dma();
+                                self._dc.?.hw_register_addr(T, addr).* = value;
+                            },
+                            .SB_GDST => {
+                                if (value == 1) {
+                                    sh4_log.info("SB_GDST DMA (ch0-DMA) initiation!", .{});
+                                    self._dc.?.start_gd_dma();
+                                } else {
+                                    sh4_log.warn("Unexpected write to SB_GDST: {X}", .{value});
+                                }
+                            },
+                            .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
+                                sh4_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
+                                return;
+                            },
+                            .SB_MDAPRO => {
+                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
+                                // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                                // Check "Security code"
+                                if (value & 0xFFFF0000 != 0x61550000) return;
+                                self._dc.?.hw_register_addr(T, addr).* = value;
+                            },
+                            .SB_MDST => {
+                                if (value == 1)
+                                    self._dc.?.start_maple_dma();
+                            },
+                            .SB_ISTNRM => {
+                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
+                                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                                self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+                            },
+                            .SB_ISTERR => {
+                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
+                                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                                self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
+                            },
+                            .SB_C2DSTAT => {
+                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
+                                self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+                            },
+                            .SB_C2DST => {
+                                if (value == 1) {
+                                    self._dc.?.start_ch2_dma();
+                                } else {
+                                    self._dc.?.end_ch2_dma();
+                                }
+                            },
+                            else => {
+                                sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
+                                self._dc.?.hw_register_addr(T, addr).* = value;
+                            },
                         }
                         return;
                     },
-                    .SB_ADST => {
-                        if (value == 1) {
-                            self._dc.?.aica.start_dma(self._dc.?);
+                    0x005F8000...0x005F9FFF => {
+                        if (T == u64) {
+                            // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
+                            if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
+                                sh4_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
+                                self._dc.?.gpu._get_register_from_addr(u64, addr).* = value;
+                                return;
+                            }
                         }
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self._dc.?.gpu.write_register(addr, value);
                     },
-                    .SB_GDEN => {
-                        sh4_log.info("Write to SB_GDEN: {X}", .{value});
-                        if (value == 0) self._dc.?.abort_gd_dma();
-                        self._dc.?.hw_register_addr(T, addr).* = value;
+                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+                    0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
+                        check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
                     },
-                    .SB_GDST => {
-                        if (value == 1) {
-                            sh4_log.info("SB_GDST DMA (ch0-DMA) initiation!", .{});
-                            self._dc.?.start_gd_dma();
-                        } else {
-                            sh4_log.warn("Unexpected write to SB_GDST: {X}", .{value});
-                        }
+                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
                     },
-                    .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
-                        sh4_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
-                        return;
-                    },
-                    .SB_MDAPRO => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
-                        // This register specifies the address range for Maple-DMA involving the system (work) memory.
-                        // Check "Security code"
-                        if (value & 0xFFFF0000 != 0x61550000) return;
-                        self._dc.?.hw_register_addr(T, addr).* = value;
-                    },
-                    .SB_MDST => {
-                        if (value == 1)
-                            self._dc.?.start_maple_dma();
-                    },
-                    .SB_ISTNRM => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
-                        // Interrupt can be cleared by writing "1" to the corresponding bit.
-                        self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
-                    },
-                    .SB_ISTERR => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
-                        // Interrupt can be cleared by writing "1" to the corresponding bit.
-                        self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
-                    },
-                    .SB_C2DSTAT => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
-                        self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
-                    },
-                    .SB_C2DST => {
-                        if (value == 1) {
-                            self._dc.?.start_ch2_dma();
-                        } else {
-                            self._dc.?.end_ch2_dma();
-                        }
-                    },
-                    else => {
-                        sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
-                        self._dc.?.hw_register_addr(T, addr).* = value;
-                    },
+                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value),
+                    else => {},
                 }
-                return;
             },
-            0x005F8000...0x005F9FFF => {
-                if (T == u64) {
-                    // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
-                    if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
-                        sh4_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
-                        self._dc.?.gpu._get_register_from_addr(u64, addr).* = value;
-                        return;
-                    }
-                }
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
-                return self._dc.?.gpu.write_register(addr, value);
-            },
-            // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
-            0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
-                check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
-                return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
-            },
-            0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
-                return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
-            },
-            0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value),
             // Area 1 - 64bit access
             0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
                 @as(*T, @alignCast(@ptrCast(&self._dc.?.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
@@ -1590,6 +1599,7 @@ pub const SH4 = struct {
                 }
                 return self._dc.?.gpu.write_vram(T, addr, value);
             },
+            // Area 4
             0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
                 if (virtual_addr & (@as(u32, 1) << 25) != 0) {
