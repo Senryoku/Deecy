@@ -2433,14 +2433,21 @@ pub const Renderer = struct {
                     var draw_call = dc: {
                         if (list_type == .Translucent and self.render_passes[0].pre_sort) {
                             // In this case, we need to preserve the order of the draw calls
-                            try self.pre_sorted_translucent_pass.append(.{
-                                .pipeline_key = pipeline_key,
-                                .draw_call = DrawCall.init(
-                                    self._allocator,
-                                    sampler,
-                                    display_list.vertex_strips.items[idx].user_clip,
-                                ),
-                            });
+                            const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
+                            if (prev_draw_call == null or
+                                !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
+                                !std.meta.eql(prev_draw_call.?.draw_call.user_clip, display_list.vertex_strips.items[idx].user_clip) or
+                                prev_draw_call.?.draw_call.sampler != sampler)
+                            {
+                                try self.pre_sorted_translucent_pass.append(.{
+                                    .pipeline_key = pipeline_key,
+                                    .draw_call = DrawCall.init(
+                                        self._allocator,
+                                        sampler,
+                                        display_list.vertex_strips.items[idx].user_clip,
+                                    ),
+                                });
+                            }
                             break :dc &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1].draw_call;
                         } else {
                             const pass = switch (list_type) {
