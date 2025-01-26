@@ -2871,17 +2871,25 @@ pub const Renderer = struct {
 
                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
 
+                var current_pipeline: ?PipelineKey = null;
+                var current_sampler: ?u8 = null;
                 for (self.pre_sorted_translucent_pass.items) |entry| {
-                    const pl = try self.get_or_put_opaque_pipeline(entry.pipeline_key, .Async);
-                    const pipeline = gctx.lookupResource(pl) orelse break;
-                    pass.setPipeline(pipeline);
+                    if (current_pipeline == null or !std.meta.eql(entry.pipeline_key, current_pipeline.?)) {
+                        const pl = try self.get_or_put_opaque_pipeline(entry.pipeline_key, .Async);
+                        const pipeline = gctx.lookupResource(pl) orelse continue;
+                        pass.setPipeline(pipeline);
+                        current_pipeline = entry.pipeline_key;
+                    }
 
                     const draw_call = entry.draw_call;
                     if (draw_call.index_count > 0) {
                         const clip = self.convert_clipping(draw_call.user_clip);
                         pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
-                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                        if (current_sampler == null or draw_call.sampler != current_sampler.?) {
+                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                            current_sampler = draw_call.sampler;
+                        }
                         pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                     }
                 }
