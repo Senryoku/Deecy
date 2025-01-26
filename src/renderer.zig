@@ -2829,7 +2829,10 @@ pub const Renderer = struct {
             }
 
             if (self.render_passes[0].pre_sort) {
-                // TODO
+                // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
+                uniform_mem.slice[0].pt_alpha_ref = -1.0;
+                defer uniform_mem.slice[0].pt_alpha_ref = self.pt_alpha_ref;
+
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
@@ -2844,9 +2847,8 @@ pub const Renderer = struct {
                 };
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
-                    .depth_load_op = .clear,
+                    .depth_load_op = .load,
                     .depth_store_op = .store,
-                    .depth_clear_value = DepthClearValue,
                     .stencil_load_op = .clear,
                     .stencil_store_op = .discard,
                     .stencil_clear_value = 0,
@@ -2883,6 +2885,9 @@ pub const Renderer = struct {
                         pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
                     }
                 }
+
+                // TODO: Support translucent modifier volumes in pre-sorted mode
+
             } else {
                 // Generate all translucent fragments
                 const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
