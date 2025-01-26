@@ -2649,7 +2649,7 @@ pub const Renderer = struct {
                 };
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
-                    .depth_load_op = .clear,
+                    .depth_load_op = .clear, // TODO: Check ZClear bit.
                     .depth_store_op = .store,
                     .depth_clear_value = DepthClearValue,
                     .stencil_load_op = .clear,
@@ -2687,6 +2687,7 @@ pub const Renderer = struct {
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
 
                 // Opaque and PunchThrough geometry
+                // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
                 inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
                     var it = metadata.pipelines.iterator();
                     while (it.next()) |entry| {
@@ -2844,7 +2845,7 @@ pub const Renderer = struct {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
-                        .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                        .load_op = .load,
                         .store_op = .store,
                     },
                     .{
