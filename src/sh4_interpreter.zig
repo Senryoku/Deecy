@@ -1336,9 +1336,11 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) void {
             sh4_log.warn("  (ocbwb_atRn) Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ cpu._operand_cache_state.addr[index], (addr & 0x1FFF_FFFF) & ~@as(u32, 31) });
         if (cpu._operand_cache_state.dirty[index]) {
             const target = cpu._operand_cache_state.addr[index] & 0x1FFF_FFFF;
-            std.debug.assert((target >= 0x10000000 and target <= 0x107FFFFF) or (target >= 0x12000000 and target <= 0x127FFFFF));
-            if (cpu._dc) |dc|
-                dc.gpu.bulk_write_ta(target, &cpu.operand_cache_lines()[index]);
+            if (cpu._dc) |dc| {
+                const LMMode = dc.read_hw_register(u32, if (target >= 0x11000000 and target < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                const access_32bit = LMMode != 0;
+                dc.gpu.write_ta(target, &cpu.operand_cache_lines()[index], if (access_32bit) .b32 else .b64);
+            }
             cpu._operand_cache_state.dirty[index] = false;
         }
     }

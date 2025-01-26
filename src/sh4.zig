@@ -880,14 +880,13 @@ pub const SH4 = struct {
                 },
                 // Direct Texture Path
                 0x11000000...0x12000000 - 1, 0x13000000...0x14000000 - 1 => {
-                    const LMMode0 = self._dc.?.read_hw_register(u32, .SB_LMMODE0);
-                    const LMMode1 = self._dc.?.read_hw_register(u32, .SB_LMMODE1);
-                    const access_32bit = (LMMode0 == 1 and dst_addr >= 0x11000000 and dst_addr < 0x12000000) or (LMMode1 == 1 and dst_addr >= 0x13000000 and dst_addr < 0x14000000);
+                    const LMMode = self._dc.?.read_hw_register(u32, if (dst_addr >= 0x11000000 and dst_addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                    const access_32bit = LMMode != 0;
                     if (access_32bit) {
                         var curr_dst: i32 = @intCast(dst_addr);
                         var curr_src: i32 = @intCast(src_addr);
                         for (0..byte_len / 4) |_| {
-                            self.write(u32, @intCast(curr_dst), self.read(u32, @intCast(curr_src)));
+                            self._dc.?.gpu.write_ta(@intCast(curr_dst), &[1]u32{self.read(u32, @intCast(curr_src))}, if (access_32bit) .b32 else .b64);
                             curr_dst += 4 * dst_stride;
                             curr_src += 4 * src_stride;
                         }
@@ -1607,7 +1606,9 @@ pub const SH4 = struct {
                     return;
                 }
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
-                return self._dc.?.gpu.write_ta(addr, value);
+                const LMMode = self._dc.?.read_hw_register(u32, if (addr >= 0x11000000 and addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                const access_32bit = LMMode != 0;
+                return self._dc.?.gpu.write_ta(addr, &[1]u32{value}, if (access_32bit) .b32 else .b64);
             },
             else => {},
         }

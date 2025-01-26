@@ -1657,38 +1657,31 @@ pub const Holly = struct {
         self._get_register_from_addr(u32, addr).* = v;
     }
 
-    // Write to the Tile Accelerator
-    pub fn write_ta(self: *@This(), addr: u32, v: u32) void {
-        holly_log.debug("  TA Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
-        std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
-        switch (addr) {
-            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => {
-                // Commands
-                self._ta_command_buffer[self._ta_command_buffer_index] = v;
-                self._ta_command_buffer_index += 1;
-                self.handle_command();
-            },
-            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
-            0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
-                // Direct Texture Path - TODO: Enforce SB_LMMODE0/SB_LMMODE1?
-                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
-                @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask]))).* = v;
-            },
-            else => holly_log.err(termcolor.red("  Unhandled TA Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
-        }
-    }
-
-    pub fn bulk_write_ta(self: *@This(), addr: u32, v: []const u32) void {
+    /// Write to the Tile Accelerator
+    pub fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
         holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
-            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => write_ta_fifo_polygon_path(self, v),
+            0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (v.len % 8 == 0) self.write_ta_fifo_polygon_path(v) else {
+                for (v) |w| {
+                    self._ta_command_buffer[self._ta_command_buffer_index] = w;
+                    self._ta_command_buffer_index += 1;
+                    self.handle_command();
+                }
+            },
             0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
-                // Direct Texture Path - TODO: Enforce SB_LMMODE0/SB_LMMODE1?
+                // Direct Texture Path
                 holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
-                for (v, 0..) |w, idx| {
-                    @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
+                switch (access_type) {
+                    .b64 => {
+                        for (v, 0..) |w, idx|
+                            @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
+                    },
+                    .b32 => {
+                        for (v, 0..) |w, idx|
+                            self.write_vram(u32, @intCast(addr + 4 * idx), w);
+                    },
                 }
             },
             else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
@@ -2117,8 +2110,8 @@ pub const Holly = struct {
     // 32-bit path read and write
     pub inline fn read_vram(self: *const @This(), comptime T: type, addr: u32) T {
         switch (@sizeOf(T)) {
-            1 => return @truncate(self.read_vram(u16, addr & 0xFFFFFFFE) >> (if (addr & 1 == 1) 8 else 0)),
-            2, 4 => return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*,
+            // 1 => return @truncate(self.read_vram(u16, addr & 0xFFFFFFFE) >> (if (addr & 1 == 1) 8 else 0)),
+            1, 2, 4 => return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*,
             else => {
                 std.debug.print(termcolor.red("read_vram: Invalid type: {s}"), .{@typeName(T)});
                 @panic("Invalid type");
