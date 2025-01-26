@@ -31,36 +31,9 @@ fn main(
     let frag_coords = vec2<i32>(position_clip.xy);
     let opaque_depth = textureLoad(opaque_depth_texture, frag_coords, 0);
 
-    // This setting is ignored for Translucent polygons in Auto-sort mode;
+    // [Depth Compare Setting] is ignored for Translucent polygons in Auto-sort mode;
     // the comparison must be made on a "Greater or Equal" basis.
-    // TODO: Handle pre-sorted mode.
-    let depth_compare = 6u; // (tex_idx_shading_instr[1] >> 16) & 0x7;
-
-    // NOTE: The label denotes when the fragment is kept, not when it's discarded.
-    switch(depth_compare) {
-        case 0u: { discard; } // Never
-        case 1u: { // Less
-            if position_clip.z >= opaque_depth { discard; }
-        }
-        case 2u: { // Equal
-            if position_clip.z != opaque_depth { discard; }
-        }
-        case 3u: { // Less or Equal
-            if position_clip.z > opaque_depth { discard; }
-        }
-        case 4u: { // Greater
-            if position_clip.z <= opaque_depth { discard; }
-        }
-        case 5u: { // Not Equal
-            if position_clip.z == opaque_depth { discard; }
-        }
-        case 6u: { // Greater or Equal
-            if position_clip.z < opaque_depth { discard; }
-        }
-        case 7u: {} // Always
-        default: {}
-    }
-
+    if position_clip.z < opaque_depth { discard; }
 
     var final_color = fragment_color(
         base_color,

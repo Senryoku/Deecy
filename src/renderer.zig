@@ -314,6 +314,14 @@ const DrawCall = struct {
     }
 };
 
+const SortedDrawCall = struct {
+    pipeline_key: PipelineKey,
+    sampler: u8,
+    user_clip: ?HollyModule.UserTileClipInfo,
+    start_index: u32 = 0,
+    index_count: u32 = 0,
+};
+
 fn translate_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor {
     return switch (factor) {
         .Zero => .zero,
@@ -412,8 +420,6 @@ const PassMetadata = struct {
         self.pipelines.clearRetainingCapacity();
     }
 };
-
-const SortedDrawCall = struct { pipeline_key: PipelineKey, draw_call: DrawCall };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     var r: [4]Vertex = .{Vertex.undef()} ** 4;
@@ -1698,8 +1704,6 @@ pub const Renderer = struct {
         const FB_R_SOF2 = holly.read_register(u32, .FB_R_SOF2);
         const FB_R_SIZE = holly.read_register(HollyModule.FB_R_SIZE, .FB_R_SIZE);
 
-        const vram = holly.vram;
-
         const line_size: u32 = 4 * (@as(u32, FB_R_SIZE.x_size) + 1); // From 32-bit units to bytes.
         const field_size: u32 = @as(u32, FB_R_SIZE.y_size) + 1; // Number of lines
 
@@ -1725,43 +1729,29 @@ pub const Renderer = struct {
                 const pixel_addr: u32 = @intCast(addr + bytes_per_pixels * x);
                 switch (FB_R_CTRL.format) {
                     0x0 => { // 0555 RGB 16 bit
-                        const pixel = holly.read_vram(Color16, pixel_addr); //std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
+                        const pixel = holly.read_vram(Color16, pixel_addr);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.argb1555.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.argb1555.g) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.argb1555.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x1 => { // 565 RGB
-                        const pixel = holly.read_vram(Color16, pixel_addr); //std.mem.bytesAsValue(Color16, vram[pixel_addr..]);
+                        const pixel = holly.read_vram(Color16, pixel_addr);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x2 => { // 888 RGB 24 bit packed
-                        if (true) {
-                            self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 2);
-                            self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
-                            self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 0);
-                        } else {
-                            const pixel = vram[pixel_addr .. pixel_addr + 3];
-                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[2];
-                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[0];
-                        }
+                        self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 2);
+                        self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
+                        self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 0);
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                     0x3 => { // 0888 RGB 32 bit
-                        if (true) {
-                            self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 0);
-                            self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
-                            self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 2);
-                        } else {
-                            const pixel = vram[pixel_addr .. pixel_addr + 3];
-                            self._scratch_pad[pixel_idx * 4 + 0] = pixel[0];
-                            self._scratch_pad[pixel_idx * 4 + 1] = pixel[1];
-                            self._scratch_pad[pixel_idx * 4 + 2] = pixel[2];
-                        }
+                        self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 0);
+                        self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
+                        self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 2);
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
                 }
@@ -2015,10 +2005,13 @@ pub const Renderer = struct {
                 }
             }
         }
-        for (self.pre_sorted_translucent_pass.items) |*sorted_draw_call| {
-            sorted_draw_call.draw_call.deinit();
-        }
+
         self.pre_sorted_translucent_pass.clearRetainingCapacity();
+        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
+        defer pre_sorted_indices.deinit();
+
+        const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
+        var index_buffer_pointer = FirstIndex;
 
         inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
             // Parameters specific to a polygon type
@@ -2430,25 +2423,33 @@ pub const Renderer = struct {
                         .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
                     };
 
-                    var draw_call = dc: {
+                    {
                         if (list_type == .Translucent and self.render_passes[0].pre_sort) {
                             // In this case, we need to preserve the order of the draw calls
-                            const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
+                            const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
                             if (prev_draw_call == null or
                                 !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
-                                !std.meta.eql(prev_draw_call.?.draw_call.user_clip, display_list.vertex_strips.items[idx].user_clip) or
-                                prev_draw_call.?.draw_call.sampler != sampler)
+                                !std.meta.eql(prev_draw_call.?.user_clip, display_list.vertex_strips.items[idx].user_clip) or
+                                prev_draw_call.?.sampler != sampler)
                             {
+                                if (prev_draw_call) |draw_call| {
+                                    // Contrary to regular draw calls, we won't append more data to pre-sorted ones. We can upload to GPU immediately (and thus use a single buffer).
+                                    draw_call.start_index = index_buffer_pointer;
+                                    draw_call.index_count = @intCast(pre_sorted_indices.items.len);
+                                    self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, pre_sorted_indices.items);
+                                    index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
+                                    pre_sorted_indices.clearRetainingCapacity();
+                                }
+
                                 try self.pre_sorted_translucent_pass.append(.{
                                     .pipeline_key = pipeline_key,
-                                    .draw_call = DrawCall.init(
-                                        self._allocator,
-                                        sampler,
-                                        display_list.vertex_strips.items[idx].user_clip,
-                                    ),
+                                    .sampler = sampler,
+                                    .user_clip = display_list.vertex_strips.items[idx].user_clip,
                                 });
                             }
-                            break :dc &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1].draw_call;
+                            for (start..self.vertices.items.len) |i|
+                                try pre_sorted_indices.append(@intCast(FirstVertex + i));
+                            try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                         } else {
                             const pass = switch (list_type) {
                                 .Opaque => &self.opaque_pass,
@@ -2473,15 +2474,22 @@ pub const Renderer = struct {
                                 ));
                                 draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                             }
-                            break :dc draw_call;
+                            for (start..self.vertices.items.len) |i|
+                                try draw_call.?.indices.append(@intCast(FirstVertex + i));
+                            try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                         }
-                    };
-                    for (start..self.vertices.items.len) |i| {
-                        try draw_call.?.indices.append(@intCast(FirstVertex + i));
                     }
-                    try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                 }
             }
+        }
+
+        // Finalize the last pre-sorted draw call
+        if (pre_sorted_indices.items.len > 0) {
+            const draw_call = &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
+            draw_call.start_index = index_buffer_pointer;
+            draw_call.index_count = @intCast(pre_sorted_indices.items.len);
+            self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, pre_sorted_indices.items);
+            index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
         }
 
         // Send everything to the GPU
@@ -2489,27 +2497,18 @@ pub const Renderer = struct {
         if (self.vertices.items.len > 0) {
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
 
-            var index = FirstIndex;
             for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
                 var it = pass.pipelines.iterator();
                 while (it.next()) |entry| {
                     for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
-                        draw_call.start_index = index;
+                        draw_call.start_index = index_buffer_pointer;
                         draw_call.index_count = @intCast(draw_call.indices.items.len);
-                        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, index * @sizeOf(u32), u32, draw_call.indices.items);
-                        index += @intCast(draw_call.indices.items.len);
+                        self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, draw_call.indices.items);
+                        index_buffer_pointer += @intCast(draw_call.indices.items.len);
 
                         draw_call.indices.clearRetainingCapacity();
                     }
                 }
-            }
-
-            for (self.pre_sorted_translucent_pass.items) |*sorted_draw_call| {
-                sorted_draw_call.draw_call.start_index = index;
-                sorted_draw_call.draw_call.index_count = @intCast(sorted_draw_call.draw_call.indices.items.len);
-                self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, index * @sizeOf(u32), u32, sorted_draw_call.draw_call.indices.items);
-                index += @intCast(sorted_draw_call.draw_call.indices.items.len);
-                sorted_draw_call.draw_call.indices.clearRetainingCapacity();
             }
         }
 
@@ -2882,15 +2881,14 @@ pub const Renderer = struct {
 
                 var current_pipeline: ?PipelineKey = null;
                 var current_sampler: ?u8 = null;
-                for (self.pre_sorted_translucent_pass.items) |entry| {
-                    if (current_pipeline == null or !std.meta.eql(entry.pipeline_key, current_pipeline.?)) {
-                        const pl = try self.get_or_put_opaque_pipeline(entry.pipeline_key, .Async);
+                for (self.pre_sorted_translucent_pass.items) |draw_call| {
+                    if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
+                        const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
                         const pipeline = gctx.lookupResource(pl) orelse continue;
                         pass.setPipeline(pipeline);
-                        current_pipeline = entry.pipeline_key;
+                        current_pipeline = draw_call.pipeline_key;
                     }
 
-                    const draw_call = entry.draw_call;
                     if (draw_call.index_count > 0) {
                         const clip = self.convert_clipping(draw_call.user_clip);
                         pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);

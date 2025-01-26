@@ -44,8 +44,5 @@ fn main(
     output.area0 = final_color.area0;
     output.area1 = final_color.area1;
 
-    // output.area0.a = 1.0;
-    // output.area1.a = 1.0;
-
     return output;
 }

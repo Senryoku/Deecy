@@ -2107,18 +2107,14 @@ pub const Holly = struct {
         }
     }
 
-    // 32-bit path read and write
+    /// 32-bit path read (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
     pub inline fn read_vram(self: *const @This(), comptime T: type, addr: u32) T {
-        switch (@sizeOf(T)) {
-            // 1 => return @truncate(self.read_vram(u16, addr & 0xFFFFFFFE) >> (if (addr & 1 == 1) 8 else 0)),
-            1, 2, 4 => return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*,
-            else => {
-                std.debug.print(termcolor.red("read_vram: Invalid type: {s}"), .{@typeName(T)});
-                @panic("Invalid type");
-            },
-        }
+        std.debug.assert(@sizeOf(T) <= 4);
+        return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*;
     }
+    /// 32-bit path write (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
     pub inline fn write_vram(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        std.debug.assert(@sizeOf(T) <= 4);
         self.check_framebuffer_write(addr);
         @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).* = value;
     }
