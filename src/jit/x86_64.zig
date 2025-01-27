@@ -468,6 +468,7 @@ pub fn convert_to_nops(instructions: []u8) void {
 }
 
 const PatchableJump = struct {
+    size: enum { r8, r32 },
     source: u32 = Invalid,
     address_to_patch: u32 = Invalid,
 
@@ -479,7 +480,7 @@ const PatchableJump = struct {
 };
 
 const PatchableJumpList = struct {
-    items: [4]PatchableJump = .{.{}} ** 4,
+    items: [4]PatchableJump = .{PatchableJump{ .size = .r32 }} ** 4,
 
     pub fn add(self: *@This(), patchable_jump: PatchableJump) !void {
         std.debug.assert(!patchable_jump.invalid());
@@ -498,14 +499,14 @@ pub const Emitter = struct {
     block_buffer: []u8 = undefined,
     block_size: u32 = 0,
 
-    jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList),
+    forward_jumps_to_patch: std.AutoHashMap(u32, PatchableJumpList),
 
     _instruction_offsets: []u32,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         return .{
-            .jumps_to_patch = std.AutoHashMap(u32, PatchableJumpList).init(allocator),
+            .forward_jumps_to_patch = std.AutoHashMap(u32, PatchableJumpList).init(allocator),
             ._instruction_offsets = try allocator.alloc(u32, 64),
             ._allocator = allocator,
         };
@@ -515,12 +516,12 @@ pub const Emitter = struct {
     pub fn set_buffer(self: *@This(), block_buffer: []u8) void {
         self.block_buffer = block_buffer;
         self.block_size = 0;
-        std.debug.assert(self.jumps_to_patch.count() == 0);
+        std.debug.assert(self.forward_jumps_to_patch.count() == 0);
     }
 
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self._instruction_offsets);
-        self.jumps_to_patch.deinit();
+        self.forward_jumps_to_patch.deinit();
     }
 
     pub fn emit_instructions(self: *@This(), instructions: []const Instruction) !void {
@@ -530,14 +531,23 @@ pub const Emitter = struct {
         for (instructions, 0..) |instr, idx| {
             self._instruction_offsets[idx] = self.block_size;
 
-            if (self.jumps_to_patch.get(@intCast(idx))) |jumps| {
+            if (self.forward_jumps_to_patch.get(@intCast(idx))) |jumps| {
                 for (jumps.items) |jump| {
                     if (!jump.invalid()) {
-                        const rel: u32 = @intCast(self.block_size - jump.source);
-                        @memcpy(@as([*]u8, @ptrCast(&self.block_buffer[jump.address_to_patch]))[0..4], @as([*]const u8, @ptrCast(&rel)));
+                        switch (jump.size) {
+                            .r8 => {
+                                std.debug.assert(self.block_size - jump.source < 128);
+                                const rel: u8 = @intCast(self.block_size - jump.source);
+                                self.block_buffer[jump.address_to_patch] = rel;
+                            },
+                            .r32 => {
+                                const rel: u32 = @intCast(self.block_size - jump.source);
+                                @memcpy(self.block_buffer[jump.address_to_patch..][0..4], std.mem.asBytes(&rel));
+                            },
+                        }
                     }
                 }
-                _ = self.jumps_to_patch.remove(@intCast(idx));
+                _ = self.forward_jumps_to_patch.remove(@intCast(idx));
             }
 
             switch (instr) {
@@ -603,8 +613,8 @@ pub const Emitter = struct {
                 // else => return error.UnsupportedInstruction,
             }
         }
-        if (self.jumps_to_patch.count() > 0) {
-            std.debug.print("Jumps left to patch: {}\n", .{self.jumps_to_patch.count()});
+        if (self.forward_jumps_to_patch.count() > 0) {
+            std.debug.print("Jumps left to patch: {}\n", .{self.forward_jumps_to_patch.count()});
             @panic("Error: Unpatched jumps!");
         }
     }
@@ -1504,9 +1514,25 @@ pub const Emitter = struct {
         //         We don't know the size of the jump yet, and we have to reserve enough space
         //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
 
-        const target_idx = @as(i32, @intCast(current_idx)) + rel;
-        if (rel < 0 and @as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(self.block_size + 2)) > -128) {
-            try self.emit_jmp_rel8(condition, @intCast(@as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(self.block_size + 2))));
+        const target_idx: u32 = @intCast(@as(i32, @intCast(current_idx)) + rel);
+        if (rel < 0 and @as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2)) > -128) {
+            try self.emit_jmp_rel8(condition, @intCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2))));
+            return;
+        }
+
+        // Try to emit a rel8 jump. Our instruction can map to multiple x86 instructions of up to 15 bytes each, so I'm being really conservative here.
+        if (rel > 0 and rel <= 6) {
+            const address_to_patch = self.block_size + 1;
+            try self.emit_jmp_rel8(condition, 0);
+            const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
+            if (!jumps.found_existing)
+                jumps.value_ptr.* = .{};
+
+            try jumps.value_ptr.*.add(.{
+                .size = .r8,
+                .source = self.block_size,
+                .address_to_patch = address_to_patch,
+            });
             return;
         }
 
@@ -1538,15 +1564,16 @@ pub const Emitter = struct {
         if (rel < 0) {
             const next_instr_address = address_to_patch + 4;
             std.debug.assert(target_idx >= 0);
-            try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(next_instr_address))));
+            try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(next_instr_address))));
         } else {
             try self.emit(u32, 0xA0C0FFEE);
 
-            const jumps = try self.jumps_to_patch.getOrPut(current_idx + @as(u32, @intCast(rel)));
+            const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
             if (!jumps.found_existing)
                 jumps.value_ptr.* = .{};
 
             try jumps.value_ptr.*.add(.{
+                .size = .r32,
                 .source = self.block_size,
                 .address_to_patch = address_to_patch,
             });
