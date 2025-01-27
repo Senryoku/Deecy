@@ -1475,11 +1475,40 @@ pub const Emitter = struct {
         }
     }
 
+    fn emit_jmp_rel8(self: *@This(), condition: JIT.Condition, rel: i8) !void {
+        try self.emit(u8, switch (condition) {
+            .Always => 0xEB,
+            .Overflow => 0x70,
+            .NotOverflow => 0x71,
+            .Carry, .Below => 0x72,
+            .NotCarry, .AboveEqual, .NotBelow => 0x73,
+            .Equal, .Zero => 0x74,
+            .NotEqual, .NotZero => 0x75,
+            .NotAbove, .BelowEqual => 0x76,
+            .Above, .NotBelowEqual => 0x77,
+            .Sign => 0x78,
+            .NotSign => 0x79,
+            .ParityEven => 0x7A,
+            .ParityOdd => 0x7B,
+            .Less, .NotGreaterEqual => 0x7C,
+            .GreaterEqual, .NotLess => 0x7D,
+            .LessEqual, .NotGreater => 0x7E,
+            .Greater, .NotLessEqual => 0x7F,
+        });
+        try self.emit(i8, rel);
+    }
+
     pub fn jmp(self: *@This(), condition: JIT.Condition, current_idx: u32, rel: i32) !void {
         // TODO: Support more destination than just immediate relative.
         //       Support different sizes of rel (rel8 in particular).
         //         We don't know the size of the jump yet, and we have to reserve enough space
         //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
+
+        const target_idx = @as(i32, @intCast(current_idx)) + rel;
+        if (rel < 0 and @as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(self.block_size + 2)) > -128) {
+            try self.emit_jmp_rel8(condition, @intCast(@as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(self.block_size + 2))));
+            return;
+        }
 
         if (condition != .Always)
             try self.emit(u8, 0x0F);
@@ -1508,7 +1537,6 @@ pub const Emitter = struct {
         std.debug.assert(rel != 0);
         if (rel < 0) {
             const next_instr_address = address_to_patch + 4;
-            const target_idx = @as(i32, @intCast(current_idx)) + rel;
             std.debug.assert(target_idx >= 0);
             try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[@intCast(target_idx)])) - @as(i32, @intCast(next_instr_address))));
         } else {
