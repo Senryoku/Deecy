@@ -59,7 +59,7 @@ const BlockCache = struct {
 
     buffer: []align(std.mem.page_size) u8,
     cursor: usize = 0,
-    blocks: []?BasicBlock = undefined,
+    blocks: []BasicBlock = undefined,
 
     min_address: u32 = 0xFFFFFFFF,
     max_address: u32 = 0,
@@ -93,22 +93,22 @@ const BlockCache = struct {
             .windows => {
                 const blocks = try std.os.windows.VirtualAlloc(
                     null,
-                    @sizeOf(?BasicBlock) * BlockEntryCount,
+                    @sizeOf(BasicBlock) * BlockEntryCount,
                     std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
                     std.os.windows.PAGE_READWRITE,
                 );
-                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
             },
             .linux => {
                 const blocks = try std.posix.mmap(
                     null,
-                    @sizeOf(?BasicBlock) * BlockEntryCount,
+                    @sizeOf(BasicBlock) * BlockEntryCount,
                     std.posix.PROT.READ | std.posix.PROT.WRITE,
                     .{ .TYPE = .PRIVATE, .EXECUTABLE = false, .ANONYMOUS = true },
                     -1,
                     0,
                 );
-                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
             },
             else => @compileError("Unsupported OS."),
         }
@@ -121,7 +121,7 @@ const BlockCache = struct {
                 std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
             },
             .linux => {
-                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(?BasicBlock)]);
+                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(BasicBlock)]);
             },
             else => @compileError("Unsupported OS."),
         }
@@ -151,7 +151,7 @@ const BlockCache = struct {
                 }
                 const start = compute_key(@intCast(start_addr), sz, pr);
                 const end = compute_key(@intCast(end_addr), sz, pr);
-                @memset(self.blocks[start..end], null);
+                @memset(self.blocks[start..end], .{ .offset = 0xFFFF_FFFF });
             }
         }
     }
@@ -160,7 +160,7 @@ const BlockCache = struct {
         return ((if (address > 0x0C000000) (address & RAMMask) else address + RAMEntryCount) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
     }
 
-    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *?BasicBlock {
+    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *BasicBlock {
         return &self.blocks[compute_key(address, sz, pr)];
     }
 
@@ -510,7 +510,7 @@ pub const SH4JIT = struct {
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
-            if (block.* == null) {
+            if (block.cycles == 0) {
                 sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ pc, cpu.fpscr.sz, cpu.fpscr.pr });
                 block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
                     if (err == error.JITCacheFull) {
@@ -520,14 +520,14 @@ pub const SH4JIT = struct {
                     } else break :retry err;
                 });
             }
-            const block_cycles = block.*.?.cycles;
+            std.debug.assert(block.cycles > 0);
             const start = std.time.nanoTimestamp();
-            block.*.?.execute(self.block_cache.buffer, cpu);
-            if (BasicBlock.EnableInstrumentation and block.* != null) { // Might have been invalidated.
-                block.*.?.time_spent += std.time.nanoTimestamp() - start;
-                block.*.?.call_count += 1;
+            block.execute(self.block_cache.buffer, cpu);
+            if (BasicBlock.EnableInstrumentation and block.cycles > 0) { // Might have been invalidated.
+                block.time_spent += std.time.nanoTimestamp() - start;
+                block.call_count += 1;
             }
-            const cycles = block_cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
+            const cycles = block.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
             return cycles;
         } else {
@@ -535,7 +535,7 @@ pub const SH4JIT = struct {
         }
     }
 
-    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*?BasicBlock {
+    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
         var ctx = start_ctx;
 
         var b = &self._working_block;

@@ -26,13 +26,11 @@ pub const JITBlock = struct {
     instructions: std.ArrayList(Instruction),
 
     _emitter: Architecture.Emitter,
-    _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !JITBlock {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
             ._emitter = try Architecture.Emitter.init(allocator),
-            ._allocator = allocator,
         };
     }
 
