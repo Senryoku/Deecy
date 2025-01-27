@@ -562,7 +562,6 @@ pub const Dreamcast = struct {
         self._global_cycles += cycles;
         while (self.scheduled_events.peek()) |event| {
             if (event.trigger_cycle <= self._global_cycles) {
-                //std.debug.print("Event triggered: {any}\n", .{event.event});
                 if (event.interrupt) |int| {
                     switch (int) {
                         .Normal => self.raise_normal_interrupt(int.Normal),
