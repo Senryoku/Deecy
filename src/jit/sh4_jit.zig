@@ -103,8 +103,8 @@ const BlockCache = struct {
                 const blocks = try std.posix.mmap(
                     null,
                     @sizeOf(?BasicBlock) * BlockEntryCount,
-                    std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC,
-                    .{ .TYPE = .PRIVATE, .EXECUTABLE = true, .ANONYMOUS = true },
+                    std.posix.PROT.READ | std.posix.PROT.WRITE,
+                    .{ .TYPE = .PRIVATE, .EXECUTABLE = false, .ANONYMOUS = true },
                     -1,
                     0,
                 );
