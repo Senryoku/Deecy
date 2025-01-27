@@ -704,6 +704,9 @@ pub const Dreamcast = struct {
         None,
         EndGDDMA,
         EndAICADMA,
+        Timer0Underflow,
+        Timer1Underflow,
+        Timer2Underflow,
     };
 
     pub fn serialize(self: *@This(), writer: anytype) !usize {
@@ -733,7 +736,16 @@ pub const Dreamcast = struct {
                         cb = .EndGDDMA;
                     } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) {
                         cb = .EndAICADMA;
-                    } else @panic("Serialization: Unhandled callback function");
+                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(SH4.get_timer_underflow_function(0)))) {
+                        cb = .Timer0Underflow;
+                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(SH4.get_timer_underflow_function(1)))) {
+                        cb = .Timer1Underflow;
+                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(SH4.get_timer_underflow_function(2)))) {
+                        cb = .Timer2Underflow;
+                    } else {
+                        dc_log.err(termcolor.red("Serialization: Unhandled callback function: {any}"), .{callback});
+                        @panic("Serialization: Unhandled callback function");
+                    }
                 }
                 bytes += try writer.write(std.mem.asBytes(&cb));
             }
@@ -774,6 +786,18 @@ pub const Dreamcast = struct {
                 .EndAICADMA => .{
                     .context = &self.aica,
                     .function = @ptrCast(&AICAModule.AICA.end_dma),
+                },
+                .Timer0Underflow => .{
+                    .context = &self.cpu,
+                    .function = @ptrCast(SH4.get_timer_underflow_function(0)),
+                },
+                .Timer1Underflow => .{
+                    .context = &self.cpu,
+                    .function = @ptrCast(SH4.get_timer_underflow_function(1)),
+                },
+                .Timer2Underflow => .{
+                    .context = &self.cpu,
+                    .function = @ptrCast(SH4.get_timer_underflow_function(2)),
                 },
                 .None => null,
             };

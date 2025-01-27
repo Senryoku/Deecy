@@ -298,4 +298,17 @@ pub const FRQCR = packed struct(u16) {
     pll1en: u1 = 0, // Use PLL1
     ckoen: u1 = 0, // CKIO clock input
     _r0: u4 = 0,
+
+    pub fn peripheral_clock_ratio(self: @This()) u32 {
+        const PeripheralClockRatio: u32 = switch (self.pfc) {
+            0b000 => 2,
+            0b001 => 3,
+            0b010 => 4,
+            0b011 => 6,
+            0b100 => 8,
+            else => @panic("Prohibited value in FRQCR.pfc"),
+        };
+        std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
+        return PeripheralClockRatio;
+    }
 };
