@@ -1382,7 +1382,7 @@ pub const AICA = struct {
 
         // G2 Bus: 25MHz 16bits - 200MHz (SH4 Clock) / 25MHz / 2 = 4 cycles per byte.
         // Used as theorical max speed.
-        dc.schedule_event(.{ .function = @ptrCast(&end_dma), .context = self }, 4 * len_in_bytes);
+        dc.schedule_event(.EndAICADMA, 4 * len_in_bytes);
     }
 
     pub fn end_dma(_: *AICA, dc: *Dreamcast) void {
