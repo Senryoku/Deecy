@@ -529,11 +529,8 @@ pub const SH4JIT = struct {
             }
             const cycles = block_cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
-            cpu.advance_timers(cycles);
             return cycles;
         } else {
-            // FIXME: Not sure if this is a thing.
-            cpu.advance_timers(8);
             return 8;
         }
     }

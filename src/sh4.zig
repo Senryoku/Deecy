@@ -196,7 +196,7 @@ pub const SH4 = struct {
     _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
-    timer_cycle_counter: [3]u32 = .{0} ** 3, // Cycle counts before scaling.
+    _last_timer_update: [3]u64 = .{0} ** 3,
 
     execution_state: ExecutionState = .Running,
 
@@ -649,8 +649,6 @@ pub const SH4 = struct {
             self._pending_cycles = 0;
             return cycles;
         } else {
-            // FIXME: Not sure if this is a thing.
-            self.add_cycles(8);
             const cycles = self._pending_cycles;
             self._pending_cycles = 0;
             return cycles;
@@ -741,70 +739,124 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn advance_timers(self: *@This(), cycles: u32) void {
-        const TSTR = self.read_p4_register(u32, .TSTR);
-        const FRQCR = self.read_p4_register(P4.FRQCR, .FRQCR);
-        const PeripheralClockRatio: u32 = switch (FRQCR.pfc) {
-            0b000 => 2,
-            0b001 => 3,
-            0b010 => 4,
-            0b011 => 6,
-            0b100 => 8,
-            else => @panic("Prohibited value in FRQCR.pfc"),
+    fn clear_timer_interrupt(self: *@This(), channel: u3) void {
+        // std.debug.print("Clearing timer interrupt {d}\n", .{channel});
+        const func: *const fn (*SH4, *Dreamcast) void = switch (channel) {
+            0 => on_timer_underflow_0,
+            1 => on_timer_underflow_1,
+            2 => on_timer_underflow_2,
+            else => @panic("Invalid timer channel"),
         };
-        std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
-
-        // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
-        // (TCNT) for the corresponding channel starts counting. When TCNT underflows, the UNF flag is
-        // set in the corresponding timer control register (TCR). If the UNIE bit in TCR is set to 1 at this
-        // time, an interrupt request is sent to the CPU. At the same time, the value is copied from TCOR
-        // into TCNT, and the count-down continues (auto-reload function).
-
-        inline for (0..3) |i| {
-            if ((TSTR >> @intCast(i)) & 0x1 == 1) {
-                const tcnt = self.p4_register(u32, TimerRegisters[i].counter);
-                const tcr = self.p4_register(P4.TCR, TimerRegisters[i].control);
-
-                self.timer_cycle_counter[i] += cycles;
-
-                // const scale = PeripheralClockRatio * SH4.timer_prescaler(tcr.*.tpsc);
-                // const diff = @divTrunc(self.timer_cycle_counter[i], scale);
-                // self.timer_cycle_counter[i] %= scale;
-
-                std.debug.assert(PeripheralClockRatio == 4); // Here we really need this to be true.
-                const shift = ([_]u5{
-                    @ctz(@as(u32, 4) << 2),
-                    @ctz(@as(u32, 16) << 2),
-                    @ctz(@as(u32, 64) << 2),
-                    @ctz(@as(u32, 256) << 2),
-                    @ctz(@as(u32, 1024) << 2),
-                })[tcr.*.tpsc];
-                const mask = ([_]u32{
-                    (4 << 2) - 1,
-                    (16 << 2) - 1,
-                    (64 << 2) - 1,
-                    (256 << 2) - 1,
-                    (1024 << 2) - 1,
-                })[tcr.*.tpsc];
-                const diff = self.timer_cycle_counter[i] >> shift;
-                self.timer_cycle_counter[i] &= mask;
-
-                if (tcnt.* <= diff) {
-                    tcr.*.unf = 1; // Signals underflow
-                    const reset_constant = self.p4_register(u32, TimerRegisters[i].constant).*;
-                    tcnt.* = reset_constant -% (diff - tcnt.*); // Reset counter
-                    tcnt.* %= reset_constant; // In case reset_constant is smaller than diff...
-                    if (tcr.*.unie == 1)
-                        self.request_interrupt(TimerRegisters[i].interrupt);
-                } else {
-                    tcnt.* -= diff;
+        var not_done: bool = true;
+        while (not_done) {
+            not_done = false;
+            var it = self._dc.?.scheduled_interrupts.iterator();
+            var idx: u32 = 0;
+            while (it.next()) |entry| {
+                if (entry.callback) |cb| {
+                    if (cb.function == @as(?*const fn (*anyopaque, *Dreamcast) void, @ptrCast(func))) {
+                        _ = self._dc.?.scheduled_interrupts.removeIndex(idx);
+                        not_done = true;
+                        break;
+                    }
                 }
+                idx += 1;
             }
         }
     }
 
+    fn schedule_timer(self: *@This(), channel: u3) void {
+        const TSTR = self.read_p4_register(u32, .TSTR);
+        if ((TSTR >> @intCast(channel)) & 0x1 == 1) {
+            const FRQCR = self.read_p4_register(P4.FRQCR, .FRQCR);
+            const PeripheralClockRatio: u32 = switch (FRQCR.pfc) {
+                0b000 => 2,
+                0b001 => 3,
+                0b010 => 4,
+                0b011 => 6,
+                0b100 => 8,
+                else => @panic("Prohibited value in FRQCR.pfc"),
+            };
+            std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
+
+            self.update_timer_registers(channel);
+            const tcnt: usize = self.read_p4_register(u32, TimerRegisters[channel].counter);
+            const tcr = self.read_p4_register(P4.TCR, TimerRegisters[channel].control);
+            const scale: usize = PeripheralClockRatio * SH4.timer_prescaler(tcr.tpsc);
+            const func: *const fn (*SH4, *Dreamcast) void = switch (channel) {
+                0 => on_timer_underflow_0,
+                1 => on_timer_underflow_1,
+                2 => on_timer_underflow_2,
+                else => @panic("Invalid timer channel"),
+            };
+            const cycles = scale * (tcnt + 1);
+            sh4_log.debug("Scheduled timer {d} underflow in {d} cycles\n", .{ channel, cycles });
+            self._dc.?.schedule_event(.{ .context = self, .function = @ptrCast(func) }, cycles);
+        }
+    }
+
+    fn on_timer_underflow(self: *@This(), channel: u3) void {
+        self.update_timer_registers(channel);
+
+        const tcr = self.p4_register(P4.TCR, TimerRegisters[channel].control);
+        tcr.*.unf = 1; // Signals underflow
+        if (tcr.*.unie == 1)
+            self.request_interrupt(TimerRegisters[channel].interrupt);
+
+        self.schedule_timer(channel);
+    }
+    fn on_timer_underflow_0(self: *@This(), _: *Dreamcast) void {
+        self.on_timer_underflow(0);
+    }
+    fn on_timer_underflow_1(self: *@This(), _: *Dreamcast) void {
+        self.on_timer_underflow(1);
+    }
+    fn on_timer_underflow_2(self: *@This(), _: *Dreamcast) void {
+        self.on_timer_underflow(2);
+    }
+
+    fn update_timer_registers(self: *@This(), channel: u3) void {
+        const TSTR = self.read_p4_register(u32, .TSTR);
+        if ((TSTR >> @intCast(channel)) & 0x1 == 1) {
+            const FRQCR = self.read_p4_register(P4.FRQCR, .FRQCR);
+            const PeripheralClockRatio: u8 = switch (FRQCR.pfc) {
+                0b000 => 2,
+                0b001 => 3,
+                0b010 => 4,
+                0b011 => 6,
+                0b100 => 8,
+                else => @panic("Prohibited value in FRQCR.pfc"),
+            };
+            std.debug.assert(PeripheralClockRatio == 4);
+
+            const tcr = self.read_p4_register(P4.TCR, TimerRegisters[channel].control);
+            const cycles = self._dc.?._scheduled_interrupts_cycles - self._last_timer_update[channel];
+
+            const shift = ([_]u5{
+                @ctz(@as(u16, 4) * PeripheralClockRatio),
+                @ctz(@as(u16, 16) * PeripheralClockRatio),
+                @ctz(@as(u16, 64) * PeripheralClockRatio),
+                @ctz(@as(u16, 256) * PeripheralClockRatio),
+                @ctz(@as(u16, 1024) * PeripheralClockRatio),
+            })[tcr.tpsc];
+            const diff = cycles >> shift;
+            self._last_timer_update[channel] += diff << shift;
+
+            const tcnt = self.p4_register(u32, TimerRegisters[channel].counter);
+            // std.debug.print("update_timer_registers {d}: cycles: {d}, diff: {d}, tcnt: {d}\n", .{ channel, cycles, diff, tcnt.* });
+
+            const reset_constant = self.p4_register(u32, TimerRegisters[channel].constant).*;
+            const mod = (@as(u32, @truncate(diff)) % reset_constant);
+            if (tcnt.* < mod) {
+                tcnt.* = reset_constant -% mod;
+            } else {
+                tcnt.* -%= mod;
+            }
+
+            // std.debug.print("  => tcnt: {d}\n", .{tcnt.*});
+        } else self._last_timer_update[channel] = self._dc.?._scheduled_interrupts_cycles;
+    }
     pub inline fn add_cycles(self: *@This(), cycles: u32) void {
-        self.advance_timers(cycles);
         self._pending_cycles += cycles;
     }
 
@@ -1194,8 +1246,15 @@ pub const SH4 = struct {
                         // FIXME: Not emulated at all, these clash with my P4 access pattern :(
                         P4Register.PMCR1 => return 0,
                         P4Register.PMCR2 => return 0,
-                        // Too spammy, even for debugging.
-                        P4Register.TCNT0 => return @constCast(self).p4_register_addr(T, virtual_addr).*,
+                        P4Register.TCNT0, P4Register.TCNT1, P4Register.TCNT2 => {
+                            @constCast(self).update_timer_registers(switch (@as(P4Register, @enumFromInt(virtual_addr))) {
+                                P4Register.TCNT0 => 0,
+                                P4Register.TCNT1 => 1,
+                                P4Register.TCNT2 => 2,
+                                else => unreachable,
+                            });
+                            return @constCast(self).p4_register_addr(T, virtual_addr).*;
+                        },
                         else => {
                             if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
                                 sh4_log.warn(termcolor.yellow(" [{X:0>8}] Invalid Read({any}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
@@ -1363,6 +1422,20 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
                             self.p4_register_addr(T, virtual_addr).* = value;
                             self.compute_interrupt_priorities();
+                            return;
+                        },
+                        // Any timer register
+                        0xFFD80000...0xFFD80030 => {
+                            // TODO: We can be a lot more precise here.
+                            inline for (0..3) |i| {
+                                self.update_timer_registers(i);
+                            }
+                            self.p4_register_addr(T, virtual_addr).* = value;
+                            inline for (0..3) |i| {
+                                self.clear_timer_interrupt(i);
+                                self.update_timer_registers(i);
+                                self.schedule_timer(i);
+                            }
                             return;
                         },
                         else => {
@@ -1746,7 +1819,7 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.p4_registers[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.utlb[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.interrupt_requests));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self._last_timer_update[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.execution_state));
         bytes += try writer.write(std.mem.asBytes(&self._pending_cycles));
         bytes += try self._operand_cache_state.serialize(writer);
@@ -1776,7 +1849,7 @@ pub const SH4 = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.p4_registers[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.utlb[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.interrupt_requests));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.timer_cycle_counter[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self._last_timer_update[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.execution_state));
         bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
         bytes += try self._operand_cache_state.deserialize(reader);

@@ -493,7 +493,7 @@ pub const Dreamcast = struct {
 
     // TODO: Add helpers for external interrupts and errors.
 
-    pub fn schedule_event(self: *@This(), callback: Callback, cycles: u32) void {
+    pub fn schedule_event(self: *@This(), callback: Callback, cycles: usize) void {
         self.scheduled_interrupts.add(.{
             .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
             .callback = callback,
