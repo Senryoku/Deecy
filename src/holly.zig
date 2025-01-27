@@ -131,9 +131,9 @@ pub const SOFT_RESET = packed struct(u32) {
 pub const SPG_STATUS = packed struct(u32) {
     scanline: u10 = 0,
     fieldnum: u1 = 0,
-    blank: u1 = 0,
-    hblank: u1 = 0,
-    vsync: u1 = 0,
+    blank: bool = false,
+    hblank: bool = false,
+    vsync: bool = false,
 
     _: u18 = 0,
 };
@@ -1394,10 +1394,9 @@ pub const Holly = struct {
     // ("double buffering" the object lists), so we have to keep track of that.
     _ta_lists: [16]TALists = undefined,
 
-    _pixel: u32 = 0,
-    _tmp_cycles: u32 = 0,
-
-    _vblank_signal: bool = false,
+    _pixel: u64 = 0,
+    _tmp_cycles: u64 = 0,
+    _last_spg_update: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
         var r = Holly{
@@ -1487,97 +1486,121 @@ pub const Holly = struct {
         self._get_register(u32, .FB_C_SOF).* = 0;
 
         self._get_register(u32, .TA_LIST_CONT).* = 0;
+
+        self.schedule_interrupts();
     }
 
-    // Cleared on read
-    pub fn vblank_signal(self: *@This()) bool {
-        const r = self._vblank_signal;
-        self._vblank_signal = false;
-        return r;
+    fn milli_cycles_per_pixel(self: *const @This()) u64 {
+        const fb_r_ctrl = self.read_register(FB_R_CTRL, .FB_R_CTRL);
+        return (if (fb_r_ctrl.vclk_div == 0) @as(u32, 2) else 1) * 7407; // FIXME: Approximation. ~200/27.
     }
 
-    // NOTE: This is pretty heavy in benchmarks, might be worth optimizing a bit (although I'm not sure how)
-    pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
-        self._tmp_cycles += 1000 * cycles;
+    pub fn schedule_hblank_in(self: *@This()) void {
+        const cpp: u64 = self.milli_cycles_per_pixel();
+        const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
+        self._dc.schedule_event(.HBlankIn, @divTrunc(cpp * spg_hblank_int.hblank_in_interrupt, 1000));
+    }
+    pub fn schedule_vblank_in(self: *@This()) void {
+        const cpp: u64 = self.milli_cycles_per_pixel();
+        const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
+        const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_in_interrupt_line_number;
+        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
+        const max_scanline = spg_load.vcount;
+        const line_diff = if (spg_status.scanline < target_scanline)
+            target_scanline - spg_status.scanline
+        else
+            (max_scanline - spg_status.scanline) + target_scanline;
+        const cycles = @divTrunc(cpp * spg_load.hcount * line_diff, 1000);
+        self._dc.schedule_event(.VBlankIn, cycles);
+    }
+    pub fn schedule_vblank_out(self: *@This()) void {
+        const cpp: u64 = self.milli_cycles_per_pixel();
+        const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
+        const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_out_interrupt_line_number;
+        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
+        const max_scanline = spg_load.vcount + 1;
+        const line_diff = if (spg_status.scanline < target_scanline)
+            target_scanline - spg_status.scanline
+        else
+            (max_scanline - spg_status.scanline) + target_scanline;
+        const cycles = @divTrunc(cpp * spg_load.hcount * line_diff, 1000);
+        self._dc.schedule_event(.VBlankOut, cycles);
+    }
 
-        // FIXME: Move all of this to its own SPG Module ?
-        const spg_hblank = self._get_register(SPG_HBLANK, .SPG_HBLANK).*;
-        const spg_hblank_int = self._get_register(SPG_HBLANK_INT, .SPG_HBLANK_INT).*;
-        const spg_load = self._get_register(SPG_LOAD, .SPG_LOAD).*;
-        const fb_r_ctrl = self._get_register(FB_R_CTRL, .FB_R_CTRL).*;
-        const cycles_per_pixel = (if (fb_r_ctrl.vclk_div == 0) @as(u32, 2) else 1) * 7407; // FIXME: Approximation. ~200/27.
+    pub fn on_hblank_in(self: *@This()) void {
+        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
+        const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
+        switch (spg_hblank_int.hblank_int_mode) {
+            // Output when the display line is the value indicated by line_comp_val.
+            0 => if (spg_status.scanline == spg_hblank_int.line_comp_val)
+                self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
+            // Output every line_comp_val lines.
+            1 => if (spg_status.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
+                self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
+            // Output every line.
+            2 => self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
+            else => {},
+        }
+        self.schedule_hblank_in();
+    }
 
-        if (self._tmp_cycles >= cycles_per_pixel) {
-            const start_pixel = self._pixel;
-            self._pixel += self._tmp_cycles / cycles_per_pixel;
-            self._tmp_cycles %= cycles_per_pixel;
+    pub fn on_vblank_in(self: *@This()) void {
+        self._dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
+        // self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = true;
+        self.schedule_vblank_in();
+    }
+    pub fn on_vblank_out(self: *@This()) void {
+        // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
+        // FIXME: This probably shouldn't be here.
+        if (self._dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and self._dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1) {
+            // NOTE: Registers SB_MSYS and SB_MSHTCL control some behaviours here and aren't emulated.
+            holly_log.warn("Mapple DMA triggered over VBlankOut.", .{});
+            self._dc.start_maple_dma();
+        }
+        self._dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
+        // self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = false;
+        self.schedule_vblank_out();
+    }
+
+    fn schedule_interrupts(self: *@This()) void {
+        self.schedule_hblank_in();
+        self.schedule_vblank_in();
+        self.schedule_vblank_out();
+    }
+
+    fn clear_scheduled_interrupts(self: *@This()) void {
+        self._dc.clear_event(.HBlankIn);
+        self._dc.clear_event(.VBlankIn);
+        self._dc.clear_event(.VBlankOut);
+    }
+
+    pub fn update_spg_status(self: *@This()) void {
+        if (self._dc._global_cycles == self._last_spg_update) return;
+        self._tmp_cycles += 1000 * (self._dc._global_cycles - self._last_spg_update);
+        self._last_spg_update = self._dc._global_cycles;
+        const cpp = self.milli_cycles_per_pixel();
+
+        if (self._tmp_cycles >= cpp) {
+            const spg_hblank = self.read_register(SPG_HBLANK, .SPG_HBLANK);
+            const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
+            self._pixel += self._tmp_cycles / cpp;
+            self._tmp_cycles %= cpp;
 
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
-            if (start_pixel < spg_hblank.hbstart and spg_hblank.hbstart <= self._pixel) {
-                spg_status.hblank = 1;
-            }
-            if (start_pixel < spg_hblank.hbend and spg_hblank.hbend <= self._pixel) {
-                spg_status.hblank = 0;
-            }
-            if (start_pixel < spg_hblank_int.hblank_in_interrupt and spg_hblank_int.hblank_in_interrupt <= self._pixel) {
-                switch (spg_hblank_int.hblank_int_mode) {
-                    0 => {
-                        // Output when the display line is the value indicated by line_comp_val.
-                        if (spg_status.scanline == spg_hblank_int.line_comp_val)
-                            dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
-                    },
-                    1 => {
-                        // Output every line_comp_val lines.
-                        if (spg_status.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
-                            dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
-                    },
-                    2 => {
-                        // Output every line.
-                        dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
-                    },
-                    else => {},
-                }
-            }
+            spg_status.hblank = self._pixel >= spg_hblank.hbstart or self._pixel <= spg_hblank.hbend;
 
-            while (self._pixel >= spg_load.hcount) {
-                self._pixel -= spg_load.hcount;
+            if (self._pixel >= spg_load.hcount) {
+                const line_count = self._pixel / spg_load.hcount;
+                self._pixel %= spg_load.hcount;
 
-                const spg_vblank = self._get_register(SPG_VBLANK, .SPG_VBLANK).*;
-                const spg_vblank_int = self._get_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).*;
+                const max_scanline = spg_load.vcount + 1;
+                spg_status.scanline +%= @intCast(line_count % max_scanline);
+                spg_status.scanline %= max_scanline;
 
-                spg_status.scanline +%= 1;
-
-                // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
-                // FIXME: This has nothing to do here.
-                if (dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1 and @as(u11, spg_status.scanline) + 1 == spg_vblank_int.vblank_out_interrupt_line_number) {
-                    // NOTE: Registers SB_MSYS and SB_MSHTCL control some behaviours here and aren't emulated.
-                    dc.start_maple_dma();
-                }
-
-                if (spg_status.scanline == spg_vblank_int.vblank_in_interrupt_line_number) {
-                    dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
-                }
-                if (spg_status.scanline == spg_vblank_int.vblank_out_interrupt_line_number) {
-                    dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
-                }
-                if (spg_status.scanline == spg_vblank.vbstart) {
-                    spg_status.vsync = 1;
-                }
-                if (spg_status.scanline == spg_vblank.vbend) {
-                    spg_status.vsync = 0;
-                }
-                // FIXME: spg_load.vcount is sometimes < spg_vblank.vbend, locking the system in constant VSync.
-                //        I don't know why yet, there's probably something I did not understand correcly,
-                //        but the important for now is that all the interrupts are fired and states are reached,
-                //        even if the timing is wrong.
-                // NOTE: vcount: Specify "number of lines per field - 1" for the CRT; in interlace mode, specify"number of lines per field/2 - 1." (default = 0x106)
-                if (spg_status.scanline >= @max(spg_load.vcount + 1, spg_vblank.vbend)) {
-                    spg_status.scanline = 0;
-                }
-
-                if (spg_status.scanline == 0)
-                    self._vblank_signal = true;
+                const spg_vblank = self.read_register(SPG_VBLANK, .SPG_VBLANK);
+                spg_status.vsync = spg_status.scanline >= spg_vblank.vbstart or spg_status.scanline < spg_vblank.vbend;
+                if (spg_vblank.vbstart < spg_vblank.vbend) spg_status.vsync = !spg_status.vsync;
             }
         }
     }
@@ -1647,9 +1670,28 @@ pub const Holly = struct {
                 return;
             },
             .TA_YUV_TEX_BASE => self._get_register(u32, .TA_YUV_TEX_CNT).* = 0,
-            .SPG_CONTROL => holly_log.warn("Write to SPG_CONTROL: {X:0>8}", .{v}),
-            .SPG_LOAD => holly_log.warn("Write to SPG_LOAD: {X:0>8}", .{v}),
-            .FB_R_CTRL, .FB_R_SIZE, .FB_R_SOF1, .FB_R_SOF2 => self.dirty_framebuffer = true,
+            .SPG_HBLANK, .SPG_HBLANK_INT => {
+                self._dc.clear_event(.HBlankIn);
+                self._get_register_from_addr(u32, addr).* = v;
+                self.schedule_hblank_in();
+                return;
+            },
+            .SPG_VBLANK, .SPG_VBLANK_INT => {
+                self._dc.clear_event(.VBlankIn);
+                self._dc.clear_event(.VBlankOut);
+                self._get_register_from_addr(u32, addr).* = v;
+                self.schedule_vblank_in();
+                self.schedule_vblank_out();
+                return;
+            },
+            .SPG_STATUS, .SPG_CONTROL, .SPG_LOAD, .FB_R_CTRL => |reg| {
+                self.clear_scheduled_interrupts();
+                self._get_register_from_addr(u32, addr).* = v;
+                self.schedule_interrupts();
+                if (reg == .FB_R_CTRL) self.dirty_framebuffer = true;
+                return;
+            },
+            .FB_R_SIZE, .FB_R_SOF1, .FB_R_SOF2 => self.dirty_framebuffer = true,
             else => |reg| {
                 holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
             },
@@ -2029,6 +2071,10 @@ pub const Holly = struct {
     }
 
     pub inline fn read_register(self: *const @This(), comptime T: type, r: HollyRegister) T {
+        switch (r) {
+            .SPG_STATUS => self._dc.gpu.update_spg_status(),
+            else => {},
+        }
         return @constCast(self)._get_register_from_addr(T, @intFromEnum(r)).*;
     }
 
@@ -2212,7 +2258,7 @@ pub const Holly = struct {
         }
         bytes += try writer.write(std.mem.asBytes(&self._pixel));
         bytes += try writer.write(std.mem.asBytes(&self._tmp_cycles));
-        bytes += try writer.write(std.mem.asBytes(&self._vblank_signal));
+        bytes += try writer.write(std.mem.asBytes(&self._last_spg_update));
         return bytes;
     }
 
@@ -2232,7 +2278,7 @@ pub const Holly = struct {
         }
         bytes += try reader.read(std.mem.asBytes(&self._pixel));
         bytes += try reader.read(std.mem.asBytes(&self._tmp_cycles));
-        bytes += try reader.read(std.mem.asBytes(&self._vblank_signal));
+        bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));
         return bytes;
     }
 };

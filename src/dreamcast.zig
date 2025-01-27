@@ -68,15 +68,24 @@ const Callback = struct {
     }
 };
 
-const ScheduledInterrupt = struct {
+const ScheduledEvent = struct {
+    const Event = union(enum) {
+        None,
+        EndGDDMA,
+        EndAICADMA,
+        TimerUnderflow: struct { channel: u2 },
+        HBlankIn,
+        VBlankIn,
+        VBlankOut,
+    };
     trigger_cycle: u64,
     interrupt: ?union(enum) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
     },
-    callback: ?Callback,
+    event: Event = .None,
 
-    fn compare(_: void, a: ScheduledInterrupt, b: ScheduledInterrupt) std.math.Order {
+    fn compare(_: void, a: ScheduledEvent, b: ScheduledEvent) std.math.Order {
         return std.math.order(a.trigger_cycle, b.trigger_cycle);
     }
 };
@@ -126,8 +135,8 @@ pub const Dreamcast = struct {
     aram: []align(4) u8 = undefined,
     hardware_registers: []align(4) u8,
 
-    scheduled_interrupts: std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare),
-    _scheduled_interrupts_cycles: u64 = 0, // FIXME: Handle the case where _scheduled_interrupts_cycles it might overflow soon?... Is it even realistic?
+    scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
+    _global_cycles: u64 = 0, // Cycles since the start of emulation.
 
     on_render_start: Callback = undefined,
 
@@ -144,7 +153,7 @@ pub const Dreamcast = struct {
             .sh4_jit = try SH4JIT.init(allocator),
             .flash = try Flash.init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
-            .scheduled_interrupts = std.PriorityQueue(ScheduledInterrupt, void, ScheduledInterrupt.compare).init(allocator, {}),
+            .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
             ._allocator = allocator,
         };
 
@@ -202,7 +211,7 @@ pub const Dreamcast = struct {
             }
         }
 
-        self.scheduled_interrupts.deinit();
+        self.scheduled_events.deinit();
         self.sh4_jit.deinit();
         self.gdrom.deinit();
         self.maple.deinit();
@@ -227,7 +236,7 @@ pub const Dreamcast = struct {
         self.gdrom_hle.reset();
         try self.aica.reset();
         self.flash.reset();
-        while (self.scheduled_interrupts.removeOrNull() != null) {}
+        while (self.scheduled_events.removeOrNull() != null) {}
 
         try self.sh4_jit.block_cache.reset();
 
@@ -487,69 +496,89 @@ pub const Dreamcast = struct {
         self.advance_scheduled_interrupts(cycles);
         try self.aica.update(self, cycles);
         self.gdrom.update(self, cycles);
-        self.gpu.update(self, cycles);
         return cycles;
     }
 
     // TODO: Add helpers for external interrupts and errors.
 
-    pub fn schedule_event(self: *@This(), callback: Callback, cycles: u32) void {
-        self.scheduled_interrupts.add(.{
-            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
-            .callback = callback,
+    pub fn schedule_event(self: *@This(), event: ScheduledEvent.Event, cycles: usize) void {
+        //std.debug.print("Schedule event in {d}: {any}\n", .{ cycles, event });
+        self.scheduled_events.add(.{
+            .trigger_cycle = self._global_cycles +% cycles,
+            .event = event,
             .interrupt = null,
         }) catch |err| {
             std.debug.panic("Failed to schedule event: {}", .{err});
         };
     }
 
-    pub fn schedule_int_event(self: *@This(), int: HardwareRegisters.SB_ISTNRM, callback: Callback, cycles: u32) void {
-        self.scheduled_interrupts.add(.{
-            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
-            .callback = callback,
+    pub fn schedule_int_event(self: *@This(), int: HardwareRegisters.SB_ISTNRM, event: ScheduledEvent.Event, cycles: u32) void {
+        self.scheduled_events.add(.{
+            .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .Normal = int },
+            .event = event,
         }) catch |err| {
             std.debug.panic("Failed to schedule event: {}", .{err});
         };
     }
 
     pub fn schedule_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTNRM, cycles: u32) void {
-        self.scheduled_interrupts.add(.{
-            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+        self.scheduled_events.add(.{
+            .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .Normal = int },
-            .callback = null,
         }) catch |err| {
             std.debug.panic("Failed to schedule interrupt: {}", .{err});
         };
     }
 
     pub fn schedule_external_interrupt(self: *@This(), int: HardwareRegisters.SB_ISTEXT, cycles: u32) void {
-        self.scheduled_interrupts.add(.{
-            .trigger_cycle = self._scheduled_interrupts_cycles +% cycles,
+        self.scheduled_events.add(.{
+            .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .External = int },
-            .callback = null,
+            .event = .None,
         }) catch |err| {
             std.debug.panic("Failed to schedule external interrupt: {}", .{err});
         };
     }
 
-    fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
-        if (self.scheduled_interrupts.count() > 0) {
-            self._scheduled_interrupts_cycles += cycles;
-            while (self.scheduled_interrupts.peek()) |event| {
-                if (event.trigger_cycle <= self._scheduled_interrupts_cycles) {
-                    if (event.interrupt) |int| {
-                        switch (int) {
-                            .Normal => self.raise_normal_interrupt(int.Normal),
-                            .External => self.raise_external_interrupt(int.External),
-                        }
-                    }
-                    if (event.callback) |callback| {
-                        callback.call(self);
-                    }
-                    _ = self.scheduled_interrupts.remove();
-                } else break;
+    pub fn clear_event(self: *@This(), event: ScheduledEvent.Event) void {
+        var not_done: bool = true;
+        while (not_done) {
+            not_done = false;
+            var it = self.scheduled_events.iterator();
+            var idx: u32 = 0;
+            while (it.next()) |entry| {
+                if (entry.event == std.meta.activeTag(event) and std.meta.eql(entry.event, event)) {
+                    _ = self.scheduled_events.removeIndex(idx);
+                    not_done = true;
+                    break;
+                }
+                idx += 1;
             }
+        }
+    }
+
+    fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
+        self._global_cycles += cycles;
+        while (self.scheduled_events.peek()) |event| {
+            if (event.trigger_cycle <= self._global_cycles) {
+                if (event.interrupt) |int| {
+                    switch (int) {
+                        .Normal => self.raise_normal_interrupt(int.Normal),
+                        .External => self.raise_external_interrupt(int.External),
+                    }
+                }
+                switch (event.event) {
+                    .None => {},
+                    .EndGDDMA => self.end_gd_dma(),
+                    .EndAICADMA => self.aica.end_dma(self),
+                    .TimerUnderflow => |e| self.cpu.on_timer_underflow(e.channel),
+                    .HBlankIn => self.gpu.on_hblank_in(),
+                    .VBlankIn => self.gpu.on_vblank_in(),
+                    .VBlankOut => self.gpu.on_vblank_out(),
+                }
+                _ = self.scheduled_events.remove();
+            } else break;
         }
     }
 
@@ -638,7 +667,7 @@ pub const Dreamcast = struct {
 
             self.schedule_int_event(
                 .{ .EoD_GDROM = 1 },
-                .{ .function = @ptrCast(&end_gd_dma), .context = self },
+                .EndGDDMA,
                 if (len <= 128 * 1024) // Transfer fit in GD-ROM 128k buffer. Advertised speed from the buffer: 13.3 MB/s
                     14 * len
                 else // GDROM speed: 1.8 MB/s
@@ -651,7 +680,7 @@ pub const Dreamcast = struct {
         }
     }
 
-    fn end_gd_dma(self: *@This(), _: *Dreamcast) void {
+    fn end_gd_dma(self: *@This()) void {
         const len = self.read_hw_register(u32, .SB_GDLEN) & 0x01FFFFE0;
         self.cpu.end_dmac(0);
         self.hw_register(u32, .SB_GDST).* = 0;
@@ -700,12 +729,6 @@ pub const Dreamcast = struct {
         // TODO: Actually cancel the DMA, right now they're instantaneous.
     }
 
-    const SerializedCallbacks = enum {
-        None,
-        EndGDDMA,
-        EndAICADMA,
-    };
-
     pub fn serialize(self: *@This(), writer: anytype) !usize {
         var bytes: usize = 0;
 
@@ -720,25 +743,11 @@ pub const Dreamcast = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.aram));
         bytes += try writer.write(std.mem.sliceAsBytes(self.hardware_registers));
 
-        // Yes, this is pretty stupid.
-        bytes += try writer.write(std.mem.asBytes(&self.scheduled_interrupts.count()));
-        if (self.scheduled_interrupts.count() > 0) {
-            var it = self.scheduled_interrupts.iterator();
-            while (it.next()) |entry| {
-                bytes += try writer.write(std.mem.asBytes(&entry.trigger_cycle));
-                bytes += try writer.write(std.mem.asBytes(&entry.interrupt));
-                var cb: SerializedCallbacks = .None;
-                if (entry.callback) |callback| {
-                    if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&end_gd_dma))) {
-                        cb = .EndGDDMA;
-                    } else if (callback.function.? == @as(@TypeOf(callback.function.?), @ptrCast(&AICAModule.AICA.end_dma))) {
-                        cb = .EndAICADMA;
-                    } else @panic("Serialization: Unhandled callback function");
-                }
-                bytes += try writer.write(std.mem.asBytes(&cb));
-            }
-        }
-        bytes += try writer.write(std.mem.asBytes(&self._scheduled_interrupts_cycles));
+        bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
+        if (self.scheduled_events.count() > 0)
+            bytes += try writer.write(std.mem.sliceAsBytes(self.scheduled_events.items[0..self.scheduled_events.count()]));
+
+        bytes += try writer.write(std.mem.asBytes(&self._global_cycles));
         return bytes;
     }
 
@@ -756,30 +765,17 @@ pub const Dreamcast = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.aram));
         bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
-        while (self.scheduled_interrupts.count() > 0)
-            _ = self.scheduled_interrupts.remove();
+        while (self.scheduled_events.count() > 0)
+            _ = self.scheduled_events.remove();
         var event_count: usize = 0;
         bytes += try reader.read(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
-            var event: ScheduledInterrupt = undefined;
-            bytes += try reader.read(std.mem.asBytes(&event.trigger_cycle));
-            bytes += try reader.read(std.mem.asBytes(&event.interrupt));
-            var callback: SerializedCallbacks = undefined;
-            bytes += try reader.read(std.mem.asBytes(&callback));
-            event.callback = switch (callback) {
-                .EndGDDMA => .{
-                    .context = self,
-                    .function = @ptrCast(&end_gd_dma),
-                },
-                .EndAICADMA => .{
-                    .context = &self.aica,
-                    .function = @ptrCast(&AICAModule.AICA.end_dma),
-                },
-                .None => null,
-            };
-            try self.scheduled_interrupts.add(event);
+            var event: ScheduledEvent = undefined;
+            bytes += try reader.read(std.mem.asBytes(&event));
+            try self.scheduled_events.add(event);
         }
-        bytes += try reader.read(std.mem.asBytes(&self._scheduled_interrupts_cycles));
+
+        bytes += try reader.read(std.mem.asBytes(&self._global_cycles));
         return bytes;
     }
 };
