@@ -741,7 +741,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub inline fn advance_timers(self: *@This(), cycles: u32) void {
+    pub fn advance_timers(self: *@This(), cycles: u32) void {
         const TSTR = self.read_p4_register(u32, .TSTR);
         const FRQCR = self.read_p4_register(P4.FRQCR, .FRQCR);
         const PeripheralClockRatio: u32 = switch (FRQCR.pfc) {
@@ -752,6 +752,7 @@ pub const SH4 = struct {
             0b100 => 8,
             else => @panic("Prohibited value in FRQCR.pfc"),
         };
+        std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
 
         // When one of bits STR0–STR2 is set to 1 in the timer start register (TSTR), the timer counter
         // (TCNT) for the corresponding channel starts counting. When TCNT underflows, the UNF flag is
@@ -766,19 +767,37 @@ pub const SH4 = struct {
 
                 self.timer_cycle_counter[i] += cycles;
 
-                const scale = PeripheralClockRatio * SH4.timer_prescaler(tcr.*.tpsc);
-                // NOTE: cycles can be > 2 * scale, hence the while; Not exactly efficient, but correct enough for now.
-                while (self.timer_cycle_counter[i] >= scale) {
-                    self.timer_cycle_counter[i] -= scale;
+                // const scale = PeripheralClockRatio * SH4.timer_prescaler(tcr.*.tpsc);
+                // const diff = @divTrunc(self.timer_cycle_counter[i], scale);
+                // self.timer_cycle_counter[i] %= scale;
 
-                    if (tcnt.* == 0) {
-                        tcr.*.unf = 1; // Signals underflow
-                        tcnt.* = self.p4_register(u32, TimerRegisters[i].constant).*; // Reset counter
-                        if (tcr.*.unie == 1)
-                            self.request_interrupt(TimerRegisters[i].interrupt);
-                    } else {
-                        tcnt.* -= 1;
-                    }
+                std.debug.assert(PeripheralClockRatio == 4); // Here we really need this to be true.
+                const shift = ([_]u5{
+                    @ctz(@as(u32, 4) << 2),
+                    @ctz(@as(u32, 16) << 2),
+                    @ctz(@as(u32, 64) << 2),
+                    @ctz(@as(u32, 256) << 2),
+                    @ctz(@as(u32, 1024) << 2),
+                })[tcr.*.tpsc];
+                const mask = ([_]u32{
+                    (4 << 2) - 1,
+                    (16 << 2) - 1,
+                    (64 << 2) - 1,
+                    (256 << 2) - 1,
+                    (1024 << 2) - 1,
+                })[tcr.*.tpsc];
+                const diff = self.timer_cycle_counter[i] >> shift;
+                self.timer_cycle_counter[i] &= mask;
+
+                if (tcnt.* <= diff) {
+                    tcr.*.unf = 1; // Signals underflow
+                    const reset_constant = self.p4_register(u32, TimerRegisters[i].constant).*;
+                    tcnt.* = reset_constant -% (diff - tcnt.*); // Reset counter
+                    tcnt.* %= reset_constant; // In case reset_constant is smaller than diff...
+                    if (tcr.*.unie == 1)
+                        self.request_interrupt(TimerRegisters[i].interrupt);
+                } else {
+                    tcnt.* -= diff;
                 }
             }
         }
