@@ -74,6 +74,9 @@ const ScheduledEvent = struct {
         EndGDDMA,
         EndAICADMA,
         TimerUnderflow: struct { channel: u2 },
+        HBlankIn,
+        VBlankIn,
+        VBlankOut,
     };
     trigger_cycle: u64,
     interrupt: ?union(enum) {
@@ -493,13 +496,13 @@ pub const Dreamcast = struct {
         self.advance_scheduled_interrupts(cycles);
         try self.aica.update(self, cycles);
         self.gdrom.update(self, cycles);
-        self.gpu.update(self, cycles);
         return cycles;
     }
 
     // TODO: Add helpers for external interrupts and errors.
 
     pub fn schedule_event(self: *@This(), event: ScheduledEvent.Event, cycles: usize) void {
+        //std.debug.print("Schedule event in {d}: {any}\n", .{ cycles, event });
         self.scheduled_events.add(.{
             .trigger_cycle = self._global_cycles +% cycles,
             .event = event,
@@ -538,26 +541,45 @@ pub const Dreamcast = struct {
         };
     }
 
-    fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
-        if (self.scheduled_events.count() > 0) {
-            self._global_cycles += cycles;
-            while (self.scheduled_events.peek()) |event| {
-                if (event.trigger_cycle <= self._global_cycles) {
-                    if (event.interrupt) |int| {
-                        switch (int) {
-                            .Normal => self.raise_normal_interrupt(int.Normal),
-                            .External => self.raise_external_interrupt(int.External),
-                        }
-                    }
-                    switch (event.event) {
-                        .None => {},
-                        .EndGDDMA => self.end_gd_dma(),
-                        .EndAICADMA => self.aica.end_dma(self),
-                        .TimerUnderflow => |e| self.cpu.on_timer_underflow(e.channel),
-                    }
-                    _ = self.scheduled_events.remove();
-                } else break;
+    pub fn clear_event(self: *@This(), event: ScheduledEvent.Event) void {
+        var not_done: bool = true;
+        while (not_done) {
+            not_done = false;
+            var it = self.scheduled_events.iterator();
+            var idx: u32 = 0;
+            while (it.next()) |entry| {
+                if (entry.event == std.meta.activeTag(event) and std.meta.eql(entry.event, event)) {
+                    _ = self.scheduled_events.removeIndex(idx);
+                    not_done = true;
+                    break;
+                }
+                idx += 1;
             }
+        }
+    }
+
+    fn advance_scheduled_interrupts(self: *@This(), cycles: u32) void {
+        self._global_cycles += cycles;
+        while (self.scheduled_events.peek()) |event| {
+            if (event.trigger_cycle <= self._global_cycles) {
+                //std.debug.print("Event triggered: {any}\n", .{event.event});
+                if (event.interrupt) |int| {
+                    switch (int) {
+                        .Normal => self.raise_normal_interrupt(int.Normal),
+                        .External => self.raise_external_interrupt(int.External),
+                    }
+                }
+                switch (event.event) {
+                    .None => {},
+                    .EndGDDMA => self.end_gd_dma(),
+                    .EndAICADMA => self.aica.end_dma(self),
+                    .TimerUnderflow => |e| self.cpu.on_timer_underflow(e.channel),
+                    .HBlankIn => self.gpu.on_hblank_in(),
+                    .VBlankIn => self.gpu.on_vblank_in(),
+                    .VBlankOut => self.gpu.on_vblank_out(),
+                }
+                _ = self.scheduled_events.remove();
+            } else break;
         }
     }
 

@@ -732,6 +732,11 @@ pub const SH4JIT = struct {
         _ = self;
 
         const Blocks = [_][]const u16{
+            // Boot ROM (Waiting on VSync by hammering SPG_STATUS)
+            //   mov.l @R5, R2
+            //   tst R4, R2
+            //   bt -4
+            &[_]u16{ 0x6252, 0x2248, 0x89FC },
             // Boot ROM (Same instructions as Soul Calibur, but using other addresses/registers)
             &[_]u16{
                 0xD223, 0x6322, 0x430B, 0x5421,
@@ -2273,7 +2278,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
 
     // Jump back at the start of this block
-    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.entry_point_address) {
+    if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.entry_point_address and ctx.cycles < MaxCyclesPerBlock) {
         if (delay_slot) {
             // Delay slot might change the T bit, push it.
             try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });

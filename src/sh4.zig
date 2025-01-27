@@ -739,27 +739,6 @@ pub const SH4 = struct {
         }
     }
 
-    fn clear_timer_interrupt(self: *@This(), channel: u3) void {
-        // FIXME: Very hackish.
-        if (self._dc) |dc| {
-            var not_done: bool = true;
-            while (not_done) {
-                not_done = false;
-                var it = dc.scheduled_events.iterator();
-                var idx: u32 = 0;
-                while (it.next()) |entry| {
-                    if (entry.event == .TimerUnderflow and entry.event.TimerUnderflow.channel == channel) {
-                        _ = dc.scheduled_events.removeIndex(idx);
-                        not_done = true;
-                        break;
-                    }
-
-                    idx += 1;
-                }
-            }
-        }
-    }
-
     fn schedule_timer(self: *@This(), channel: u2) void {
         const TSTR = self.read_p4_register(u32, .TSTR);
         if ((TSTR >> @intCast(channel)) & 0x1 == 1) {
@@ -1397,7 +1376,7 @@ pub const SH4 = struct {
                             }
                             self.p4_register_addr(T, virtual_addr).* = value;
                             inline for (0..3) |i| {
-                                self.clear_timer_interrupt(i);
+                                self._dc.?.clear_event(.{ .TimerUnderflow = .{ .channel = i } });
                                 self.update_timer_registers(i);
                                 self.schedule_timer(i);
                             }
@@ -1454,6 +1433,10 @@ pub const SH4 = struct {
                                 return self._dc.?.hw_register_addr(T, addr).*;
                             },
                         }
+                    },
+                    0x005F8000...0x005F9FFF => {
+                        check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8} (Holly Registers)\n", .{ T, addr });
+                        return self._dc.?.gpu.read_register(T, @enumFromInt(addr));
                     },
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
                     0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
