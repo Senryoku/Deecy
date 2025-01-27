@@ -206,6 +206,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (was_running)
                 d.start();
         }
+        zgui.sameLine(.{});
+        if (zgui.button("Dump DC State", .{})) {
+            const was_running = d.running;
+            if (was_running)
+                d.stop();
+            var file = try std.fs.cwd().createFile("logs/dc_dump.bin", .{});
+            defer file.close();
+            _ = try dc.serialize(file.writer());
+            if (was_running)
+                d.start();
+        }
         zgui.text("PC: {X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
         zgui.text("PR: {X:0>8}", .{dc.cpu.pr});
         zgui.text("SR: ", .{});

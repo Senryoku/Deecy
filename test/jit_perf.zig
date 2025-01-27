@@ -80,5 +80,28 @@ pub fn main() !void {
         std.debug.print("[JIT] Sonic: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
     }
 
+    {
+        var dc = try Dreamcast.create(allocator);
+        defer {
+            dc.deinit();
+            allocator.destroy(dc);
+        }
+
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/dca3.cdi", allocator);
+        {
+            const file = try std.fs.cwd().openFile("logs/dc_states/dca3_game_start.bin", .{ .mode = .read_only });
+            defer file.close();
+            _ = try dc.deserialize(file.reader());
+        }
+        const start = try std.time.Instant.now();
+        var cycles: u32 = 0;
+        while (cycles < cycles_target) {
+            cycles += try dc.tick_jit();
+        }
+        const elapsed = (try std.time.Instant.now()).since(start);
+        total_time += elapsed;
+        std.debug.print("[JIT] DCA3: Ran {d} cycles in {} ms\n", .{ cycles, elapsed / std.time.ns_per_ms });
+    }
+
     std.debug.print("[JIT] Total: {} ms\n", .{total_time / std.time.ns_per_ms});
 }
