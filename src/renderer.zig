@@ -2433,12 +2433,9 @@ pub const Renderer = struct {
                                 prev_draw_call.?.sampler != sampler)
                             {
                                 if (prev_draw_call) |draw_call| {
-                                    // Contrary to regular draw calls, we won't append more data to pre-sorted ones. We can upload to GPU immediately (and thus use a single buffer).
                                     draw_call.start_index = index_buffer_pointer;
-                                    draw_call.index_count = @intCast(pre_sorted_indices.items.len);
-                                    self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, pre_sorted_indices.items);
-                                    index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
-                                    pre_sorted_indices.clearRetainingCapacity();
+                                    draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
+                                    index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
                                 }
 
                                 try self.pre_sorted_translucent_pass.append(.{
@@ -2487,9 +2484,10 @@ pub const Renderer = struct {
         if (pre_sorted_indices.items.len > 0) {
             const draw_call = &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
             draw_call.start_index = index_buffer_pointer;
-            draw_call.index_count = @intCast(pre_sorted_indices.items.len);
-            self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, pre_sorted_indices.items);
-            index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
+            draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
+            index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
+            // And send all indices to the GPU
+            self._gctx.queue.writeBuffer(index_buffer, FirstIndex * @sizeOf(u32), u32, pre_sorted_indices.items);
         }
 
         // Send everything to the GPU
