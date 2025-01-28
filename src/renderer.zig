@@ -835,7 +835,7 @@ pub const Renderer = struct {
             .size = 4 * 1024,
         });
 
-        const StripMetadataSize = 4 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
+        const StripMetadataSize = 16 * 4096 * @sizeOf(StripMetadata); // FIXME: Arbitrary size for testing
         const strips_metadata_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .storage = true },
             .size = StripMetadataSize,
