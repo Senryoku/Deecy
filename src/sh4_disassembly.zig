@@ -10,39 +10,29 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     if (DisassemblyCache[opcode.value]) |r|
         return r;
 
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
+
     const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode.value]];
 
-    const Rn = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.n});
-    const Rm = try std.fmt.allocPrint(allocator, "R{d}", .{opcode.nmd.m});
-    const disp = try std.fmt.allocPrint(allocator, "{d}", .{opcode.nmd.d});
-    const d8 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
-    const d12 = try std.fmt.allocPrint(allocator, "{d}", .{@as(i12, @bitCast(opcode.d12.d))});
-    const imm = try std.fmt.allocPrint(allocator, "#{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
-    const label8 = try std.fmt.allocPrint(allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u8(opcode.nd8.d)});
-    const label12 = try std.fmt.allocPrint(allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u12(opcode.d12.d)});
-    defer allocator.free(Rn);
-    defer allocator.free(Rm);
-    defer allocator.free(disp);
-    defer allocator.free(d8);
-    defer allocator.free(d12);
-    defer allocator.free(imm);
-    defer allocator.free(label8);
-    defer allocator.free(label12);
+    const Rn = try std.fmt.allocPrint(arena_allocator, "R{d}", .{opcode.nmd.n});
+    const Rm = try std.fmt.allocPrint(arena_allocator, "R{d}", .{opcode.nmd.m});
+    const disp = try std.fmt.allocPrint(arena_allocator, "{d}", .{opcode.nmd.d});
+    const d8 = try std.fmt.allocPrint(arena_allocator, "{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
+    const d12 = try std.fmt.allocPrint(arena_allocator, "{d}", .{@as(i12, @bitCast(opcode.d12.d))});
+    const imm = try std.fmt.allocPrint(arena_allocator, "#{d}", .{@as(i8, @bitCast(opcode.nd8.d))});
+    const label8 = try std.fmt.allocPrint(arena_allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u8(opcode.nd8.d)});
+    const label12 = try std.fmt.allocPrint(arena_allocator, "{X}", .{4 + 2 * bit_manip.sign_extension_u12(opcode.d12.d)});
 
-    const n0 = try std.mem.replaceOwned(u8, allocator, desc.name, "Rn", Rn);
-    defer allocator.free(n0);
-    const n1 = try std.mem.replaceOwned(u8, allocator, n0, "Rm", Rm);
-    defer allocator.free(n1);
-    const n2 = try std.mem.replaceOwned(u8, allocator, n1, "disp", disp);
-    defer allocator.free(n2);
-    const n3 = try std.mem.replaceOwned(u8, allocator, n2, "d:8", d8);
-    defer allocator.free(n3);
-    const n4 = try std.mem.replaceOwned(u8, allocator, n3, "d:12", d12);
-    defer allocator.free(n4);
-    const n5 = try std.mem.replaceOwned(u8, allocator, n4, "label:8", label8);
-    defer allocator.free(n5);
-    const n6 = try std.mem.replaceOwned(u8, allocator, n5, "label:12", label12);
-    defer allocator.free(n6);
+    const n0 = try std.mem.replaceOwned(u8, arena_allocator, desc.name, "Rn", Rn);
+    const n1 = try std.mem.replaceOwned(u8, arena_allocator, n0, "Rm", Rm);
+    const n2 = try std.mem.replaceOwned(u8, arena_allocator, n1, "disp", disp);
+    const n3 = try std.mem.replaceOwned(u8, arena_allocator, n2, "d:8", d8);
+    const n4 = try std.mem.replaceOwned(u8, arena_allocator, n3, "d:12", d12);
+    const n5 = try std.mem.replaceOwned(u8, arena_allocator, n4, "label:8", label8);
+    const n6 = try std.mem.replaceOwned(u8, arena_allocator, n5, "label:12", label12);
+
     const final_buff = try std.mem.replaceOwned(u8, allocator, n6, "#imm", imm);
 
     DisassemblyCache[opcode.value] = final_buff;

@@ -366,11 +366,12 @@ pub const JITContext = struct {
     pub fn compile_delay_slot(self: *@This(), b: *JITBlock) !void {
         const instr = self.instructions[self.index + 1];
         const op = instr_lookup(instr);
-        sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
-            self.address,
-            if (op.use_fallback()) "!" else " ",
-            try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
-        });
+        if (comptime std.log.logEnabled(.debug, .sh4_jit))
+            sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
+                self.address,
+                if (op.use_fallback()) "!" else " ",
+                try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
+            });
         self.address += 2; // Same thing as in the interpreter, this in probably useless as instructions refering to PC should be illegal here, but just in case...
         const branch = try op.jit_emit_fn(b, self, @bitCast(instr));
         std.debug.assert(!branch);
@@ -580,11 +581,12 @@ pub const SH4JIT = struct {
 
             const instr = ctx.instructions[ctx.index];
             const op = instr_lookup(instr);
-            sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
-                ctx.address,
-                if (op.use_fallback()) "!" else " ",
-                try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
-            });
+            if (comptime std.log.logEnabled(.debug, .sh4_jit))
+                sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
+                    ctx.address,
+                    if (op.use_fallback()) "!" else " ",
+                    try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
+                });
             branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
             ctx.cycles += op.issue_cycles;
@@ -2370,11 +2372,12 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 ctx.address += 2;
                 const i = ctx.instructions[ctx.index];
                 const op = instr_lookup(i);
-                sh4_jit_log.debug("[{X:0>8}] {s} > {s}", .{
-                    ctx.address,
-                    if (op.use_fallback()) "!" else " ",
-                    try sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
-                });
+                if (comptime std.log.logEnabled(.debug, .sh4_jit))
+                    sh4_jit_log.debug("[{X:0>8}] {s} > {s}", .{
+                        ctx.address,
+                        if (op.use_fallback()) "!" else " ",
+                        try sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
+                    });
                 const branch = try op.jit_emit_fn(block, ctx, @bitCast(i));
                 std.debug.assert(!branch);
                 optional_cycles += op.issue_cycles;
