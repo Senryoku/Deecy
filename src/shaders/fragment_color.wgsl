@@ -20,15 +20,15 @@ fn bilinear_interpolation(u_min_v_min: vec4<f32>, u_min_v_max: vec4<f32>, u_max_
 fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instructions: u32, control: u32, index: u32) -> vec4<f32> {
     if index >= textureNumLayers(tex_array) { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }
 
-    let mipmap: bool = ((control >> 25) & 1) == 1;
+    let mipmap: bool = extractBits(control, 25, 1) == 1;
 
     if (palette_instructions & 1) == 1 {
         // Palette Texture
-        let palette_selector = ((palette_instructions >> 2) & 0x3F) << 4;
+        let palette_selector = extractBits(palette_instructions, 2, 6) << 4;
 
         // TODO: Handle mipmaps?
 
-        if ((palette_instructions >> 1) & 1) == 1 {
+        if extractBits(palette_instructions, 1, 1) == 1 {
             // with Bilinear filtering
             let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv;
 
@@ -80,7 +80,7 @@ fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2
 }
 
 fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instructions: u32, control: u32, index: u32) -> vec4<f32> {
-    switch(max((control >> 4) & 7, (control >> 7) & 7))  {
+    switch(max(extractBits(control, 4, 3), extractBits(control, 7, 3)))  {
         case 0u: { return tex_array_sample(texture_array_8x8, uv, duvdx, duvdy, palette_instructions, control, index); }
         case 1u: { return tex_array_sample(texture_array_16x16, uv, duvdx, duvdy, palette_instructions, control, index); }
         case 2u: { return tex_array_sample(texture_array_32x32, uv, duvdx, duvdy, palette_instructions, control, index); }
@@ -120,7 +120,7 @@ fn fog_alpha_lut(z: f32) -> f32 {
 
 fn apply_fog(shading_instructions: u32, z: f32, color: vec4<f32>, offset_alpha: f32) -> vec4<f32> {
     // TODO: Color Clamping
-    switch((shading_instructions >> 19) & 0x3) {
+    switch(extractBits(shading_instructions, 19, 2)) {
         case 0x0u: {
             // Lookup table mode
             let fog_alpha = fog_alpha_lut(z);
@@ -128,7 +128,7 @@ fn apply_fog(shading_instructions: u32, z: f32, color: vec4<f32>, offset_alpha: 
         }
         case 0x1u: {
             // Per vertex mode
-            if ((shading_instructions >> 21) & 1) == 1 { // Using Offset color?
+            if extractBits(shading_instructions, 21, 1) == 1 { // Using Offset color?
                 return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);
             } else {
                 // If the polygon is not set up to use an Offset Color, Fog processing is not performed.
@@ -166,13 +166,13 @@ fn area_color(
     var final_color = base_color + vec4<f32>(offset_color.rgb, 0.0);
 
     if (shading_instructions & 1) == 1 {
-        let u_size: f32 = tex_size((shading_instructions >> 4) & 7);
-        let v_size: f32 = tex_size((shading_instructions >> 7) & 7);
+        let u_size: f32 = tex_size(extractBits(shading_instructions, 4, 3));
+        let v_size: f32 = tex_size(extractBits(shading_instructions, 7, 3));
         let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
         let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
 
-        let shading = (shading_instructions >> 1) & 0x3;
-        let ignore_tex_alpha = ((shading_instructions >> 3) & 0x1) == 1;
+        let shading = extractBits(shading_instructions, 1, 2);
+        let ignore_tex_alpha = extractBits(shading_instructions, 3, 1) == 1;
         let tex_a = select(tex_color.a, 1.0, ignore_tex_alpha);
 
         // NOTE: Doc. says alpha should be checked *after* applying the shading instructions, (i.e.
@@ -187,7 +187,7 @@ fn area_color(
             // in menus. It also uses ARGB1555 textures with all alpha values to 0 preventing them from being rendered
             // if we strictly follow the documentation.
             // I don't know if this is the best place to do this, but let's double check.
-            let src_alpha = (shading_instructions >> 10) & 3;
+            let src_alpha = extractBits(shading_instructions, 10, 2);
             if src_alpha != 1 {
                 discard;
             }
@@ -250,8 +250,8 @@ fn fragment_color(
 ) -> FragmentColor {
     var output: FragmentColor;
 
-    let gouraud_area0 = ((shading_instructions >> 23) & 1) == 1;
-    let gouraud_area1 = ((area1_shading_instructions >> 23) & 1) == 1;
+    let gouraud_area0 = extractBits(shading_instructions, 23, 1) == 1;
+    let gouraud_area1 = extractBits(area1_shading_instructions, 23, 1) == 1;
 
     let base_color = select(flat_base_color, varying_base_color, gouraud_area0);
     let offset_color = select(flat_offset_color, varying_offset_color, gouraud_area0);
@@ -287,8 +287,8 @@ fn fragment_color(
     //      1     |     0      | Polygons for which shadow processing is performed (in Intensity Volume mode)
     //      1     |     1      | Polygons in "with Two Volumes" format
 
-    let shadow_bit = ((shading_instructions >> 22) & 1) == 1;
-    let volume_bit = ((shading_instructions >> 24) & 1) == 1;
+    let shadow_bit = extractBits(shading_instructions, 22, 1) == 1;
+    let volume_bit = extractBits(shading_instructions, 24, 1) == 1;
 
     let area1_texture_index: u32 = area1_texture_index_palette & 0xFFFF;
     let area1_palette_instructions: u32 = area1_texture_index_palette >> 16;

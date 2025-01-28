@@ -108,8 +108,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         let src = unpack4x8unorm(select(layers[i].color_area0, layers[i].color_area1, use_area1));
         let dst = color;
-        let blend_modes = (layers[i].index_and_blend_modes >> select(0u, 6u, use_area1)) & 0x3F;
-        color = src * get_src_factor(blend_modes & 7, src, dst) + dst * get_dst_factor((blend_modes >> 3) & 7, src, dst);
+        let blend_modes = extractBits(layers[i].index_and_blend_modes, select(0u, 6u, use_area1), 6);
+        color = src * get_src_factor(extractBits(blend_modes, 0, 3), src, dst) + dst * get_dst_factor(extractBits(blend_modes, 3, 3), src, dst);
         color = clamp(color, vec4<f32>(0.0), vec4<f32>(1.0));
     }
 
