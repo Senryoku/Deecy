@@ -351,7 +351,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     while (static.top.count() > 0) _ = static.top.remove();
                 }
                 for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                    if (dc.sh4_jit.block_cache.blocks[i]) |block| {
+                    if (dc.sh4_jit.block_cache.blocks[i].cycles > 0) {
+                        const block = dc.sh4_jit.block_cache.blocks[i];
                         if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
                             static.top.add(block) catch unreachable;
                         }
@@ -365,7 +366,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.sameLine(.{});
             if (zgui.button("Reset", .{})) {
                 for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                    if (dc.sh4_jit.block_cache.blocks[i]) |*block| {
+                    if (dc.sh4_jit.block_cache.blocks[i].cycles > 0) {
+                        const block = &dc.sh4_jit.block_cache.blocks[i];
                         block.time_spent = 0;
                         block.call_count = 0;
                     }
