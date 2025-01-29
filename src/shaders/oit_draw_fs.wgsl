@@ -35,7 +35,7 @@ fn main(
     // the comparison must be made on a "Greater or Equal" basis.
     if position_clip.z < opaque_depth { discard; }
 
-    var final_color = fragment_color(
+    let final_color = fragment_color(
         base_color,
         unpack4x8unorm(flat_base_color).zyxw,
         offset_color,
@@ -71,7 +71,7 @@ fn main(
         linked_list.data[frag_index].color_area0 = pack4x8unorm(final_color.area0);
         linked_list.data[frag_index].color_area1 = pack4x8unorm(final_color.area1);
         let blend_modes_area0 = extractBits(tex_idx_shading_instr[1], 10, 6);
-        var blend_modes_area1 = blend_modes_area0 ;
+        var blend_modes_area1 = blend_modes_area0;
         // Shading instruction for Area1 are only valid if both shadow and volume bits are set.
         let shadow_bit = extractBits(area1_tex_idx_shading_instr[1], 22, 1) == 1;
         let volume_bit = extractBits(area1_tex_idx_shading_instr[1], 24, 1) == 1;
