@@ -228,16 +228,15 @@ cd_read_state: struct {
     expected_data_type: u3 = 0,
 } = .{},
 
-scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
-
+_dc: *Dreamcast,
 _allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator) !@This() {
+pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !@This() {
     return .{
         .pio_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
         .dma_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-        .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
         .audio_state = .{ .buffer = try allocator.alloc(i16, 2352 / 2) },
+        ._dc = dc,
         ._allocator = allocator,
     };
 }
@@ -256,38 +255,12 @@ pub fn reset(self: *@This()) void {
     self.packet_command_idx = 0;
     @memset(&self.packet_command, 0);
     self.audio_state = .{ .buffer = self.audio_state.buffer };
-    while (self.scheduled_events.count() > 0)
-        _ = self.scheduled_events.remove();
 }
 
 pub fn deinit(self: *@This()) void {
     self._allocator.free(self.audio_state.buffer);
     self.pio_data_queue.deinit();
     self.dma_data_queue.deinit();
-}
-
-pub fn update(self: *@This(), dc: *Dreamcast, cycles: u32) void {
-    if (self.scheduled_events.peek()) |*event| {
-        if (event.cycles <= cycles) {
-            gdrom_log.debug(" Event (/{d}): {any}", .{ self.scheduled_events.count(), event });
-            if (event.state) |state|
-                self.state = state;
-            if (event.status) |status|
-                self.status_register = status;
-            if (event.interrupt_reason) |reason| {
-                self.interrupt_reason_register = reason;
-                if (self.control_register.nien == 0)
-                    dc.raise_external_interrupt(.{ .GDRom = 1 });
-            }
-            if (event.clear_interrupt)
-                dc.clear_external_interrupt(.{ .GDRom = 1 });
-
-            _ = self.scheduled_events.remove();
-        }
-    }
-    for (self.scheduled_events.items) |*event| {
-        event.cycles -= @as(i32, @intCast(cycles));
-    }
 }
 
 pub fn get_cdda_samples(self: *@This()) [2]i16 {
@@ -325,7 +298,22 @@ fn fetch_next_cdda_sector(self: *@This()) bool {
 }
 
 fn schedule_event(self: *@This(), event: ScheduledEvent) void {
-    self.scheduled_events.add(event) catch unreachable;
+    // NOTE: I wasn't actually delaying any of these events, so I removed the scheduling mechanism internal to GDROM.
+    //       If this ends up being necessary, use the global scheduler in the Dreamcast structure instead.
+    std.debug.assert(event.cycles == 0);
+
+    gdrom_log.debug(" Event: {any}", .{event});
+    if (event.state) |state|
+        self.state = state;
+    if (event.status) |status|
+        self.status_register = status;
+    if (event.interrupt_reason) |reason| {
+        self.interrupt_reason_register = reason;
+        if (self.control_register.nien == 0)
+            self._dc.raise_external_interrupt(.{ .GDRom = 1 });
+    }
+    if (event.clear_interrupt)
+        self._dc.clear_external_interrupt(.{ .GDRom = 1 });
 }
 
 pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
@@ -1096,10 +1084,6 @@ pub fn serialize(self: *@This(), writer: anytype) !usize {
 
     bytes += try writer.write(std.mem.asBytes(&self.cd_read_state));
 
-    bytes += try writer.write(std.mem.asBytes(&self.scheduled_events.count()));
-    if (self.scheduled_events.count() > 0)
-        bytes += try writer.write(std.mem.sliceAsBytes(self.scheduled_events.items[0..self.scheduled_events.count()]));
-
     return bytes;
 }
 
@@ -1135,16 +1119,6 @@ pub fn deserialize(self: *@This(), reader: anytype) !usize {
     bytes += try self.audio_state.deserialize(reader);
 
     bytes += try reader.read(std.mem.asBytes(&self.cd_read_state));
-
-    while (self.scheduled_events.count() > 0)
-        _ = self.scheduled_events.remove();
-    var event_count: usize = 0;
-    bytes += try reader.read(std.mem.asBytes(&event_count));
-    for (0..event_count) |_| {
-        var event: ScheduledEvent = undefined;
-        bytes += try reader.read(std.mem.asBytes(&event));
-        try self.scheduled_events.add(event);
-    }
 
     return bytes;
 }

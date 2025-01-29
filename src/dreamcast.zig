@@ -120,7 +120,7 @@ pub const Dreamcast = struct {
     gpu: Holly = undefined,
     aica: AICA = undefined,
     maple: MapleHost,
-    gdrom: GDROM,
+    gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
 
     sh4_jit: SH4JIT,
@@ -149,7 +149,6 @@ pub const Dreamcast = struct {
         dc.* = Dreamcast{
             .cpu = try SH4.init(allocator, dc),
             .maple = try MapleHost.init(allocator),
-            .gdrom = try GDROM.init(allocator),
             .sh4_jit = try SH4JIT.init(allocator),
             .flash = try Flash.init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
@@ -171,6 +170,7 @@ pub const Dreamcast = struct {
 
         dc.gpu = try Holly.init(allocator, dc);
         dc.aica = try AICA.init(allocator, dc.aram);
+        dc.gdrom = try GDROM.init(allocator, dc);
         dc.aica.setup_arm();
 
         // Create 'userdata' folder if it doesn't exist
@@ -495,7 +495,6 @@ pub const Dreamcast = struct {
     fn tick_peripherals(self: *@This(), cycles: u32) !u32 {
         self.advance_scheduled_interrupts(cycles);
         try self.aica.update(self, cycles);
-        self.gdrom.update(self, cycles);
         return cycles;
     }
 
