@@ -89,7 +89,7 @@ const BlockCache = struct {
     }
 
     fn allocate_blocks(self: *@This()) !void {
-        switch (@import("builtin").os.tag) {
+        switch (builtin.os.tag) {
             .windows => {
                 const blocks = try std.os.windows.VirtualAlloc(
                     null,
@@ -115,7 +115,7 @@ const BlockCache = struct {
     }
 
     fn deallocate_blocks(self: *@This()) void {
-        switch (@import("builtin").os.tag) {
+        switch (builtin.os.tag) {
             .windows => {
                 // FIXME: Can I merely decommit and re-commit it?
                 std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
@@ -505,16 +505,14 @@ pub const SH4JIT = struct {
         self.block_cache.invalidate(start_addr, end_addr);
     }
 
-    pub fn init_compile_and_run_handler(self: *@This()) !void {
+    fn init_compile_and_run_handler(self: *@This()) !void {
+        std.debug.assert(self.block_cache.cursor == 0);
         var b = &self._working_block;
-
         b.clearRetainingCapacity();
         try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
         try b.call(compile_and_run);
         const block_size = try b.emit(self.block_cache.buffer[0..]);
-        sh4_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[0..block_size]});
-        self.block_cache.cursor += block_size;
-        self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
     }
 
     pub fn reset(self: *@This()) !void {
@@ -543,6 +541,7 @@ pub const SH4JIT = struct {
             cpu._pending_cycles = 0;
             return cycles;
         } else {
+            @branchHint(.unlikely);
             return 8;
         }
     }
@@ -555,13 +554,13 @@ pub const SH4JIT = struct {
             if (err == error.JITCacheFull) {
                 sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
-                    std.debug.panic("Failed to reset JIT: {s}", .{@errorName(reset_err)});
+                    sh4_jit_log.err("Failed to reset JIT: {s}", .{@errorName(reset_err)});
                     std.process.exit(1);
                 };
                 break :retry self.compile(JITContext.init(cpu));
             } else break :retry err;
         }) catch |err| {
-            std.debug.print("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
+            sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
             std.process.exit(1);
         };
         block.execute(self.block_cache.buffer, cpu);

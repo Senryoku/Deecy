@@ -27,7 +27,7 @@ const BlockCache = struct {
 
     buffer: []align(std.mem.page_size) u8,
     cursor: usize = 0,
-    blocks: []?BasicBlock = undefined,
+    blocks: []BasicBlock = undefined,
 
     min_address: u32 = std.math.maxInt(u32),
     max_address: u32 = 0,
@@ -68,48 +68,47 @@ const BlockCache = struct {
             const from: u32 = @intCast(@max(0, @as(i64, @intCast(addr & 0xFFFFFFFC)) - 4 * MaxCyclesPerBlock));
             var instr_addr = from;
             while (instr_addr <= addr) : (instr_addr += 4) {
-                if (self.get(instr_addr)) |block| {
-                    if (instr_addr + 4 * (block.cycles - 1) >= 4 * MaxCyclesPerBlock) {
-                        self.invalidate(instr_addr);
-                    }
+                const block = self.get(instr_addr);
+                if (instr_addr + 4 * (block.cycles - 1) >= 4 * MaxCyclesPerBlock) {
+                    self.invalidate(instr_addr);
                 }
             }
         }
     }
 
     fn allocate_blocks(self: *@This()) !void {
-        switch (@import("builtin").os.tag) {
+        switch (builtin.os.tag) {
             .windows => {
                 const blocks = try std.os.windows.VirtualAlloc(
                     null,
-                    @sizeOf(?BasicBlock) * BlockEntryCount,
+                    @sizeOf(BasicBlock) * BlockEntryCount,
                     std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
                     std.os.windows.PAGE_READWRITE,
                 );
-                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
             },
             .linux => {
                 const blocks = try std.posix.mmap(
                     null,
-                    @sizeOf(?BasicBlock) * BlockEntryCount,
-                    std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC,
-                    .{ .TYPE = .PRIVATE, .EXECUTABLE = true, .ANONYMOUS = true },
+                    @sizeOf(BasicBlock) * BlockEntryCount,
+                    std.posix.PROT.READ | std.posix.PROT.WRITE,
+                    .{ .TYPE = .PRIVATE, .EXECUTABLE = false, .ANONYMOUS = true },
                     -1,
                     0,
                 );
-                self.blocks = @as([*]?BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
+                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
             },
             else => @compileError("Unsupported OS."),
         }
     }
 
     fn deallocate_blocks(self: *@This()) void {
-        switch (@import("builtin").os.tag) {
+        switch (builtin.os.tag) {
             .windows => {
                 std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
             },
             .linux => {
-                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(?BasicBlock)]);
+                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(BasicBlock)]);
             },
             else => @compileError("Unsupported OS."),
         }
@@ -129,10 +128,10 @@ const BlockCache = struct {
     }
 
     pub fn invalidate(self: *@This(), address: u32) void {
-        self.blocks[(address & self.addr_mask) >> 2] = null;
+        self.blocks[(address & self.addr_mask) >> 2] = .{ .offset = 0 };
     }
 
-    pub fn get(self: *@This(), address: u32) ?BasicBlock {
+    pub fn get(self: *@This(), address: u32) BasicBlock {
         return self.blocks[(address & self.addr_mask) >> 2];
     }
 
@@ -154,68 +153,95 @@ pub const JITContext = struct {
 pub const ARM7JIT = struct {
     block_cache: BlockCache,
 
+    _working_block: JITBlock,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
-        return .{
+        var r = @This(){
             .block_cache = try BlockCache.init(allocator, addr_mask),
+            ._working_block = try JITBlock.init(allocator),
             ._allocator = allocator,
         };
+        try r.init_compile_and_run_handler();
+        return r;
     }
 
     pub fn deinit(self: *@This()) void {
+        self._working_block.deinit();
         self.block_cache.deinit();
     }
 
     pub fn reset(self: *@This()) !void {
         try self.block_cache.reset();
+        try self.init_compile_and_run_handler();
+    }
+
+    fn init_compile_and_run_handler(self: *@This()) !void {
+        std.debug.assert(self.block_cache.cursor == 0);
+        var b = &self._working_block;
+        b.clearRetainingCapacity();
+        try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
+        try b.call(compile_and_run);
+        const block_size = try b.emit(self.block_cache.buffer[0..]);
+        self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
     }
 
     pub noinline fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
         if (!cpu.running) return 0;
 
-        var spent_cycles: i32 = 0;
+        var spent_cycles: u32 = 0;
         while (spent_cycles < cycles) {
             const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
-            var block = self.block_cache.get(pc);
-            if (block == null) {
-                arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
-                const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
-                block = try (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
-                    if (err == error.JITCacheFull) {
-                        try self.block_cache.reset();
-                        arm_jit_log.info("JIT cache purged.", .{});
-                        break :retry try self.compile(.{ .address = pc, .cpu = cpu }, instructions);
-                    } else break :retry err;
-                });
-            }
+            const block = self.block_cache.get(pc);
             // arm_jit_log.debug("Running {X:0>8} ({} cycles)", .{ pc, block.?.cycles });
-            block.?.execute(self.block_cache.buffer, cpu);
+            block.execute(self.block_cache.buffer, cpu);
 
-            spent_cycles += @intCast(block.?.cycles);
-
-            // Not necessary, just here to allow compatibility with the interpreter if we need it.
-            // (Right now we're always calling to the interpreter so this should stay in sync, but once
-            //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-            cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+            spent_cycles += block.cycles;
 
             cpu.check_fiq(); // FIXME: Non-tested.
 
             if (cpu.pc() > cpu.memory_address_mask) {
+                @branchHint(.unlikely);
                 arm_jit_log.warn("arm7: PC out of bounds: {X:0>8}, stopping.", .{cpu.pc()});
                 cpu.running = false;
                 break;
             }
         }
 
-        return spent_cycles;
+        // Not necessary, just here to allow compatibility with the interpreter if we need it.
+        // (Right now we're always calling to the interpreter so this should stay in sync, but once
+        //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
+        cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+
+        return @intCast(spent_cycles);
+    }
+
+    // Default handler sitting the offset 0 of our executable buffer
+    pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) void {
+        const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
+        arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
+        const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
+        const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
+            if (err == error.JITCacheFull) {
+                self.block_cache.reset() catch |reset_err| {
+                    arm_jit_log.err("Failed to reset ARM JIT: {s}", .{@errorName(reset_err)});
+                    std.process.exit(1);
+                };
+                arm_jit_log.info("JIT cache purged.", .{});
+                break :retry self.compile(.{ .address = pc, .cpu = cpu }, instructions);
+            } else break :retry err;
+        }) catch |err| {
+            arm_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ pc, @errorName(err) });
+            std.process.exit(1);
+        };
+        block.execute(self.block_cache.buffer, cpu);
     }
 
     pub fn compile(self: *@This(), start_ctx: JITContext, instructions: [*]u32) !BasicBlock {
         var ctx = start_ctx;
 
-        var b = try JITBlock.init(self._allocator);
-        defer b.deinit();
+        var b = &self._working_block;
+        b.clearRetainingCapacity();
 
         // We'll be using these callee saved registers, push 'em to the stack.
         try b.push(.{ .reg = SavedRegisters[0] });
@@ -233,16 +259,16 @@ pub const ARM7JIT = struct {
             // Update PC. Done before the instruction is executed, emulating fetching.
             try b.add(guest_register(15), .{ .imm32 = 4 }); // PC += 4
 
-            var jump = try handle_condition(&b, &ctx, instr);
+            var jump = try handle_condition(b, &ctx, instr);
 
             const tag = arm7.ARM7.get_instr_tag(instr);
-            const branch = try InstructionHandlers[arm7.JumpTable[tag]](&b, &ctx, instr);
+            const branch = try InstructionHandlers[arm7.JumpTable[tag]](b, &ctx, instr);
 
-            if (jump) |*j| {
+            if (jump) |*j|
                 j.patch();
-            }
 
-            arm_jit_log.debug("  [{X:0>8}] {s} {s}", .{ ctx.address, if (ctx.did_fallback) "!" else " ", arm7.ARM7.disassemble(instr) });
+            if (comptime std.log.logEnabled(.debug, .arm_jit))
+                arm_jit_log.debug("  [{X:0>8}] {s} {s}", .{ ctx.address, if (ctx.did_fallback) "!" else " ", arm7.ARM7.disassemble(instr) });
 
             cycles += 1; // FIXME
             index += 1;
