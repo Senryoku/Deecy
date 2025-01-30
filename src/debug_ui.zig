@@ -202,7 +202,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const was_running = d.running;
             if (was_running)
                 d.stop();
-            try dc.sh4_jit.block_cache.reset();
+            try dc.sh4_jit.reset();
             if (was_running)
                 d.start();
         }

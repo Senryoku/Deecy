@@ -1340,7 +1340,7 @@ pub const SH4 = struct {
                             if (ccr.ici == 1 or ccr.oci == 1) {
                                 // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
                                 sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
-                                self._dc.?.sh4_jit.block_cache.reset() catch {
+                                self._dc.?.sh4_jit.reset() catch {
                                     sh4_log.err(termcolor.red("Failed to purge JIT cache."), .{});
                                     @panic("Failed to purge JIT cache.");
                                 };

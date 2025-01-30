@@ -238,7 +238,7 @@ pub const Dreamcast = struct {
         self.flash.reset();
         while (self.scheduled_events.removeOrNull() != null) {}
 
-        try self.sh4_jit.block_cache.reset();
+        try self.sh4_jit.reset();
 
         @memset(self.ram[0..], 0x00); // NOTE: Sonic Adventure 2 reads some unitialized memory around 0x0C000050...
 

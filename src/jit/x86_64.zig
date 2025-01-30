@@ -907,12 +907,7 @@ pub const Emitter = struct {
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
-                        } else {
-                            // movabs <reg>,<imm64>
-                            try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
-                            try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
-                            try self.emit(u64, imm);
-                        }
+                        } else return error.Invalid64bMovSource;
                     },
                     .imm32 => |imm| {
                         if (imm == 0 and !preserve_flags) {
@@ -931,12 +926,16 @@ pub const Emitter = struct {
                 }
             },
             .reg64 => |dst_reg| {
-                _ = dst_reg;
                 switch (src) {
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
-                        } else return error.Unimplemented;
+                        } else {
+                            // movabs <reg>,<imm64>
+                            try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
+                            try self.emit(u8, 0xB8 + @as(u8, encode(dst_reg)));
+                            try self.emit(u64, imm);
+                        }
                     },
                     else => return error.Unimplemented,
                 }

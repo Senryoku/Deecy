@@ -490,6 +490,7 @@ pub const SH4JIT = struct {
         };
         if (ExperimentalFastMem)
             r.virtual_address_space = try VirtualAddressSpace.init(allocator);
+        try r.init_compile_and_run_handler();
         return r;
     }
 
@@ -504,6 +505,23 @@ pub const SH4JIT = struct {
         self.block_cache.invalidate(start_addr, end_addr);
     }
 
+    pub fn init_compile_and_run_handler(self: *@This()) !void {
+        var b = &self._working_block;
+
+        b.clearRetainingCapacity();
+        try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
+        try b.call(compile_and_run);
+        const block_size = try b.emit(self.block_cache.buffer[0..]);
+        sh4_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[0..block_size]});
+        self.block_cache.cursor += block_size;
+        self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+    }
+
+    pub fn reset(self: *@This()) !void {
+        try self.block_cache.reset();
+        try self.init_compile_and_run_handler();
+    }
+
     pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         cpu.handle_interrupts();
 
@@ -511,19 +529,8 @@ pub const SH4JIT = struct {
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
-            if (block.cycles == 0) {
-                sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ pc, cpu.fpscr.sz, cpu.fpscr.pr });
-                block = try (self.compile(JITContext.init(cpu)) catch |err| retry: {
-                    if (err == error.JITCacheFull) {
-                        sh4_jit_log.warn("JIT cache full: Resetting.", .{});
-                        try self.block_cache.reset();
-                        break :retry self.compile(JITContext.init(cpu));
-                    } else break :retry err;
-                });
-            }
-            std.debug.assert(block.cycles > 0);
             const start = std.time.nanoTimestamp();
-            block.execute(self.block_cache.buffer, cpu);
+            @as(*const fn (*anyopaque) void, @ptrCast(&self.block_cache.buffer[block.offset]))(cpu);
             if (BasicBlock.EnableInstrumentation and block.cycles > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
                 block.call_count += 1;
@@ -534,6 +541,26 @@ pub const SH4JIT = struct {
         } else {
             return 8;
         }
+    }
+
+    // Default handler sitting the offset 0 of our executable buffer
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) void {
+        const pc = cpu.pc & 0x1FFFFFFF;
+        sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ pc, cpu.fpscr.sz, cpu.fpscr.pr });
+        const block = (self.compile(JITContext.init(cpu)) catch |err| retry: {
+            if (err == error.JITCacheFull) {
+                sh4_jit_log.warn("JIT cache full: Resetting.", .{});
+                self.reset() catch |reset_err| {
+                    std.debug.panic("Failed to reset JIT: {s}", .{@errorName(reset_err)});
+                    std.process.exit(1);
+                };
+                break :retry self.compile(JITContext.init(cpu));
+            } else break :retry err;
+        }) catch |err| {
+            std.debug.print("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
+            std.process.exit(1);
+        };
+        block.execute(self.block_cache.buffer, cpu);
     }
 
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
@@ -566,10 +593,10 @@ pub const SH4JIT = struct {
 
         if (ExperimentalFastMem) {
             const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
-            try b.mov(.{ .reg = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
+            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
         } else {
             const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
-            try b.mov(.{ .reg = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
         }
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
@@ -674,10 +701,7 @@ pub const SH4JIT = struct {
         }
         self.block_cache.cursor += block_size;
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
-        if (self.block_cache.cursor & 0xF != 0) {
-            self.block_cache.cursor += 0x10;
-            self.block_cache.cursor &= ~@as(usize, 0xF);
-        }
+        self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
 
         sh4_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
@@ -794,7 +818,7 @@ pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
 
 inline fn call_interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
+    try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
     try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
 }
 
@@ -1765,7 +1789,7 @@ pub fn fsca_FPUL_DRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     std.debug.assert(instr.nmd.n & 1 == 0);
 
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 16 } }); // Load low 16-bits of FPUL
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(fsca_table.ptr) });
+    try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = @intFromPtr(fsca_table.ptr) });
     // Lookup into the pre-computed table ([0x10000][2]f32)
     //    This is 512kB LUT, I wonder how efficient it really is. Looks like ~5% gain in my very stupid benchmark.
     try store_fp_register(block, ctx, instr.nmd.n + 0, .{ .mem = .{ .base = ArgRegisters[0], .index = ReturnRegister, .scale = ._8, .displacement = 0, .size = 32 } });

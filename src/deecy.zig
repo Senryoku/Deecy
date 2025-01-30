@@ -288,6 +288,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
             },
             else => {
+                deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
                 self.display_unrecoverable_error("Error initializing Dreamcast");
             },
         }

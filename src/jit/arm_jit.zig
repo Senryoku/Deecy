@@ -307,7 +307,7 @@ noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
 fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
     const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
-    try b.mov(.{ .reg = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
+    try b.mov(.{ .reg64 = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
     try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = dst, .displacement = 0, .size = @bitSizeOf(T) } });
     // Apply rotate on non-aligned read
     if (T == u32 and addr & 3 != 0)
@@ -318,7 +318,7 @@ fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst:
 fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
     const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
-    try b.mov(.{ .reg = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
+    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
     try b.mov(.{ .mem = .{ .base = ReturnRegister, .displacement = 0, .size = @bitSizeOf(T) } }, .{ .reg = value });
 }
 
