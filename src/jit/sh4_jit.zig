@@ -156,11 +156,24 @@ const BlockCache = struct {
         }
     }
 
+    const Key = packed struct(u32) {
+        addr: u23,
+        boot: bool,
+        sz: u1,
+        pr: u1,
+        _: u6 = 0,
+    };
+
     inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
-        return ((if (address > 0x0C000000) (address & RAMMask) else address + RAMEntryCount) + (@as(u32, sz) << 25) + (@as(u32, pr) << 26)) >> 1;
+        return @bitCast(Key{
+            .addr = @truncate(address >> 1),
+            .boot = address < BootEntryCount,
+            .sz = sz,
+            .pr = pr,
+        });
     }
 
-    pub fn get(self: *@This(), address: u32, sz: u1, pr: u1) *BasicBlock {
+    pub inline fn get(self: *@This(), address: u32, sz: u1, pr: u1) *BasicBlock {
         return &self.blocks[compute_key(address, sz, pr)];
     }
 
@@ -520,10 +533,11 @@ pub const SH4JIT = struct {
         try self.init_compile_and_run_handler();
     }
 
-    pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+    pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
+            @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
