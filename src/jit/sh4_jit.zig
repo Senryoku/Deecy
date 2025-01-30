@@ -529,12 +529,16 @@ pub const SH4JIT = struct {
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
             const pc = cpu.pc & 0x1FFFFFFF;
             var block = self.block_cache.get(pc, cpu.fpscr.sz, cpu.fpscr.pr);
-            const start = std.time.nanoTimestamp();
-            @as(*const fn (*anyopaque) void, @ptrCast(&self.block_cache.buffer[block.offset]))(cpu);
+
+            const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
+
+            block.execute(self.block_cache.buffer, cpu);
+
             if (BasicBlock.EnableInstrumentation and block.cycles > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
                 block.call_count += 1;
             }
+
             const cycles = block.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
             cpu._pending_cycles = 0;
             return cycles;
