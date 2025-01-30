@@ -18,7 +18,7 @@ const SavedRegisters = Architecture.SavedRegisters;
 const FPSavedRegisters = Architecture.FPSavedRegisters;
 const FPScratchRegisters = Architecture.FPScratchRegisters;
 
-const BasicBlock = @import("basic_block.zig");
+const BasicBlock = @import("sh4_basic_block.zig");
 
 const sh4_instructions = @import("../sh4_instructions.zig");
 
@@ -151,7 +151,7 @@ const BlockCache = struct {
                 }
                 const start = compute_key(@intCast(start_addr), sz, pr);
                 const end = compute_key(@intCast(end_addr), sz, pr);
-                @memset(self.blocks[start..end], .{ .offset = 0xFFFF_FFFF });
+                @memset(self.blocks[start..end], .{ .offset = 0 });
             }
         }
     }
@@ -307,6 +307,7 @@ pub const JITContext = struct {
 
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
+    may_have_pending_cycles: bool = false,
 
     start_address: u32, // Adress of the first instruction in the instructions array.
     start_index: u32 = undefined, // Index in the block corresponding to the first guest instruction.
@@ -544,15 +545,13 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            block.execute(self.block_cache.buffer, cpu);
+            const cycles = block.execute(self.block_cache.buffer, cpu);
 
-            if (BasicBlock.EnableInstrumentation and block.cycles > 0) { // Might have been invalidated.
+            if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
                 block.call_count += 1;
             }
 
-            const cycles = block.cycles + cpu._pending_cycles; // _pending_cycles might be incremented by looping blocks.
-            cpu._pending_cycles = 0;
             return cycles;
         } else {
             @branchHint(.unlikely);
@@ -561,7 +560,7 @@ pub const SH4JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) void {
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) u32 {
         const pc = cpu.pc & 0x1FFFFFFF;
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ pc, cpu.fpscr.sz, cpu.fpscr.pr });
         const block = (self.compile(JITContext.init(cpu)) catch |err| retry: {
@@ -577,7 +576,7 @@ pub const SH4JIT = struct {
             sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
             std.process.exit(1);
         };
-        block.execute(self.block_cache.buffer, cpu);
+        return block.execute(self.block_cache.buffer, cpu);
     }
 
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
@@ -660,6 +659,14 @@ pub const SH4JIT = struct {
         try ctx.gpr_cache.commit_and_invalidate_all(b);
         try ctx.fpr_cache.commit_and_invalidate_all(b);
 
+        try self.idle_speedup(&ctx);
+
+        try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
+        if (ctx.may_have_pending_cycles) {
+            try b.add(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } });
+            try b.append(.{ .Mov = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .src = .{ .imm32 = 0 }, .preserve_flags = false } });
+        }
+
         if (Architecture.JITABI == .Win64) {
             // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
             if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
@@ -705,14 +712,10 @@ pub const SH4JIT = struct {
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-        try self.idle_speedup(&ctx);
-
         const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
-        var block = BasicBlock{
-            .offset = @intCast(self.block_cache.cursor),
-            .cycles = ctx.cycles,
-        };
+        var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
         if (BasicBlock.EnableInstrumentation) {
+            block.cycles = ctx.cycles;
             block.start_addr = ctx.entry_point_address;
             block.len = ctx.index;
         }
@@ -2365,6 +2368,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
         try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
         to_end.patch();
 
+        ctx.may_have_pending_cycles = true;
         ctx.outdated_pc = false;
         return true;
     }
@@ -2424,6 +2428,8 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 optional_cycles += op.issue_cycles;
             }
             try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .imm32 = optional_cycles });
+
+            ctx.may_have_pending_cycles = true;
 
             try ctx.gpr_cache.commit_and_invalidate_all(block);
             try ctx.fpr_cache.commit_and_invalidate_all(block);

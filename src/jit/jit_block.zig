@@ -8,8 +8,6 @@ pub const Instruction = Architecture.Instruction;
 pub const Operand = Architecture.Operand;
 pub const Condition = Architecture.Condition;
 
-const BasicBlock = @import("basic_block.zig");
-
 pub const PatchableJump = struct {
     source_index: usize,
     block: *JITBlock,

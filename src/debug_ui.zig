@@ -9,7 +9,7 @@ const HardwareRegisters = @import("./hardware_registers.zig");
 
 const sh4 = @import("./sh4.zig");
 const sh4_disassembly = sh4.sh4_disassembly;
-const BasicBlock = @import("jit/basic_block.zig");
+const BasicBlock = @import("jit/sh4_basic_block.zig");
 const arm7 = @import("arm7");
 const Holly = @import("./holly.zig");
 const AICAModule = @import("./aica.zig");
@@ -351,7 +351,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     while (static.top.count() > 0) _ = static.top.remove();
                 }
                 for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                    if (dc.sh4_jit.block_cache.blocks[i].cycles > 0) {
+                    if (dc.sh4_jit.block_cache.blocks[i].offset > 0) {
                         const block = dc.sh4_jit.block_cache.blocks[i];
                         if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
                             static.top.add(block) catch unreachable;
@@ -365,13 +365,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             zgui.sameLine(.{});
             if (zgui.button("Reset", .{})) {
-                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                    if (dc.sh4_jit.block_cache.blocks[i].cycles > 0) {
-                        const block = &dc.sh4_jit.block_cache.blocks[i];
-                        block.time_spent = 0;
-                        block.call_count = 0;
-                    }
-                }
+                const was_running = d.running;
+                if (was_running)
+                    d.stop();
+                try dc.sh4_jit.reset();
+                if (was_running)
+                    d.start();
             }
             zgui.endDisabled();
 

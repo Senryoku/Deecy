@@ -4,7 +4,6 @@ const termcolor = @import("termcolor");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
-const BasicBlock = @import("basic_block.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = @import("jit_block.zig").JITBlock;
 
@@ -1058,7 +1057,6 @@ pub const Emitter = struct {
         _ = rax_dst_opcode_8;
         _ = mr_opcode_8;
         _ = rm_opcode_8;
-        _ = rm_opcode;
 
         switch (dst) {
             .reg => |dst_reg| {
@@ -1077,6 +1075,16 @@ pub const Emitter = struct {
                     },
                     .imm8 => |imm8| {
                         try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm8);
+                    },
+                    .mem => |src_m| {
+                        switch (src_m.size) {
+                            32, 64 => {
+                                try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                                try self.emit(u8, rm_opcode);
+                                try self.emit_mem_addressing(encode(dst_reg), src_m);
+                            },
+                            else => return error.OperandSizeMismatch,
+                        }
                     },
                     else => return error.InvalidSource,
                 }

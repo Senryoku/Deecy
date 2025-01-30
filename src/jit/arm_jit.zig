@@ -13,7 +13,15 @@ const ReturnRegister = Architecture.ReturnRegister;
 const ArgRegisters = Architecture.ArgRegisters;
 const SavedRegisters = Architecture.SavedRegisters;
 
-const BasicBlock = @import("basic_block.zig");
+const BasicBlock = struct {
+    offset: u32,
+    cycles: u32 = 0,
+    pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
+        @setRuntimeSafety(false);
+        @as(*const fn (*anyopaque) void, @ptrCast(&buffer[self.offset]))(user_data);
+    }
+};
+
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
 const arm_jit_log = std.log.scoped(.arm_jit);
