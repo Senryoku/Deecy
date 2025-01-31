@@ -45,6 +45,8 @@ fn glfw_key_callback(
     const maybe_app = window.getUserPointer(@This());
 
     if (maybe_app) |app| {
+        if (zgui.io.getWantCaptureKeyboard()) return;
+
         if (action == .press) {
             switch (key) {
                 .escape => {
