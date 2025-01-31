@@ -15,6 +15,8 @@ const Disc = @import("./disc/disc.zig").Disc;
 const Colors = @import("colors.zig");
 const PVRFile = @import("pvr_file.zig");
 
+const Notifications = @import("./ui/notifications.zig");
+
 const GameFile = struct {
     path: [:0]const u8,
     name: [:0]const u8,
@@ -52,6 +54,8 @@ display_library: bool = false,
 disc_files: std.ArrayList(GameFile),
 disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
+notifications: Notifications,
+
 deecy: *Deecy,
 allocator: std.mem.Allocator,
 
@@ -59,6 +63,7 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
         .disc_files = std.ArrayList(GameFile).init(allocator),
+        .notifications = Notifications.init(allocator),
         .deecy = d,
         .allocator = allocator,
     };

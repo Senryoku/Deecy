@@ -820,6 +820,8 @@ pub fn draw_ui(self: *@This()) !void {
         zgui.end();
     }
 
+    self.ui.notifications.draw();
+
     self.submit_ui();
 }
 
@@ -980,6 +982,8 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
     self.save_state_slots[index] = true;
 
     deecy_log.info("  Saved State #{d} to '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+
+    self.ui.notifications.push("State Saved", .{}, "State #{d} saved successfully.", .{index});
 }
 
 pub fn load_state(self: *@This(), index: usize) !void {
@@ -1024,6 +1028,8 @@ pub fn load_state(self: *@This(), index: usize) !void {
         deecy_log.err(termcolor.red("Loading save state used {d} bytes, expected {d}"), .{ bytes, header.uncompressed_size });
 
     deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
+
+    self.ui.notifications.push("State Loaded", .{}, "Save State #{d} loaded successfully.", .{index});
 }
 
 fn save_config(self: *@This()) !void {
