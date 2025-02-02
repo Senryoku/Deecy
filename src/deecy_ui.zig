@@ -176,15 +176,21 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
-fn get_game_image(self: *@This(), path: []const u8) !void {
+fn get_game_image(self: *@This(), path: []const u8) void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var disc = try Disc.init(path, allocator);
+    var disc = Disc.init(path, allocator) catch |err| {
+        ui_log.err("Failed to load disc '{s}': {s}", .{ path, @errorName(err) });
+        return;
+    };
     defer disc.deinit();
 
-    const tex_buffer: []u8 = try allocator.alloc(u8, 1024 * 1024);
+    const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
+        ui_log.err("Failed to allocate texture buffer: {s}", .{@errorName(err)});
+        return;
+    };
     defer allocator.free(tex_buffer);
 
     if (disc.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
@@ -430,9 +436,13 @@ pub fn draw(self: *@This()) !void {
 
     if (!d.running and d.dc.gdrom.disc == null or self.display_library)
         self.draw_game_library() catch |err| {
+            // Most likely due to game loading, and not actually drawing the UI.
             switch (err) {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
-                else => error_popup_to_open = "Unknown error",
+                else => {
+                    error_popup_to_open = "Unknown error";
+                    ui_log.err(termcolor.red("Error: {s}"), .{@errorName(err)});
+                },
             }
         };
 
@@ -585,16 +595,14 @@ pub fn draw(self: *@This()) !void {
 
     if (zgui.beginPopupModal("Error: Missing Flash", .{ .flags = .{ .always_auto_resize = true } })) {
         zgui.text("Failed to load flash. Did you put a copy of 'dc_flash.bin' in 'data/'?", .{});
-        if (zgui.button("OK", .{})) {
+        if (zgui.button("OK", .{}))
             zgui.closeCurrentPopup();
-        }
         zgui.endPopup();
     }
     if (zgui.beginPopupModal("Unknown error", .{})) {
         zgui.text("The console might have more information!", .{});
-        if (zgui.button("OK", .{})) {
+        if (zgui.button("OK", .{}))
             zgui.closeCurrentPopup();
-        }
         zgui.endPopup();
     }
 }
@@ -605,6 +613,7 @@ pub fn draw_game_library(self: *@This()) !void {
     zgui.setNextWindowPos(.{ .x = @floatFromInt((@max(target_width, d.gctx.swapchain_descriptor.width) - target_width) / 2), .y = 32, .cond = .always });
     zgui.setNextWindowSize(.{ .w = target_width, .h = @floatFromInt(@max(48, d.gctx.swapchain_descriptor.height) - 64), .cond = .always });
 
+    defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
@@ -630,32 +639,36 @@ pub fn draw_game_library(self: *@This()) !void {
             self.disc_files_mutex.lock();
             defer self.disc_files_mutex.unlock();
 
-            _ = zgui.beginChild("Games", .{});
             {
+                _ = zgui.beginChild("Games", .{});
+                defer zgui.endChild();
+
                 var truncated_name: [28:0]u8 = undefined;
                 zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
                 zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
                 defer zgui.popStyleVar(.{ .count = 2 });
                 for (self.disc_files.items, 0..) |entry, idx| {
                     var launch = false;
-                    zgui.beginGroup();
-                    zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
-                    zgui.pushIntId(@intCast(idx));
-                    @memset(&truncated_name, 0);
-                    @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
-                    launch = (zgui.button(&truncated_name, .{ .w = 256, .h = 24 })) or launch;
+                    {
+                        zgui.beginGroup();
+                        defer zgui.endGroup();
+                        zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 0, 0 } });
+                        defer zgui.popStyleVar(.{});
+                        zgui.pushIntId(@intCast(idx));
+                        defer zgui.popId();
+                        @memset(&truncated_name, 0);
+                        @memcpy(truncated_name[0..@min(entry.name.len, truncated_name.len - 1)], entry.name[0..@min(entry.name.len, truncated_name.len - 1)]);
+                        launch = (zgui.button(&truncated_name, .{ .w = 256, .h = 24 })) or launch;
 
-                    zgui.pushStrId("image");
-                    if (entry.view) |view| {
-                        launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
-                    } else {
-                        launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                        zgui.pushStrId("image");
+                        defer zgui.popId();
+                        if (entry.view) |view| {
+                            launch = zgui.imageButton(entry.name, self.deecy.gctx.lookupResource(view).?, .{ .w = 256, .h = 256 }) or launch;
+                        } else {
+                            launch = zgui.button(entry.name, .{ .w = 256, .h = 256 }) or launch;
+                        }
                     }
-                    zgui.popId();
 
-                    zgui.popId();
-                    zgui.popStyleVar(.{});
-                    zgui.endGroup();
                     if (zgui.isItemHovered(.{ .for_tooltip = true }) and zgui.beginTooltip()) {
                         zgui.text("{s}", .{entry.name});
                         zgui.endTooltip();
@@ -667,8 +680,6 @@ pub fn draw_game_library(self: *@This()) !void {
                     if (idx % 4 != 3) zgui.sameLine(.{});
                 }
             }
-            zgui.endChild();
         }
     }
-    zgui.end();
 }
