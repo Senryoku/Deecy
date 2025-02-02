@@ -36,8 +36,15 @@ test "DirectoryRecord" {
 }
 
 pub const PVD = extern struct {
-    type_code: u8,
-    standard_identifier: [5]u8,
+    type_code: enum(u8) {
+        BootRecordVolumeDescriptor = 0,
+        PrimaryVolumeDescriptor = 1,
+        SupplementaryVolumeDescriptor = 2,
+        VolumePartitionDescriptor = 3,
+        VolumeDescriptorSetTerminator = 255,
+        _,
+    },
+    standard_identifier: [5]u8, // == "CD001"
     version: u8,
     _unused: u8,
     system_identifer: [32]u8,

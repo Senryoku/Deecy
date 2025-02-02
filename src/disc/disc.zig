@@ -60,7 +60,8 @@ pub const Disc = union(enum) {
     }
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
-        const root_directory_entry = self.get_primary_volume_descriptor().root_directory_entry;
+        const pvd = try self.get_primary_volume_descriptor();
+        const root_directory_entry = pvd.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
         const root_directory_fad = lba_to_fad(root_directory_entry.location);
         const root_track = try self.get_corresponding_track(root_directory_fad);
@@ -128,12 +129,15 @@ pub const Disc = union(enum) {
             null;
     }
 
-    pub fn get_primary_volume_descriptor(self: *const @This()) *const CD.PVD {
+    pub fn get_primary_volume_descriptor(self: *const @This()) !*const CD.PVD {
         if (self.get_first_data_track()) |t| {
             const offset = 0x10 * t.format + t.sector_data_offset(); // 16th sector + skip sector header
-            return @ptrCast(@alignCast(t.data.ptr + offset));
+            const pvd: *const CD.PVD = @ptrCast(@alignCast(t.data.ptr + offset));
+            if (pvd.type_code != .PrimaryVolumeDescriptor or !std.mem.eql(u8, &pvd.standard_identifier, "CD001") or pvd.version != 0x01)
+                return error.InvalidPVD;
+            return pvd;
         }
-        @panic("Failed to get primary volume descriptor");
+        return error.MissingDataTrack;
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
