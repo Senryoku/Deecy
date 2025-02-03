@@ -219,88 +219,113 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
     try zglfw.init();
 
-    // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
-    if (builtin.os.tag == .linux)
-        zglfw.windowHint(.client_api, .no_api);
-
     // TODO: Load from config.
     const default_resolution = Renderer.Resolution{ .width = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), .height = 2 * Renderer.NativeResolution.height };
 
     const self = try allocator.create(@This());
     self.* = .{
-        .window = try zglfw.Window.create(default_resolution.width, default_resolution.height, "Deecy", null),
+        .window = undefined,
         .config = config,
         .last_frame_timestamp = std.time.microTimestamp(),
         .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
         .breakpoints = std.ArrayList(u32).init(allocator),
         ._allocator = allocator,
     };
-    self.window.swapBuffers(); // Clear to black
-    glfwSetWindowIcon(self.window, icons.len, &icons);
-    if (builtin.os.tag == .windows)
-        @import("dwmapi.zig").allow_dark_mode(self.window, true);
-
-    // NOTE: For some reason this is the longest operation in here. Start ASAP and in parallel of context creation (second longest operation).
-    var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
-    defer joystick_thread.join();
-
-    self.window.setUserPointer(self);
-    _ = self.window.setKeyCallback(glfw_key_callback);
-    _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
 
     {
-        const gctx_start_time = std.time.milliTimestamp();
-        defer deecy_log.info("Graphics context initialized in {d} ms", .{std.time.milliTimestamp() - gctx_start_time});
-        self.gctx = try zgpu.GraphicsContext.create(allocator, .{
-            .window = self.window,
-            .fn_getTime = @ptrCast(&zglfw.getTime),
-            .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
-            .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
-            .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
-            .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
-            .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
-        }, .{
-            .present_mode = .mailbox,
-            .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
-            .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
-        });
+        // NOTE: For some reason Joystick initialization is the longest operation in here. Start ASAP and in parallel of context creation and window creation (second longest operation).
+        //       Note that glfwIsJoystickPresent() is not supposed to be thread-safe... But I haven't had any problems so far.
+        var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
+        defer joystick_thread.join();
+
+        {
+            const window_init_time = std.time.milliTimestamp();
+            defer deecy_log.info("Window initialized in {d} ms", .{std.time.milliTimestamp() - window_init_time});
+
+            // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
+            zglfw.windowHint(.client_api, .no_api);
+            zglfw.windowHint(.visible, false); // Hide window until the first frame is drawn to avoid a white flash. Don't forget to .show() it eventually!
+            self.window = try zglfw.Window.create(default_resolution.width, default_resolution.height, "Deecy", null);
+            glfwSetWindowIcon(self.window, icons.len, &icons);
+            if (builtin.os.tag == .windows)
+                @import("dwmapi.zig").allow_dark_mode(self.window, true);
+
+            self.window.setUserPointer(self);
+            _ = self.window.setKeyCallback(glfw_key_callback);
+            _ = zglfw.setDropCallback(self.window, glfw_drop_callback);
+
+            const scale = self.window.getContentScale();
+            self.scale_factor = @max(scale[0], scale[1]);
+        }
+
+        {
+            const gctx_start_time = std.time.milliTimestamp();
+            defer deecy_log.info("Graphics context initialized in {d} ms", .{std.time.milliTimestamp() - gctx_start_time});
+            self.gctx = try zgpu.GraphicsContext.create(allocator, .{
+                .window = self.window,
+                .fn_getTime = @ptrCast(&zglfw.getTime),
+                .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
+                .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
+                .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
+                .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+                .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
+            }, .{
+                .present_mode = .mailbox,
+                .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
+                .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
+            });
+        }
+
+        // Now that we have our graphics context, "draw" a black frame and show the window.
+        // We could wait until the first frame is actually drawn, but this give an earlier feedback...
+        // Not sure what's best here.
+        {
+            const back_buffer_view = self.gctx.swapchain.getCurrentTextureView();
+            defer back_buffer_view.release();
+            _ = self.gctx.present();
+            self.window.show();
+        }
+
+        if (comptime std.log.logEnabled(.debug, .deecy)) {
+            brk_limits: {
+                var device_limits: zgpu.wgpu.SupportedLimits = .{};
+                var adapter_limits: zgpu.wgpu.SupportedLimits = .{};
+                if (!self.gctx.device.getLimits(&device_limits)) {
+                    deecy_log.debug("Failed to get device limits.", .{});
+                    break :brk_limits;
+                }
+                if (!self.gctx.device.getAdapter().getLimits(&adapter_limits)) {
+                    deecy_log.debug("Failed to get adapter limits.", .{});
+                    break :brk_limits;
+                }
+                deecy_log.debug("WebGPU Limits (Device/Adapter):", .{});
+                inline for (std.meta.fields(zgpu.wgpu.Limits)) |field| {
+                    deecy_log.debug("{s: >48}: {d: >10} / {d: >10}", .{ field.name, @field(device_limits.limits, field.name), @field(adapter_limits.limits, field.name) });
+                }
+            }
+        }
+
+        try self.audio_init();
     }
 
-    brk_limits: {
-        var device_limits: zgpu.wgpu.SupportedLimits = .{};
-        var adapter_limits: zgpu.wgpu.SupportedLimits = .{};
-        if (!self.gctx.device.getLimits(&device_limits)) {
-            deecy_log.debug("Failed to get device limits.", .{});
-            break :brk_limits;
-        }
-        if (!self.gctx.device.getAdapter().getLimits(&adapter_limits)) {
-            deecy_log.debug("Failed to get adapter limits.", .{});
-            break :brk_limits;
-        }
-        deecy_log.debug("WebGPU Limits (Device/Adapter):", .{});
-        inline for (std.meta.fields(zgpu.wgpu.Limits)) |field| {
-            deecy_log.debug("{s: >48}: {d: >10} / {d: >10}", .{ field.name, @field(device_limits.limits, field.name), @field(adapter_limits.limits, field.name) });
-        }
+    // Avoid having other threads running while initialisation the Dreamcast to increase the chance of virtual_address_space initialization to succeed on Windows.
+    // FIXME: See sh4_virtual_address_space_windows.zig
+    {
+        const dc_init_time = std.time.milliTimestamp();
+        defer deecy_log.info("Dreamcast initialized in {d} ms", .{std.time.milliTimestamp() - dc_init_time});
+        self.dc = Dreamcast.create(allocator) catch |err| {
+            switch (err) {
+                error.BiosNotFound => {
+                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
+                },
+                else => {
+                    deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
+                    self.display_unrecoverable_error("Error initializing Dreamcast");
+                },
+            }
+            return err;
+        };
     }
-
-    const scale = self.window.getContentScale();
-    self.scale_factor = @max(scale[0], scale[1]);
-
-    self.dc = Dreamcast.create(allocator) catch |err| {
-        switch (err) {
-            error.BiosNotFound => {
-                self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
-            },
-            else => {
-                deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
-                self.display_unrecoverable_error("Error initializing Dreamcast");
-            },
-        }
-        return err;
-    };
-
-    self.ui = try UI.create(allocator, self);
-    try self.ui_init();
 
     self.renderer = try Renderer.create(self._allocator, self.gctx);
     self.dc.on_render_start = .{
@@ -308,19 +333,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .context = self.renderer,
     };
 
-    zaudio.init(allocator);
-
-    var audio_device_config = zaudio.Device.Config.init(.playback);
-    audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
-    audio_device_config.data_callback = audio_callback;
-    audio_device_config.user_data = self;
-    audio_device_config.period_size_in_frames = 16;
-    audio_device_config.playback.format = .signed32;
-    audio_device_config.playback.channels = 2;
-    self.audio_device = try zaudio.Device.create(null, audio_device_config);
-
-    try self.audio_device.setMasterVolume(config.audio_volume);
-
+    self.ui = try UI.create(self._allocator, self);
+    try self.ui_init();
     self.debug_ui = try DebugUI.init(self);
 
     try self.check_save_state_slots();
@@ -373,6 +387,23 @@ fn auto_populate_joysticks(self: *@This()) !void {
             }
         }
     }
+}
+
+fn audio_init(self: *@This()) !void {
+    const zaudio_init_time = std.time.milliTimestamp();
+    defer deecy_log.info("Zaudio initialized in {d} ms", .{std.time.milliTimestamp() - zaudio_init_time});
+    zaudio.init(self._allocator);
+
+    var audio_device_config = zaudio.Device.Config.init(.playback);
+    audio_device_config.sample_rate = DreamcastModule.AICAModule.AICA.SampleRate;
+    audio_device_config.data_callback = audio_callback;
+    audio_device_config.user_data = self;
+    audio_device_config.period_size_in_frames = 16;
+    audio_device_config.playback.format = .signed32;
+    audio_device_config.playback.channels = 2;
+    self.audio_device = try zaudio.Device.create(null, audio_device_config);
+
+    try self.audio_device.setMasterVolume(self.config.audio_volume);
 }
 
 fn ui_init(self: *@This()) !void {

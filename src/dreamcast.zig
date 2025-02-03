@@ -185,12 +185,6 @@ pub const Dreamcast = struct {
 
         try dc.reset();
 
-        // FIXME: Hack to bypass some checks I'm failling to emulate.
-        //        Pretty sure this is linked to the GD ROM, bios is waiting on something here.
-        //        Insert a nop instead of the branch.
-        // dc.boot[0x077B] = 0x00;
-        // dc.boot[0x077A] = 0x09;
-
         return dc;
     }
 
