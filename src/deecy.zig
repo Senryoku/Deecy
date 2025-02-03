@@ -54,7 +54,7 @@ fn glfw_key_callback(
                 },
                 .space => {
                     if (app.running) {
-                        app.stop();
+                        app.pause();
                     } else {
                         app.start();
                     }
@@ -327,7 +327,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 }
 
 pub fn destroy(self: *@This()) void {
-    self.stop();
+    self.pause();
     self.wait_async_jobs();
 
     self.save_config() catch |err| deecy_log.err("Error writing config: {s}", .{@errorName(err)});
@@ -494,7 +494,7 @@ fn ui_deinit(_: *@This()) void {
 
 pub fn reset(self: *@This()) !void {
     const was_running = self.running;
-    if (was_running) self.stop();
+    if (was_running) self.pause();
     defer {
         if (was_running) self.start();
     }
@@ -507,11 +507,18 @@ pub fn reset(self: *@This()) !void {
     try self.check_save_state_slots();
 }
 
+pub fn stop(self: *@This()) !void {
+    self.pause();
+    try self.reset();
+    if (self.dc.gdrom.disc) |*disc| disc.deinit();
+    self.dc.gdrom.disc = null;
+}
+
 pub fn update(self: *@This()) void {
     self.poll_controllers();
     self.dc.maple.flush_vmus();
     if (self._stop_request) {
-        self.stop();
+        self.pause();
         self._stop_request = false;
     }
 }
@@ -611,7 +618,7 @@ pub fn poll_controllers(self: *@This()) void {
 }
 
 pub fn load_and_start(self: *@This(), path: []const u8) !void {
-    self.stop();
+    self.pause();
     try self.load_disc(path);
     self.dc.set_region(self.dc.gdrom.disc.?.get_region()) catch |err| {
         switch (err) {
@@ -761,7 +768,7 @@ pub fn start(self: *@This()) void {
     }
 }
 
-pub fn stop(self: *@This()) void {
+pub fn pause(self: *@This()) void {
     if (self.running) {
         if (!self.realtime) {
             self.running = false;
@@ -781,7 +788,7 @@ pub fn stop(self: *@This()) void {
 pub fn set_realtime(self: *@This(), realtime: bool) void {
     if (self.realtime == realtime) return;
     const was_running = self.running;
-    if (was_running) self.stop();
+    if (was_running) self.pause();
     defer if (was_running) self.start();
     self.realtime = realtime;
 }
@@ -944,7 +951,7 @@ const SaveStateHeader = extern struct {
 
 pub fn save_state(self: *@This(), index: usize) !void {
     const was_running = self.running;
-    if (was_running) self.stop();
+    if (was_running) self.pause();
     defer {
         if (was_running) self.start();
     }
@@ -988,7 +995,7 @@ fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array
 
 pub fn load_state(self: *@This(), index: usize) !void {
     const was_running = self.running;
-    if (was_running) self.stop();
+    if (was_running) self.pause();
     defer {
         if (was_running) self.start();
     }

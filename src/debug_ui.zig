@@ -201,7 +201,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.button("Clear Cache", .{})) {
             const was_running = d.running;
             if (was_running)
-                d.stop();
+                d.pause();
             try dc.sh4_jit.reset();
             if (was_running)
                 d.start();
@@ -210,7 +210,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.button("Dump DC State", .{})) {
             const was_running = d.running;
             if (was_running)
-                d.stop();
+                d.pause();
             var file = try std.fs.cwd().createFile("logs/dc_dump.bin", .{});
             defer file.close();
             _ = try dc.serialize(file.writer());
@@ -254,7 +254,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         if (zgui.button(if (d.running) "Pause" else "Run", .{ .w = 200.0 })) {
             if (d.running) {
-                d.stop();
+                d.pause();
             } else {
                 d.start();
             }
@@ -433,7 +433,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit })) {
             const was_running = d.running;
             if (was_running)
-                d.stop();
+                d.pause();
             try dc.aica.arm_jit.block_cache.reset();
             if (was_running)
                 d.start();

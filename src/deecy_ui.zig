@@ -305,7 +305,7 @@ pub fn draw(self: *@This()) !void {
         if (zgui.beginMenu("File", true)) {
             if (zgui.menuItem("Load Disc", .{})) {
                 const was_running = d.running;
-                if (was_running) d.stop();
+                if (was_running) d.pause();
                 const open_path = try nfd.openFileDialog("gdi,cdi", null);
                 if (open_path) |path| {
                     defer nfd.freePath(path);
@@ -322,7 +322,7 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.separator();
             if (zgui.menuItem("Exit", .{})) {
-                d.stop();
+                d.pause();
                 zglfw.setWindowShouldClose(d.window, true);
             }
             zgui.endMenu();
@@ -333,15 +333,20 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.menuItem("Start", .{}))
                     d.start();
             } else {
-                if (zgui.menuItem("Stop", .{}))
-                    d.stop();
+                if (zgui.menuItem("Pause", .{}))
+                    d.pause();
             }
             if (zgui.menuItem("Reset", .{}))
                 try d.reset();
+            if (zgui.menuItem("Stop", .{}))
+                try d.stop();
+            zgui.separator();
+
             var realtime = self.deecy.realtime;
             if (zgui.checkbox("Realtime", .{ .v = &realtime }))
                 self.deecy.set_realtime(realtime);
             zgui.separator();
+
             if (zgui.beginMenu("Region", !d.running)) {
                 if (zgui.menuItem("USA", .{ .selected = d.dc.region == .USA })) {
                     try d.dc.set_region(.USA);
@@ -355,6 +360,7 @@ pub fn draw(self: *@This()) !void {
                 zgui.endMenu();
             }
             zgui.separator();
+
             if (zgui.beginMenu("Cable", true)) {
                 zgui.textColored(.{ 1.0, 1.0, 1.0, 0.5 }, "  (WIP!)", .{});
                 if (zgui.menuItem("VGA", .{ .selected = d.dc.cable_type == .VGA })) {
@@ -369,6 +375,7 @@ pub fn draw(self: *@This()) !void {
                 zgui.endMenu();
             }
             zgui.separator();
+
             if (zgui.beginMenu("Save States", true)) {
                 inline for (0..4) |i| {
                     if (zgui.menuItem("Save Slot " ++ std.fmt.comptimePrint("{d}", .{i}), .{ .shortcut = std.fmt.comptimePrint("F{d}", .{i + 1}) })) {
@@ -394,7 +401,7 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Swap Disc", .{})) {
                 const open_path = try nfd.openFileDialog("gdi,cdi", null);
                 const was_running = d.running;
-                if (was_running) d.stop();
+                if (was_running) d.pause();
                 if (open_path) |path| err_brk: {
                     defer nfd.freePath(path);
                     // TODO! Emulate opening the tray and inserting a new disc.
@@ -412,9 +419,15 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Open Tray", .{})) {
                 d.dc.gdrom.state = .Open;
             }
-            if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null and d.dc.gdrom.state == .Open })) {
+            if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
+                const was_running = d.running;
+                if (was_running) d.pause();
                 d.dc.gdrom.disc.?.deinit();
                 d.dc.gdrom.disc = null;
+                if (d.dc.gdrom.state != .Open)
+                    d.dc.gdrom.state = .Empty;
+                if (was_running)
+                    d.start();
             }
             if (zgui.menuItem("Close Tray", .{})) {
                 d.dc.gdrom.state = .Standby;

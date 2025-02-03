@@ -90,8 +90,8 @@ pub const std_options: std.Options = .{
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .warn },
-        .{ .scope = .sh4_jit, .level = .warn },
-        .{ .scope = .arm_jit, .level = .info },
+        .{ .scope = .sh4_jit, .level = .debug },
+        .{ .scope = .arm_jit, .level = .debug },
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall, .level = .debug },
         .{ .scope = .aica, .level = .info },
@@ -106,7 +106,7 @@ pub const std_options: std.Options = .{
 };
 
 fn trapa_handler(app: *anyopaque) void {
-    @as(*Deecy, @alignCast(@ptrCast(app))).stop();
+    @as(*Deecy, @alignCast(@ptrCast(app))).pause();
 }
 
 const Hack = struct { addr: u32, instr: []const u16 };
