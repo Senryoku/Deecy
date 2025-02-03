@@ -21,6 +21,7 @@ const FPScratchRegisters = Architecture.FPScratchRegisters;
 const BasicBlock = @import("sh4_basic_block.zig");
 
 const sh4_instructions = @import("../sh4_instructions.zig");
+const sh4_interpreter_handlers = @import("../sh4_interpreter_handlers.zig");
 
 const sh4_jit_log = std.log.scoped(.sh4_jit);
 
@@ -837,9 +838,14 @@ pub fn call(block: *JITBlock, ctx: *JITContext, func: *const anyopaque) !void {
 }
 
 inline fn call_interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !void {
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-    try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-    try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+    if (sh4_interpreter_handlers.Enable) {
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        try call(block, ctx, sh4_interpreter_handlers.InstructionHandlers[instr.value]);
+    } else {
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+        try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
+        try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+    }
 }
 
 // We need pointers to all of these functions, can't really refactor that mess sadly.

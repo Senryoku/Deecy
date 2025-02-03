@@ -20,6 +20,7 @@ const addr_t = common.addr_t;
 
 pub const sh4_instructions = @import("sh4_instructions.zig");
 pub const sh4_disassembly = @import("sh4_disassembly.zig");
+pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
@@ -472,13 +473,11 @@ pub const SH4 = struct {
     }
 
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
-        if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
+        if ((comptime builtin.mode == .Debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
-            return &@as([*]T, @alignCast(@ptrCast(&self._operand_cache)))[0];
-        }
 
         // Half of the operand cache can be used as RAM when CCR.ORA == 1, and some games do.
-        std.debug.assert(self.read_p4_register(P4.CCR, .CCR).ora == 1);
+        // std.debug.assert(self.read_p4_register(P4.CCR, .CCR).ora == 1);
         std.debug.assert(virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF);
 
         // NOTE: The operand cache as RAM (8K) is split into two 4K areas and the correct addressing changes depending on the CCR.OIX bit.
@@ -548,13 +547,13 @@ pub const SH4 = struct {
 
     pub inline fn getDR(self: *@This(), r: u4) f64 {
         std.debug.assert(r & 1 == 0);
-        return @bitCast((@as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[r + 0]))) << 32) | @as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[r + 1]))));
+        return @bitCast((@as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[(r & 0xE) + 0]))) << 32) | @as(u64, @as(u32, @bitCast(self.fp_banks[0].fr[(r & 0xE) + 1]))));
     }
     pub inline fn setDR(self: *@This(), r: u4, v: f64) void {
         std.debug.assert(r & 1 == 0);
         const fp: [2]f32 = @bitCast(v);
-        self.fp_banks[0].fr[r + 0] = fp[1];
-        self.fp_banks[0].fr[r + 1] = fp[0];
+        self.fp_banks[0].fr[(r & 0xE) + 1] = fp[0];
+        self.fp_banks[0].fr[(r & 0xE) + 0] = fp[1];
     }
 
     pub inline fn XF(self: *@This(), r: u4) *f32 {
@@ -807,26 +806,31 @@ pub const SH4 = struct {
     pub inline fn _execute(self: *@This(), addr: addr_t) void {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
-        const physical_addr = if (comptime builtin.is_test) addr else (addr & 0x1FFFFFFF);
-        if (!comptime builtin.is_test)
+        const opcode = if (comptime !builtin.is_test) oc: {
+            const physical_addr = if (comptime builtin.is_test) addr else (addr & 0x1FFFFFFF);
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
+            break :oc @call(.always_inline, @This().read, .{ self, u16, physical_addr });
+        } else self.read(u16, addr);
 
-        const opcode = self.read(u16, physical_addr);
-        const instr = Instr{ .value = opcode };
-        const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
+        if (interpreter_handlers.Enable) {
+            interpreter_handlers.InstructionHandlers[opcode](self);
+        } else {
+            const instr = Instr{ .value = opcode };
+            const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
 
-        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-            std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, sh4_disassembly.disassemble(instr, self._allocator) catch {
-                std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
-                unreachable;
-            }, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+            if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, sh4_disassembly.disassemble(instr, self._allocator) catch {
+                    std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
+                    unreachable;
+                }, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
-        desc.fn_(self, instr);
+            desc.fn_(self, instr);
 
-        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-            std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+            if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+                std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
-        self.add_cycles(desc.issue_cycles);
+            self.add_cycles(desc.issue_cycles);
+        }
     }
 
     pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
