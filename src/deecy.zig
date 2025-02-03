@@ -220,7 +220,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     try zglfw.init();
 
     // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
-    zglfw.windowHint(.client_api, .no_api);
+    if (builtin.os.tag == .linux)
+        zglfw.windowHint(.client_api, .no_api);
 
     // TODO: Load from config.
     const default_resolution = Renderer.Resolution{ .width = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), .height = 2 * Renderer.NativeResolution.height };
@@ -234,6 +235,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .breakpoints = std.ArrayList(u32).init(allocator),
         ._allocator = allocator,
     };
+    self.window.swapBuffers(); // Clear to black
     glfwSetWindowIcon(self.window, icons.len, &icons);
     if (builtin.os.tag == .windows)
         @import("dwmapi.zig").allow_dark_mode(self.window, true);

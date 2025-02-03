@@ -330,10 +330,10 @@ pub fn draw(self: *@This()) !void {
 
         if (zgui.beginMenu("DC", true)) {
             if (!d.running) {
-                if (zgui.menuItem("Start", .{}))
+                if (zgui.menuItem("Start", .{ .shortcut = "Space" }))
                     d.start();
             } else {
-                if (zgui.menuItem("Pause", .{}))
+                if (zgui.menuItem("Pause", .{ .shortcut = "Space" }))
                     d.pause();
             }
             if (zgui.menuItem("Reset", .{}))
@@ -397,7 +397,16 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Drive", true)) {
-            // TODO
+            if (d.dc.gdrom.disc) |disc| {
+                if (disc.get_product_name()) |name| {
+                    zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Disc: {s}", .{name});
+                } else {
+                    zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Unknown Disc", .{});
+                }
+            } else {
+                zgui.textColored(.{ 1.0, 1.0, 1.0, 0.5 }, "No Disc", .{});
+            }
+            zgui.separator();
             if (zgui.menuItem("Swap Disc", .{})) {
                 const open_path = try nfd.openFileDialog("gdi,cdi", null);
                 const was_running = d.running;
@@ -416,7 +425,7 @@ pub fn draw(self: *@This()) !void {
                         d.start();
                 }
             }
-            if (zgui.menuItem("Open Tray", .{})) {
+            if (zgui.menuItem("Open Tray", .{ .enabled = d.dc.gdrom.state != .Open })) {
                 d.dc.gdrom.state = .Open;
             }
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
@@ -429,8 +438,12 @@ pub fn draw(self: *@This()) !void {
                 if (was_running)
                     d.start();
             }
-            if (zgui.menuItem("Close Tray", .{})) {
-                d.dc.gdrom.state = .Standby;
+            if (zgui.menuItem("Close Tray", .{ .enabled = d.dc.gdrom.state == .Open })) {
+                if (d.dc.gdrom.disc == null) {
+                    d.dc.gdrom.state = .Empty;
+                } else {
+                    d.dc.gdrom.state = .Standby;
+                }
             }
             zgui.endMenu();
         }
