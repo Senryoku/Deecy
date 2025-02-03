@@ -529,7 +529,6 @@ pub const AICA = struct {
         };
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try ARM7JIT.init(allocator, r.arm7.memory_address_mask);
-
         try r.reset();
 
         return r;
@@ -583,6 +582,7 @@ pub const AICA = struct {
         self.get_reg(u32, .SCILV1).* = 0x50;
         self.get_reg(u32, .SCILV2).* = 0x08;
 
+        self.arm7.reset();
         try self.arm_jit.reset();
     }
 
@@ -795,7 +795,7 @@ pub const AICA = struct {
                         self.check_interrupts();
 
                         self._arm_cycles_counter = 0;
-                        self.arm7.reset(value & 1 == 0);
+                        self.arm7.signal_reset(value & 1 == 0);
                         self.arm_jit.reset() catch unreachable;
                         if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
                             aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
