@@ -216,13 +216,17 @@ pub const ISP_FEED_CFG = packed struct(u32) {
 };
 
 pub const SCALER_CTL = packed struct(u32) {
-    vertical_scale_factor: u16, // This field specifies the scale factor in the vertical direction. (default = 0x0400)
-    // This value consists of a 6-bit integer portion and a 10-bit decimal portion, and
-    // expands or reduces the screen in the vertical direction by "1/scale factor." When
-    // using flicker-free interlace mode type B, specify 0x0800.
-    horizontal_scaling_enable: bool, // This field specifies whether or not to use the horizontal direction 1/2 scaler.
-    interlace: bool, // This register specifies whether or not to use flicker-free interlace mode type B.
-    field_select: u1, // This register specifies the field that is to be stored in the frame buffer in flicker-free interlace mode type B.
+    /// This field specifies the scale factor in the vertical direction. (default = 0x0400)
+    /// This value consists of a 6-bit integer portion and a 10-bit decimal portion, and
+    /// expands or reduces the screen in the vertical direction by "1/scale factor." When
+    /// using flicker-free interlace mode type B, specify 0x0800.
+    vertical_scale_factor: u16,
+    /// This field specifies whether or not to use the horizontal direction 1/2 scaler.
+    horizontal_scaling_enable: bool,
+    /// This register specifies whether or not to use flicker-free interlace mode type B.
+    interlace: bool,
+    /// This register specifies the field that is to be stored in the frame buffer in flicker-free interlace mode type B.
+    field_select: u1,
     _reserved: u13,
 };
 
@@ -331,25 +335,40 @@ pub const TEXT_CONTROL = packed struct(u32) {
 };
 
 pub const VO_CONTROL = packed struct(u32) {
-    hsync_pool: u1, // Polarity of HSYNC (0 = active low, 1 = active high)
-    vsync_pool: u1, // Polarity of VSYNC (0 = active low, 1 = active high)
-    blank_pool: u1, // Polarity of BLANK (0 = active low, 1 = active high)
-    blank_video: u1, // This field specifies whether to display the screen or not. 0: Display the screen, 1: Do not display the screen. (Display the border color.) (default)
+    /// Polarity of HSYNC (0 = active low, 1 = active high)
+    hsync_pool: u1,
+    /// Polarity of VSYNC (0 = active low, 1 = active high)
+    vsync_pool: u1,
+    /// Polarity of BLANK (0 = active low, 1 = active high)
+    blank_pool: u1,
+    /// This field specifies whether to display the screen or not. 0: Display the screen, 1: Do not display the screen. (Display the border color.) (default)
+    blank_video: u1,
     field_mode: enum(u4) {
-        SPG = 0, // Use field flag from SPG. (default)
-        InverseSPG = 1, // Use inverse of field flag from SPG.
-        Field1 = 2, // Field 1 fixed.
-        Field2 = 3, // Field 2 fixed.
-        Field1Sync = 4, // Field 1 when the active edges of HSYNC and VSYNC match.
-        Field2Sync = 5, // Field 2 when the active edges of HSYNC and VSYNC match.
-        Field1Async = 6, // Field 1 when HSYNC becomes active in the middle of the VSYNC active edge.
-        Field2Async = 7, // Field 2 when HSYNC becomes active in the middle of the VSYNC active edge.
-        VsyncInverted = 8, // Inverted at the active edge of VSYNC
+        /// Use field flag from SPG. (default)
+        SPG = 0,
+        /// Use inverse of field flag from SPG.
+        InverseSPG = 1,
+        /// Field 1 fixed.
+        Field1 = 2,
+        /// Field 2 fixed.
+        Field2 = 3,
+        /// Field 1 when the active edges of HSYNC and VSYNC match.
+        Field1Sync = 4,
+        /// Field 2 when the active edges of HSYNC and VSYNC match.
+        Field2Sync = 5,
+        /// Field 1 when HSYNC becomes active in the middle of the VSYNC active edge.
+        Field1Async = 6,
+        /// Field 2 when HSYNC becomes active in the middle of the VSYNC active edge.
+        Field2Async = 7,
+        /// Inverted at the active edge of VSYNC
+        VsyncInverted = 8,
         _, // Reserved
     },
-    pixel_double: bool, // This field specifies whether to output the same pixel or not for two pixels in the horizontal direction. 0: not pixel double, 1: pixel double (default)
+    /// This field specifies whether to output the same pixel or not for two pixels in the horizontal direction. 0: not pixel double, 1: pixel double (default)
+    pixel_double: bool,
     _r0: u7,
-    pclk_delay: u6, // This field specifies the delay for the PCLK signal to the DAC.
+    /// This field specifies the delay for the PCLK signal to the DAC.
+    pclk_delay: u6,
     _r1: u10,
 };
 
@@ -1368,7 +1387,7 @@ pub const TALists = struct {
 
 pub const Holly = struct {
     pub const VRAMSize = 8 * 1024 * 1024;
-    pub const VRAMMask = VRAMSize - 1;
+    pub const VRAMMask: u32 = VRAMSize - 1;
     pub const RegistersSize = 0x2000;
 
     vram: []align(32) u8, // Not owned.
@@ -2192,20 +2211,17 @@ pub const Holly = struct {
     }
 
     pub fn write_framebuffer(self: *@This(), pixels: []const u8) void {
-        // TODO: Absolutely not done.
         const scaler_ctl = self._get_register(SCALER_CTL, .SCALER_CTL).*;
         const w_ctrl = self._get_register(FB_W_CTRL, .FB_W_CTRL).*;
         const x_clip = self._get_register(FB_CLIP, .FB_X_CLIP).*;
         const y_clip = self._get_register(FB_CLIP, .FB_Y_CLIP).*;
         const video_out_ctrl = self._get_register(VO_CONTROL, .VO_CONTROL).*;
-
-        _ = scaler_ctl;
         _ = video_out_ctrl;
 
-        const interlaced = false; // TODO: Support interlacing?
-        const field = if (interlaced and false) 1 else 0; // TODO
-        const FB_W_SOF = self._get_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2).*; // TODO: Support interlacing?
-        const access_32bit = !(FB_W_SOF & 0x1000000 != 0);
+        const interlaced = scaler_ctl.interlace;
+        const field = if (interlaced) scaler_ctl.field_select else 0;
+        const FB_W_SOF = self._get_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2).*;
+        const access_32bit = FB_W_SOF & 0x1000000 == 0;
 
         const resolution = struct {
             const width = 640;
@@ -2213,14 +2229,15 @@ pub const Holly = struct {
         };
 
         const FB_W_LINESTRIDE = 8 * (self._get_register(u32, .FB_W_LINESTRIDE).* & 0x1FF);
-        const line_offset = field; // TODO: Support interlacing?
-        const height = resolution.height / 2; // When?
-        for (y_clip.min..@min(height, y_clip.max)) |y| {
-            for (x_clip.min..@min(resolution.width, x_clip.max)) |x| {
-                const idx = ((2 * y + line_offset) * resolution.width + x) * 4;
+        const line_offset = field;
+        const line_stride: u32 = if (interlaced) 2 else 1;
+        const height = resolution.height / line_stride;
+        for (y_clip.min..@min(height, y_clip.max + 1)) |y| {
+            for (x_clip.min..@min(resolution.width, x_clip.max + 1)) |x| {
+                const idx = ((line_stride * y + line_offset) * resolution.width + x) * 4;
                 switch (w_ctrl.fb_packmode) {
                     .RGB565 => {
-                        var addr = (FB_W_SOF & VRAMMask) + y * FB_W_LINESTRIDE + 2 * x;
+                        var addr: u32 = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 2 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
                         var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
                         pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
@@ -2228,7 +2245,7 @@ pub const Holly = struct {
                         pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
                     },
                     .RGB888 => {
-                        var addr = (FB_W_SOF & VRAMMask) + y * FB_W_LINESTRIDE + 3 * x;
+                        var addr = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 3 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
                         self.vram[addr + 0] = pixels[idx + 2];
                         self.vram[addr + 1] = pixels[idx + 1];

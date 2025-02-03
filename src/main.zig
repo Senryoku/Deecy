@@ -109,27 +109,6 @@ fn trapa_handler(app: *anyopaque) void {
     @as(*Deecy, @alignCast(@ptrCast(app))).stop();
 }
 
-// FIXME: Temp PoC, do better.
-var fb_mapping_available: bool = false;
-fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
-    switch (status) {
-        .success => {},
-        else => std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)}),
-    }
-    fb_mapping_available = true;
-}
-fn write_back_fb(d: *Deecy) void {
-    defer d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.unmap();
-    const mapped_pixels = d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.getConstMappedRange(
-        u8,
-        0,
-        4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-    );
-    if (mapped_pixels) |pixels| {
-        d.dc.gpu.write_framebuffer(pixels);
-    } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
-}
-
 const Hack = struct { addr: u32, instr: []const u16 };
 
 const AvailableHacks = [_]struct { name: []const u8, hacks: []const Hack }{
@@ -343,24 +322,6 @@ pub fn main() !void {
 
         if (force_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
-
-            if (RendererModule.ExperimentalFBWriteBack) {
-                d.gctx.lookupResource(d.renderer.framebuffer_copy_buffer).?.mapAsync(
-                    .{ .read = true },
-                    0,
-                    4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
-                    @ptrCast(&signal_fb_mapped),
-                    null,
-                );
-                // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
-                // It needs to be unmapped before the next frame.
-                while (!fb_mapping_available) {
-                    d.gctx.device.tick();
-                }
-                fb_mapping_available = false;
-
-                write_back_fb(d);
-            }
         }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {

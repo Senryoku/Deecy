@@ -677,34 +677,33 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("ISP_BACKGND_D: {d: >8.2} / {d: >8.2}", .{ ISP_BACKGND_D, @as(f32, @bitCast(ISP_BACKGND_D)) });
         zgui.text("ISP_BACKGND_T: {X:0>8}", .{ISP_BACKGND_T});
 
-        const FB_C_SOF = dc.gpu._get_register(u32, .FB_C_SOF).*;
-        const FB_W_CTRL = dc.gpu._get_register(Holly.FB_W_CTRL, .FB_W_CTRL).*;
-        const FB_W_SOF1 = dc.gpu._get_register(u32, .FB_W_SOF1).*;
-        const FB_W_SOF2 = dc.gpu._get_register(u32, .FB_W_SOF2).*;
-        const FB_W_LINESTRIDE = dc.gpu._get_register(u32, .FB_W_LINESTRIDE).*;
-        const FB_R_CTRL = dc.gpu._get_register(Holly.FB_R_CTRL, .FB_R_CTRL).*;
-        const FB_R_SOF1 = dc.gpu._get_register(u32, .FB_R_SOF1).*;
-        const FB_R_SOF2 = dc.gpu._get_register(u32, .FB_R_SOF2).*;
-        const FB_R_SIZE = dc.gpu._get_register(Holly.FB_R_SIZE, .FB_R_SIZE).*;
-        const FB_X_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_X_CLIP).*;
-        const FB_Y_CLIP = dc.gpu._get_register(Holly.FB_CLIP, .FB_Y_CLIP).*;
-        const VO_CONTROL = dc.gpu._get_register(Holly.VO_CONTROL, .VO_CONTROL).*;
+        const FB_C_SOF = dc.gpu.read_register(u32, .FB_C_SOF);
+        const FB_W_SOF1 = dc.gpu.read_register(u32, .FB_W_SOF1);
+        const FB_W_SOF2 = dc.gpu.read_register(u32, .FB_W_SOF2);
+        const FB_W_LINESTRIDE = dc.gpu.read_register(u32, .FB_W_LINESTRIDE);
+        const FB_R_SOF1 = dc.gpu.read_register(u32, .FB_R_SOF1);
+        const FB_R_SOF2 = dc.gpu.read_register(u32, .FB_R_SOF2);
+        const FB_X_CLIP = dc.gpu.read_register(Holly.FB_CLIP, .FB_X_CLIP);
+        const FB_Y_CLIP = dc.gpu.read_register(Holly.FB_CLIP, .FB_Y_CLIP);
         zgui.text("FB_C_SOF:  0x{X:0>8}", .{FB_C_SOF});
-        zgui.text("FB_W_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_W_CTRL)), FB_W_CTRL });
+        if (zgui.collapsingHeader("FB_W_CTRL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.FB_W_CTRL, .FB_W_CTRL));
         zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
         zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
         zgui.text("FB_W_LINESTRIDE: 0x{X:0>8}", .{FB_W_LINESTRIDE});
-        zgui.text("FB_X_CLIP: [{d}, {d}]", .{ FB_X_CLIP.min, FB_X_CLIP.max });
-        zgui.text("FB_Y_CLIP: [{d}, {d}]", .{ FB_Y_CLIP.min, FB_Y_CLIP.max });
-        zgui.text("FB_R_CTRL: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_CTRL)), FB_R_CTRL });
+        zgui.text("FB_CLIP:  X=[{d}, {d}], Y=[{d}, {d}]", .{ FB_X_CLIP.min, FB_X_CLIP.max, FB_Y_CLIP.min, FB_Y_CLIP.max });
+        if (zgui.collapsingHeader("FB_R_CTRL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL));
         zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
-        zgui.text("FB_R_SIZE: 0x{X:0>8} - {any}", .{ @as(u32, @bitCast(FB_R_SIZE)), FB_R_SIZE });
-        zgui.text("VO_CONTROL: {any}", .{VO_CONTROL});
-        if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = true }))
-            display(dc.gpu._get_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG).*);
-        if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = true }))
-            display(dc.gpu._get_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL).*);
+        if (zgui.collapsingHeader("FB_R_SIZE", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.FB_R_SIZE, .FB_R_SIZE));
+        if (zgui.collapsingHeader("VO_CONTROL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.VO_CONTROL, .VO_CONTROL));
+        if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG));
+        if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL));
 
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});

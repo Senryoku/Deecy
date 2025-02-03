@@ -570,6 +570,16 @@ const BlitBindGroupLayout = [_]wgpu.BindGroupLayoutEntry{
     zgpu.samplerEntry(1, .{ .fragment = true }, .filtering),
 };
 
+// FIXME: Temp PoC, do better.
+var fb_mapping_available: bool = false;
+fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
+    switch (status) {
+        .success => {},
+        else => std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)}),
+    }
+    fb_mapping_available = true;
+}
+
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 512, 512, 512, 512, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
@@ -2606,7 +2616,7 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn render(self: *Renderer, _: *const HollyModule.Holly) !void {
+    pub fn render(self: *Renderer, holly: *HollyModule.Holly) !void {
         const gctx = self._gctx;
 
         const ta_lists = self.ta_lists;
@@ -3092,7 +3102,7 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            if (ExperimentalFBWriteBack)
+            if (ExperimentalFBWriteBack) {
                 encoder.copyTextureToBuffer(
                     .{
                         .texture = gctx.lookupResource(self.framebuffer_texture).?,
@@ -3114,12 +3124,39 @@ pub const Renderer = struct {
                         .depth_or_array_layers = 1,
                     },
                 );
+            }
 
             break :commands encoder.finish(null);
         };
         defer commands.release();
 
         gctx.submit(&.{commands});
+
+        if (ExperimentalFBWriteBack) {
+            gctx.lookupResource(self.framebuffer_copy_buffer).?.mapAsync(
+                .{ .read = true },
+                0,
+                4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
+                @ptrCast(&signal_fb_mapped),
+                null,
+            );
+            // Wait for mapping to be available. There's no synchronous way to do that AFAIK.
+            // It needs to be unmapped before the next frame.
+            while (!fb_mapping_available) {
+                gctx.device.tick();
+            }
+            fb_mapping_available = false;
+
+            defer gctx.lookupResource(self.framebuffer_copy_buffer).?.unmap();
+            const mapped_pixels = gctx.lookupResource(self.framebuffer_copy_buffer).?.getConstMappedRange(
+                u8,
+                0,
+                4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
+            );
+            if (mapped_pixels) |pixels| {
+                holly.write_framebuffer(pixels);
+            } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
+        }
     }
 
     pub fn draw(self: *Renderer) void {
