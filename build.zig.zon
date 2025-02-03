@@ -1,12 +1,12 @@
 .{
     .name = "Deecy",
-    .version = "0.1.0-dev",
+    .version = "0.2.0-dev",
     .minimum_zig_version = "0.14.0-dev.2577+271452d22",
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "https://github.com/zig-gamedev/zgpu/archive/987809eff7cb47901192a6d41dc67486e3211f21.tar.gz",
-            .hash = "1220777b1f964f666f5e990412f34c7dd36b6c399ff15920754f842df297425dffa5",
+            .url = "https://github.com/zig-gamedev/zgpu/archive/50be30045ca9f4d9e05aad205d3407209f6eeb44.tar.gz",
+            .hash = "1220e44b32228e968d57e32e2c6a72b80d39b6ebc8ecfbdc9b1d527f94e0b075f976",
         },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
@@ -29,12 +29,12 @@
             .hash = "1220b1f02f2f7edd98a078c64e3100907d90311d94880a3cc5927e1ac009d002667a",
         },
         .zglfw = .{
-            .url = "https://github.com/Senryoku/zglfw/archive/a7d7ef627aeaab604eeb22237214fb13dc7d8aa2.tar.gz",
-            .hash = "1220021bcbe652b78931e3d58268fb5254cc95b6d8d3544886e722b8871654222e4d",
+            .url = "https://github.com/Senryoku/zglfw/archive/5aaf806521bbda4385b1041d9448bd0c40192a1c.tar.gz",
+            .hash = "12202db5d18aa92ae61b0e47c11ec517eeb5984d8e2647ff513807ff30a444fef49a",
         },
         .zgui = .{
-            .url = "https://github.com/Senryoku/zgui/archive/a622b1956a74a7e7d2a74570b16408188304c3ea.tar.gz",
-            .hash = "1220d4e364077d6344b54e0d86240b194b3721e169c2b9a6db35d79ab90a573db317",
+            .url = "https://github.com/Senryoku/zgui/archive/92b2df4fc151fe3d24b68d50bfcf8c673e2fce63.tar.gz",
+            .hash = "1220b57984ee47884716529151745c6c8218c86d98247a6e88fda4d0db20980a3147",
         },
         .zaudio = .{
             .url = "https://github.com/zig-gamedev/zaudio/archive/496da32757767b31f389554e1e5c668796755fe2.tar.gz",
