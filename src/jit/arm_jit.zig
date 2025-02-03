@@ -15,10 +15,15 @@ const SavedRegisters = Architecture.SavedRegisters;
 
 const BasicBlock = struct {
     offset: u32,
-    cycles: u32 = 0,
+    cycles: u32,
+
     pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
         @setRuntimeSafety(false);
         @as(*const fn (*anyopaque) void, @ptrCast(&buffer[self.offset]))(user_data);
+    }
+
+    pub inline fn is_valid(self: *const @This()) bool {
+        return self.offset != 0 and self.cycles != 0;
     }
 };
 
@@ -77,7 +82,7 @@ const BlockCache = struct {
             var instr_addr = from;
             while (instr_addr <= addr) : (instr_addr += 4) {
                 const block = self.get(instr_addr);
-                if (instr_addr + 4 * (block.cycles - 1) >= 4 * MaxCyclesPerBlock) {
+                if (block.is_valid() and instr_addr + 4 * (block.cycles - 1) >= 4 * MaxCyclesPerBlock) {
                     self.invalidate(instr_addr);
                 }
             }
@@ -136,7 +141,7 @@ const BlockCache = struct {
     }
 
     pub fn invalidate(self: *@This(), address: u32) void {
-        self.blocks[(address & self.addr_mask) >> 2] = .{ .offset = 0 };
+        self.blocks[(address & self.addr_mask) >> 2] = .{ .offset = 0, .cycles = 0 };
     }
 
     pub fn get(self: *@This(), address: u32) BasicBlock {
