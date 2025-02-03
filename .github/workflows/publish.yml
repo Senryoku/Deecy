@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
         - name: Install nfd-zig dependencies
-          run: sudo apt -y install libgtk-3-dev
+          run: sudo apt update && sudo apt -y install libgtk-3-dev
         - uses: actions/checkout@v4
           with:
             submodules: 'true'
