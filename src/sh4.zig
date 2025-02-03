@@ -1394,8 +1394,6 @@ pub const SH4 = struct {
         }
     }
 
-    const ExpSplit64bitsRW = true; // FIXME: TEMP Experiment
-
     pub fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
@@ -1459,8 +1457,8 @@ pub const SH4 = struct {
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64 and ExpSplit64bitsRW) {
-                    sh4_log.warn("Read(64) from 0x{X:0>8}", .{virtual_addr});
+                if (T == u64) {
+                    sh4_log.debug("Read(64) from 0x{X:0>8}", .{virtual_addr});
                     return @as(u64, self.read(u32, virtual_addr + 4)) << 32 | self.read(u32, virtual_addr);
                 }
                 return self._dc.?.gpu.read_vram(T, addr);
@@ -1631,8 +1629,8 @@ pub const SH4 = struct {
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64 and ExpSplit64bitsRW) {
-                    sh4_log.warn("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ virtual_addr, value });
+                if (T == u64) {
+                    sh4_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ virtual_addr, value });
                     self.write(u32, virtual_addr, @truncate(value));
                     self.write(u32, virtual_addr + 4, @truncate(value >> 32));
                     return;
