@@ -1097,22 +1097,28 @@ pub fn deserialize(self: *@This(), reader: anytype) !usize {
     bytes += try reader.read(std.mem.asBytes(&self.features));
     bytes += try reader.read(std.mem.asBytes(&self.byte_count));
 
-    self.pio_data_queue.discard(self.pio_data_queue.count);
-    var pio_data_queue_count: usize = 0;
-    bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
-    if (pio_data_queue_count > 0) {
-        bytes += try reader.read(try self.pio_data_queue.writableWithSize(pio_data_queue_count));
-        self.pio_data_queue.update(pio_data_queue_count);
+    {
+        self.pio_data_queue.discard(self.pio_data_queue.count);
+        var pio_data_queue_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
+        if (pio_data_queue_count > 0) {
+            const bytes_read = try reader.read((try self.pio_data_queue.writableWithSize(pio_data_queue_count))[0..pio_data_queue_count]);
+            if (bytes_read != pio_data_queue_count) return error.ErrorReadingPIODataQueue;
+            bytes += bytes_read;
+            self.pio_data_queue.update(pio_data_queue_count);
+        }
     }
-
-    self.dma_data_queue.discard(self.dma_data_queue.count);
-    var dma_data_queue_count: usize = 0;
-    bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
-    if (dma_data_queue_count > 0) {
-        bytes += try reader.read(try self.dma_data_queue.writableWithSize(dma_data_queue_count));
-        self.dma_data_queue.update(dma_data_queue_count);
+    {
+        self.dma_data_queue.discard(self.dma_data_queue.count);
+        var dma_data_queue_count: usize = 0;
+        bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
+        if (dma_data_queue_count > 0) {
+            const bytes_read = try reader.read((try self.dma_data_queue.writableWithSize(dma_data_queue_count))[0..dma_data_queue_count]);
+            if (bytes_read != dma_data_queue_count) return error.ErrorReadingDMADataQueue;
+            bytes += bytes_read;
+            self.dma_data_queue.update(dma_data_queue_count);
+        }
     }
-
     bytes += try reader.read(std.mem.asBytes(&self.packet_command_idx));
     bytes += try reader.read(std.mem.sliceAsBytes(&self.packet_command));
 
