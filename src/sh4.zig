@@ -431,18 +431,13 @@ pub const SH4 = struct {
         self.sr.rb = new_rb; // In case it was forced to 0 by md.
     }
 
-    pub fn set_fpscr(self: *@This(), value: u32) void {
-        const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
-        if (new_value.fr != self.fpscr.fr) {
-            std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
-        }
-
-        // Adjust SSE settings
+    fn update_sse_settings(self: *@This()) void {
+        // Adjust SSE settings to match the guest system configuration
         var mxcsr: u32 = 0x1F80; // Default MXCSR value
-        if (new_value.dn) {
+        if (self.fpscr.dn) {
             mxcsr |= 0x0040; // DAZ - Denormals are zeros
         }
-        switch (new_value.rm) {
+        switch (self.fpscr.rm) {
             .RoundToNearest => mxcsr |= 0x0000, // Yes, there's no bit associated with this mode, it's the default.
             .RoundToZero => mxcsr |= 0x6000,
             else => {},
@@ -452,8 +447,15 @@ pub const SH4 = struct {
             : [_] "{rax}" (&mxcsr),
             : "rax"
         );
+    }
 
+    pub fn set_fpscr(self: *@This(), value: u32) void {
+        const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
+        if (new_value.fr != self.fpscr.fr) {
+            std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
+        }
         self.fpscr = new_value;
+        self.update_sse_settings();
     }
 
     inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
@@ -1805,6 +1807,7 @@ pub const SH4 = struct {
         bytes += try self._operand_cache_state.deserialize(reader);
 
         self.compute_interrupt_priorities();
+        self.update_sse_settings();
 
         return bytes;
     }
