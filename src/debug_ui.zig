@@ -435,7 +435,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const was_running = d.running;
             if (was_running)
                 d.pause();
-            try dc.aica.arm_jit.block_cache.reset();
+            try dc.aica.arm_jit.reset();
             dc.aica.enable_arm_jit = jit_enabled;
             if (was_running)
                 d.start();

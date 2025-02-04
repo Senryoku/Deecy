@@ -43,7 +43,7 @@ const Optimizations = .{
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
 
-pub const ExperimentalFastMem = true;
+pub const ExperimentalFastMem = true; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
 
 const VirtualAddressSpace = if (ExperimentalFastMem) switch (builtin.os.tag) {
     .windows => @import("sh4_virtual_address_space_windows.zig"),

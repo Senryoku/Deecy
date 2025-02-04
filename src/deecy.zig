@@ -233,7 +233,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     };
 
     {
-        // NOTE: For some reason Joystick initialization is the longest operation in here. Start ASAP and in parallel of context creation and window creation (second longest operation).
+        // NOTE: For some reason Joystick initialization is the longest operation in here on Windows. Start ASAP and in parallel of context creation and window creation (second longest operation).
         //       Note that glfwIsJoystickPresent() is not supposed to be thread-safe... But I haven't had any problems so far.
         var joystick_thread = try std.Thread.spawn(.{}, auto_populate_joysticks, .{self});
         defer joystick_thread.join();
