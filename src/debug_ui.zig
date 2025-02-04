@@ -430,11 +430,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("AICA - ARM", .{})) {
-        if (zgui.checkbox("ARM JIT", .{ .v = &dc.aica.enable_arm_jit })) {
+        var jit_enabled = dc.aica.enable_arm_jit;
+        if (zgui.checkbox("ARM JIT", .{ .v = &jit_enabled })) {
             const was_running = d.running;
             if (was_running)
                 d.pause();
             try dc.aica.arm_jit.block_cache.reset();
+            dc.aica.enable_arm_jit = jit_enabled;
             if (was_running)
                 d.start();
         }
