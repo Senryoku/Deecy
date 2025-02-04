@@ -1528,7 +1528,8 @@ pub const Emitter = struct {
         }
 
         // Try to emit a rel8 jump. Our instruction can map to multiple x86 instructions of up to 15 bytes each, so I'm being really conservative here.
-        if (rel > 0 and rel <= 6) {
+        // The important thing is to include forward jumps due to skipped fallback memory access with FastMem, which are extremely common and should be 3 "instructions" at most.
+        if (rel > 0 and rel <= 4) {
             const address_to_patch = self.block_size + 1;
             try self.emit_jmp_rel8(condition, 0);
             const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
