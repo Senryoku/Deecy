@@ -645,76 +645,79 @@ fn handle_undefined(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     @panic("Unimplemented undefined");
 }
 
-fn handle_single_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+// Directly taken from the interpreter: Generate specialized version of the different versions of the instruction.
+// We miss some optimisation opportunities here: For example if Rn is 15, read is PC relative and could be inlined to
+// a wave_memory_read.
+fn comptime_handle_single_data_transfer(comptime i: u1, comptime u: u1, comptime w: u1, comptime p: u1, comptime l: u1, comptime b: u1) type {
+    return struct {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+            const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
+
+            var offset: u32 = inst.offset;
+            if (comptime i == 1) { // Offset is a register
+                var sro: arm7.interpreter.ScaledRegisterOffset = @bitCast(inst.offset);
+                if (sro.register_specified == 1) sro.register_specified = 0;
+                offset = arm7.interpreter.offset_from_register(cpu, @bitCast(sro)).shifter_operand;
+            }
+
+            const signed_offset: u32 = if (comptime u == 1) offset else (~offset +% 1);
+
+            const base = cpu.r[inst.rn];
+            const addr: u32 = @bitCast(if (comptime p == 1) base +% signed_offset else base);
+
+            if (comptime l == 0) {
+                // Store to memory
+                var val = cpu.r[inst.rd];
+
+                if (inst.rd == 15) val += 4;
+
+                if (comptime b == 1)
+                    cpu.write(u8, addr, @truncate(val))
+                else {
+                    cpu.write(u32, addr, val);
+                }
+                // Post-indexed data transfers always write back the modified base.
+                if (comptime w == 1 or p == 0)
+                    cpu.r[inst.rn] +%= signed_offset;
+            } else {
+                if (comptime w == 1 or p == 0)
+                    cpu.r[inst.rn] +%= signed_offset;
+
+                // Load from memory
+                if (comptime b == 1) {
+                    cpu.r[inst.rd] = cpu.read(u8, addr);
+                } else {
+                    cpu.r[inst.rd] = cpu.read(u32, addr);
+                }
+                if (inst.rd == 15) cpu.reset_pipeline();
+            }
+        }
+    };
+}
+
+fn handle_single_data_transfer(block: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
-        try interpreter_fallback(b, ctx, instruction);
+        try interpreter_fallback(block, ctx, instruction);
         return inst.l == 1 and inst.rd == 15;
     }
 
-    if (inst.i == 0) {
-        const offset: u32 = inst.offset;
-
-        var addr: JIT.Operand = .{ .reg = ArgRegisters[1] };
-        const offset_addr = ReturnRegister;
-
-        // PC-relative addressing: A constant in this case.
-        if (inst.rn == 15) {
-            std.debug.assert(inst.w == 0);
-            std.debug.assert(inst.p == 1);
-            addr = .{ .imm32 = if (inst.u == 1) ctx.address + 8 + offset else ctx.address + 8 - offset };
-        } else {
-            try load_register(b, addr.reg, inst.rn);
-            if (inst.offset != 0) {
-                try b.mov(.{ .reg = offset_addr }, addr);
-
-                if (inst.u == 1) {
-                    try b.add(.{ .reg = offset_addr }, .{ .imm32 = offset });
-                } else {
-                    try b.sub(.{ .reg = offset_addr }, .{ .imm32 = offset });
+    inline for (0..2) |i| {
+        inline for (0..2) |u| {
+            inline for (0..2) |w| {
+                inline for (0..2) |p| {
+                    inline for (0..2) |l| {
+                        inline for (0..2) |b| {
+                            if (inst.i == i and inst.u == u and inst.w == w and inst.p == p and inst.l == l and inst.b == b) {
+                                try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                                try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                                try block.call(comptime_handle_single_data_transfer(i, u, w, p, l, b).handler);
+                            }
+                        }
+                    }
                 }
-
-                if (inst.p == 1) try b.mov(addr, .{ .reg = offset_addr });
-
-                if (inst.w == 1 or inst.p == 0) try store_register(b, inst.rn, .{ .reg = offset_addr });
             }
         }
-
-        if (inst.l == 0) {
-            // Store
-            const val = ArgRegisters[2];
-            try load_register(b, val, inst.rd);
-
-            if (inst.rd == 15)
-                try b.add(.{ .reg = val }, .{ .imm32 = 4 });
-
-            if (inst.b == 1) {
-                try store_mem(b, ctx, u8, addr, val);
-            } else {
-                if (addr == .imm32) {
-                    addr.imm32 &= 0xFFFFFFFC;
-                } else {
-                    try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0xFFFFFFFC } } });
-                }
-                try store_mem(b, ctx, u32, addr, val);
-            }
-        } else {
-            // Load
-            const val = ReturnRegister;
-            if (inst.b == 1) {
-                try load_mem(b, ctx, u8, val, addr);
-            } else {
-                try load_mem(b, ctx, u32, val, addr);
-            }
-            try store_register(b, inst.rd, .{ .reg = val });
-
-            // Simulate an additional fetch
-            if (inst.rd == 15) {
-                try b.add(guest_register(15), .{ .imm32 = 4 });
-            }
-        }
-    } else {
-        try interpreter_fallback(b, ctx, instruction);
     }
     return inst.l == 1 and inst.rd == 15;
 }

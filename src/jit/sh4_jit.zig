@@ -105,7 +105,7 @@ const BlockCache = struct {
                     null,
                     @sizeOf(BasicBlock) * BlockEntryCount,
                     std.posix.PROT.READ | std.posix.PROT.WRITE,
-                    .{ .TYPE = .PRIVATE, .EXECUTABLE = false, .ANONYMOUS = true },
+                    .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
                     -1,
                     0,
                 );
