@@ -362,7 +362,7 @@ fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, add
 }
 
 /// Loads into ReturnRegister
-/// NOTE: Uses ArgRegisters 0 and 1
+/// NOTE: Uses ArgRegisters 0 and 1. And calls a function, so don't rely on caller saved registers anyway.
 fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -398,7 +398,7 @@ fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Reg
     }
 }
 
-/// NOTE: Uses ArgRegisters 0, 1 and 2
+/// NOTE: Overwrites ArgRegisters 0, 1 and 2 (ReturnRegister too). And calls a function, so don't rely on caller saved registers anyway.
 fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
@@ -593,6 +593,9 @@ pub const InstructionHandlers = [_]*const fn (b: *JITBlock, ctx: *JITContext, in
     handle_invalid,
 };
 
+// NOTE: With this stupid setup, SavedRegisters[0] is a pointer to the cpu struct and should not be changed.
+//       SavedRegisters[1] is the only register we save and that will survive a function call (e.g. load_mem/store_mem).
+
 fn handle_branch_and_exchange(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
@@ -727,22 +730,24 @@ fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bo
     std.debug.assert(inst.rn != 15);
     std.debug.assert(inst.rm != 15);
 
-    const addr: JIT.Operand = .{ .reg = ArgRegisters[2] };
-    const reg = ArgRegisters[3];
+    const addr: JIT.Operand = .{ .reg = SavedRegisters[1] };
     const rd = ReturnRegister;
     try load_register(b, addr.reg, inst.rn);
-    try load_register(b, reg, inst.rm);
     if (inst.b == 1) {
         // cpu.r[inst.rd] = cpu.read(u8, addr);
         try load_mem(b, ctx, u8, rd, addr);
         try store_register(b, inst.rd, .{ .reg = rd }); // rd is 0 extended
         // cpu.write(u8, addr, @truncate(reg));
+        const reg = ArgRegisters[2];
+        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u8, addr, reg);
     } else {
         // cpu.r[inst.rd] = cpu.read(u32, addr);
         try load_mem(b, ctx, u32, rd, addr);
         try store_register(b, inst.rd, .{ .reg = rd });
         // cpu.write(u32, addr, reg);
+        const reg = ArgRegisters[2];
+        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u32, addr, reg);
     }
 
@@ -881,7 +886,7 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
             if (sro.register_specified == 0) {
                 const shift_amount = sro.shift_amount.imm;
                 switch (sro.shift_type) {
-                    .LSL => try b.append(.{ .Shl = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
+                    .LSL => if (shift_amount > 0) try b.append(.{ .Shl = .{ .dst = .{ .reg = rm }, .amount = .{ .imm8 = shift_amount } } }),
                     .LSR => {
                         if (shift_amount == 0) {
                             // The form of the shift field which might be expected to correspond to LSR #0 is used to
