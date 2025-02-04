@@ -308,6 +308,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         try self.audio_init();
     }
 
+    try self.ui_init(); // Init UI early to have a chance to display errors.
+
     // Avoid having other threads running while initialisation the Dreamcast to increase the chance of virtual_address_space initialization to succeed on Windows.
     // FIXME: See sh4_virtual_address_space_windows.zig
     {
@@ -334,7 +336,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     };
 
     self.ui = try UI.create(self._allocator, self);
-    try self.ui_init();
     self.debug_ui = try DebugUI.init(self);
 
     try self.check_save_state_slots();

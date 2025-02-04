@@ -173,6 +173,8 @@ pub const Dreamcast = struct {
         dc.gdrom = try GDROM.init(allocator, dc);
         dc.aica.setup_arm();
 
+        errdefer dc.deinit();
+
         // Create 'userdata' folder if it doesn't exist
         try std.fs.cwd().makePath(user_data_directory);
 
