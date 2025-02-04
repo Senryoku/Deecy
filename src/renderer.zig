@@ -605,6 +605,8 @@ pub const Renderer = struct {
     // TODO: Support multiple render passes.
     render_passes: [1]struct { z_clear: bool = true, pre_sort: bool = false } = .{.{}} ** 1,
     ta_lists: HollyModule.TALists,
+    ta_lists_to_render: HollyModule.TALists,
+    _ta_lists_mutex: std.Thread.Mutex = .{},
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
     texture_metadata: [8][512]TextureMetadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8,
@@ -1149,6 +1151,7 @@ pub const Renderer = struct {
             .pre_sorted_translucent_pass = std.ArrayList(SortedDrawCall).init(allocator),
 
             .ta_lists = HollyModule.TALists.init(allocator),
+            .ta_lists_to_render = HollyModule.TALists.init(allocator),
 
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
@@ -1333,6 +1336,9 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
+        self.ta_lists.deinit();
+        self.ta_lists_to_render.deinit();
+
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
             self._gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) == null or
@@ -1433,6 +1439,7 @@ pub const Renderer = struct {
         self.render_start = false;
         self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
 
+        self.ta_lists_to_render.clearRetainingCapacity();
         self.ta_lists.clearRetainingCapacity();
 
         self.translucent_pass.reset();
@@ -1445,6 +1452,9 @@ pub const Renderer = struct {
     }
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
+        self._ta_lists_mutex.lock();
+        defer self._ta_lists_mutex.unlock();
+
         if (self.render_start) {
             renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
         }
@@ -1965,7 +1975,14 @@ pub const Renderer = struct {
     }
 
     pub fn update(self: *Renderer, gpu: *const HollyModule.Holly) !void {
-        const ta_lists = self.ta_lists;
+        {
+            self._ta_lists_mutex.lock();
+            defer self._ta_lists_mutex.unlock();
+            self.ta_lists_to_render.clearRetainingCapacity();
+            std.mem.swap(HollyModule.TALists, &self.ta_lists, &self.ta_lists_to_render);
+        }
+
+        const ta_lists = &self.ta_lists_to_render;
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -2029,7 +2046,7 @@ pub const Renderer = struct {
             var face_offset_color: fARGB = undefined;
             var area1_face_color: fARGB = undefined;
             var area1_face_offset_color: fARGB = undefined;
-            const display_list: *const HollyModule.DisplayList = @constCast(&ta_lists).get_list(list_type);
+            const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
             for (0..display_list.vertex_strips.items.len) |idx| {
                 const start: u32 = @intCast(self.vertices.items.len);
@@ -2619,7 +2636,7 @@ pub const Renderer = struct {
     pub fn render(self: *Renderer, holly: *HollyModule.Holly) !void {
         const gctx = self._gctx;
 
-        const ta_lists = self.ta_lists;
+        const ta_lists = &self.ta_lists_to_render;
 
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
