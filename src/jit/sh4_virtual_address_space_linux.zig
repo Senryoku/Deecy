@@ -51,6 +51,15 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 }
 
 pub fn deinit(self: *@This()) void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .handler = std.posix.SIG.DFL },
+        .mask = std.posix.empty_sigset,
+        .flags = 0,
+    };
+    std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
+
+    GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = null;
+
     for (self.mirrors.items) |item|
         std.posix.munmap(item);
     self.mirrors.deinit();

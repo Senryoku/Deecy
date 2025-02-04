@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -8,6 +9,8 @@ const Dreamcast = DreamcastModule.Dreamcast;
 pub const std_options: std.Options = .{
     .log_level = .err,
 };
+
+const Root = if (builtin.os.tag == .windows) "D:/DC Games/" else "/media/senryoku/Data1/DC Games/";
 
 pub fn main() !void {
     const cycles_target = 10 * 200_000_000;
@@ -44,7 +47,7 @@ pub fn main() !void {
             allocator.destroy(dc);
         }
 
-        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init(Root ++ "[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
         _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
@@ -66,7 +69,7 @@ pub fn main() !void {
         }
 
         dc.skip_bios(true);
-        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init(Root ++ "[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
         _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
 
@@ -87,7 +90,7 @@ pub fn main() !void {
             allocator.destroy(dc);
         }
 
-        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/dca3.cdi", allocator);
+        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init(Root ++ "dca3.cdi", allocator);
         {
             const file = try std.fs.cwd().openFile("logs/dc_states/dca3_game_start.bin", .{ .mode = .read_only });
             defer file.close();

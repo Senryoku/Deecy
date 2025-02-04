@@ -16,6 +16,10 @@ vram: std.os.windows.LPVOID = undefined,
 aram: std.os.windows.LPVOID = undefined,
 
 pub fn init(allocator: std.mem.Allocator) !@This() {
+    if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |_| {
+        return error.AlreadyInitialized;
+    }
+
     var vas: @This() = .{
         .no_access = std.ArrayList(*anyopaque).init(allocator),
         .mirrors = std.ArrayList(std.os.windows.LPVOID).init(allocator),
@@ -98,6 +102,8 @@ pub fn deinit(self: *@This()) void {
     std.os.windows.CloseHandle(self.vram);
     std.os.windows.CloseHandle(self.ram);
     std.os.windows.CloseHandle(self.boot);
+    _ = std.os.windows.kernel32.RemoveVectoredExceptionHandler(handle_segfault_windows);
+    GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = null;
 }
 
 pub fn base_addr(self: *@This()) *u8 {
