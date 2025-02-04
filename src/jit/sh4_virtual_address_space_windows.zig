@@ -5,7 +5,10 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
 const VAS = @import("sh4_virtual_address_space.zig");
 
+const log = std.log.scoped(.sh4_jit);
+
 var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?std.os.windows.LPVOID = null;
+var GLOBAL_EXCEPTION_HANDLER: ?std.os.windows.LPVOID = null;
 
 base: std.os.windows.LPVOID = undefined,
 no_access: std.ArrayList(*anyopaque), // Reads and Writes to these ranges will throw an access violation
@@ -40,14 +43,14 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     while (!mapped and attempts < 10) : (attempts += 1) {
         mapped = true;
         vas.try_mapping() catch |err| {
-            std.log.scoped(.sh4_jit).err(termcolor.red("Failed to map virtual address space: {s} (attempt {d}/10)"), .{ @errorName(err), attempts + 1 });
+            log.err(termcolor.red("Failed to map virtual address space: {s} (attempt {d}/10)"), .{ @errorName(err), attempts + 1 });
             mapped = false;
         };
     }
     if (!mapped) return error.FailedToMapVirtualAddressSpace;
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
-    _ = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
+    GLOBAL_EXCEPTION_HANDLER = std.os.windows.kernel32.AddVectoredExceptionHandler(1, handle_segfault_windows);
 
     return vas;
 }
@@ -85,7 +88,7 @@ fn try_mapping(self: *@This()) !void {
 fn release_views(self: *@This()) void {
     for (self.mirrors.items) |item| {
         if (windows.UnmapViewOfFile(item) == 0)
-            std.log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
+            log.warn(termcolor.yellow("UnmapViewOfFile Error: {}\n"), .{std.os.windows.GetLastError()});
     }
     self.mirrors.clearRetainingCapacity();
     for (self.no_access.items) |item| {
@@ -102,7 +105,9 @@ pub fn deinit(self: *@This()) void {
     std.os.windows.CloseHandle(self.vram);
     std.os.windows.CloseHandle(self.ram);
     std.os.windows.CloseHandle(self.boot);
-    _ = std.os.windows.kernel32.RemoveVectoredExceptionHandler(handle_segfault_windows);
+    if (std.os.windows.kernel32.RemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
+        log.err(termcolor.red("Call to RemoveVectoredExceptionHandler failed.\n"), .{});
+    GLOBAL_EXCEPTION_HANDLER = null;
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = null;
 }
 
