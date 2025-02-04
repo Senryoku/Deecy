@@ -61,6 +61,13 @@ fn glfw_key_callback(
                 },
                 .d => app.config.display_debug_ui = !app.config.display_debug_ui,
                 .l => app.set_realtime(!app.realtime),
+                .n => {
+                    if (app.running) {
+                        app.pause();
+                    } else {
+                        while (!app.renderer.render_start) app.run_for(128);
+                    }
+                },
                 .F1, .F2, .F3, .F4 => {
                     const idx: usize = switch (key) {
                         .F1 => 0,
