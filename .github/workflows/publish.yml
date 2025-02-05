@@ -28,9 +28,9 @@ jobs:
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy.exe Deecy/
-            echo -e "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
             mkdir Deecy/data
-            echo -e "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-windows
@@ -57,9 +57,9 @@ jobs:
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy Deecy/
-            echo -e "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
             mkdir Deecy/data
-            echo -e "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-linux
