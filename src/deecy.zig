@@ -153,6 +153,8 @@ const Configuration = struct {
 pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
 pub const ConfigPath = "./userdata/config.json";
 
+pub const MaxSaveStates = 4;
+
 window: *zglfw.Window,
 gctx: *zgpu.GraphicsContext = undefined,
 gctx_queue_mutex: std.Thread.Mutex = .{}, // GPU Memory access isn't thread safe. Use this to copy to textures from another thread for example.
@@ -185,7 +187,7 @@ display_ui: bool = true,
 ui: *UI = undefined,
 debug_ui: DebugUI = undefined,
 
-save_state_slots: [4]bool = .{ false, false, false, false },
+save_state_slots: [MaxSaveStates]bool = .{ false, false, false, false },
 
 _allocator: std.mem.Allocator,
 

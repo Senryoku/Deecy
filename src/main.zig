@@ -156,6 +156,7 @@ pub fn main() !void {
     var start_immediately = false;
     var force_stop = false;
     var force_render = false; // Enable to re-render every time and help capturing with RenderDoc (will mess with framebuffer emulation).
+    var load_state: ?u32 = null;
 
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
@@ -197,6 +198,20 @@ pub fn main() !void {
             force_render = true;
         if (std.mem.eql(u8, arg, "--no-realtime"))
             d.realtime = false;
+        if (std.mem.eql(u8, arg, "--load-state")) {
+            const num_str = args.next() orelse {
+                std.log.err(termcolor.red("Expected state number after --load-state."), .{});
+                return error.InvalidArguments;
+            };
+            load_state = std.fmt.parseInt(u32, num_str, 10) catch |err| {
+                std.log.err(termcolor.red("Invalid state number after --load-state: {s}"), .{@errorName(err)});
+                return error.InvalidArguments;
+            };
+            if (load_state.? >= Deecy.MaxSaveStates) {
+                std.log.err(termcolor.red("Invalid state number after --load-state: {d}"), .{load_state.?});
+                return error.InvalidArguments;
+            }
+        }
     }
 
     dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(allocator, vmu_path.items) };
@@ -256,6 +271,10 @@ pub fn main() !void {
                 EnabledHacks = hack.hacks;
                 break;
             }
+        }
+
+        if (load_state) |state| {
+            try d.load_state(state);
         }
 
         start_immediately = true;
