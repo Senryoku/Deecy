@@ -666,11 +666,14 @@ pub const Renderer = struct {
     display_mode: DisplayMode = .Center,
     resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
 
-    // Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
+    /// Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
     framebuffer_texture: zgpu.TextureHandle,
     framebuffer_texture_view: zgpu.TextureViewHandle,
-    framebuffer_copy_buffer: if (ExperimentalFBWriteBack) zgpu.BufferHandle else void, // Intermediate buffer used to read pixels back to main RAM.
-    // Framebuffer at window resolution to draw on
+    /// Target for rendering to a texture (will be read back to guest VRAM using framebuffer_copy_buffer)
+    render_to_texture: zgpu.TextureHandle,
+    render_to_texture_view: zgpu.TextureViewHandle,
+    framebuffer_copy_buffer: zgpu.BufferHandle, // Intermediate buffer used to read pixels back to main RAM.
+    /// Framebuffer at target resolution to draw on
     resized_framebuffer_texture: zgpu.TextureHandle = undefined,
     resized_framebuffer_texture_view: zgpu.TextureViewHandle = undefined,
     resized_framebuffer_area1_texture: zgpu.TextureHandle = undefined,
@@ -729,11 +732,22 @@ pub const Renderer = struct {
             .mip_level_count = 1,
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
+        const render_to_texture = gctx.createTexture(.{
+            .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
+            .size = .{
+                .width = NativeResolution.width,
+                .height = NativeResolution.height,
+                .depth_or_array_layers = 1,
+            },
+            .format = zgpu.GraphicsContext.swapchain_format,
+            .mip_level_count = 1,
+        });
+        const render_to_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
-        const framebuffer_copy_buffer = if (ExperimentalFBWriteBack) gctx.createBuffer(.{
+        const framebuffer_copy_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .map_read = true },
             .size = 4 * NativeResolution.width * NativeResolution.height,
-        }) else {};
+        });
 
         const bind_group_layout = gctx.createBindGroupLayout(&.{
             zgpu.bufferEntry(0, .{ .vertex = true, .fragment = true }, .uniform, true, 0),
@@ -1113,6 +1127,8 @@ pub const Renderer = struct {
 
             .framebuffer_texture = framebuffer_texture,
             .framebuffer_texture_view = framebuffer_texture_view,
+            .render_to_texture = render_to_texture,
+            .render_to_texture_view = render_to_texture_view,
             .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
             .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
@@ -1422,8 +1438,7 @@ pub const Renderer = struct {
 
         self._gctx.releaseResource(self.framebuffer_texture_view);
         self._gctx.releaseResource(self.framebuffer_texture);
-        if (ExperimentalFBWriteBack)
-            self._gctx.releaseResource(self.framebuffer_copy_buffer);
+        self._gctx.releaseResource(self.framebuffer_copy_buffer);
 
         self._gctx.releaseResource(self.framebuffer_resize_bind_group);
 
@@ -2638,6 +2653,21 @@ pub const Renderer = struct {
 
         const ta_lists = &self.ta_lists_to_render;
 
+        const render_to_texture = holly.render_to_texture();
+        if (render_to_texture) {
+            renderer_log.info("Rendering to texture!", .{});
+            renderer_log.info("Global Clip: {any}", .{self.global_clip});
+        }
+
+        const Target = struct { view: wgpu.TextureView, texture: wgpu.Texture };
+        const target = if (render_to_texture) Target{
+            .view = gctx.lookupResource(self.render_to_texture_view).?,
+            .texture = gctx.lookupResource(self.render_to_texture).?,
+        } else Target{
+            .view = gctx.lookupResource(self.framebuffer_texture_view).?,
+            .texture = gctx.lookupResource(self.framebuffer_texture).?,
+        };
+
         const commands = commands: {
             const encoder = gctx.device.createCommandEncoder(null);
             defer encoder.release();
@@ -3094,7 +3124,7 @@ pub const Renderer = struct {
                 const blit_bind_group = gctx.lookupResource(self.blit_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.framebuffer_texture_view),
+                    .view = target.view,
                     .load_op = .clear,
                     .store_op = .store,
                 }};
@@ -3119,10 +3149,10 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            if (ExperimentalFBWriteBack) {
+            if (ExperimentalFBWriteBack or render_to_texture) {
                 encoder.copyTextureToBuffer(
                     .{
-                        .texture = gctx.lookupResource(self.framebuffer_texture).?,
+                        .texture = target.texture,
                         .mip_level = 0,
                         .origin = .{},
                         .aspect = .all,
@@ -3149,8 +3179,9 @@ pub const Renderer = struct {
 
         gctx.submit(&.{commands});
 
-        if (ExperimentalFBWriteBack) {
-            gctx.lookupResource(self.framebuffer_copy_buffer).?.mapAsync(
+        if (ExperimentalFBWriteBack or render_to_texture) {
+            const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
+            copy_buffer.mapAsync(
                 .{ .read = true },
                 0,
                 4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
@@ -3164,8 +3195,8 @@ pub const Renderer = struct {
             }
             fb_mapping_available = false;
 
-            defer gctx.lookupResource(self.framebuffer_copy_buffer).?.unmap();
-            const mapped_pixels = gctx.lookupResource(self.framebuffer_copy_buffer).?.getConstMappedRange(
+            defer copy_buffer.unmap();
+            const mapped_pixels = copy_buffer.getConstMappedRange(
                 u8,
                 0,
                 4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
@@ -3181,7 +3212,6 @@ pub const Renderer = struct {
             const back_buffer_view = self._gctx.swapchain.getCurrentTextureView();
             defer back_buffer_view.release();
 
-            // NOTE: This does not change - expect for the back_buffer_view - and could be recorded once and for all.
             const commands = commands: {
                 const encoder = self._gctx.device.createCommandEncoder(null);
                 defer encoder.release();

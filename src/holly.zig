@@ -2210,17 +2210,24 @@ pub const Holly = struct {
         return addr;
     }
 
+    pub fn render_to_texture(self: *const @This()) bool {
+        const scaler_ctl = self.read_register(SCALER_CTL, .SCALER_CTL);
+        const field = if (scaler_ctl.interlace) scaler_ctl.field_select else 0;
+        const FB_W_SOF = self.read_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2);
+        return FB_W_SOF & 0x1000000 != 0;
+    }
+
     pub fn write_framebuffer(self: *@This(), pixels: []const u8) void {
-        const scaler_ctl = self._get_register(SCALER_CTL, .SCALER_CTL).*;
-        const w_ctrl = self._get_register(FB_W_CTRL, .FB_W_CTRL).*;
-        const x_clip = self._get_register(FB_CLIP, .FB_X_CLIP).*;
-        const y_clip = self._get_register(FB_CLIP, .FB_Y_CLIP).*;
-        const video_out_ctrl = self._get_register(VO_CONTROL, .VO_CONTROL).*;
+        const scaler_ctl = self.read_register(SCALER_CTL, .SCALER_CTL);
+        const w_ctrl = self.read_register(FB_W_CTRL, .FB_W_CTRL);
+        const x_clip = self.read_register(FB_CLIP, .FB_X_CLIP);
+        const y_clip = self.read_register(FB_CLIP, .FB_Y_CLIP);
+        const video_out_ctrl = self.read_register(VO_CONTROL, .VO_CONTROL);
         _ = video_out_ctrl;
 
         const interlaced = scaler_ctl.interlace;
         const field = if (interlaced) scaler_ctl.field_select else 0;
-        const FB_W_SOF = self._get_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2).*;
+        const FB_W_SOF = self.read_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2);
         const access_32bit = FB_W_SOF & 0x1000000 == 0;
 
         const resolution = struct {
@@ -2228,7 +2235,7 @@ pub const Holly = struct {
             const height = 480;
         };
 
-        const FB_W_LINESTRIDE = 8 * (self._get_register(u32, .FB_W_LINESTRIDE).* & 0x1FF);
+        const FB_W_LINESTRIDE = 8 * (self.read_register(u32, .FB_W_LINESTRIDE) & 0x1FF);
         const line_offset = field;
         const line_stride: u32 = if (interlaced) 2 else 1;
         const height = resolution.height / line_stride;
