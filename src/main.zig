@@ -329,6 +329,8 @@ pub fn main() !void {
         const render_start = d.renderer.render_start;
         if (render_start) {
             try d.renderer.update(&d.dc.gpu);
+            try d.renderer.render(&d.dc.gpu);
+            d.renderer.render_start = false;
 
             if (!d.dc.gpu.render_to_texture()) {
                 if (d.last_n_frametimes.count >= 60) {
@@ -340,10 +342,9 @@ pub fn main() !void {
             }
         }
 
-        if (force_render or render_start) {
+        // Debug aid (see force_render)
+        if (force_render and !render_start)
             try d.renderer.render(&d.dc.gpu);
-            if (render_start) d.renderer.render_start = false;
-        }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
             d.renderer.draw(); //  Blit to screen
