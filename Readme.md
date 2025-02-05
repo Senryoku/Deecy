@@ -6,11 +6,22 @@
 
 Deecy is a very experimental Dreamcast emulator written in Zig.
 
-Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), [Grandia II](https://www.youtube.com/watch?v=YQG3SSVfeis) (July 2024)
+Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), [Grandia II](https://www.youtube.com/watch?v=YQG3SSVfeis) (July 2024), [DCA3](https://www.youtube.com/watch?v=RAj67PZbVnc) (January 2025)
 
 ![image](https://github.com/user-attachments/assets/cf0027bb-b136-45d3-bec9-623c407660fa)
 
-## Build and Run
+## Installation
+
+ - Download the latest version for your platform from the [Release Page](https://github.com/Senryoku/Deecy/releases).
+ - Decompress the zip archive.
+ - Copy your bios and flash dumps as `dc_boot.bin` and `dc_flash.bin` to the `data` folder.
+ - Launch the Deecy executable and click `Change Directory` to select the folder where you store your DC games.
+
+## Compatibility
+
+[See issue #33](https://github.com/Senryoku/Deecy/issues/33)
+
+## Build
 
 Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/)). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
