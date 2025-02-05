@@ -130,7 +130,7 @@ pub fn init(d: *Deecy) !@This() {
 
     for (0..self.renderer_texture_views.len) |i| {
         for (0..RendererModule.Renderer.MaxTextures[i]) |j| {
-            self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i], .{
+            self.renderer_texture_views[i][j] = d.gctx.createTextureView(d.renderer.texture_arrays[i].texture, .{
                 .dimension = .tvdim_2d,
                 .base_array_layer = @intCast(j),
                 .array_layer_count = 1,
@@ -966,11 +966,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
         if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
-            const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer_texture_view).?;
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer_texture.view).?;
             zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
-            const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer_texture_view).?;
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer_texture.view).?;
             zgui.image(fb_tex_id, .{ .w = @floatFromInt(d.gctx.swapchain_descriptor.width), .h = @floatFromInt(d.gctx.swapchain_descriptor.height) });
         }
     }

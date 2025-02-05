@@ -580,6 +580,15 @@ fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void
     fb_mapping_available = true;
 }
 
+const TextureAndView = struct {
+    texture: zgpu.TextureHandle,
+    view: zgpu.TextureViewHandle,
+    pub fn release(self: @This(), gctx: *zgpu.GraphicsContext) void {
+        gctx.releaseResource(self.view);
+        gctx.destroyResource(self.texture);
+    }
+};
+
 pub const Renderer = struct {
     pub const MaxTextures: [8]u16 = .{ 512, 512, 512, 512, 256, 128, 32, 8 }; // Max texture count for each size. FIXME: Not sure what are good values.
 
@@ -659,29 +668,23 @@ pub const Renderer = struct {
     modvol_linked_list_buffer: zgpu.BufferHandle = undefined,
     modvol_volumes_buffer: zgpu.BufferHandle = undefined,
 
-    texture_arrays: [8]zgpu.TextureHandle,
-    texture_array_views: [8]zgpu.TextureViewHandle,
+    texture_arrays: [8]TextureAndView,
     palette_buffer: zgpu.BufferHandle,
 
     display_mode: DisplayMode = .Center,
     resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
 
     /// Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
-    framebuffer_texture: zgpu.TextureHandle,
-    framebuffer_texture_view: zgpu.TextureViewHandle,
+    framebuffer_texture: TextureAndView,
     /// Target for rendering to a texture (will be read back to guest VRAM using framebuffer_copy_buffer)
-    render_to_texture: zgpu.TextureHandle,
-    render_to_texture_view: zgpu.TextureViewHandle,
+    render_to_texture_target: TextureAndView,
     framebuffer_copy_buffer: zgpu.BufferHandle, // Intermediate buffer used to read pixels back to main RAM.
     /// Framebuffer at target resolution to draw on
-    resized_framebuffer_texture: zgpu.TextureHandle = undefined,
-    resized_framebuffer_texture_view: zgpu.TextureViewHandle = undefined,
-    resized_framebuffer_area1_texture: zgpu.TextureHandle = undefined,
-    resized_framebuffer_area1_texture_view: zgpu.TextureViewHandle = undefined,
+    resized_framebuffer_texture: TextureAndView = undefined,
+    resized_framebuffer_area1_texture: TextureAndView = undefined,
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
-    resized_framebuffer_copy_texture: zgpu.TextureHandle = undefined,
-    resized_framebuffer_copy_texture_view: zgpu.TextureViewHandle = undefined,
+    resized_framebuffer_copy_texture: TextureAndView = undefined,
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
@@ -742,7 +745,6 @@ pub const Renderer = struct {
             .format = zgpu.GraphicsContext.swapchain_format,
             .mip_level_count = 1,
         });
-        const render_to_texture_view = gctx.createTextureView(framebuffer_texture, .{});
 
         const framebuffer_copy_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .map_read = true },
@@ -841,10 +843,9 @@ pub const Renderer = struct {
             .{ .binding = 1, .sampler_handle = samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
 
-        var texture_arrays: [8]zgpu.TextureHandle = undefined;
-        var texture_array_views: [8]zgpu.TextureViewHandle = undefined;
+        var texture_arrays: [8]TextureAndView = undefined;
         for (0..8) |i| {
-            texture_arrays[i] = gctx.createTexture(.{
+            texture_arrays[i].texture = gctx.createTexture(.{
                 .usage = .{ .texture_binding = true, .storage_binding = true, .copy_dst = true },
                 .size = .{
                     .width = @as(u32, 8) << @intCast(i),
@@ -854,7 +855,7 @@ pub const Renderer = struct {
                 .format = .bgra8_unorm,
                 .mip_level_count = @intCast(4 + i),
             });
-            texture_array_views[i] = gctx.createTextureView(texture_arrays[i], .{});
+            texture_arrays[i].view = gctx.createTextureView(texture_arrays[i].texture, .{});
         }
         const palette_buffer = gctx.createBuffer(.{
             .usage = .{ .copy_dst = true, .storage = true },
@@ -869,14 +870,14 @@ pub const Renderer = struct {
 
         const bind_group = gctx.createBindGroup(bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(Uniforms) },
-            .{ .binding = 1, .texture_view_handle = texture_array_views[0] },
-            .{ .binding = 2, .texture_view_handle = texture_array_views[1] },
-            .{ .binding = 3, .texture_view_handle = texture_array_views[2] },
-            .{ .binding = 4, .texture_view_handle = texture_array_views[3] },
-            .{ .binding = 5, .texture_view_handle = texture_array_views[4] },
-            .{ .binding = 6, .texture_view_handle = texture_array_views[5] },
-            .{ .binding = 7, .texture_view_handle = texture_array_views[6] },
-            .{ .binding = 8, .texture_view_handle = texture_array_views[7] },
+            .{ .binding = 1, .texture_view_handle = texture_arrays[0].view },
+            .{ .binding = 2, .texture_view_handle = texture_arrays[1].view },
+            .{ .binding = 3, .texture_view_handle = texture_arrays[2].view },
+            .{ .binding = 4, .texture_view_handle = texture_arrays[3].view },
+            .{ .binding = 5, .texture_view_handle = texture_arrays[4].view },
+            .{ .binding = 6, .texture_view_handle = texture_arrays[5].view },
+            .{ .binding = 7, .texture_view_handle = texture_arrays[6].view },
+            .{ .binding = 8, .texture_view_handle = texture_arrays[7].view },
             .{ .binding = 9, .buffer_handle = strips_metadata_buffer, .offset = 0, .size = StripMetadataSize },
             .{ .binding = 10, .buffer_handle = palette_buffer, .offset = 0, .size = 4 * 1024 },
         });
@@ -1125,10 +1126,8 @@ pub const Renderer = struct {
 
             .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
 
-            .framebuffer_texture = framebuffer_texture,
-            .framebuffer_texture_view = framebuffer_texture_view,
-            .render_to_texture = render_to_texture,
-            .render_to_texture_view = render_to_texture_view,
+            .framebuffer_texture = .{ .texture = framebuffer_texture, .view = framebuffer_texture_view },
+            .render_to_texture_target = .{ .texture = render_to_texture, .view = gctx.createTextureView(framebuffer_texture, .{}) },
             .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
             .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
@@ -1151,7 +1150,6 @@ pub const Renderer = struct {
             .modifier_volume_vertex_buffer = modifier_volume_vertex_buffer,
 
             .texture_arrays = texture_arrays,
-            .texture_array_views = texture_array_views,
             .palette_buffer = palette_buffer,
 
             .samplers = samplers,
@@ -1399,11 +1397,8 @@ pub const Renderer = struct {
             self._gctx.releaseResource(sampler);
         }
 
-        for (self.texture_array_views) |view| {
-            self._gctx.releaseResource(view);
-        }
-        for (self.texture_arrays) |array| {
-            self._gctx.releaseResource(array);
+        for (self.texture_arrays) |tv| {
+            tv.release(self._gctx);
         }
 
         self._gctx.releaseResource(self.modifier_volume_vertex_buffer);
@@ -1436,8 +1431,8 @@ pub const Renderer = struct {
         }
         self.opaque_pipelines.deinit();
 
-        self._gctx.releaseResource(self.framebuffer_texture_view);
-        self._gctx.releaseResource(self.framebuffer_texture);
+        self.framebuffer_texture.release(self._gctx);
+        self.render_to_texture_target.release(self._gctx);
         self._gctx.releaseResource(self.framebuffer_copy_buffer);
 
         self._gctx.releaseResource(self.framebuffer_resize_bind_group);
@@ -1681,7 +1676,7 @@ pub const Renderer = struct {
         for (0..copies) |part| {
             self._gctx.queue.writeTexture(
                 .{
-                    .texture = self._gctx.lookupResource(self.texture_arrays[size_index]).?,
+                    .texture = self._gctx.lookupResource(self.texture_arrays[size_index].texture).?,
                     .origin = .{
                         .x = if (repeat_vertically) 0 else @intCast(u_size * part),
                         .y = if (repeat_vertically) @intCast(v_size * part) else 0,
@@ -1699,7 +1694,7 @@ pub const Renderer = struct {
         }
 
         if (texture_control_word.mip_mapped == 1)
-            MipMap.generate_mipmaps(self._gctx, self.texture_arrays[size_index], texture_index);
+            MipMap.generate_mipmaps(self._gctx, self.texture_arrays[size_index].texture, texture_index);
 
         return texture_index;
     }
@@ -1794,7 +1789,7 @@ pub const Renderer = struct {
         }
         self._gctx.queue.writeTexture(
             .{
-                .texture = self._gctx.lookupResource(self.framebuffer_texture).?,
+                .texture = self._gctx.lookupResource(self.framebuffer_texture.texture).?,
                 .origin = .{},
             },
             .{
@@ -2614,7 +2609,7 @@ pub const Renderer = struct {
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
                     .load_op = .clear,
                     .store_op = .store,
                 }};
@@ -2661,11 +2656,11 @@ pub const Renderer = struct {
 
         const Target = struct { view: wgpu.TextureView, texture: wgpu.Texture };
         const target = if (render_to_texture) Target{
-            .view = gctx.lookupResource(self.render_to_texture_view).?,
-            .texture = gctx.lookupResource(self.render_to_texture).?,
+            .view = gctx.lookupResource(self.render_to_texture_target.view).?,
+            .texture = gctx.lookupResource(self.render_to_texture_target.texture).?,
         } else Target{
-            .view = gctx.lookupResource(self.framebuffer_texture_view).?,
-            .texture = gctx.lookupResource(self.framebuffer_texture).?,
+            .view = gctx.lookupResource(self.framebuffer_texture.view).?,
+            .texture = gctx.lookupResource(self.framebuffer_texture.texture).?,
         };
 
         const commands = commands: {
@@ -2691,12 +2686,12 @@ pub const Renderer = struct {
             skip_opaque: {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
                         .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
                         .store_op = .store,
                     },
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture_view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture.view).?,
                         .load_op = .clear,
                         .store_op = .store,
                     },
@@ -2767,8 +2762,8 @@ pub const Renderer = struct {
 
             // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
             encoder.copyTextureToTexture(
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture.texture).? },
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture.texture).? },
                 .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
@@ -2842,7 +2837,7 @@ pub const Renderer = struct {
                     const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                     const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                     const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
-                    const dest_view = gctx.lookupResource(self.resized_framebuffer_texture_view).?;
+                    const dest_view = gctx.lookupResource(self.resized_framebuffer_texture.view).?;
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
@@ -2884,8 +2879,8 @@ pub const Renderer = struct {
 
                 // Copy the result to resized_framebuffer_copy_texture_view too.
                 encoder.copyTextureToTexture(
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture).? },
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture).? },
+                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture.texture).? },
+                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture.texture).? },
                     .{ .width = self.resolution.width, .height = self.resolution.height },
                 );
             }
@@ -2898,12 +2893,12 @@ pub const Renderer = struct {
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
                         .load_op = .load,
                         .store_op = .store,
                     },
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture_view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture.view).?,
                         .load_op = .clear,
                         .store_op = .store,
                     },
@@ -2964,7 +2959,7 @@ pub const Renderer = struct {
                 const blend_bind_group = gctx.lookupResource(self.blend_bind_group).?;
 
                 const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture_view).?,
+                    .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
                     .load_op = .load,
                     .store_op = .store,
                 }};
@@ -3331,14 +3326,12 @@ pub const Renderer = struct {
     }
 
     fn deinit_screen_textures(self: *@This()) void {
+        self._gctx.releaseResource(self.depth_only_texture_view);
         self._gctx.releaseResource(self.depth_texture_view);
         self._gctx.destroyResource(self.depth_texture);
 
-        self._gctx.releaseResource(self.resized_framebuffer_texture_view);
-        self._gctx.destroyResource(self.resized_framebuffer_texture);
-
-        self._gctx.releaseResource(self.resized_framebuffer_copy_texture_view);
-        self._gctx.destroyResource(self.resized_framebuffer_copy_texture);
+        self.resized_framebuffer_texture.release(self._gctx);
+        self.resized_framebuffer_copy_texture.release(self._gctx);
 
         self._gctx.releaseResource(self.blit_bind_group);
 
@@ -3367,23 +3360,17 @@ pub const Renderer = struct {
         self.depth_only_texture_view = depth.depth_only_view;
 
         // Same thing for our screen size framebuffer.
-        const resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
-        self.resized_framebuffer_texture = resized_framebuffer.texture;
-        self.resized_framebuffer_texture_view = resized_framebuffer.view;
+        self.resized_framebuffer_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
-        const resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
-        self.resized_framebuffer_area1_texture = resized_framebuffer_area1.texture;
-        self.resized_framebuffer_area1_texture_view = resized_framebuffer_area1.view;
+        self.resized_framebuffer_area1_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
 
-        const resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
-        self.resized_framebuffer_copy_texture = resized_framebuffer_copy.texture;
-        self.resized_framebuffer_copy_texture_view = resized_framebuffer_copy.view;
+        self.resized_framebuffer_copy_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
 
         const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout);
         defer self._gctx.releaseResource(blit_bind_group_layout);
 
         self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = resized_framebuffer.view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_texture.view },
             .{ .binding = 1, .sampler_handle = self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
 
@@ -3393,7 +3380,7 @@ pub const Renderer = struct {
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1_texture_view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1_texture.view },
         });
 
         self.create_oit_buffers();
@@ -3472,10 +3459,7 @@ pub const Renderer = struct {
         return .{ .texture = texture, .view = view, .depth_only_view = depth_only_view };
     }
 
-    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, copy_src: bool, copy_dst: bool) struct {
-        texture: zgpu.TextureHandle,
-        view: zgpu.TextureViewHandle,
-    } {
+    fn create_resized_framebuffer_texture(gctx: *zgpu.GraphicsContext, resolution: Resolution, copy_src: bool, copy_dst: bool) TextureAndView {
         const resized_framebuffer_texture = gctx.createTexture(.{
             .usage = .{
                 .render_attachment = true,
@@ -3586,8 +3570,8 @@ pub const Renderer = struct {
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
-            .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture_view },
-            .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture_view },
+            .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture.view },
+            .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture.view },
             .{ .binding = 5, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
     }
