@@ -328,7 +328,6 @@ pub fn main() !void {
 
         const render_start = d.renderer.render_start;
         if (render_start) {
-            d.renderer.render_start = false;
             try d.renderer.update(&d.dc.gpu);
 
             if (d.last_n_frametimes.count >= 60) {
@@ -341,6 +340,7 @@ pub fn main() !void {
 
         if (force_render or render_start) {
             try d.renderer.render(&d.dc.gpu);
+            if (render_start) d.renderer.render_start = false;
         }
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
