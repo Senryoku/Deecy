@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 env:
-    README: "Copy dc_boot.bin and dc_flash.bin in ./data.\n\nWebsite: https://github.com/Senryoku/Deecy"
-    DATA_README: "Copy dc_boot.bin and dc_flash.bin here."
+  README: "Copy dc_boot.bin and dc_flash.bin in ./data.\n\nWebsite: https://github.com/Senryoku/Deecy"
+  DATA_README: "Copy dc_boot.bin and dc_flash.bin here."
 
 jobs:
   build-windows:
