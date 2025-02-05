@@ -6,10 +6,6 @@ on:
   pull_request:
     branches: [main]
 
-env:
-    README: "Copy dc_boot.bin and dc_flash.bin in ./data.\n\nWebsite: https://github.com/Senryoku/Deecy"
-    DATA_README: "Copy dc_boot.bin and dc_flash.bin here."
-
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -32,9 +28,9 @@ jobs:
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy.exe Deecy/
-            printf "$README" > Deecy/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
             mkdir Deecy/data
-            printf "$DATA_README" > Deecy/data/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-windows
@@ -61,9 +57,9 @@ jobs:
           run: |
             mkdir Deecy
             cp zig-out/bin/Deecy Deecy/
-            printf "$README" > Deecy/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
             mkdir Deecy/data
-            printf "$DATA_README" > Deecy/data/README.txt
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-linux
