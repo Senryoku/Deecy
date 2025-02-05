@@ -90,5 +90,6 @@ Dependencies are managed by the `build.zig.zon` file.
 -   And overall thanks to everyone participating in the EmuDev Discord :)
 
 ## Licence
-
--   Uses data from MAME under the BSD-3-Clause licence (see `src/gdrom_secu.zig`).
+ 
+ Uses data from MAME under the BSD-3-Clause licence (see `src/gdrom_secu.zig`).
+ Rest is MIT.
