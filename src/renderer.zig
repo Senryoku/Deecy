@@ -674,24 +674,27 @@ pub const Renderer = struct {
     display_mode: DisplayMode = .Center,
     resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
 
-    /// Intermediate texture to upload framebuffer from VRAM (and maybe downsample and read back from at some point?)
-    framebuffer_texture: TextureAndView,
+    /// Intermediate texture to upload framebuffer from VRAM at native resolution
+    framebuffer: TextureAndView,
     /// Target for rendering to a texture (will be read back to guest VRAM using framebuffer_copy_buffer)
     render_to_texture_target: TextureAndView,
-    framebuffer_copy_buffer: zgpu.BufferHandle, // Intermediate buffer used to read pixels back to main RAM.
+    /// Intermediate buffer used to read pixels back to main RAM.
+    framebuffer_copy_buffer: zgpu.BufferHandle,
     /// Framebuffer at target resolution to draw on
-    resized_framebuffer_texture: TextureAndView = undefined,
-    resized_framebuffer_area1_texture: TextureAndView = undefined,
+    resized_framebuffer: TextureAndView = undefined,
+    resized_framebuffer_area1: TextureAndView = undefined,
 
     // NOTE: This should not be needed, but WGPU doesn't handle reading from a storage texture yet.
-    resized_framebuffer_copy_texture: TextureAndView = undefined,
+    resized_framebuffer_copy: TextureAndView = undefined,
+
+    depth: struct {
+        texture: zgpu.TextureHandle,
+        view: zgpu.TextureViewHandle,
+        depth_only_view: zgpu.TextureViewHandle,
+    } = undefined,
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
-
-    depth_texture: zgpu.TextureHandle = undefined,
-    depth_texture_view: zgpu.TextureViewHandle = undefined,
-    depth_only_texture_view: zgpu.TextureViewHandle = undefined,
 
     opaque_pass: PassMetadata,
     punchthrough_pass: PassMetadata,
@@ -735,7 +738,8 @@ pub const Renderer = struct {
             .mip_level_count = 1,
         });
         const framebuffer_texture_view = gctx.createTextureView(framebuffer_texture, .{});
-        const render_to_texture = gctx.createTexture(.{
+
+        const render_to_texture_target = gctx.createTexture(.{
             .usage = .{ .render_attachment = true, .texture_binding = true, .copy_dst = true, .copy_src = true },
             .size = .{
                 .width = NativeResolution.width,
@@ -1126,8 +1130,8 @@ pub const Renderer = struct {
 
             .framebuffer_resize_bind_group = framebuffer_resize_bind_group,
 
-            .framebuffer_texture = .{ .texture = framebuffer_texture, .view = framebuffer_texture_view },
-            .render_to_texture_target = .{ .texture = render_to_texture, .view = gctx.createTextureView(framebuffer_texture, .{}) },
+            .framebuffer = .{ .texture = framebuffer_texture, .view = framebuffer_texture_view },
+            .render_to_texture_target = .{ .texture = render_to_texture_target, .view = gctx.createTextureView(render_to_texture_target, .{}) },
             .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
             .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
@@ -1339,7 +1343,7 @@ pub const Renderer = struct {
         // Ensure capacity for opaque pipelines: Async creation needs pointer stability.
         try renderer.opaque_pipelines.ensureTotalCapacity(std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
 
-        // Asyncronously create some common opaque pipelines ahead of time
+        // Asynchronously create some common opaque pipelines ahead of time
         _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, .Async); // Background
         _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
         _ = try renderer.get_or_put_opaque_pipeline(.{ .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
@@ -1431,7 +1435,7 @@ pub const Renderer = struct {
         }
         self.opaque_pipelines.deinit();
 
-        self.framebuffer_texture.release(self._gctx);
+        self.framebuffer.release(self._gctx);
         self.render_to_texture_target.release(self._gctx);
         self._gctx.releaseResource(self.framebuffer_copy_buffer);
 
@@ -1789,7 +1793,7 @@ pub const Renderer = struct {
         }
         self._gctx.queue.writeTexture(
             .{
-                .texture = self._gctx.lookupResource(self.framebuffer_texture.texture).?,
+                .texture = self._gctx.lookupResource(self.framebuffer.texture).?,
                 .origin = .{},
             },
             .{
@@ -2609,7 +2613,7 @@ pub const Renderer = struct {
                 const framebuffer_resize_bind_group = gctx.lookupResource(self.framebuffer_resize_bind_group).?;
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
+                    .view = gctx.lookupResource(self.resized_framebuffer.view).?,
                     .load_op = .clear,
                     .store_op = .store,
                 }};
@@ -2659,8 +2663,8 @@ pub const Renderer = struct {
             .view = gctx.lookupResource(self.render_to_texture_target.view).?,
             .texture = gctx.lookupResource(self.render_to_texture_target.texture).?,
         } else Target{
-            .view = gctx.lookupResource(self.framebuffer_texture.view).?,
-            .texture = gctx.lookupResource(self.framebuffer_texture.texture).?,
+            .view = gctx.lookupResource(self.framebuffer.view).?,
+            .texture = gctx.lookupResource(self.framebuffer.texture).?,
         };
 
         const commands = commands: {
@@ -2681,17 +2685,17 @@ pub const Renderer = struct {
             uniform_mem.slice[0].fog_lut = self.fog_lut;
 
             const bind_group = gctx.lookupResource(self.bind_group).?;
-            const depth_view = gctx.lookupResource(self.depth_texture_view).?;
+            const depth_view = gctx.lookupResource(self.depth.view).?;
 
             skip_opaque: {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer.view).?,
                         .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
                         .store_op = .store,
                     },
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture.view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
                         .load_op = .clear,
                         .store_op = .store,
                     },
@@ -2762,8 +2766,8 @@ pub const Renderer = struct {
 
             // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
             encoder.copyTextureToTexture(
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture.texture).? },
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture.texture).? },
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer.texture).? },
+                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
                 .{ .width = self.resolution.width, .height = self.resolution.height },
             );
 
@@ -2837,7 +2841,7 @@ pub const Renderer = struct {
                     const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
                     const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
                     const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
-                    const dest_view = gctx.lookupResource(self.resized_framebuffer_texture.view).?;
+                    const dest_view = gctx.lookupResource(self.resized_framebuffer.view).?;
 
                     const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                         .view = depth_view,
@@ -2879,8 +2883,8 @@ pub const Renderer = struct {
 
                 // Copy the result to resized_framebuffer_copy_texture_view too.
                 encoder.copyTextureToTexture(
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_texture.texture).? },
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy_texture.texture).? },
+                    .{ .texture = gctx.lookupResource(self.resized_framebuffer.texture).? },
+                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
                     .{ .width = self.resolution.width, .height = self.resolution.height },
                 );
             }
@@ -2893,12 +2897,12 @@ pub const Renderer = struct {
 
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer.view).?,
                         .load_op = .load,
                         .store_op = .store,
                     },
                     .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1_texture.view).?,
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
                         .load_op = .clear,
                         .store_op = .store,
                     },
@@ -2959,7 +2963,7 @@ pub const Renderer = struct {
                 const blend_bind_group = gctx.lookupResource(self.blend_bind_group).?;
 
                 const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = gctx.lookupResource(self.resized_framebuffer_texture.view).?,
+                    .view = gctx.lookupResource(self.resized_framebuffer.view).?,
                     .load_op = .load,
                     .store_op = .store,
                 }};
@@ -3326,12 +3330,12 @@ pub const Renderer = struct {
     }
 
     fn deinit_screen_textures(self: *@This()) void {
-        self._gctx.releaseResource(self.depth_only_texture_view);
-        self._gctx.releaseResource(self.depth_texture_view);
-        self._gctx.destroyResource(self.depth_texture);
+        self._gctx.releaseResource(self.depth.depth_only_view);
+        self._gctx.releaseResource(self.depth.view);
+        self._gctx.destroyResource(self.depth.texture);
 
-        self.resized_framebuffer_texture.release(self._gctx);
-        self.resized_framebuffer_copy_texture.release(self._gctx);
+        self.resized_framebuffer.release(self._gctx);
+        self.resized_framebuffer_copy.release(self._gctx);
 
         self._gctx.releaseResource(self.blit_bind_group);
 
@@ -3355,22 +3359,22 @@ pub const Renderer = struct {
 
         // Create a new depth texture to match the new render size.
         const depth = create_depth_texture(self._gctx, self.resolution);
-        self.depth_texture = depth.texture;
-        self.depth_texture_view = depth.view;
-        self.depth_only_texture_view = depth.depth_only_view;
+        self.depth.texture = depth.texture;
+        self.depth.view = depth.view;
+        self.depth.depth_only_view = depth.depth_only_view;
 
         // Same thing for our screen size framebuffer.
-        self.resized_framebuffer_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
+        self.resized_framebuffer = create_resized_framebuffer_texture(self._gctx, self.resolution, true, false);
 
-        self.resized_framebuffer_area1_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
+        self.resized_framebuffer_area1 = create_resized_framebuffer_texture(self._gctx, self.resolution, false, false);
 
-        self.resized_framebuffer_copy_texture = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
+        self.resized_framebuffer_copy = create_resized_framebuffer_texture(self._gctx, self.resolution, false, true);
 
         const blit_bind_group_layout = self._gctx.createBindGroupLayout(&BlitBindGroupLayout);
         defer self._gctx.releaseResource(blit_bind_group_layout);
 
         self.blit_bind_group = self._gctx.createBindGroup(blit_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_texture.view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer.view },
             .{ .binding = 1, .sampler_handle = self.samplers[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)] },
         });
 
@@ -3380,7 +3384,7 @@ pub const Renderer = struct {
         defer self._gctx.releaseResource(mv_apply_bind_group_layout);
 
         self.modifier_volume_apply_bind_group = self._gctx.createBindGroup(mv_apply_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1_texture.view },
+            .{ .binding = 0, .texture_view_handle = self.resized_framebuffer_area1.view },
         });
 
         self.create_oit_buffers();
@@ -3544,7 +3548,7 @@ pub const Renderer = struct {
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
-            .{ .binding = 3, .texture_view_handle = self.depth_only_texture_view },
+            .{ .binding = 3, .texture_view_handle = self.depth.depth_only_view },
         });
     }
 
@@ -3570,8 +3574,8 @@ pub const Renderer = struct {
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
-            .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy_texture.view },
-            .{ .binding = 4, .texture_view_handle = self.resized_framebuffer_texture.view },
+            .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
+            .{ .binding = 4, .texture_view_handle = self.resized_framebuffer.view },
             .{ .binding = 5, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
     }

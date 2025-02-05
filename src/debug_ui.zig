@@ -966,11 +966,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
         if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
-            const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer_texture.view).?;
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.framebuffer.view).?;
             zgui.image(fb_tex_id, .{ .w = 640, .h = 480 });
         }
         if (zgui.collapsingHeader("Resized Framebuffer Texture", .{})) {
-            const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer_texture.view).?;
+            const fb_tex_id = d.gctx.lookupResource(d.renderer.resized_framebuffer.view).?;
             zgui.image(fb_tex_id, .{ .w = @floatFromInt(d.gctx.swapchain_descriptor.width), .h = @floatFromInt(d.gctx.swapchain_descriptor.height) });
         }
     }
