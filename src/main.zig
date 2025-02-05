@@ -330,12 +330,14 @@ pub fn main() !void {
         if (render_start) {
             try d.renderer.update(&d.dc.gpu);
 
-            if (d.last_n_frametimes.count >= 60) {
-                _ = d.last_n_frametimes.readItem();
+            if (!d.dc.gpu.render_to_texture()) {
+                if (d.last_n_frametimes.count >= 60) {
+                    _ = d.last_n_frametimes.readItem();
+                }
+                const now = std.time.microTimestamp();
+                try d.last_n_frametimes.writeItem(now - d.last_frame_timestamp);
+                d.last_frame_timestamp = now;
             }
-            const now = std.time.microTimestamp();
-            try d.last_n_frametimes.writeItem(now - d.last_frame_timestamp);
-            d.last_frame_timestamp = now;
         }
 
         if (force_render or render_start) {
