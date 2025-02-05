@@ -24,10 +24,17 @@ jobs:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy
           run: zig build --release=fast
+        - name: Prepare artifact
+          run: |
+            mkdir Deecy
+            cp zig-out/bin/Deecy.exe Deecy/
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
+            mkdir Deecy/data
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-windows
-            path: zig-out/bin/Deecy.exe
+            path: Deecy/
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -46,8 +53,15 @@ jobs:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy
           run: zig build --release=fast
+        - name: Prepare artifact
+          run: |
+            mkdir Deecy
+            cp zig-out/bin/Deecy Deecy/
+            printf "Copy dc_boot.bin and dc_flash.bin in ./data.\nWebsite: https://github.com/Senryoku/Deecy" > Deecy/README.txt
+            mkdir Deecy/data
+            printf "Copy dc_boot.bin and dc_flash.bin here." > Deecy/data/README.txt
         - uses: actions/upload-artifact@v4
           with: 
             name: Deecy-x86_64-linux
-            path: zig-out/bin/Deecy
+            path: Deecy/
 
