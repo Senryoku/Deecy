@@ -12,12 +12,12 @@ const Instruction = packed struct(u64) {
     MASA: u6,
     NOFL: bool,
     // -----
-    BSEL: bool,
+    BSEL: u1,
     ZERO: bool,
     NEGB: bool,
-    YRL: u1,
+    YRL: bool,
     SHFT: u2,
-    FRCL: u1,
+    FRCL: bool,
     ADRL: bool,
     EWA: u4,
     EWT: bool,
@@ -34,7 +34,7 @@ const Instruction = packed struct(u64) {
     // -----
     _48: u1,
     TWA: u7,
-    TWT: u1,
+    TWT: bool,
     TRA: u7,
 };
 
@@ -43,15 +43,18 @@ fn saturate(comptime T: type, value: anytype) T {
     return @truncate(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
 }
 
-// TODO
 // To convert from 16-bit float to 24-bit integer (on read):
 //  - Take the mantissa and shift it left by 11
 //  - Make bit 23 be the sign bit
 //  - Make bit 22 be the reverse of the sign bit
 //  - Shift right (signed) by the exponent
 fn convert_from_16bit_float(value: u16) i24 {
-    _ = value;
-    return 0;
+    const sign_bit: u1 = @truncate(value >> 15);
+    const exponent: u4 = @truncate(value >> 11);
+    var val: u24 = (@as(u24, value) & 0x7FF) << 11;
+    val |= @as(u24, sign_bit) << 23;
+    val |= @as(u24, 1 ^ sign_bit) << 22;
+    return @divTrunc(@as(i24, @bitCast(val)), @as(i24, @bitCast(@as(u24, 1) << exponent)));
 }
 
 // To convert from 24-bit integer to 16-bit float (on write):
@@ -64,12 +67,12 @@ fn convert_to_16bit_float(value: i24) u16 {
     var u: u24 = @bitCast(value);
 
     var exponent: u4 = 0;
-    while (exponent < 15 and u & @as(u24, 0b11 << 22) == 0 or u & @as(u24, 0b11 << 22) == @as(u24, 0b11) << 22) {
+    while (exponent < 15 and (u & @as(u24, 0b11 << 22) == 0 or u & @as(u24, 0b11 << 22) == @as(u24, 0b11) << 22)) {
         u <<= 1;
         exponent += 1;
     }
     var val: u16 = @truncate(@as(u24, @bitCast(value >> 11)));
-    val &= 0x3FF;
+    val &= 0x7FF;
     val |= @as(u16, exponent) << 11;
     val |= @as(u16, sign_bit) << 15;
 
@@ -283,7 +286,7 @@ pub fn generate_sample(self: *@This()) void {
             const value: u24 = if (self.read_mpro(@intCast(step - 2)).NOFL)
                 @truncate(@as(u24, self.temp_word[(step - 2) % self.temp_word.len]) << 8)
             else
-                convert_to_16bit_float(@intCast(@as(i16, @bitCast(self.temp_word[(step - 2) % self.temp_word.len]))));
+                @bitCast(convert_from_16bit_float(self.temp_word[(step - 2) % self.temp_word.len]));
             self.write_mems(instruction.IWA, value);
         }
 
@@ -293,15 +296,14 @@ pub fn generate_sample(self: *@This()) void {
         // If BSEL=0: The TEMP register indicated by ((TRA + MDEC_CT) & 0x7F).
         //            This value is sign-extended from 24 to 26 bits, not shifted.
         // If BSEL=1: The accumulator (ACC), already 26 bits.
-        //
-        // If NEGB=1, this value is then made negative. (B becomes 0-B)
-        // If ZERO=1, this value becomes zero, regardless of all other bits.
-        B = if (instruction.BSEL)
+        B = if (instruction.BSEL == 0)
             @intCast(@as(i24, @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))))
         else
             ACC;
+        // If NEGB=1, this value is then made negative. (B becomes 0-B)
         if (instruction.NEGB)
-            B = ~B +% 1;
+            B = -B;
+        // If ZERO=1, this value becomes zero, regardless of all other bits.
         if (instruction.ZERO)
             B = 0;
 
@@ -329,7 +331,7 @@ pub fn generate_sample(self: *@This()) void {
 
         // - Y latch
         //   If YRL is set, Y_REG becomes INPUTS.
-        if (instruction.YRL == 1)
+        if (instruction.YRL)
             Y_REG = @bitCast(INPUTS);
 
         // - Shift of previous accumulator
@@ -339,12 +341,11 @@ pub fn generate_sample(self: *@This()) void {
         //     If SHFT=2: SHIFTED becomes ACC*2, with the highest bits simply cut off
         //     If SHFT=3: SHIFTED becomes ACC, with the highest bits simply cut off
         //
-        //     If saturation is enabled, SHIFTED is clipped to the range
-        //     -0x800000...0x7FFFFF.
+        //     If saturation is enabled, SHIFTED is clipped to the range -0x800000...0x7FFFFF.
         SHIFTED = switch (instruction.SHFT) {
             0 => saturate(i24, ACC),
             1 => saturate(i24, ACC *| 2),
-            2 => @truncate(ACC *% 2),
+            2 => @truncate(@as(i32, @intCast(ACC)) * 2),
             3 => @truncate(ACC),
         };
 
@@ -358,14 +359,14 @@ pub fn generate_sample(self: *@This()) void {
 
         // - Temp write
         //  If TWT is set, the value SHIFTED is written to the temp buffer address indicated by ((TWA + MDEC_CT) & 0x7F).
-        if (instruction.TWT == 1)
+        if (instruction.TWT)
             self.write_temp((instruction.TWA + self.MDEC_CT) & 0x7F, @bitCast(SHIFTED));
 
         //  - Fractional address latch
         //   If FRCL is set, FRC_REG (13-bit) becomes one of the following:
         //     If SHFT=3: FRC_REG = lowest 12 bits of SHIFTED, ZERO-EXTENDED to 13 bits.
         //     Other values of SHFT: FRC_REG = bits 23-11 of SHIFTED.
-        if (instruction.FRCL == 1) {
+        if (instruction.FRCL) {
             const s = @as(u24, @bitCast(SHIFTED));
             FRC_REG = switch (instruction.SHFT) {
                 3 => @as(u12, @truncate(s)),
@@ -377,53 +378,53 @@ pub fn generate_sample(self: *@This()) void {
         //
         //   If either MRD or MWT are set, we are performing a memory operation (on the
         //   external ringbuffer) and we'll need to compute an address.
-        //
-        //   Start with the 16-bit value of the MADRS register indicated by MASA
-        //   (0x00-0x3F).
-        var addr: u32 = self._madrs(instruction.MASA).*;
-        //   If TABLE=0, add the 16-bit value MDEC_CT.
-        if (instruction.TABLE == 0)
-            addr +%= self.MDEC_CT;
-        //   If ADREB=1, add the 12-bit value ADRS_REG, zero-extended.
-        if (instruction.ADREB)
-            addr +%= ADRS_REG;
-        //   If NXADR=1, add 1.
-        if (instruction.NXADR)
-            addr +%= 1;
-        //   If TABLE=0, mod the address so it's within the proper ringbuffer size.
-        //     For a 8Kword  ringbuffer: AND by 0x1FFF
-        //     For a 16Kword ringbuffer: AND by 0x3FFF
-        //     For a 32Kword ringbuffer: AND by 0x7FFF
-        //     For a 64Kword ringbuffer: AND by 0xFFFF
-        //   If TABLE=1, simply AND the address by 0xFFFF.
-        if (instruction.TABLE == 0)
-            switch (self._ring_buffer.size) {
-                .@"8k" => addr &= 0x1FFF,
-                .@"16k" => addr &= 0x3FFF,
-                .@"32k" => addr &= 0x7FFF,
-                .@"64k" => addr &= 0xFFFF,
+        if (instruction.MRD or instruction.MWT) {
+            //   Start with the 16-bit value of the MADRS register indicated by MASA (0x00-0x3F).
+            var addr: u32 = self._madrs(instruction.MASA).*;
+            //   If TABLE=0, add the 16-bit value MDEC_CT.
+            if (instruction.TABLE == 0)
+                addr +%= self.MDEC_CT;
+            //   If ADREB=1, add the 12-bit value ADRS_REG, zero-extended.
+            if (instruction.ADREB)
+                addr +%= ADRS_REG;
+            //   If NXADR=1, add 1.
+            if (instruction.NXADR)
+                addr +%= 1;
+            //   If TABLE=0, mod the address so it's within the proper ringbuffer size.
+            //     For a 8Kword  ringbuffer: AND by 0x1FFF
+            //     For a 16Kword ringbuffer: AND by 0x3FFF
+            //     For a 32Kword ringbuffer: AND by 0x7FFF
+            //     For a 64Kword ringbuffer: AND by 0xFFFF
+            //   If TABLE=1, simply AND the address by 0xFFFF.
+            if (instruction.TABLE == 0)
+                switch (self._ring_buffer.size) {
+                    .@"8k" => addr &= 0x1FFF,
+                    .@"16k" => addr &= 0x3FFF,
+                    .@"32k" => addr &= 0x7FFF,
+                    .@"64k" => addr &= 0xFFFF,
+                }
+            else
+                addr &= 0xFFFF;
+            //   Shift the address left by 1 (so it's referring to a word offset).
+            addr <<= 1;
+            //   Add (RBP<<11).
+            addr +%= @as(u32, self._ring_buffer.pointer) << 11;
+            //   This is the address, in main memory, you'll be reading or writing.
+
+            //   If MRD is set, read the 16-bit word at the calculated address and put it
+            //   in a temporary place.  It will then be accessible by the instruction either
+            //   2 or 3 steps ahead.  That instruction will have to use a IWT to get the
+            //   result.  Don't perform any conversions yet; let the IWT handle it later on.
+            if (instruction.MRD)
+                self.temp_word[step % self.temp_word.len] = self.read(u16, addr);
+
+            //   If MWT is set, write the value of SHIFTED into memory at the calculated
+            //   address.  If NOFL=1, simply shift it right by 8 to make it 16-bit.
+            //   Otherwise, convert from 24-bit integer to 16-bit float (see float notes).
+            if (instruction.MWT) {
+                const value: u16 = if (instruction.NOFL) @truncate(@as(u24, @bitCast(SHIFTED)) >> 8) else convert_to_16bit_float(SHIFTED);
+                self.write(u16, addr, value);
             }
-        else
-            addr &= 0xFFFF;
-        //   Shift the address left by 1 (so it's referring to a word offset).
-        addr <<= 1;
-        //   Add (RBP<<11).
-        addr +%= @as(u32, self._ring_buffer.pointer) << 11;
-        //   This is the address, in main memory, you'll be reading or writing.
-
-        //   If MRD is set, read the 16-bit word at the calculated address and put it
-        //   in a temporary place.  It will then be accessible by the instruction either
-        //   2 or 3 steps ahead.  That instruction will have to use a IWT to get the
-        //   result.  Don't perform any conversions yet; let the IWT handle it later on.
-        if (instruction.MRD)
-            self.temp_word[step % self.temp_word.len] = self.read(u16, addr);
-
-        //   If MWT is set, write the value of SHIFTED into memory at the calculated
-        //   address.  If NOFL=1, simply shift it right by 8 to make it 16-bit.
-        //   Otherwise, convert from 24-bit integer to 16-bit float (see float notes).
-        if (instruction.MWT) {
-            const value: u16 = if (instruction.NOFL) @truncate(@as(u24, @bitCast(SHIFTED)) >> 8) else convert_to_16bit_float(SHIFTED);
-            self.write(u16, addr, value);
         }
 
         //- Address latch
