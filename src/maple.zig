@@ -456,7 +456,7 @@ pub const VMU = struct {
                     maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
                 const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
                 const len = BlockSize / ReadAccessPerBlock;
-                @memcpy(dest[start .. start + len], self.blocks[block_num % BlockCount][start .. start + len]);
+                @memcpy(dest[0..len], self.blocks[block_num % BlockCount][start .. start + len]);
                 return len / 4;
             },
             else => maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function}),

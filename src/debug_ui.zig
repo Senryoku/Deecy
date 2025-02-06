@@ -442,9 +442,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.sameLine(.{});
         _ = zgui.checkbox("Debug Trace", .{ .v = &dc.aica.arm_debug_trace });
-        zgui.sameLine(.{});
         if (zgui.button("Dump Memory", .{})) {
             dc.aica.dump_wave_memory();
+        }
+        zgui.sameLine(.{});
+        if (zgui.button("Dump Regs", .{})) {
+            dc.aica.dump_registers();
         }
         zgui.text("State: {s} - Run.: {any}", .{ @tagName(dc.aica.arm7.cpsr.m), dc.aica.arm7.running });
         zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
