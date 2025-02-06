@@ -27,7 +27,7 @@ const Instruction = packed struct(u64) {
     // -----
     _32: u1,
     IWA: u5,
-    IWT: u1,
+    IWT: bool,
     IRA: u6,
     YSEL: u2,
     XSEL: u1,
@@ -71,7 +71,8 @@ fn convert_to_16bit_float(value: i24) u16 {
         u <<= 1;
         exponent += 1;
     }
-    var val: u16 = @truncate(@as(u24, @bitCast(value >> 11)));
+    const tmp = @divTrunc(@as(i24, @bitCast(u)), @as(i24, 1) << 11);
+    var val: u16 = @truncate(@as(u24, @bitCast(tmp)));
     val &= 0x7FF;
     val |= @as(u16, exponent) << 11;
     val |= @as(u16, sign_bit) << 15;
@@ -81,8 +82,6 @@ fn convert_to_16bit_float(value: i24) u16 {
 
 /// 16-bit unsigned register which is decremented on every sample
 MDEC_CT: u16 = 1,
-
-temp_word: [4]u16 = .{0} ** 4,
 
 _regs: []u32, // Memory backing for internal registers
 _memory: []u8,
@@ -233,8 +232,8 @@ pub fn add_mixs(self: *@This(), idx: usize, value: u24) void {
 fn _efreg(self: *@This(), idx: usize) *u16 {
     return @ptrCast(&self._regs[@as(u32, 0x1580 / 4) + idx]);
 }
-pub fn read_efreg(self: *@This(), idx: usize) u16 {
-    return self._efreg(idx).*;
+pub fn read_efreg(self: *@This(), idx: usize) i16 {
+    return @bitCast(self._efreg(idx).*);
 }
 
 // 0x45C0-0x45C7: External input data stack (EXTS), 2 registers, 16 bits each
@@ -250,22 +249,16 @@ pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
 }
 
 pub fn generate_sample(self: *@This()) void {
-    // 26-bit signed addend
-    var B: i26 = 0;
-    // 24-bit signed multiplicand
-    var X: i24 = 0;
-    // 13-bit signed multiplier
-    var Y: i13 = 0;
     // 26-bit signed accumulator
     var ACC: i26 = 0;
-    // 24-bit signed shifted output value
-    var SHIFTED: i24 = 0;
     // 24-bit signed latch register
     var Y_REG: i24 = 0;
     // 13-bit fractional address
     var FRC_REG: u13 = 0;
     // 12-bit whole address
     var ADRS_REG: u12 = 0;
+
+    var temp_word: [4]u16 = .{0} ** 4;
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -278,25 +271,26 @@ pub fn generate_sample(self: *@This()) void {
             else => 0,
         };
 
-        if (instruction.IWT == 1) {
+        if (instruction.IWT) {
             // If IWT is set, then the memory data from a MRD (either 2 or 3 instructions ago) is copied into the MEMS register indicated by IWA (0x00-0x1F).
             // If NOFL was set 2 instructions ago (only), the value is simply promoted from 16 to 24-bit by shifting left.
             // Otherwise, it's converted from 16-bit float format to 24-bit integer.  (See float notes)
             std.debug.assert(step >= 2);
+            const temp = temp_word[(step - 2) % temp_word.len];
             const value: u24 = if (self.read_mpro(@intCast(step - 2)).NOFL)
-                @truncate(@as(u24, self.temp_word[(step - 2) % self.temp_word.len]) << 8)
+                @truncate(@as(u24, temp) << 8)
             else
-                @bitCast(convert_from_16bit_float(self.temp_word[(step - 2) % self.temp_word.len]));
+                @bitCast(convert_from_16bit_float(temp));
             self.write_mems(instruction.IWA, value);
         }
 
         // - B selection
-        // A 26-bit value (B) is read from one of two sources:
-        //
-        // If BSEL=0: The TEMP register indicated by ((TRA + MDEC_CT) & 0x7F).
-        //            This value is sign-extended from 24 to 26 bits, not shifted.
-        // If BSEL=1: The accumulator (ACC), already 26 bits.
-        B = if (instruction.BSEL == 0)
+        //   A 26-bit value (B) is read from one of two sources:
+        //     If BSEL=0: The TEMP register indicated by ((TRA + MDEC_CT) & 0x7F).
+        //                This value is sign-extended from 24 to 26 bits, not shifted.
+        //     If BSEL=1: The accumulator (ACC), already 26 bits.
+        // 26-bit signed addend (Always overwritten)
+        var B: i26 = if (instruction.BSEL == 0)
             @intCast(@as(i24, @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))))
         else
             ACC;
@@ -311,7 +305,8 @@ pub fn generate_sample(self: *@This()) void {
         //   A 24-bit value (X) is read from one of two sources:
         //     If XSEL=0: One of the TEMP registers indicated by ((TRA + MDEC_CT) & 0x7F).
         //     If XSEL=1: The INPUTS register.
-        X = if (instruction.XSEL == 0)
+        // 24-bit signed multiplicand (Always overwritten)
+        const X: i24 = if (instruction.XSEL == 0)
             @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))
         else
             @bitCast(INPUTS);
@@ -322,7 +317,8 @@ pub fn generate_sample(self: *@This()) void {
         //     If YSEL=1: Y becomes this instruction's COEF
         //     If YSEL=2: Y becomes bits 23-11 of Y_REG
         //     If YSEL=3: Y becomes bits 15-4 of Y_REG, ZERO-EXTENDED to 13 bits.
-        Y = switch (instruction.YSEL) {
+        // 13-bit signed multiplier (Always overwritten)
+        const Y: i13 = switch (instruction.YSEL) {
             0 => @bitCast(FRC_REG),
             1 => @bitCast(self.read_coef(step)),
             2 => @truncate(Y_REG >> 11),
@@ -340,9 +336,9 @@ pub fn generate_sample(self: *@This()) void {
         //     If SHFT=1: SHIFTED becomes ACC*2, with saturation
         //     If SHFT=2: SHIFTED becomes ACC*2, with the highest bits simply cut off
         //     If SHFT=3: SHIFTED becomes ACC, with the highest bits simply cut off
-        //
-        //     If saturation is enabled, SHIFTED is clipped to the range -0x800000...0x7FFFFF.
-        SHIFTED = switch (instruction.SHFT) {
+        //   If saturation is enabled, SHIFTED is clipped to the range -0x800000...0x7FFFFF.
+        // 24-bit signed shifted output value (Always overwritten)
+        const SHIFTED: i24 = switch (instruction.SHFT) {
             0 => saturate(i24, ACC),
             1 => saturate(i24, ACC *| 2),
             2 => @truncate(@as(i32, @intCast(ACC)) * 2),
@@ -352,9 +348,7 @@ pub fn generate_sample(self: *@This()) void {
         //  - Multiply and accumulate
         //   A 26-bit value (ACC) becomes ((X * Y) >> 12) + B.
         //   The multiplication is signed.  I don't think the addition includes saturation.
-        ACC = X;
-        ACC *%= Y;
-        ACC >>= 12;
+        ACC = @truncate((@as(i64, @intCast(X)) * @as(i64, @intCast(Y))) >> 12);
         ACC +%= B;
 
         // - Temp write
@@ -416,7 +410,7 @@ pub fn generate_sample(self: *@This()) void {
             //   2 or 3 steps ahead.  That instruction will have to use a IWT to get the
             //   result.  Don't perform any conversions yet; let the IWT handle it later on.
             if (instruction.MRD)
-                self.temp_word[step % self.temp_word.len] = self.read(u16, addr);
+                temp_word[step % temp_word.len] = self.read(u16, addr);
 
             //   If MWT is set, write the value of SHIFTED into memory at the calculated
             //   address.  If NOFL=1, simply shift it right by 8 to make it 16-bit.

@@ -1025,9 +1025,9 @@ pub const AICA = struct {
                 self.dsp.generate_sample();
                 for (0..16) |channel| {
                     const mix = self.get_dsp_mix_register(@intCast(channel)).*;
-                    const left_sample = apply_pan_attenuation(self.dsp.read_efreg(@intCast(channel)), mix.efsdl, mix.efpan);
-                    self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] +|= left_sample.left;
-                    self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] +|= left_sample.right;
+                    const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
+                    self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] +|= sample.left;
+                    self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] +|= sample.right;
                 }
             }
 
