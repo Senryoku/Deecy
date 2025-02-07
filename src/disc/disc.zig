@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const GDI = @import("gdi.zig").GDI;
-const CDI = @import("cdi.zig").CDI;
+const CDI = @import("cdi.zig");
+const CHD = @import("chd.zig");
 
 pub const CD = @import("iso9660.zig");
 pub const Track = @import("track.zig");
@@ -20,12 +21,15 @@ pub const DiscFormat = enum(u4) {
 pub const Disc = union(enum) {
     GDI: GDI,
     CDI: CDI,
+    CHD: CHD,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
             return Disc{ .GDI = try GDI.init(filepath, allocator) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
             return Disc{ .CDI = try CDI.init(filepath, allocator) };
+        } else if (std.mem.endsWith(u8, filepath, ".chd")) {
+            return Disc{ .CHD = try CHD.init(filepath, allocator) };
         } else return error.UnknownDiscFormat;
     }
 
@@ -38,6 +42,7 @@ pub const Disc = union(enum) {
     pub fn get_format(self: *const @This()) DiscFormat {
         switch (self.*) {
             .GDI => return .GDROM,
+            .CHD => return .GDROM,
             .CDI => return .CDROM_XA,
         }
     }
