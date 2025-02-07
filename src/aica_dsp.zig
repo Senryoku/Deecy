@@ -5,6 +5,15 @@ const AICAModule = @import("aica.zig");
 
 // HEAVILY based on Neill Corlett's Yamaha AICA notes, most of the comments come directly from there.
 
+// NOTE: A bunch of right shifts here as expected to be arithmetic (i.e. signed), which contradicts current Zig documentation:
+//         "Moves all bits to the right, inserting zeroes at the most-significant bit."
+//       In practice however, right shifts on signed integers does appear to be arithmetic (as of Zig 0.14.0-dev.2577+271452d22).
+//       Small checks in case this changes in the future :) (https://github.com/ziglang/zig/issues/20367)
+comptime {
+    const sign_test: i16 = -1;
+    std.debug.assert((sign_test >> 2) < 0);
+}
+
 const Instruction = packed struct(u64) {
     _0_6: u7,
     NXADR: bool,
@@ -54,7 +63,7 @@ fn convert_from_16bit_float(value: u16) i24 {
     var val: u24 = (@as(u24, value) & 0x7FF) << 11;
     val |= @as(u24, sign_bit) << 23;
     val |= @as(u24, 1 ^ sign_bit) << 22;
-    return @divTrunc(@as(i24, @bitCast(val)), @as(i24, @bitCast(@as(u24, 1) << exponent)));
+    return @as(i24, @bitCast(val)) >> exponent;
 }
 
 // To convert from 24-bit integer to 16-bit float (on write):
@@ -67,11 +76,12 @@ fn convert_to_16bit_float(value: i24) u16 {
     var u: u24 = @bitCast(value);
 
     var exponent: u4 = 0;
-    while (exponent < 15 and (u & @as(u24, 0b11 << 22) == 0 or u & @as(u24, 0b11 << 22) == @as(u24, 0b11) << 22)) {
+    const mask = @as(u24, 0b11 << 22);
+    while (exponent < 15 and ((u & mask) == 0 or (u & mask) == mask)) {
         u <<= 1;
         exponent += 1;
     }
-    const tmp = @divTrunc(@as(i24, @bitCast(u)), @as(i24, 1) << 11);
+    const tmp = @as(i24, @bitCast(u)) >> 11;
     var val: u16 = @truncate(@as(u24, @bitCast(tmp)));
     val &= 0x7FF;
     val |= @as(u16, exponent) << 11;
@@ -91,6 +101,10 @@ _dirty_mpro: bool = false,
 
 pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8) @This() {
     return .{ ._ring_buffer = ring_buffer, ._regs = registers, ._memory = memory };
+}
+
+pub fn clear_mixs(self: *@This()) void {
+    @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
 }
 
 pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
@@ -230,7 +244,7 @@ pub fn add_mixs(self: *@This(), idx: usize, value: u24) void {
 //                0x45BC: bits 15-0 = EFREG(15)
 //                These are the 16 sound outputs.
 fn _efreg(self: *@This(), idx: usize) *u16 {
-    return @ptrCast(&self._regs[@as(u32, 0x1580 / 4) + idx]);
+    return @ptrCast(&self._regs[0x1580 / 4 + idx]);
 }
 pub fn read_efreg(self: *@This(), idx: usize) i16 {
     return @bitCast(self._efreg(idx).*);
@@ -241,7 +255,7 @@ pub fn read_efreg(self: *@This(), idx: usize) i16 {
 //                0x45C4: bits 15-0 = EXTS(1)
 //                These come from CDDA left and right, respectively.
 fn _exts(self: *@This(), idx: usize) *u16 {
-    return @ptrCast(&self._regs[@as(u32, 0x15C0 / 4) + idx]);
+    return @ptrCast(&self._regs[0x15C0 / 4 + idx]);
 }
 
 pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
@@ -259,6 +273,9 @@ pub fn generate_sample(self: *@This()) void {
     var ADRS_REG: u12 = 0;
 
     var temp_word: [4]u16 = .{0} ** 4;
+
+    // Reset EFREGs
+    @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -421,16 +438,19 @@ pub fn generate_sample(self: *@This()) void {
             }
         }
 
-        //- Address latch
+        // - Address latch
         //   If ADRL is set, ADRS_REG (12-bit) becomes one of the following:
         //     If SHFT=3: ADRS_REG = INPUTS >> 16 (signed shift with sign extension).
         //     Other values of SHFT: ADRS_REG = bits 23-12 of SHIFTED.
         if (instruction.ADRL)
-            ADRS_REG = @truncate(if (instruction.SHFT == 3) @as(u24, @bitCast(@divTrunc(@as(i24, @bitCast(INPUTS)), 65_536))) else @as(u24, @bitCast(SHIFTED)) >> 12);
+            ADRS_REG = @truncate(@as(u24, @bitCast(if (instruction.SHFT == 3)
+                @as(i24, @bitCast(INPUTS)) >> 16
+            else
+                SHIFTED >> 12)));
 
         // - Effect output write
         //   If EWT is set, write (SHIFTED >> 8) into the EFREG register specified by EWA (0x0-0xF).
-        if (instruction.EWT) self._efreg(instruction.EWA).* = @as(u16, @truncate(@as(u24, @bitCast(SHIFTED)) >> 8));
+        if (instruction.EWT) self._efreg(instruction.EWA).* = @bitCast(@as(i16, @truncate(SHIFTED >> 8)));
     }
 
     self.MDEC_CT -= 1;

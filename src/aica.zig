@@ -1013,11 +1013,17 @@ pub const AICA = struct {
             //        0xE       |   -3dB
             //        0xF       |    0dB
 
+            if (self.enable_dsp) self.dsp.clear_mixs();
+
             for (0..64) |i| {
                 self.update_channel(@intCast(i));
             }
 
             const cdda_samples = dc.gdrom.get_cdda_samples();
+
+            const offset = self.sample_write_offset;
+            std.debug.assert(offset % 2 == 0);
+            std.debug.assert(offset + 1 < self.sample_buffer.len);
 
             if (self.enable_dsp) {
                 self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
@@ -1026,32 +1032,32 @@ pub const AICA = struct {
                 for (0..16) |channel| {
                     const mix = self.get_dsp_mix_register(@intCast(channel)).*;
                     const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
-                    self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] +|= sample.left;
-                    self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] +|= sample.right;
+                    self.sample_buffer[offset + 0] +|= sample.left;
+                    self.sample_buffer[offset + 1] +|= sample.right;
                 }
             }
 
             // Stream from GD-ROM
-            const left_out = self.get_reg(DSPOutputMixer, .CDDAOutputLeft).*;
-            const right_out = self.get_reg(DSPOutputMixer, .CDDAOutputRight).*;
-
+            const cdda_mix = .{
+                self.get_reg(DSPOutputMixer, .CDDAOutputLeft).*,
+                self.get_reg(DSPOutputMixer, .CDDAOutputRight).*,
+            };
             // I guess each channel can be independently redirected. That's a little weird, but mmh, ok.
-            const left_sample = apply_pan_attenuation(cdda_samples[0], left_out.efsdl, left_out.efpan);
-            self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] +|= left_sample.left;
-            self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] +|= left_sample.right;
-            const right_sample = apply_pan_attenuation(cdda_samples[1], right_out.efsdl, right_out.efpan);
-            self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] +|= right_sample.left;
-            self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] +|= right_sample.right;
+            inline for (0..2) |channel| {
+                const sample = apply_pan_attenuation(cdda_samples[channel], cdda_mix[channel].efsdl, cdda_mix[channel].efpan);
+                self.sample_buffer[offset + 0] +|= sample.left;
+                self.sample_buffer[offset + 1] +|= sample.right;
+            }
 
             const attenuation = 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F);
             if (attenuation == 0xF) {
-                self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] = 0;
-                self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] = 0;
+                self.sample_buffer[offset + 0] = 0;
+                self.sample_buffer[offset + 1] = 0;
             } else {
                 const factor = std.math.pow(i32, 2, attenuation);
                 // zig doesn't have a arithmetic shift right :(
-                self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 0) % self.sample_buffer.len], factor);
-                self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len] = @divTrunc(self.sample_buffer[(self.sample_write_offset + 1) % self.sample_buffer.len], factor);
+                self.sample_buffer[offset + 0] = @divTrunc(self.sample_buffer[offset + 0], factor);
+                self.sample_buffer[offset + 1] = @divTrunc(self.sample_buffer[offset + 1], factor);
             }
 
             self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
