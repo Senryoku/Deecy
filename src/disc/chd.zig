@@ -15,25 +15,58 @@ _file: MemoryMappedFile,
 
 const Tag = "MComprHD";
 
-const Compression = enum(u32) {
-    none = 0,
-    zlib = tag("zlib"),
-    zstd = tag("zstd"),
-    lzma = tag("lzma"),
-    huffman = tag("huff"),
-    flag = tag("flac"),
+fn make_tag(comptime t: *const [4:0]u8) u32 {
+    return @as(u32, t[0]) << 24 | @as(u32, t[1]) << 16 | @as(u32, t[2]) << 8 | @as(u32, t[3]) << 0;
+}
 
-    cd_zlib = tag("cdzl"),
-    cd_zstd = tag("cdzs"),
-    cd_lzma = tag("cdlz"),
-    cd_flac = tag("cdfl"),
+const Compression = enum(u32) {
+    None = 0,
+    Zlib = make_tag("zlib"),
+    Zstd = make_tag("zstd"),
+    LZMA = make_tag("lzma"),
+    Huffman = make_tag("huff"),
+    Flac = make_tag("flac"),
+
+    CD_Zlib = make_tag("cdzl"),
+    CD_Zstd = make_tag("cdzs"),
+    CD_LZMA = make_tag("cdlz"),
+    CD_Flac = make_tag("cdfl"),
 
     _,
-
-    fn tag(comptime t: *const [4:0]u8) u32 {
-        return @as(u32, t[0]) << 24 | @as(u32, t[1]) << 16 | @as(u32, t[2]) << 8 | @as(u32, t[3]) << 0;
-    }
 };
+
+const CompressionType = enum(u8) {
+    Type0 = 0,
+    Type1 = 1,
+    Type2 = 2,
+    Type3 = 3,
+    None = 4,
+    Self = 5,
+    Parent = 6,
+    // ...
+    RLESmall = 7,
+    RLELarge = 8,
+    Self0 = 9,
+    Self1 = 10,
+    ParentSelf = 11,
+    Parent0 = 12,
+    Parent1 = 13,
+    _,
+};
+
+const MetadataTag = enum(u32) {
+    HardDisk = make_tag("GDDD"),
+    HardDiskIdent = make_tag("IDNT"),
+    HardDiskKey = make_tag("KEY "),
+    PCMCIACIS = make_tag("CIS "),
+    CDROMOld = make_tag("CHCD"),
+    CDROMTrack = make_tag("CHTR"),
+    CDROMTrack2 = make_tag("CHT2"),
+    GDROMOld = make_tag("CHGT"),
+    GDROMTrack = make_tag("CHGD"),
+    _,
+};
+
 fn crc16(data: []const u8) u16 {
     var crc: u16 = 0xffff;
 
@@ -75,6 +108,44 @@ fn crc16(data: []const u8) u16 {
     for (data) |d|
         crc = (crc << 8) ^ s_table[(crc >> 8) ^ d];
     return crc;
+}
+
+const MetadataEntry = struct {
+    tag: MetadataTag,
+    offset: u64,
+    length: u32,
+    next: u64,
+    flags: u8,
+};
+
+fn search_metadata(file: anytype, meta_offset: u64, tag: MetadataTag, index: u32) !MetadataEntry {
+    var offset: u64 = meta_offset;
+    var current_index: u32 = 0;
+
+    var reader = file.reader();
+
+    while (offset != 0) {
+        var entry: MetadataEntry = undefined;
+        try file.seekTo(offset);
+        entry.tag = @enumFromInt(try reader.readInt(u32, .big));
+        entry.length = try reader.readInt(u32, .big);
+        entry.next = try reader.readInt(u64, .big);
+
+        entry.offset = offset;
+        entry.flags = @truncate(entry.length >> 24);
+        entry.length &= 0x00FFFFFF;
+
+        if (entry.tag == tag) {
+            if (current_index == index) return entry;
+            current_index += 1;
+        }
+
+        std.debug.print("  (search_metadata) Entry: {any}\n", .{entry});
+
+        offset = entry.next;
+    }
+
+    return error.NotFound;
 }
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
@@ -264,8 +335,11 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 }
             }
 
-            // FIXME: I don't now how to handle pulled and unused bits elegantly. Hacking in special cases for each possible next read for now.
-            // std.debug.assert(decod.unused_bits == 0);
+            if (decod.unused_bits != 0) {
+                const pos = try file.getPos();
+                try file.seekTo(pos - 1);
+                _ = try bit_reader.readBitsNoEof(u8, 8 - decod.unused_bits);
+            }
 
             var curoffset: u48 = first_offset;
             var last_self: u48 = 0;
@@ -275,24 +349,12 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 var crc: u16 = 0;
                 switch (map[i].compression) {
                     .Type0, .Type1, .Type2, .Type3 => {
-                        if (decod.unused_bits > 0) {
-                            length = try bit_reader.readBitsNoEof(u24, length_bits - decod.unused_bits);
-                            length |= @as(u24, decod.bits) << @intCast(24 - 8);
-                            decod.unused_bits = 0;
-                        } else {
-                            length = try bit_reader.readBitsNoEof(u24, length_bits);
-                        }
+                        length = try bit_reader.readBitsNoEof(u24, length_bits);
                         curoffset += length;
                         crc = try bit_reader.readBitsNoEof(u16, 16);
                     },
                     .Self => {
-                        if (decod.unused_bits > 0) {
-                            offset = try bit_reader.readBitsNoEof(u48, self_bits - decod.unused_bits);
-                            offset |= @as(u48, decod.bits) << @intCast(48 - 8);
-                            decod.unused_bits = 0;
-                        } else {
-                            offset = try bit_reader.readBitsNoEof(u48, self_bits);
-                        }
+                        offset = try bit_reader.readBitsNoEof(u48, self_bits);
                         last_self = offset;
                     },
                     .Self0, .Self1 => |t| {
@@ -322,6 +384,139 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             log.debug("  map: {X}", .{std.mem.sliceAsBytes(map)[0..24]});
             log.debug("  raw_map: {X}", .{std.mem.sliceAsBytes(raw_map)[0..24]});
 
+            const track_types = [_]MetadataTag{
+                .GDROMTrack,
+                .GDROMOld,
+                .CDROMTrack2,
+                .CDROMOld,
+            };
+
+            var current_track: MetadataEntry = undefined;
+            var track_tag: ?MetadataTag = null;
+            for (track_types) |t| {
+                current_track = search_metadata(file, meta_offset, t, 0) catch |err| switch (err) {
+                    error.NotFound => continue,
+                    else => |e| return e,
+                };
+                track_tag = t;
+                break;
+            }
+
+            if (track_tag == null) return error.NoTracks;
+
+            var tracks = std.ArrayList(MetadataEntry).init(allocator);
+            defer tracks.deinit();
+            try tracks.append(current_track);
+
+            while (current_track.next != 0) {
+                current_track = search_metadata(file, current_track.next, track_tag.?, 0) catch |err| switch (err) {
+                    error.NotFound => break,
+                    else => |e| return e,
+                };
+                try tracks.append(current_track);
+            }
+
+            var current_fad: u32 = 0;
+            for (tracks.items) |track| {
+                log.debug("Metadata entry: {any}", .{track});
+                try file.seekTo(track.offset + 16);
+                switch (track.tag) {
+                    .GDROMTrack => {
+                        const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
+                        defer allocator.free(buffer);
+
+                        // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
+                        _ = try reader.read(buffer);
+                        log.debug("  '{s}'", .{buffer});
+                        var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
+                        const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
+                        log.debug("    track_num: {d}", .{track_num});
+                        const track_type_str = iterator.next().?["TYPE:".len..];
+                        log.debug("    track_type: {s}", .{track_type_str});
+                        const sub_type = iterator.next().?["SUBTYPE:".len..];
+                        log.debug("    sub_type: {s}", .{sub_type});
+                        const frames = try std.fmt.parseInt(u32, iterator.next().?["FRAMES:".len..], 10);
+                        log.debug("    frames: {d}", .{frames});
+                        const pad = try std.fmt.parseInt(u32, iterator.next().?["PAD:".len..], 10);
+                        log.debug("    pad: {d}", .{pad});
+                        const pregap = try std.fmt.parseInt(u32, iterator.next().?["PREGAP:".len..], 10);
+                        log.debug("    pregap: {d}", .{pregap});
+                        const pgtype = iterator.next().?["PGTYPE:".len..];
+                        log.debug("    pgtype: {s}", .{pgtype});
+                        const pgsub = iterator.next().?["PGSUB:".len..];
+                        log.debug("    pgsub: {s}", .{pgsub});
+                        const postgap = try std.fmt.parseInt(u32, iterator.next().?["POSTGAP:".len..], 10);
+                        log.debug("    postgap: {d}", .{postgap});
+
+                        const track_type: u8 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 0 else 4;
+
+                        const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) 2352 else return error.UnsupportedFormat;
+
+                        const CD_MAX_SECTOR_DATA = 2352;
+                        const CD_MAX_SUBCODE_DATA = 96;
+                        const CD_FRAME_SIZE = (CD_MAX_SECTOR_DATA + CD_MAX_SUBCODE_DATA);
+
+                        const data = try allocator.alloc(u8, CD_MAX_SECTOR_DATA * frames);
+                        const sectors_per_hunk = hunk_bytes / CD_FRAME_SIZE;
+
+                        var cursor: usize = 0;
+                        // var trash: [96]u8 = undefined;
+
+                        for (@divTrunc(current_fad, sectors_per_hunk)..@divTrunc(current_fad + frames, sectors_per_hunk)) |hunk| {
+                            log.debug("Hunk: {d}/{d} - {any}", .{ hunk, sectors_per_hunk, map[hunk] });
+                            const compression = switch (map[hunk].compression) {
+                                .Type0 => compressors[0],
+                                .Type1 => compressors[1],
+                                .Type2 => compressors[2],
+                                .Type3 => compressors[3],
+                                else => return error.UnsupportedCompressionType,
+                            };
+                            switch (compression) {
+                                .CD_LZMA => {
+                                    const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
+                                    const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
+                                    const header_bytes: u32 = ecc_bytes + complen_bytes;
+                                    try file.seekTo(map[hunk].offset);
+                                    std.debug.print("    ECC Bytes: ", .{});
+                                    for (0..ecc_bytes) |_| {
+                                        std.debug.print(" {X}", .{try reader.readByte()});
+                                    }
+                                    std.debug.print("\n", .{});
+                                    const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
+                                    std.debug.print("    Compressed Length: {X} - {d}\n", .{ complen, complen });
+
+                                    try file.seekTo(map[hunk].offset + header_bytes);
+                                    var decompressor = try std.compress.lzma.decompressWithOptions(allocator, reader, .{
+                                        .unpacked_size = .{
+                                            .use_provided = hunk_bytes,
+                                        },
+                                    });
+                                    defer decompressor.deinit();
+                                    cursor += try decompressor.read(data[cursor .. cursor + hunk_bytes]);
+                                    //for (0..sectors_per_hunk) |i| {
+                                    //    cursor += try decompressor.read(data[cursor .. cursor + 2352]);
+                                    //    // std.debug.assert(try decompressor.read(&trash) == 96);
+                                    //    std.debug.print("  Decompressed sector #{d}\n", .{i});
+                                    //}
+                                },
+                                else => return error.UnsupportedCompressionType,
+                            }
+                        }
+
+                        try self.tracks.append(.{
+                            .num = track_num,
+                            .fad = current_fad,
+                            .track_type = track_type,
+                            .format = format,
+                            .pregap = 0,
+                            .data = data,
+                        });
+                        current_fad += frames;
+                    },
+                    else => {},
+                }
+            }
+
             return error.TODO;
         },
         else => {
@@ -332,25 +527,6 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
     return self;
 }
-
-const CompressionType = enum(u8) {
-    Type0 = 0,
-    Type1 = 1,
-    Type2 = 2,
-    Type3 = 3,
-    None = 4,
-    Self = 5,
-    Parent = 6,
-    // ...
-    RLESmall = 7,
-    RLELarge = 8,
-    Self0 = 9,
-    Self1 = 10,
-    ParentSelf = 11,
-    Parent0 = 12,
-    Parent1 = 13,
-    _,
-};
 
 const decoder = struct {
     const MaxBits = 8;
@@ -376,45 +552,6 @@ const decoder = struct {
         return @truncate(value);
     }
 };
-
-fn track_header(reader: anytype) !void {
-    const null_or_extra = try reader.readInt(u32, .little);
-    if (null_or_extra != 0)
-        try reader.skipBytes(8, .{});
-    const track_start_mark = try reader.readInt(u160, .big);
-    if (track_start_mark != 0x0000_0100_0000_FFFF_FFFF_0000_0100_0000_FFFF_FFFF) {
-        log.err("  Invalid Track Start Mark: {X}", .{track_start_mark});
-        return error.InvalidCDI;
-    }
-    try reader.skipBytes(4, .{});
-
-    const filename_length = try reader.readInt(u8, .little);
-    var buffer: [256]u8 = undefined;
-    const filename = buffer[0..filename_length];
-    _ = try reader.read(filename);
-    log.debug("    Filename: {s}", .{filename});
-    try reader.skipBytes(1 + 10 + 4 + 4, .{});
-
-    const v4_mark = try reader.readInt(u32, .little);
-    const max_cd_length = mcl: {
-        if (v4_mark != 0x80000000) {
-            break :mcl v4_mark;
-        } else {
-            const max_cd_length = try reader.readInt(u32, .little);
-            const v4_mark_2 = try reader.readInt(u32, .little);
-            if (v4_mark_2 != 0x980000) {
-                log.debug("  V4 Mark 2: {X}", .{v4_mark_2});
-                return error.InvalidCDI;
-            }
-            break :mcl max_cd_length;
-        }
-    };
-    if (max_cd_length != 0x514C8 and max_cd_length != 0x57E40) {
-        log.err("  Invalid max_cd_length: {X}", .{max_cd_length});
-        return error.InvalidCDI;
-    }
-    log.debug("    Max CD Length: {X}", .{max_cd_length});
-}
 
 pub fn deinit(self: *@This()) void {
     self.sessions.deinit();

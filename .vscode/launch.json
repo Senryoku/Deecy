@@ -21,7 +21,7 @@
 			"request": "launch",
 			"target": "${workspaceFolder}/zig-out/bin/Deecy",
 			"cwd": "${workspaceFolder}",
-			"preLaunchTask": "build",
+			"preLaunchTask": "build"
 		},
 		{
 			"name": "Debug",
@@ -29,8 +29,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				"-g",
-				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
+				//	"-g",
+				//	"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
