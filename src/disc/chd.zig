@@ -486,18 +486,24 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                                     std.debug.print("    Compressed Length: {X} - {d}\n", .{ complen, complen });
 
                                     try file.seekTo(map[hunk].offset + header_bytes);
-                                    var decompressor = try std.compress.lzma.decompressWithOptions(allocator, reader, .{
-                                        .unpacked_size = .{
-                                            .use_provided = hunk_bytes,
+                                    std.debug.print(" Compressed: ", .{});
+                                    for (0..32) |_|
+                                        std.debug.print(" {X}", .{try reader.readByte()});
+                                    std.debug.print(" \n ", .{});
+
+                                    try file.seekTo(map[hunk].offset + header_bytes);
+                                    var decompressor = try std.compress.lzma.Decompress(@TypeOf(reader)).init(allocator, reader, .{
+                                        // There is no LZMA headers and these parameters are implicit...
+                                        .properties = .{
+                                            .lc = 3,
+                                            .lp = 0,
+                                            .pb = 2,
                                         },
-                                    });
+                                        .dict_size = 0x6000,
+                                        .unpacked_size = sectors_per_hunk * CD_MAX_SECTOR_DATA,
+                                    }, null);
                                     defer decompressor.deinit();
-                                    cursor += try decompressor.read(data[cursor .. cursor + hunk_bytes]);
-                                    //for (0..sectors_per_hunk) |i| {
-                                    //    cursor += try decompressor.read(data[cursor .. cursor + 2352]);
-                                    //    // std.debug.assert(try decompressor.read(&trash) == 96);
-                                    //    std.debug.print("  Decompressed sector #{d}\n", .{i});
-                                    //}
+                                    cursor += try decompressor.read(data[cursor .. cursor + sectors_per_hunk * CD_MAX_SECTOR_DATA]);
                                 },
                                 else => return error.UnsupportedCompressionType,
                             }
