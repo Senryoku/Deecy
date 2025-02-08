@@ -123,6 +123,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             log.debug("  Raw SHA1: {X}", .{raw_sha1});
             log.debug("  SHA1: {X}", .{sha1});
             log.debug("  Parent SHA1: {X}", .{parent_sha1});
+            log.debug("  Hunk Count: {X}", .{hunk_count});
 
             try file.seekTo(map_offset);
 
@@ -263,6 +264,9 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 }
             }
 
+            // FIXME: I don't now how to handle pulled and unused bits elegantly. Hacking in special cases for each possible next read for now.
+            // std.debug.assert(decod.unused_bits == 0);
+
             var curoffset: u48 = first_offset;
             var last_self: u48 = 0;
             for (0..hunk_count) |i| {
@@ -271,12 +275,24 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 var crc: u16 = 0;
                 switch (map[i].compression) {
                     .Type0, .Type1, .Type2, .Type3 => {
-                        length = try bit_reader.readBitsNoEof(u24, length_bits);
+                        if (decod.unused_bits > 0) {
+                            length = try bit_reader.readBitsNoEof(u24, length_bits - decod.unused_bits);
+                            length |= @as(u24, decod.bits) << @intCast(24 - 8);
+                            decod.unused_bits = 0;
+                        } else {
+                            length = try bit_reader.readBitsNoEof(u24, length_bits);
+                        }
                         curoffset += length;
                         crc = try bit_reader.readBitsNoEof(u16, 16);
                     },
                     .Self => {
-                        offset = try bit_reader.readBitsNoEof(u48, self_bits);
+                        if (decod.unused_bits > 0) {
+                            offset = try bit_reader.readBitsNoEof(u48, self_bits - decod.unused_bits);
+                            offset |= @as(u48, decod.bits) << @intCast(48 - 8);
+                            decod.unused_bits = 0;
+                        } else {
+                            offset = try bit_reader.readBitsNoEof(u48, self_bits);
+                        }
                         last_self = offset;
                     },
                     .Self0, .Self1 => |t| {
@@ -293,14 +309,16 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 map[i].offset = offset;
                 map[i].crc = crc;
 
+                //log.debug("  MapEntry[{d}]: {any}", .{ i, map[i] });
+
                 raw_map[12 * i] = @intFromEnum(map[i].compression);
                 std.mem.bytesAsValue(u24, raw_map[12 * i + 1 ..]).* = @byteSwap(length);
                 std.mem.bytesAsValue(u48, raw_map[12 * i + 4 ..]).* = @byteSwap(offset);
                 std.mem.bytesAsValue(u16, raw_map[12 * i + 10 ..]).* = @byteSwap(crc);
             }
-
-            //log.debug("  raw_map: {any}", .{raw_map});
             log.debug("  crc: {X} / {X}", .{ map_crc, crc16(raw_map) });
+            if (map_crc != crc16(raw_map)) return error.InvalidMapCRC;
+
             log.debug("  map: {X}", .{std.mem.sliceAsBytes(map)[0..24]});
             log.debug("  raw_map: {X}", .{std.mem.sliceAsBytes(raw_map)[0..24]});
 
