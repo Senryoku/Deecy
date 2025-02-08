@@ -430,22 +430,23 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         log.debug("  '{s}'", .{buffer});
                         var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
                         const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
-                        log.debug("    track_num: {d}", .{track_num});
                         const track_type_str = iterator.next().?["TYPE:".len..];
-                        log.debug("    track_type: {s}", .{track_type_str});
                         const sub_type = iterator.next().?["SUBTYPE:".len..];
-                        log.debug("    sub_type: {s}", .{sub_type});
                         const frames = try std.fmt.parseInt(u32, iterator.next().?["FRAMES:".len..], 10);
-                        log.debug("    frames: {d}", .{frames});
                         const pad = try std.fmt.parseInt(u32, iterator.next().?["PAD:".len..], 10);
-                        log.debug("    pad: {d}", .{pad});
                         const pregap = try std.fmt.parseInt(u32, iterator.next().?["PREGAP:".len..], 10);
-                        log.debug("    pregap: {d}", .{pregap});
-                        const pgtype = iterator.next().?["PGTYPE:".len..];
-                        log.debug("    pgtype: {s}", .{pgtype});
                         const pgsub = iterator.next().?["PGSUB:".len..];
-                        log.debug("    pgsub: {s}", .{pgsub});
+                        const pgtype = iterator.next().?["PGTYPE:".len..];
                         const postgap = try std.fmt.parseInt(u32, iterator.next().?["POSTGAP:".len..], 10);
+
+                        log.debug("    track_num: {d}", .{track_num});
+                        log.debug("    track_type: {s}", .{track_type_str});
+                        log.debug("    sub_type: {s}", .{sub_type});
+                        log.debug("    frames: {d}", .{frames});
+                        log.debug("    pad: {d}", .{pad});
+                        log.debug("    pregap: {d}", .{pregap});
+                        log.debug("    pgtype: {s}", .{pgtype});
+                        log.debug("    pgsub: {s}", .{pgsub});
                         log.debug("    postgap: {d}", .{postgap});
 
                         const track_type: u8 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 0 else 4;
@@ -460,10 +461,12 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const sectors_per_hunk = hunk_bytes / CD_FRAME_SIZE;
 
                         var cursor: usize = 0;
-                        // var trash: [96]u8 = undefined;
+
+                        const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
+                        const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
+                        const header_bytes: u32 = ecc_bytes + complen_bytes;
 
                         for (@divTrunc(current_fad, sectors_per_hunk)..@divTrunc(current_fad + frames, sectors_per_hunk)) |hunk| {
-                            log.debug("Hunk: {d}/{d} - {any}", .{ hunk, sectors_per_hunk, map[hunk] });
                             const compression = switch (map[hunk].compression) {
                                 .Type0 => compressors[0],
                                 .Type1 => compressors[1],
@@ -473,23 +476,9 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                             };
                             switch (compression) {
                                 .CD_LZMA => {
-                                    const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
-                                    const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
-                                    const header_bytes: u32 = ecc_bytes + complen_bytes;
-                                    try file.seekTo(map[hunk].offset);
-                                    std.debug.print("    ECC Bytes: ", .{});
-                                    for (0..ecc_bytes) |_| {
-                                        std.debug.print(" {X}", .{try reader.readByte()});
-                                    }
-                                    std.debug.print("\n", .{});
-                                    const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
-                                    std.debug.print("    Compressed Length: {X} - {d}\n", .{ complen, complen });
-
-                                    try file.seekTo(map[hunk].offset + header_bytes);
-                                    std.debug.print(" Compressed: ", .{});
-                                    for (0..32) |_|
-                                        std.debug.print(" {X}", .{try reader.readByte()});
-                                    std.debug.print(" \n ", .{});
+                                    // try file.seekTo(map[hunk].offset);
+                                    // const ecc = try reader.readBytesNoEof(ecc_bytes);
+                                    // const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
 
                                     try file.seekTo(map[hunk].offset + header_bytes);
                                     var decompressor = try std.compress.lzma.Decompress(@TypeOf(reader)).init(allocator, reader, .{
@@ -505,7 +494,18 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                                     defer decompressor.deinit();
                                     cursor += try decompressor.read(data[cursor .. cursor + sectors_per_hunk * CD_MAX_SECTOR_DATA]);
                                 },
-                                else => return error.UnsupportedCompressionType,
+                                .CD_Zlib => {
+                                    try file.seekTo(map[hunk].offset + header_bytes);
+                                    var output_stream = std.io.fixedBufferStream(data[cursor..]);
+                                    try std.compress.flate.decompress(reader, output_stream.writer());
+                                    cursor += try output_stream.getPos();
+                                },
+                                else => {
+                                    log.err("Unsupported compression type: {d}", .{compression});
+                                    log.err("  Track: {any}", .{track});
+
+                                    return error.UnsupportedCompressionType;
+                                },
                             }
                         }
 
@@ -519,7 +519,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         });
                         current_fad += frames;
                     },
-                    else => {},
+                    else => return error.UnsupportedTrackType,
                 }
             }
 
