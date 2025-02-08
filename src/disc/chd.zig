@@ -9,11 +9,26 @@ const log = std.log.scoped(.chd);
 
 tracks: std.ArrayList(Track),
 sessions: std.ArrayList(Session),
+
+version: u32 = undefined,
+compressors: [4]Compression = undefined,
+logical_bytes: u64 = undefined,
+map_offset: u64 = undefined,
+meta_offset: u64 = undefined,
+hunk_bytes: u32 = undefined,
+unit_bytes: u32 = undefined,
+map: []MapEntry = undefined,
+
 _file: MemoryMappedFile,
+
+_allocator: std.mem.Allocator,
 
 // NOTE: All number are big endian.
 
 const Tag = "MComprHD";
+const CD_MAX_SECTOR_DATA = 2352;
+const CD_MAX_SUBCODE_DATA = 96;
+const CD_FRAME_SIZE = (CD_MAX_SECTOR_DATA + CD_MAX_SUBCODE_DATA);
 
 fn make_tag(comptime t: *const [4:0]u8) u32 {
     return @as(u32, t[0]) << 24 | @as(u32, t[1]) << 16 | @as(u32, t[2]) << 8 | @as(u32, t[3]) << 0;
@@ -53,6 +68,8 @@ const CompressionType = enum(u8) {
     Parent1 = 13,
     _,
 };
+
+const MapEntry = struct { compression: CompressionType, length: u24, offset: u48, crc: u16 };
 
 const MetadataTag = enum(u32) {
     HardDisk = make_tag("GDDD"),
@@ -153,6 +170,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         .tracks = std.ArrayList(Track).init(allocator),
         .sessions = std.ArrayList(Session).init(allocator),
         ._file = try MemoryMappedFile.init(filepath, allocator),
+        ._allocator = allocator,
     };
     errdefer self.deinit();
 
@@ -163,40 +181,42 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     const tag = try reader.readBytesNoEof(8);
     if (!std.mem.eql(u8, &tag, Tag)) return error.InvalidCHD;
     const header_length = try reader.readInt(u32, .big);
-    const version = try reader.readInt(u32, .big);
+    self.version = try reader.readInt(u32, .big);
 
-    switch (version) {
+    switch (self.version) {
         5 => {
             if (header_length != 124) return error.InvalidCHDv5;
-            const compressors = [4]Compression{
+            self.compressors = [4]Compression{
                 @enumFromInt(try reader.readInt(u32, .big)),
                 @enumFromInt(try reader.readInt(u32, .big)),
                 @enumFromInt(try reader.readInt(u32, .big)),
                 @enumFromInt(try reader.readInt(u32, .big)),
             };
-            const logical_bytes = try reader.readInt(u64, .big);
-            const map_offset = try reader.readInt(u64, .big);
-            const meta_offset = try reader.readInt(u64, .big);
-            const hunk_bytes = try reader.readInt(u32, .big);
-            const unit_bytes = try reader.readInt(u32, .big);
+            self.logical_bytes = try reader.readInt(u64, .big);
+            self.map_offset = try reader.readInt(u64, .big);
+            self.meta_offset = try reader.readInt(u64, .big);
+            self.hunk_bytes = try reader.readInt(u32, .big);
+            self.unit_bytes = try reader.readInt(u32, .big);
             const raw_sha1 = try reader.readBytesNoEof(20);
             const sha1 = try reader.readBytesNoEof(20);
             const parent_sha1 = try reader.readBytesNoEof(20);
 
-            const hunk_count = (logical_bytes + hunk_bytes - 1) / hunk_bytes;
+            const hunk_count = (self.logical_bytes + self.hunk_bytes - 1) / self.hunk_bytes;
 
-            log.debug("  Compressor: {any}", .{compressors});
-            log.debug("  Logical Bytes: {X}", .{logical_bytes});
-            log.debug("  Map Offset: {X}", .{map_offset});
-            log.debug("  Meta Offset: {X}", .{meta_offset});
-            log.debug("  Hunk Bytes: {X}", .{hunk_bytes});
-            log.debug("  Unit Bytes: {X}", .{unit_bytes});
+            self.map = try allocator.alloc(MapEntry, hunk_count);
+
+            log.debug("  Compressor: {any}", .{self.compressors});
+            log.debug("  Logical Bytes: {X}", .{self.logical_bytes});
+            log.debug("  Map Offset: {X}", .{self.map_offset});
+            log.debug("  Meta Offset: {X}", .{self.meta_offset});
+            log.debug("  Hunk Bytes: {X}", .{self.hunk_bytes});
+            log.debug("  Unit Bytes: {X}", .{self.unit_bytes});
             log.debug("  Raw SHA1: {X}", .{raw_sha1});
             log.debug("  SHA1: {X}", .{sha1});
             log.debug("  Parent SHA1: {X}", .{parent_sha1});
             log.debug("  Hunk Count: {X}", .{hunk_count});
 
-            try file.seekTo(map_offset);
+            try file.seekTo(self.map_offset);
 
             const map_bytes = try reader.readInt(u32, .big);
             const first_offset = try reader.readInt(u48, .big);
@@ -213,9 +233,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             log.debug("  Parent Bits: {X}", .{parent_bits});
 
             // Map is compressed using huffman running length encoding.
-            // I don't really want to reimplement all of that...
-
-            try file.seekTo(map_offset + 16);
+            try file.seekTo(self.map_offset + 16);
 
             const NumCodes = 16;
             const MaxBits = 8;
@@ -300,14 +318,12 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             }
             log.debug("  lookup: {X}", .{lookup});
 
-            var decod = decoder{
+            var decod = MapDecoder{
                 .lookup = lookup,
             };
 
             // const map_entry_bytes = 12; // FIXME: If uncompressed: 4;
             // const raw_map_size = hunk_count * map_entry_bytes;
-            const map = try allocator.alloc(packed struct(u96) { compression: CompressionType, length: u24, offset: u48, crc: u16 }, hunk_count);
-            defer allocator.free(map);
 
             // For CRC computation only
             const raw_map = try allocator.alloc(u8, 12 * hunk_count);
@@ -317,19 +333,19 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             var rep_count: usize = 0;
             for (0..hunk_count) |i| {
                 if (rep_count > 0) {
-                    map[i].compression = last_comp;
+                    self.map[i].compression = last_comp;
                     rep_count -= 1;
                 } else {
                     const val: CompressionType = @enumFromInt(try decod.next(&bit_reader));
                     if (val == .RLESmall) {
-                        map[i].compression = last_comp;
+                        self.map[i].compression = last_comp;
                         rep_count = 2 + try decod.next(&bit_reader);
                     } else if (val == .RLELarge) {
-                        map[i].compression = last_comp;
+                        self.map[i].compression = last_comp;
                         rep_count = 2 + 16 + (@as(usize, @intCast(try decod.next(&bit_reader))) << 4);
                         rep_count += try decod.next(&bit_reader);
                     } else {
-                        map[i].compression = val;
+                        self.map[i].compression = val;
                         last_comp = val;
                     }
                 }
@@ -347,7 +363,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 var length: u24 = 0;
                 var offset: u48 = curoffset;
                 var crc: u16 = 0;
-                switch (map[i].compression) {
+                switch (self.map[i].compression) {
                     .Type0, .Type1, .Type2, .Type3 => {
                         length = try bit_reader.readBitsNoEof(u24, length_bits);
                         curoffset += length;
@@ -359,30 +375,27 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                     },
                     .Self0, .Self1 => |t| {
                         if (t == .Self1) last_self += 1;
-                        map[i].compression = .Self;
+                        self.map[i].compression = .Self;
                         offset = last_self;
                     },
                     else => {
-                        log.err("  Compression type {any} not supported.", .{map[i].compression});
+                        log.err("  Compression type {any} not supported.", .{self.map[i].compression});
                         return error.COMPRESSION_TYPE_TODO;
                     },
                 }
-                map[i].length = length;
-                map[i].offset = offset;
-                map[i].crc = crc;
+                self.map[i].length = length;
+                self.map[i].offset = offset;
+                self.map[i].crc = crc;
 
                 //log.debug("  MapEntry[{d}]: {any}", .{ i, map[i] });
 
-                raw_map[12 * i] = @intFromEnum(map[i].compression);
+                raw_map[12 * i] = @intFromEnum(self.map[i].compression);
                 std.mem.bytesAsValue(u24, raw_map[12 * i + 1 ..]).* = @byteSwap(length);
                 std.mem.bytesAsValue(u48, raw_map[12 * i + 4 ..]).* = @byteSwap(offset);
                 std.mem.bytesAsValue(u16, raw_map[12 * i + 10 ..]).* = @byteSwap(crc);
             }
-            log.debug("  crc: {X} / {X}", .{ map_crc, crc16(raw_map) });
+            log.debug("  Map CRC: {X} / {X}", .{ map_crc, crc16(raw_map) });
             if (map_crc != crc16(raw_map)) return error.InvalidMapCRC;
-
-            log.debug("  map: {X}", .{std.mem.sliceAsBytes(map)[0..24]});
-            log.debug("  raw_map: {X}", .{std.mem.sliceAsBytes(raw_map)[0..24]});
 
             const track_types = [_]MetadataTag{
                 .GDROMTrack,
@@ -394,7 +407,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             var current_track: MetadataEntry = undefined;
             var track_tag: ?MetadataTag = null;
             for (track_types) |t| {
-                current_track = search_metadata(file, meta_offset, t, 0) catch |err| switch (err) {
+                current_track = search_metadata(file, self.meta_offset, t, 0) catch |err| switch (err) {
                     error.NotFound => continue,
                     else => |e| return e,
                 };
@@ -453,60 +466,14 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
                         const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) 2352 else return error.UnsupportedFormat;
 
-                        const CD_MAX_SECTOR_DATA = 2352;
-                        const CD_MAX_SUBCODE_DATA = 96;
-                        const CD_FRAME_SIZE = (CD_MAX_SECTOR_DATA + CD_MAX_SUBCODE_DATA);
-
                         const data = try allocator.alloc(u8, CD_MAX_SECTOR_DATA * frames);
-                        const sectors_per_hunk = hunk_bytes / CD_FRAME_SIZE;
+
+                        const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
 
                         var cursor: usize = 0;
 
-                        const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
-                        const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
-                        const header_bytes: u32 = ecc_bytes + complen_bytes;
-
                         for (@divTrunc(current_fad, sectors_per_hunk)..@divTrunc(current_fad + frames, sectors_per_hunk)) |hunk| {
-                            const compression = switch (map[hunk].compression) {
-                                .Type0 => compressors[0],
-                                .Type1 => compressors[1],
-                                .Type2 => compressors[2],
-                                .Type3 => compressors[3],
-                                else => return error.UnsupportedCompressionType,
-                            };
-                            switch (compression) {
-                                .CD_LZMA => {
-                                    // try file.seekTo(map[hunk].offset);
-                                    // const ecc = try reader.readBytesNoEof(ecc_bytes);
-                                    // const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
-
-                                    try file.seekTo(map[hunk].offset + header_bytes);
-                                    var decompressor = try std.compress.lzma.Decompress(@TypeOf(reader)).init(allocator, reader, .{
-                                        // There is no LZMA headers and these parameters are implicit...
-                                        .properties = .{
-                                            .lc = 3,
-                                            .lp = 0,
-                                            .pb = 2,
-                                        },
-                                        .dict_size = 0x6000,
-                                        .unpacked_size = sectors_per_hunk * CD_MAX_SECTOR_DATA,
-                                    }, null);
-                                    defer decompressor.deinit();
-                                    cursor += try decompressor.read(data[cursor .. cursor + sectors_per_hunk * CD_MAX_SECTOR_DATA]);
-                                },
-                                .CD_Zlib => {
-                                    try file.seekTo(map[hunk].offset + header_bytes);
-                                    var output_stream = std.io.fixedBufferStream(data[cursor..]);
-                                    try std.compress.flate.decompress(reader, output_stream.writer());
-                                    cursor += try output_stream.getPos();
-                                },
-                                else => {
-                                    log.err("Unsupported compression type: {d}", .{compression});
-                                    log.err("  Track: {any}", .{track});
-
-                                    return error.UnsupportedCompressionType;
-                                },
-                            }
+                            cursor += try self.read_hunk(file, hunk, data[cursor..]);
                         }
 
                         try self.tracks.append(.{
@@ -522,11 +489,9 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                     else => return error.UnsupportedTrackType,
                 }
             }
-
-            return error.TODO;
         },
         else => {
-            log.err(termcolor.red("CHD version {d} not supported."), .{version});
+            log.err(termcolor.red("CHD version {d} not supported."), .{self.version});
             return error.CHDVersionNotSupported;
         },
     }
@@ -534,7 +499,71 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-const decoder = struct {
+fn read_hunk(self: @This(), file: std.fs.File, hunk: usize, dest: []u8) !usize {
+    log.debug("Reading hunk {d}", .{hunk});
+
+    const compression = switch (self.map[hunk].compression) {
+        .Type0 => self.compressors[0],
+        .Type1 => self.compressors[1],
+        .Type2 => self.compressors[2],
+        .Type3 => self.compressors[3],
+        .Self => {
+            std.debug.assert(hunk != self.map[hunk].offset);
+            return self.read_hunk(file, self.map[hunk].offset, dest);
+        },
+        else => {
+            log.err("Unsupported compression type: {any}", .{self.map[hunk].compression});
+            return error.UnsupportedCompressionType;
+        },
+    };
+
+    const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
+    const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
+    const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
+    const header_bytes: u32 = ecc_bytes + complen_bytes;
+
+    const file_reader = file.reader();
+
+    switch (compression) {
+        .CD_LZMA => {
+            // try file.seekTo(map[hunk].offset);
+            // const ecc = try reader.readBytesNoEof(ecc_bytes);
+            // const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
+
+            try file.seekTo(self.map[hunk].offset + header_bytes);
+            var decompressor = try std.compress.lzma.Decompress(@TypeOf(file_reader)).init(self._allocator, file_reader, .{
+                // There is no LZMA headers and these parameters are implicit... FIXME: They also depend on hunk_size, these are the parameters for hunk_size = 0x4C80.
+                .properties = .{
+                    .lc = 3,
+                    .lp = 0,
+                    .pb = 2,
+                },
+                .dict_size = 0x6000,
+                .unpacked_size = sectors_per_hunk * CD_MAX_SECTOR_DATA,
+            }, null);
+            defer decompressor.deinit();
+            return try decompressor.read(dest[0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
+        },
+        .CD_Zlib => {
+            try file.seekTo(self.map[hunk].offset + header_bytes);
+            var output_stream = std.io.fixedBufferStream(dest[0..]);
+            try std.compress.flate.decompress(file_reader, output_stream.writer());
+            return try output_stream.getPos();
+        },
+        .CD_Flac => {
+            log.err("Unsupported compression type: {any} (Skipping for test...)", .{compression});
+
+            @memset(dest[0..@min(dest.len, CD_MAX_SECTOR_DATA * sectors_per_hunk)], 0);
+            return @min(dest.len, CD_MAX_SECTOR_DATA * sectors_per_hunk);
+        },
+        else => {
+            log.err("Unsupported compression type: {any}", .{compression});
+            return error.UnsupportedCompression;
+        },
+    }
+}
+
+const MapDecoder = struct {
     const MaxBits = 8;
 
     lookup: [1 << MaxBits]u16,
@@ -560,7 +589,11 @@ const decoder = struct {
 };
 
 pub fn deinit(self: *@This()) void {
+    self._allocator.free(self.map);
+
     self.sessions.deinit();
+    for (self.tracks.items) |track|
+        self._allocator.free(track.data);
     self.tracks.deinit();
     self._file.deinit();
 }
