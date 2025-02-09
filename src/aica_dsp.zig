@@ -189,12 +189,12 @@ fn read_mpro(self: *@This(), idx: usize) Instruction {
 ///                referring to it decrement by 1 each sample.
 const TEMP_base = 0x1000 / 4;
 fn read_temp(self: *@This(), idx: usize) u24 {
-    const lo = self._regs[TEMP_base + 2 * idx];
+    const lo = self._regs[TEMP_base + 2 * idx + 0];
     const hi = self._regs[TEMP_base + 2 * idx + 1];
     return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
 }
 fn write_temp(self: *@This(), idx: usize, value: u24) void {
-    self._regs[TEMP_base + 2 * idx] = value & 0xFF;
+    self._regs[TEMP_base + 2 * idx + 0] = value & 0xFF;
     self._regs[TEMP_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
 }
 
@@ -207,12 +207,12 @@ fn write_temp(self: *@This(), idx: usize, value: u24) void {
 //                Used for holding data that was read out of the ringbuffer.
 const MEMS_base: u32 = 0x1400 / 4;
 fn read_mems(self: *@This(), idx: usize) u24 {
-    const lo = self._regs[MEMS_base + 2 * idx];
+    const lo = self._regs[MEMS_base + 2 * idx + 0];
     const hi = self._regs[MEMS_base + 2 * idx + 1];
     return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
 }
 fn write_mems(self: *@This(), idx: usize, value: u24) void {
-    self._regs[MEMS_base + 2 * idx] = value & 0xFF;
+    self._regs[MEMS_base + 2 * idx + 0] = value & 0xFF;
     self._regs[MEMS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
 }
 
@@ -225,16 +225,16 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
 //                These are the 16 send buses coming from the 64 main channels.
 const MIXS_base: u32 = 0x1500 / 4;
 pub fn read_mixs(self: *@This(), idx: usize) u20 {
-    const low = self._regs[MIXS_base + 2 * idx];
-    const high = self._regs[MIXS_base + 2 * idx + 1];
-    return @truncate(((high & 0xFFFF) << 4) | (low & 0xF));
+    const lo = self._regs[MIXS_base + 2 * idx + 0];
+    const hi = self._regs[MIXS_base + 2 * idx + 1];
+    return @truncate(((hi & 0xFFFF) << 4) | (lo & 0xF));
 }
 fn write_mixs(self: *@This(), idx: usize, value: u20) void {
-    self._regs[MIXS_base + 2 * idx] = value & 0xF;
+    self._regs[MIXS_base + 2 * idx + 0] = value & 0xF;
     self._regs[MIXS_base + 2 * idx + 1] = (value >> 4) & 0xFFFF;
 }
-pub fn add_mixs(self: *@This(), idx: usize, value: u20) void {
-    self.write_mixs(idx, self.read_mixs(idx) +% value);
+pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
+    self.write_mixs(idx, @bitCast(@as(i20, @bitCast(self.read_mixs(idx))) + value));
 }
 
 // 0x4580-0x45BF: Effect output data (EFREG), 16 registers, 16 bits each
@@ -243,11 +243,11 @@ pub fn add_mixs(self: *@This(), idx: usize, value: u20) void {
 //                ...
 //                0x45BC: bits 15-0 = EFREG(15)
 //                These are the 16 sound outputs.
-fn _efreg(self: *@This(), idx: usize) *u16 {
+fn _efreg(self: *@This(), idx: usize) *i16 {
     return @ptrCast(&self._regs[0x1580 / 4 + idx]);
 }
 pub fn read_efreg(self: *@This(), idx: usize) i16 {
-    return @bitCast(self._efreg(idx).*);
+    return self._efreg(idx).*;
 }
 
 // 0x45C0-0x45C7: External input data stack (EXTS), 2 registers, 16 bits each
@@ -281,12 +281,12 @@ pub fn generate_sample(self: *@This()) void {
         const instruction = self.read_mpro(@intCast(step));
 
         // If the source register is less than 24 bits, it's promoted to 24-bit by shifting left.
-        const INPUTS: u24 = switch (instruction.IRA) {
+        const INPUTS: i24 = @bitCast(switch (instruction.IRA) {
             0x00...0x1F => |reg| self.read_mems(reg),
             0x20...0x2F => |reg| @as(u24, self.read_mixs(reg - 0x20)) << 4,
             0x30...0x31 => |reg| @as(u24, self._exts(@intCast(reg - 0x30)).*) << 8,
             else => 0,
-        };
+        });
 
         if (instruction.IWT) {
             // If IWT is set, then the memory data from a MRD (either 2 or 3 instructions ago) is copied into the MEMS register indicated by IWA (0x00-0x1F).
@@ -326,7 +326,7 @@ pub fn generate_sample(self: *@This()) void {
         const X: i24 = if (instruction.XSEL == 0)
             @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))
         else
-            @bitCast(INPUTS);
+            INPUTS;
 
         // - Y selection
         //   A 13-bit value (Y) is read from one of four sources:
@@ -345,7 +345,7 @@ pub fn generate_sample(self: *@This()) void {
         // - Y latch
         //   If YRL is set, Y_REG becomes INPUTS.
         if (instruction.YRL)
-            Y_REG = @bitCast(INPUTS);
+            Y_REG = INPUTS;
 
         // - Shift of previous accumulator
         //   A 24-bit value (SHIFTED) is set to one of the following:
@@ -365,7 +365,7 @@ pub fn generate_sample(self: *@This()) void {
         //  - Multiply and accumulate
         //   A 26-bit value (ACC) becomes ((X * Y) >> 12) + B.
         //   The multiplication is signed.  I don't think the addition includes saturation.
-        ACC = @truncate((@as(i64, @intCast(X)) * @as(i64, @intCast(Y))) >> 12);
+        ACC = @intCast((@as(i64, @intCast(X)) * @as(i64, @intCast(Y))) >> 12);
         ACC += B;
 
         // - Temp write
@@ -386,7 +386,6 @@ pub fn generate_sample(self: *@This()) void {
         }
 
         // - Memory operations
-        //
         //   If either MRD or MWT are set, we are performing a memory operation (on the
         //   external ringbuffer) and we'll need to compute an address.
         if (instruction.MRD or instruction.MWT) {
@@ -444,14 +443,24 @@ pub fn generate_sample(self: *@This()) void {
         //     Other values of SHFT: ADRS_REG = bits 23-12 of SHIFTED.
         if (instruction.ADRL)
             ADRS_REG = @truncate(@as(u24, @bitCast(if (instruction.SHFT == 3)
-                @as(i24, @bitCast(INPUTS)) >> 16
+                INPUTS >> 16
             else
                 SHIFTED >> 12)));
 
+        //  if (self.MDEC_CT == 1) {
+        //      std.debug.print("[{d: >3}] ACC: {d: >6} INPUTS: {d: >6} Y_REG: {d: >6} FRC_REG: {d: >6} ADRS_REG: {d: >6} SHIFTED: {d: >6}\n", .{ step, ACC, INPUTS, Y_REG, FRC_REG, ADRS_REG, SHIFTED });
+        //  }
+
         // - Effect output write
         //   If EWT is set, write (SHIFTED >> 8) into the EFREG register specified by EWA (0x0-0xF).
-        if (instruction.EWT) self._efreg(instruction.EWA).* = @bitCast(@as(i16, @truncate(SHIFTED >> 8)));
+        if (instruction.EWT) self._efreg(instruction.EWA).* = @truncate(SHIFTED >> 8);
     }
+    // if (self.MDEC_CT == 1) {
+    // for (0..16) |i| {
+    //     std.debug.print("{d: >7} ", .{self._efreg(i).*});
+    // }
+    // std.debug.print("\n", .{});
+    // }
 
     self.MDEC_CT -= 1;
     if (self.MDEC_CT == 0)

@@ -1262,10 +1262,10 @@ pub const AICA = struct {
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
                 const att: u4 = 0xF - registers.dps_channel_send.level;
-                const attenuated = sample >> att;
+                const attenuated: i32 = sample >> att;
 
                 if (self.enable_dsp) {
-                    self.dsp.add_mixs(channel, @truncate(@as(u32, @bitCast(attenuated))));
+                    self.dsp.add_mixs(channel, @intCast(attenuated));
                 } else {
                     // Bypass DSP and output the sample directly
                     const channel_mix = self.get_dsp_mix_register(channel);

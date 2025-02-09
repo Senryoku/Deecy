@@ -636,61 +636,63 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
         const MaxSamples = 10_000;
-        inline for (0..16) |i| {
-            const number = std.fmt.comptimePrint("{d}", .{i});
-            zgui.text("MIXS #" ++ number, .{});
-            if (d.running) {
-                if (time - self.dsp_inputs[i].start_time > MaxSamples) {
-                    self.dsp_inputs[i].xv.clearRetainingCapacity();
-                    self.dsp_inputs[i].yv.clearRetainingCapacity();
-                }
-                if (self.dsp_inputs[i].xv.items.len > 0) {
-                    try self.dsp_inputs[i].xv.append(@intCast(time - self.dsp_inputs[i].start_time));
+        if (zgui.collapsingHeader("DSP Inputs (MIXS)", .{ .default_open = false })) {
+            inline for (0..16) |i| {
+                const number = std.fmt.comptimePrint("{d}", .{i});
+                zgui.text("MIXS #" ++ number, .{});
+                if (d.running) {
+                    if (time - self.dsp_inputs[i].start_time > MaxSamples) {
+                        self.dsp_inputs[i].xv.clearRetainingCapacity();
+                        self.dsp_inputs[i].yv.clearRetainingCapacity();
+                    }
+                    if (self.dsp_inputs[i].xv.items.len > 0) {
+                        try self.dsp_inputs[i].xv.append(@intCast(time - self.dsp_inputs[i].start_time));
+                    } else {
+                        self.dsp_inputs[i].start_time = time;
+                        try self.dsp_inputs[i].xv.append(0);
+                    }
+                    try self.dsp_inputs[i].yv.append(@intCast(@as(i20, @bitCast(dc.aica.dsp.read_mixs(i)))));
                 } else {
-                    self.dsp_inputs[i].start_time = time;
-                    try self.dsp_inputs[i].xv.append(0);
+                    if (self.dsp_inputs[i].xv.items.len > 0)
+                        self.dsp_inputs[i].start_time = time - self.dsp_inputs[i].xv.items[self.dsp_inputs[i].xv.items.len - 1];
                 }
-                try self.dsp_inputs[i].yv.append(@intCast(@as(i20, @bitCast(dc.aica.dsp.read_mixs(i)))));
-            } else {
-                if (self.dsp_inputs[i].xv.items.len > 0)
-                    self.dsp_inputs[i].start_time = time - self.dsp_inputs[i].xv.items[self.dsp_inputs[i].xv.items.len - 1];
-            }
-            if (zgui.plot.beginPlot("DSPInput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
-                zgui.plot.setupAxis(.x1, .{ .label = "time" });
-                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
-                zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
-                zgui.plot.setupFinish();
-                zgui.plot.plotLine("input", i32, .{ .xv = self.dsp_inputs[i].xv.items, .yv = self.dsp_inputs[i].yv.items });
-                zgui.plot.endPlot();
+                if (zgui.plot.beginPlot("DSPInput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
+                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
+                    zgui.plot.setupFinish();
+                    zgui.plot.plotLine("input", i32, .{ .xv = self.dsp_inputs[i].xv.items, .yv = self.dsp_inputs[i].yv.items });
+                    zgui.plot.endPlot();
+                }
             }
         }
-        inline for (0..16) |i| {
-            const number = std.fmt.comptimePrint("{d}", .{i});
-            const mix = dc.aica.get_dsp_mix_register(@intCast(i)).*;
-            zgui.text("EFREG #" ++ number ++ " (EFSDL: {X}, EFPAN: {X})", .{ mix.efsdl, mix.efpan });
-            if (d.running) {
-                if (time - self.dsp_outputs[i].start_time > MaxSamples) {
-                    self.dsp_outputs[i].xv.clearRetainingCapacity();
-                    self.dsp_outputs[i].yv.clearRetainingCapacity();
-                }
-                if (self.dsp_outputs[i].xv.items.len > 0) {
-                    try self.dsp_outputs[i].xv.append(@intCast(time - self.dsp_outputs[i].start_time));
+        if (zgui.collapsingHeader("DSP Outputs (EFREG)", .{ .default_open = true })) {
+            inline for (0..16) |i| {
+                const number = std.fmt.comptimePrint("{d}", .{i});
+                const mix = dc.aica.get_dsp_mix_register(@intCast(i)).*;
+                zgui.text("EFREG #" ++ number ++ " (EFSDL: {X}, EFPAN: {X})", .{ mix.efsdl, mix.efpan });
+                if (d.running) {
+                    if (time - self.dsp_outputs[i].start_time > MaxSamples) {
+                        self.dsp_outputs[i].xv.clearRetainingCapacity();
+                        self.dsp_outputs[i].yv.clearRetainingCapacity();
+                    }
+                    if (self.dsp_outputs[i].xv.items.len > 0) {
+                        try self.dsp_outputs[i].xv.append(@intCast(time - self.dsp_outputs[i].start_time));
+                    } else {
+                        self.dsp_outputs[i].start_time = time;
+                        try self.dsp_outputs[i].xv.append(0);
+                    }
+                    try self.dsp_outputs[i].yv.append(@intCast(dc.aica.dsp.read_efreg(i)));
                 } else {
-                    self.dsp_outputs[i].start_time = time;
-                    try self.dsp_outputs[i].xv.append(0);
+                    if (self.dsp_outputs[i].xv.items.len > 0)
+                        self.dsp_outputs[i].start_time = time - self.dsp_outputs[i].xv.items[self.dsp_outputs[i].xv.items.len - 1];
                 }
-                try self.dsp_outputs[i].yv.append(@intCast(dc.aica.dsp.read_efreg(i)));
-            } else {
-                if (self.dsp_outputs[i].xv.items.len > 0)
-                    self.dsp_outputs[i].start_time = time - self.dsp_outputs[i].xv.items[self.dsp_outputs[i].xv.items.len - 1];
-            }
-            if (zgui.plot.beginPlot("DSPOutput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
-                zgui.plot.setupAxis(.x1, .{ .label = "time" });
-                zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
-                zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
-                zgui.plot.setupFinish();
-                zgui.plot.plotLine("Output", i32, .{ .xv = self.dsp_outputs[i].xv.items, .yv = self.dsp_outputs[i].yv.items });
-                zgui.plot.endPlot();
+                if (zgui.plot.beginPlot("DSPOutput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                    zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
+                    zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
+                    zgui.plot.setupFinish();
+                    zgui.plot.plotLine("Output", i32, .{ .xv = self.dsp_outputs[i].xv.items, .yv = self.dsp_outputs[i].yv.items });
+                    zgui.plot.endPlot();
+                }
             }
         }
     }
