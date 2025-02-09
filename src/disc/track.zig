@@ -12,8 +12,6 @@ format: u32, // Sector size
 pregap: u32,
 data: []const u8,
 
-chd_fad_offset: u32 = 0, // FIXME: Remove this.
-
 pub fn get_directory_record(self: *const @This(), offset: usize) *const CD.DirectoryRecord {
     return @ptrCast(@alignCast(self.data.ptr + offset));
 }
