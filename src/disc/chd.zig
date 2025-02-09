@@ -153,11 +153,10 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         ._allocator = allocator,
     };
     errdefer self.deinit();
+    self._file_view = try self._file.create_full_view();
 
-    const file = try std.fs.cwd().openFile(filepath, .{});
-    defer file.close();
-
-    const reader = file.reader();
+    var stream = std.io.fixedBufferStream(self._file_view);
+    const reader = stream.reader();
     const tag = try reader.readBytesNoEof(8);
     if (!std.mem.eql(u8, &tag, Tag)) return error.InvalidCHD;
     const header_length = try reader.readInt(u32, .big);
@@ -191,13 +190,13 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             log.debug("  SHA1: {X}", .{sha1});
             log.debug("  Parent SHA1: {X}", .{parent_sha1});
 
-            try self.decode_map_v5(file);
+            try self.decode_map_v5();
 
             var current_track: MetadataEntry = undefined;
             var track_tag: ?MetadataTag = null;
             // Check each track metadata type to find the one used in this file.
             for ([_]MetadataTag{ .GDROMTrack, .GDROMOld, .CDROMTrack2, .CDROMOld }) |t| {
-                current_track = search_metadata(file, self.meta_offset, t, 0) catch |err| switch (err) {
+                current_track = self.search_metadata(null, t, 0) catch |err| switch (err) {
                     error.NotFound => continue,
                     else => return err,
                 };
@@ -211,7 +210,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             try tracks_metadata.append(current_track);
 
             while (current_track.next != 0) {
-                current_track = search_metadata(file, current_track.next, track_tag.?, 0) catch |err| switch (err) {
+                current_track = self.search_metadata(current_track.next, track_tag.?, 0) catch |err| switch (err) {
                     error.NotFound => break,
                     else => |e| return e,
                 };
@@ -222,7 +221,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             var current_fad: u32 = 150;
             for (tracks_metadata.items) |track| {
                 log.debug("Track Metadata entry: {any}", .{track});
-                try file.seekTo(track.offset + 16);
+                try stream.seekTo(track.offset + 16);
                 switch (track.tag) {
                     .GDROMTrack => {
                         const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
@@ -275,7 +274,6 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                     else => return error.UnsupportedTrackType,
                 }
             }
-            self._file_view = try self._file.create_full_view();
 
             try self.decompress_sectors(self.tracks.items[2].fad, 1);
         },
@@ -327,14 +325,15 @@ fn MapDecoder(comptime MaxBits: u8) type {
 }
 /// Map is compressed using huffman running length encoding.
 /// This is a custom implementation by MAME, so this function is a direct port for compatibility.
-fn decode_map_v5(self: *@This(), file: std.fs.File) !void {
+fn decode_map_v5(self: *@This()) !void {
     const hunk_count = (self.logical_bytes + self.hunk_bytes - 1) / self.hunk_bytes;
     log.debug("  Hunk Count: {X}", .{hunk_count});
 
     self.map = try self._allocator.alloc(MapEntry, hunk_count);
 
-    try file.seekTo(self.map_offset);
-    var reader = file.reader();
+    var stream = std.io.fixedBufferStream(self._file_view);
+    try stream.seekTo(self.map_offset);
+    var reader = stream.reader();
 
     const map_bytes = try reader.readInt(u32, .big);
     const first_offset = try reader.readInt(u48, .big);
@@ -350,7 +349,7 @@ fn decode_map_v5(self: *@This(), file: std.fs.File) !void {
     log.debug("  Self Bits: {X}", .{self_bits});
     log.debug("  Parent Bits: {X}", .{parent_bits});
 
-    try file.seekTo(self.map_offset + 16);
+    try stream.seekTo(self.map_offset + 16);
 
     const NumCodes = 16;
     const MaxBits = 8;
@@ -450,8 +449,8 @@ fn decode_map_v5(self: *@This(), file: std.fs.File) !void {
     }
 
     if (decoder.unused_bits != 0) {
-        const pos = try file.getPos();
-        try file.seekTo(pos - 1);
+        const pos = try stream.getPos();
+        try stream.seekTo(pos - 1);
         _ = try bit_reader.readBitsNoEof(u8, 8 - decoder.unused_bits);
     }
 
@@ -498,20 +497,21 @@ fn decode_map_v5(self: *@This(), file: std.fs.File) !void {
     if (map_crc != crc16(raw_map)) return error.InvalidMapCRC;
 }
 
-fn search_metadata(file: std.fs.File, meta_offset: u64, tag: MetadataTag, index: u32) !MetadataEntry {
-    var offset: u64 = meta_offset;
+fn search_metadata(self: *@This(), offset: ?u64, tag: MetadataTag, index: u32) !MetadataEntry {
+    var current_offset: u64 = if (offset) |o| o else self.meta_offset;
     var current_index: u32 = 0;
 
-    var reader = file.reader();
+    var stream = std.io.fixedBufferStream(self._file_view);
+    var reader = stream.reader();
 
-    while (offset != 0) {
+    while (current_offset != 0) {
         var entry: MetadataEntry = undefined;
-        try file.seekTo(offset);
+        try stream.seekTo(current_offset);
         entry.tag = @enumFromInt(try reader.readInt(u32, .big));
         entry.length = try reader.readInt(u32, .big);
         entry.next = try reader.readInt(u64, .big);
 
-        entry.offset = offset;
+        entry.offset = current_offset;
         entry.flags = @truncate(entry.length >> 24);
         entry.length &= 0x00FFFFFF;
 
@@ -520,7 +520,7 @@ fn search_metadata(file: std.fs.File, meta_offset: u64, tag: MetadataTag, index:
             current_index += 1;
         }
 
-        offset = entry.next;
+        current_offset = entry.next;
     }
 
     return error.NotFound;
