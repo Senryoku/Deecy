@@ -49,7 +49,7 @@ const Instruction = packed struct(u64) {
 
 fn saturate(comptime T: type, value: anytype) T {
     std.debug.assert(@bitSizeOf(T) < @bitSizeOf(@TypeOf(value)));
-    return @truncate(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
+    return @intCast(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
 }
 
 // To convert from 16-bit float to 24-bit integer (on read):
@@ -224,7 +224,7 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
 //                0x457C: bits 15-0 = bits 19-4 of MIXS(15)
 //                These are the 16 send buses coming from the 64 main channels.
 const MIXS_base: u32 = 0x1500 / 4;
-fn read_mixs(self: *@This(), idx: usize) u20 {
+pub fn read_mixs(self: *@This(), idx: usize) u20 {
     const low = self._regs[MIXS_base + 2 * idx];
     const high = self._regs[MIXS_base + 2 * idx + 1];
     return @truncate(((high & 0xFFFF) << 4) | (low & 0xF));
@@ -366,7 +366,7 @@ pub fn generate_sample(self: *@This()) void {
         //   A 26-bit value (ACC) becomes ((X * Y) >> 12) + B.
         //   The multiplication is signed.  I don't think the addition includes saturation.
         ACC = @truncate((@as(i64, @intCast(X)) * @as(i64, @intCast(Y))) >> 12);
-        ACC +%= B;
+        ACC += B;
 
         // - Temp write
         //  If TWT is set, the value SHIFTED is written to the temp buffer address indicated by ((TWA + MDEC_CT) & 0x7F).

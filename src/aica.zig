@@ -647,7 +647,7 @@ pub const AICA = struct {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
-    fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
+    pub fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
         return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
     }
 
