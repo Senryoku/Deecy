@@ -20,6 +20,7 @@ unit_bytes: u32 = undefined,
 map: []MapEntry = undefined,
 
 _file: MemoryMappedFile,
+_file_view: []const u8 = undefined,
 
 _allocator: std.mem.Allocator,
 
@@ -69,7 +70,13 @@ const CompressionType = enum(u8) {
     _,
 };
 
-const MapEntry = struct { compression: CompressionType, length: u24, offset: u48, crc: u16 };
+const MapEntry = struct {
+    compression: CompressionType,
+    length: u24,
+    offset: u48,
+    crc: u16,
+    loaded: bool = false,
+};
 
 const MetadataTag = enum(u32) {
     HardDisk = make_tag("GDDD"),
@@ -429,7 +436,8 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                 try tracks.append(current_track);
             }
 
-            var current_fad: u32 = 0;
+            var fad_offset: u32 = 0;
+            var current_fad: u32 = 150;
             for (tracks.items) |track| {
                 log.debug("Metadata entry: {any}", .{track});
                 try file.seekTo(track.offset + 16);
@@ -448,8 +456,8 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const frames = try std.fmt.parseInt(u32, iterator.next().?["FRAMES:".len..], 10);
                         const pad = try std.fmt.parseInt(u32, iterator.next().?["PAD:".len..], 10);
                         const pregap = try std.fmt.parseInt(u32, iterator.next().?["PREGAP:".len..], 10);
-                        const pgsub = iterator.next().?["PGSUB:".len..];
                         const pgtype = iterator.next().?["PGTYPE:".len..];
+                        const pgsub = iterator.next().?["PGSUB:".len..];
                         const postgap = try std.fmt.parseInt(u32, iterator.next().?["POSTGAP:".len..], 10);
 
                         log.debug("    track_num: {d}", .{track_num});
@@ -462,19 +470,11 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         log.debug("    pgsub: {s}", .{pgsub});
                         log.debug("    postgap: {d}", .{postgap});
 
+                        log.debug("    fad: {d}", .{current_fad});
+
                         const track_type: u8 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 0 else 4;
-
-                        const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) 2352 else return error.UnsupportedFormat;
-
+                        const format: u32 = CD_MAX_SECTOR_DATA; // if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CD_MAX_SECTOR_DATA else return error.UnsupportedFormat;
                         const data = try allocator.alloc(u8, CD_MAX_SECTOR_DATA * frames);
-
-                        const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
-
-                        var cursor: usize = 0;
-
-                        for (@divTrunc(current_fad, sectors_per_hunk)..@divTrunc(current_fad + frames, sectors_per_hunk)) |hunk| {
-                            cursor += try self.read_hunk(file, hunk, data[cursor..]);
-                        }
 
                         try self.tracks.append(.{
                             .num = track_num,
@@ -483,12 +483,18 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                             .format = format,
                             .pregap = 0,
                             .data = data,
+                            .chd_fad_offset = current_fad - fad_offset,
                         });
                         current_fad += frames;
+
+                        fad_offset += std.mem.alignForward(u32, frames, 4);
                     },
                     else => return error.UnsupportedTrackType,
                 }
             }
+            self._file_view = try self._file.create_full_view();
+
+            try self.decompress_sectors(self.tracks.items[2].fad, 16);
         },
         else => {
             log.err(termcolor.red("CHD version {d} not supported."), .{self.version});
@@ -499,8 +505,40 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-fn read_hunk(self: @This(), file: std.fs.File, hunk: usize, dest: []u8) !usize {
-    log.debug("Reading hunk {d}", .{hunk});
+pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
+    log.debug("Decompressing sectors [{d}, {d}]", .{ fad, fad + count - 1 });
+    const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
+
+    var current_fad: usize = fad;
+
+    var track_idx: usize = 0;
+    while (track_idx + 1 < self.tracks.items.len and self.tracks.items[track_idx + 1].fad <= fad) : (track_idx += 1) {}
+
+    const shifted_fad: u32 = fad - self.tracks.items[track_idx].chd_fad_offset;
+    const start_hunk = @divTrunc(shifted_fad, sectors_per_hunk);
+    const end_hunk = 1 + @divTrunc(shifted_fad + count, sectors_per_hunk);
+
+    for (start_hunk..end_hunk) |hunk| {
+        log.debug("Hunk {d}/{d} for sectors [{d}, {d}]: {}", .{
+            hunk,
+            end_hunk,
+            sectors_per_hunk * hunk + self.tracks.items[track_idx].chd_fad_offset,
+            sectors_per_hunk * (hunk + 1) - 1 + self.tracks.items[track_idx].chd_fad_offset,
+            self.map[hunk].loaded,
+        });
+        if (!self.map[hunk].loaded) {
+            self.map[hunk].loaded = true;
+            const offset = current_fad - self.tracks.items[track_idx].fad;
+            // FIXME: Rewrite tracks so this constCast isn't necessary anymore?
+            const bytes = try self.read_hunk(hunk, @constCast(self.tracks.items[track_idx].data)[offset * CD_MAX_SECTOR_DATA ..][0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
+            std.debug.assert(bytes == sectors_per_hunk * CD_MAX_SECTOR_DATA);
+        }
+        current_fad += sectors_per_hunk;
+    }
+}
+
+fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
+    log.debug("  Reading hunk {d}", .{hunk});
 
     const compression = switch (self.map[hunk].compression) {
         .Type0 => self.compressors[0],
@@ -509,7 +547,7 @@ fn read_hunk(self: @This(), file: std.fs.File, hunk: usize, dest: []u8) !usize {
         .Type3 => self.compressors[3],
         .Self => {
             std.debug.assert(hunk != self.map[hunk].offset);
-            return self.read_hunk(file, self.map[hunk].offset, dest);
+            return self.read_hunk(self.map[hunk].offset, dest);
         },
         else => {
             log.err("Unsupported compression type: {any}", .{self.map[hunk].compression});
@@ -518,19 +556,19 @@ fn read_hunk(self: @This(), file: std.fs.File, hunk: usize, dest: []u8) !usize {
     };
 
     const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
-    const complen_bytes: u32 = if (sectors_per_hunk * CD_FRAME_SIZE < 65536) 2 else 3;
+    const complen_bytes: u32 = if (self.hunk_bytes < 65536) 2 else 3;
     const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
     const header_bytes: u32 = ecc_bytes + complen_bytes;
 
-    const file_reader = file.reader();
+    var header_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + ecc_bytes ..]);
+    const header_reader = header_stream.reader();
+    const compressed_length = if (complen_bytes == 2) try header_reader.readInt(u16, .big) else try header_reader.readInt(u24, .big);
+
+    var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+    const file_reader = fixed_stream.reader();
 
     switch (compression) {
         .CD_LZMA => {
-            // try file.seekTo(map[hunk].offset);
-            // const ecc = try reader.readBytesNoEof(ecc_bytes);
-            // const complen = if (complen_bytes == 2) try reader.readInt(u16, .big) else try reader.readInt(u24, .big);
-
-            try file.seekTo(self.map[hunk].offset + header_bytes);
             var decompressor = try std.compress.lzma.Decompress(@TypeOf(file_reader)).init(self._allocator, file_reader, .{
                 // There is no LZMA headers and these parameters are implicit... FIXME: They also depend on hunk_size, these are the parameters for hunk_size = 0x4C80.
                 .properties = .{
@@ -542,13 +580,20 @@ fn read_hunk(self: @This(), file: std.fs.File, hunk: usize, dest: []u8) !usize {
                 .unpacked_size = sectors_per_hunk * CD_MAX_SECTOR_DATA,
             }, null);
             defer decompressor.deinit();
-            return try decompressor.read(dest[0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
+            const bytes = try decompressor.read(dest[0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
+            // This probably won't work without subcodes/raw sector data
+            // if (self.map[hunk].crc != crc16(dest[0..bytes]))
+            //     return error.InvalidCRC;
+            return bytes;
         },
         .CD_Zlib => {
-            try file.seekTo(self.map[hunk].offset + header_bytes);
-            var output_stream = std.io.fixedBufferStream(dest[0..]);
+            var output_stream = std.io.fixedBufferStream(dest[0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
             try std.compress.flate.decompress(file_reader, output_stream.writer());
-            return try output_stream.getPos();
+            const bytes = try output_stream.getPos();
+            // This probably won't work without subcodes/raw sector data
+            // if (self.map[hunk].crc != crc16(dest[0..bytes]))
+            //     return error.InvalidCRC;
+            return bytes;
         },
         .CD_Flac => {
             log.err("Unsupported compression type: {any} (Skipping for test...)", .{compression});
@@ -598,15 +643,33 @@ pub fn deinit(self: *@This()) void {
     self._file.deinit();
 }
 
-pub fn get_session_count(self: *const @This()) u32 {
-    return @intCast(self.sessions.items.len);
+// FIXME: The following methods shouldn't be hardcoded.
+
+pub fn get_session_count(_: *const @This()) u32 {
+    return 2;
 }
 
 pub fn get_session(self: *const @This(), session_number: u32) Session {
-    return self.sessions.items[session_number - 1];
+    return switch (session_number) {
+        1 => .{
+            .first_track = 0,
+            .last_track = 1,
+            .start_fad = 0,
+            .end_fad = @intCast(self.tracks.items[1].get_end_fad()),
+        },
+        2 => .{
+            .first_track = 2,
+            .last_track = @intCast(self.tracks.items.len - 1),
+            .start_fad = self.tracks.items[2].fad,
+            .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
+        },
+        else => @panic("CDH: Invalid session number"),
+    };
 }
 
 pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
-    std.debug.assert(area == .SingleDensity);
-    return .{ 0, @intCast(self.tracks.items.len - 1) };
+    return switch (area) {
+        .SingleDensity => [2]u32{ 0, 1 },
+        .DoubleDensity => [2]u32{ 2, @intCast(self.tracks.items.len - 1) },
+    };
 }
