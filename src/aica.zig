@@ -856,7 +856,7 @@ pub const AICA = struct {
         }
 
         if (local_addr >= 0x3000 and local_addr < 0x8000)
-            return self.dsp.write_register(T, local_addr, value);
+            return self.dsp.write_register(T, local_addr - 0x3000, value);
 
         switch (T) {
             u8 => @as([*]u8, @ptrCast(self.regs.ptr))[local_addr] = value,
@@ -1469,6 +1469,7 @@ pub const AICA = struct {
     pub fn serialize(self: *const @This(), writer: anytype) !usize {
         var bytes: usize = 0;
         bytes += try self.arm7.serialize(writer);
+        bytes += try self.dsp.serialize(writer);
         bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
@@ -1495,6 +1496,7 @@ pub const AICA = struct {
         try self.arm_jit.reset();
 
         bytes += try self.arm7.deserialize(reader);
+        bytes += try self.dsp.deserialize(reader);
         bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));

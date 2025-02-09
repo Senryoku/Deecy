@@ -5,6 +5,10 @@ const AICAModule = @import("aica.zig");
 
 // HEAVILY based on Neill Corlett's Yamaha AICA notes, most of the comments come directly from there.
 
+/// If disabled, registers that are not typically written to by the CPU are not reflected in their memory mapped location,
+/// and instead use a simpler implementation.
+const FullRegisterEmulation = false;
+
 // NOTE: A bunch of right shifts here as expected to be arithmetic (i.e. signed), which contradicts current Zig documentation:
 //         "Moves all bits to the right, inserting zeroes at the most-significant bit."
 //       In practice however, right shifts on signed integers does appear to be arithmetic (as of Zig 0.14.0-dev.2577+271452d22).
@@ -93,6 +97,12 @@ fn convert_to_16bit_float(value: i24) u16 {
 /// 16-bit unsigned register which is decremented on every sample
 MDEC_CT: u16 = 1,
 
+internal_regs: struct {
+    MIXS: [16]i20 = [_]i20{0} ** 16,
+    MEMS: [16]u24 = [_]u24{0} ** 16,
+    TEMP: [128]i24 = [_]i24{0} ** 128,
+} = .{},
+
 _regs: []u32, // Memory backing for internal registers
 _memory: []u8,
 _ring_buffer: *const AICAModule.RingBufferAddress,
@@ -104,7 +114,11 @@ pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, 
 }
 
 pub fn clear_mixs(self: *@This()) void {
-    @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
+    if (FullRegisterEmulation) {
+        @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
+    } else {
+        self.internal_regs.MIXS = [_]i20{0} ** 16;
+    }
 }
 
 pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
@@ -147,7 +161,7 @@ fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
 pub fn read_coef(self: *@This(), idx: usize) i13 {
     const u: u16 = @truncate(self._regs[idx]);
     const s: i16 = @bitCast(u);
-    return @intCast(s >> 3);
+    return @truncate(s >> 3);
 }
 
 /// 0x3200-0x32FF: External memory addresses (MADRS), 64 registers, 16 bits each
@@ -191,15 +205,23 @@ fn read_mpro(self: *@This(), idx: usize) Instruction {
 ///                referring to it decrement by 1 each sample.
 const TEMP_base = 0x1000 / 4;
 fn read_temp(self: *@This(), idx: usize) i24 {
-    const lo = self._regs[TEMP_base + 2 * idx + 0];
-    const hi = self._regs[TEMP_base + 2 * idx + 1];
-    const u: u24 = @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
-    return @bitCast(u);
+    if (FullRegisterEmulation) {
+        const lo = self._regs[TEMP_base + 2 * idx + 0];
+        const hi = self._regs[TEMP_base + 2 * idx + 1];
+        const u: u24 = @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
+        return @bitCast(u);
+    } else {
+        return self.internal_regs.TEMP[idx];
+    }
 }
 fn write_temp(self: *@This(), idx: usize, value: i24) void {
-    const u: u24 = @bitCast(value);
-    self._regs[TEMP_base + 2 * idx + 0] = u & 0xFF;
-    self._regs[TEMP_base + 2 * idx + 1] = (u >> 8) & 0xFFFF;
+    if (FullRegisterEmulation) {
+        const u: u24 = @bitCast(value);
+        self._regs[TEMP_base + 2 * idx + 0] = u & 0xFF;
+        self._regs[TEMP_base + 2 * idx + 1] = (u >> 8) & 0xFFFF;
+    } else {
+        self.internal_regs.TEMP[idx] = value;
+    }
 }
 
 // 0x4400-0x44FF: Memory data (MEMS), 32 registers, 24 bits each
@@ -211,13 +233,21 @@ fn write_temp(self: *@This(), idx: usize, value: i24) void {
 //                Used for holding data that was read out of the ringbuffer.
 const MEMS_base: u32 = 0x1400 / 4;
 fn read_mems(self: *@This(), idx: usize) u24 {
-    const lo = self._regs[MEMS_base + 2 * idx + 0];
-    const hi = self._regs[MEMS_base + 2 * idx + 1];
-    return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
+    if (FullRegisterEmulation) {
+        const lo = self._regs[MEMS_base + 2 * idx + 0];
+        const hi = self._regs[MEMS_base + 2 * idx + 1];
+        return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
+    } else {
+        return self.internal_regs.MEMS[idx];
+    }
 }
 fn write_mems(self: *@This(), idx: usize, value: u24) void {
-    self._regs[MEMS_base + 2 * idx + 0] = value & 0xFF;
-    self._regs[MEMS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
+    if (FullRegisterEmulation) {
+        self._regs[MEMS_base + 2 * idx + 0] = value & 0xFF;
+        self._regs[MEMS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
+    } else {
+        self.internal_regs.MEMS[idx] = value;
+    }
 }
 
 // 0x4500-0x457F: Mixer input data (MIXS), 16 registers, 20 bits each
@@ -228,17 +258,27 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
 //                0x457C: bits 15-0 = bits 19-4 of MIXS(15)
 //                These are the 16 send buses coming from the 64 main channels.
 const MIXS_base: u32 = 0x1500 / 4;
-pub fn read_mixs(self: *@This(), idx: usize) u20 {
-    const lo = self._regs[MIXS_base + 2 * idx + 0];
-    const hi = self._regs[MIXS_base + 2 * idx + 1];
-    return @truncate(((hi & 0xFFFF) << 4) | (lo & 0xF));
+pub fn read_mixs(self: *@This(), idx: usize) i20 {
+    if (FullRegisterEmulation) {
+        const lo = self._regs[MIXS_base + 2 * idx + 0];
+        const hi = self._regs[MIXS_base + 2 * idx + 1];
+        const u: u20 = @truncate(((hi & 0xFFFF) << 4) | (lo & 0xF));
+        return @bitCast(u);
+    } else {
+        return self.internal_regs.MIXS[idx];
+    }
 }
-fn write_mixs(self: *@This(), idx: usize, value: u20) void {
-    self._regs[MIXS_base + 2 * idx + 0] = value & 0xF;
-    self._regs[MIXS_base + 2 * idx + 1] = (value >> 4) & 0xFFFF;
+fn write_mixs(self: *@This(), idx: usize, value: i20) void {
+    if (FullRegisterEmulation) {
+        const u: u20 = @bitCast(value);
+        self._regs[MIXS_base + 2 * idx + 0] = u & 0xF;
+        self._regs[MIXS_base + 2 * idx + 1] = (u >> 4) & 0xFFFF;
+    } else {
+        self.internal_regs.MIXS[idx] = value;
+    }
 }
 pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
-    self.write_mixs(idx, @bitCast(@as(i20, @bitCast(self.read_mixs(idx))) + value));
+    self.write_mixs(idx, self.read_mixs(idx) + value);
 }
 
 // 0x4580-0x45BF: Effect output data (EFREG), 16 registers, 16 bits each
@@ -285,12 +325,12 @@ pub fn generate_sample(self: *@This()) void {
         const instruction = self.read_mpro(@intCast(step));
 
         // If the source register is less than 24 bits, it's promoted to 24-bit by shifting left.
-        const INPUTS: i24 = @bitCast(switch (instruction.IRA) {
-            0x00...0x1F => |reg| self.read_mems(reg),
-            0x20...0x2F => |reg| @as(u24, self.read_mixs(reg - 0x20)) << 4,
-            0x30...0x31 => |reg| @as(u24, self._exts(reg - 0x30).*) << 8,
+        const INPUTS: i24 = switch (instruction.IRA) {
+            0x00...0x1F => |reg| @bitCast(self.read_mems(reg)),
+            0x20...0x2F => |reg| @as(i24, @intCast(self.read_mixs(reg - 0x20))) << 4,
+            0x30...0x31 => |reg| @bitCast(@as(u24, self._exts(reg - 0x30).*) << 8),
             else => 0,
-        });
+        };
 
         if (instruction.IWT) {
             // If IWT is set, then the memory data from a MRD (either 2 or 3 instructions ago) is copied into the MEMS register indicated by IWA (0x00-0x1F).
@@ -469,4 +509,18 @@ pub fn generate_sample(self: *@This()) void {
     self.MDEC_CT -= 1;
     if (self.MDEC_CT == 0)
         self.MDEC_CT = @intCast(self._ring_buffer.size_in_samples() - 1);
+}
+
+pub fn serialize(self: @This(), writer: anytype) !usize {
+    var bytes: usize = 0;
+    bytes += try writer.write(std.mem.asBytes(&self.MDEC_CT));
+    bytes += try writer.write(std.mem.asBytes(&self.internal_regs));
+    return bytes;
+}
+
+pub fn deserialize(self: *@This(), reader: anytype) !usize {
+    var bytes: usize = 0;
+    bytes += try reader.read(std.mem.asBytes(&self.MDEC_CT));
+    bytes += try reader.read(std.mem.asBytes(&self.internal_regs));
+    return bytes;
 }
