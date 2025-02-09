@@ -472,9 +472,10 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
                         log.debug("    fad: {d}", .{current_fad});
 
+                        const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
                         const track_type: u8 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 0 else 4;
                         const format: u32 = CD_MAX_SECTOR_DATA; // if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CD_MAX_SECTOR_DATA else return error.UnsupportedFormat;
-                        const data = try allocator.alloc(u8, CD_MAX_SECTOR_DATA * frames);
+                        const data = try allocator.alloc(u8, CD_MAX_SECTOR_DATA * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
                         try self.tracks.append(.{
                             .num = track_num,
@@ -509,31 +510,30 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
     log.debug("Decompressing sectors [{d}, {d}]", .{ fad, fad + count - 1 });
     const sectors_per_hunk = self.hunk_bytes / CD_FRAME_SIZE;
 
-    var current_fad: usize = fad;
-
     var track_idx: usize = 0;
     while (track_idx + 1 < self.tracks.items.len and self.tracks.items[track_idx + 1].fad <= fad) : (track_idx += 1) {}
 
-    const shifted_fad: u32 = fad - self.tracks.items[track_idx].chd_fad_offset;
+    const shifted_fad: usize = fad - self.tracks.items[track_idx].chd_fad_offset;
     const start_hunk = @divTrunc(shifted_fad, sectors_per_hunk);
-    const end_hunk = 1 + @divTrunc(shifted_fad + count, sectors_per_hunk);
+    const end_hunk = @min(self.map.len, 1 + @divTrunc(shifted_fad + count, sectors_per_hunk));
 
+    var offset = std.mem.alignBackward(usize, fad - self.tracks.items[track_idx].fad, sectors_per_hunk);
     for (start_hunk..end_hunk) |hunk| {
-        log.debug("Hunk {d}/{d} for sectors [{d}, {d}]: {}", .{
+        log.debug("Hunk {d}/{d} for sectors {d} in [{d}, {d}]: {}", .{
             hunk,
-            end_hunk,
+            self.map.len,
+            offset,
             sectors_per_hunk * hunk + self.tracks.items[track_idx].chd_fad_offset,
             sectors_per_hunk * (hunk + 1) - 1 + self.tracks.items[track_idx].chd_fad_offset,
             self.map[hunk].loaded,
         });
         if (!self.map[hunk].loaded) {
             self.map[hunk].loaded = true;
-            const offset = current_fad - self.tracks.items[track_idx].fad;
             // FIXME: Rewrite tracks so this constCast isn't necessary anymore?
             const bytes = try self.read_hunk(hunk, @constCast(self.tracks.items[track_idx].data)[offset * CD_MAX_SECTOR_DATA ..][0 .. sectors_per_hunk * CD_MAX_SECTOR_DATA]);
             std.debug.assert(bytes == sectors_per_hunk * CD_MAX_SECTOR_DATA);
         }
-        current_fad += sectors_per_hunk;
+        offset += sectors_per_hunk;
     }
 }
 
