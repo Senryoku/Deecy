@@ -636,6 +636,14 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
         const MaxSamples = 10_000;
+        if (zgui.collapsingHeader("Coeff.", .{ .default_open = false })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            inline for (0..128) |i| {
+                const number = std.fmt.comptimePrint("{d: >3}", .{i});
+                zgui.text("Coeff #" ++ number ++ ": {d: >6}", .{dc.aica.dsp.read_coef(i)});
+            }
+        }
         if (zgui.collapsingHeader("DSP Inputs (MIXS)", .{ .default_open = false })) {
             inline for (0..16) |i| {
                 const number = std.fmt.comptimePrint("{d}", .{i});

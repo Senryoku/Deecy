@@ -144,8 +144,10 @@ fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
 ///               You could interpret these as 16-bit signed (2's complement)
 ///               coefficients with the lowest 3 bits are always 0.
 ///               Each of the 128 COEFs is used by the corresponding instruction (MPRO).
-fn read_coef(self: *@This(), idx: usize) u13 {
-    return @truncate(self._regs[idx] >> 3);
+pub fn read_coef(self: *@This(), idx: usize) i13 {
+    const u: u16 = @truncate(self._regs[idx]);
+    const s: i16 = @bitCast(u);
+    return @intCast(s >> 3);
 }
 
 /// 0x3200-0x32FF: External memory addresses (MADRS), 64 registers, 16 bits each
@@ -188,14 +190,16 @@ fn read_mpro(self: *@This(), idx: usize) Instruction {
 ///                The temp buffer is configured as a ring buffer, so pointers
 ///                referring to it decrement by 1 each sample.
 const TEMP_base = 0x1000 / 4;
-fn read_temp(self: *@This(), idx: usize) u24 {
+fn read_temp(self: *@This(), idx: usize) i24 {
     const lo = self._regs[TEMP_base + 2 * idx + 0];
     const hi = self._regs[TEMP_base + 2 * idx + 1];
-    return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
+    const u: u24 = @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
+    return @bitCast(u);
 }
-fn write_temp(self: *@This(), idx: usize, value: u24) void {
-    self._regs[TEMP_base + 2 * idx + 0] = value & 0xFF;
-    self._regs[TEMP_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
+fn write_temp(self: *@This(), idx: usize, value: i24) void {
+    const u: u24 = @bitCast(value);
+    self._regs[TEMP_base + 2 * idx + 0] = u & 0xFF;
+    self._regs[TEMP_base + 2 * idx + 1] = (u >> 8) & 0xFFFF;
 }
 
 // 0x4400-0x44FF: Memory data (MEMS), 32 registers, 24 bits each
@@ -275,7 +279,7 @@ pub fn generate_sample(self: *@This()) void {
     var temp_word: [4]u16 = .{0} ** 4;
 
     // Reset EFREGs
-    @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
+    // @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -284,7 +288,7 @@ pub fn generate_sample(self: *@This()) void {
         const INPUTS: i24 = @bitCast(switch (instruction.IRA) {
             0x00...0x1F => |reg| self.read_mems(reg),
             0x20...0x2F => |reg| @as(u24, self.read_mixs(reg - 0x20)) << 4,
-            0x30...0x31 => |reg| @as(u24, self._exts(@intCast(reg - 0x30)).*) << 8,
+            0x30...0x31 => |reg| @as(u24, self._exts(reg - 0x30).*) << 8,
             else => 0,
         });
 
@@ -308,7 +312,7 @@ pub fn generate_sample(self: *@This()) void {
         //     If BSEL=1: The accumulator (ACC), already 26 bits.
         // 26-bit signed addend (Always overwritten)
         var B: i26 = if (instruction.BSEL == 0)
-            @intCast(@as(i24, @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))))
+            @intCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))
         else
             ACC;
         // If NEGB=1, this value is then made negative. (B becomes 0-B)
@@ -324,7 +328,7 @@ pub fn generate_sample(self: *@This()) void {
         //     If XSEL=1: The INPUTS register.
         // 24-bit signed multiplicand (Always overwritten)
         const X: i24 = if (instruction.XSEL == 0)
-            @bitCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))
+            self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F)
         else
             INPUTS;
 
@@ -337,7 +341,7 @@ pub fn generate_sample(self: *@This()) void {
         // 13-bit signed multiplier (Always overwritten)
         const Y: i13 = switch (instruction.YSEL) {
             0 => @bitCast(FRC_REG),
-            1 => @bitCast(self.read_coef(step)),
+            1 => self.read_coef(step),
             2 => @truncate(Y_REG >> 11),
             3 => @truncate(Y_REG >> 4),
         };
@@ -357,8 +361,8 @@ pub fn generate_sample(self: *@This()) void {
         // 24-bit signed shifted output value (Always overwritten)
         const SHIFTED: i24 = switch (instruction.SHFT) {
             0 => saturate(i24, ACC),
-            1 => saturate(i24, ACC *| 2),
-            2 => @truncate(@as(i32, @intCast(ACC)) * 2),
+            1 => saturate(i24, ACC << 1),
+            2 => @truncate(ACC << 1),
             3 => @truncate(ACC),
         };
 
@@ -371,7 +375,7 @@ pub fn generate_sample(self: *@This()) void {
         // - Temp write
         //  If TWT is set, the value SHIFTED is written to the temp buffer address indicated by ((TWA + MDEC_CT) & 0x7F).
         if (instruction.TWT)
-            self.write_temp((instruction.TWA + self.MDEC_CT) & 0x7F, @bitCast(SHIFTED));
+            self.write_temp((instruction.TWA + self.MDEC_CT) & 0x7F, SHIFTED);
 
         //  - Fractional address latch
         //   If FRCL is set, FRC_REG (13-bit) becomes one of the following:
@@ -453,7 +457,7 @@ pub fn generate_sample(self: *@This()) void {
 
         // - Effect output write
         //   If EWT is set, write (SHIFTED >> 8) into the EFREG register specified by EWA (0x0-0xF).
-        if (instruction.EWT) self._efreg(instruction.EWA).* = @truncate(SHIFTED >> 8);
+        if (instruction.EWT) self._efreg(instruction.EWA).* = @intCast(SHIFTED >> 8);
     }
     // if (self.MDEC_CT == 1) {
     // for (0..16) |i| {
