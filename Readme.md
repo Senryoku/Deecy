@@ -102,5 +102,7 @@ Dependencies are managed by the `build.zig.zon` file.
 
 ## Licence
  
- Uses data from MAME under the BSD-3-Clause licence (see `src/gdrom_secu.zig`).
+ Uses data from MAME under the BSD-3-Clause licence (see `src/gdrom_secu.zig`). CHD related features (`src/disc/chd.zig`) are also
+ inspired by, or even direct ports of, their equivalent from the MAME project.
+
  Rest is MIT.

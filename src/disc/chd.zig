@@ -193,17 +193,10 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
             try self.decode_map_v5(file);
 
-            const track_types = [_]MetadataTag{
-                .GDROMTrack,
-                .GDROMOld,
-                .CDROMTrack2,
-                .CDROMOld,
-            };
-
             var current_track: MetadataEntry = undefined;
             var track_tag: ?MetadataTag = null;
             // Check each track metadata type to find the one used in this file.
-            for (track_types) |t| {
+            for ([_]MetadataTag{ .GDROMTrack, .GDROMOld, .CDROMTrack2, .CDROMOld }) |t| {
                 current_track = search_metadata(file, self.meta_offset, t, 0) catch |err| switch (err) {
                     error.NotFound => continue,
                     else => return err,
@@ -284,7 +277,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             }
             self._file_view = try self._file.create_full_view();
 
-            try self.decompress_sectors(self.tracks.items[2].fad, 16);
+            try self.decompress_sectors(self.tracks.items[2].fad, 1);
         },
         else => {
             log.err(termcolor.red("CHD version {d} not supported."), .{self.version});
@@ -551,16 +544,22 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
 
     var sector_offset = std.mem.alignBackward(usize, fad - self.tracks.items[track_idx].fad, sectors_per_hunk);
 
+    // FIXME: Rewrite tracks so this constCast isn't necessary anymore?
+    var dest = @constCast(self.tracks.items[track_idx].data);
+
     if (hunk_offset != 0) {
         const usable_sectors_in_first_hunk = sectors_per_hunk - hunk_offset;
         if (start_hunk == first_hunk) {
             // First hunk of track, but there are additional sectors before the first one we're actually interested in. We can't write directly to the track.
+            // FIXME: Since we mark the hunk as loaded, access to the last sectors of the previous track will access uninitialized memory...
+            //        This probably won't be a problem in practice (because of padding, and I don't even know of a single example of such access),
+            //        but we may want to fix this at some point anyway.
             if (!self.map[first_hunk].loaded) {
                 self.map[first_hunk].loaded = true;
                 const tmp = try self._allocator.alloc(u8, sectors_per_hunk * CDMaxSectorBytes);
                 defer self._allocator.free(tmp);
                 const bytes = try self.read_hunk(first_hunk, tmp);
-                @memcpy(@constCast(self.tracks.items[track_idx].data)[0 .. bytes - track_byte_offset], tmp[track_byte_offset..]);
+                @memcpy(dest[0 .. bytes - track_byte_offset], tmp[track_byte_offset..]);
             }
             sector_offset = usable_sectors_in_first_hunk;
             start_hunk += 1;
@@ -572,8 +571,7 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
     for (start_hunk..end_hunk) |hunk| {
         if (!self.map[hunk].loaded) {
             self.map[hunk].loaded = true;
-            // FIXME: Rewrite tracks so this constCast isn't necessary anymore?
-            const bytes = try self.read_hunk(hunk, @constCast(self.tracks.items[track_idx].data)[sector_offset * CDMaxSectorBytes ..][0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            const bytes = try self.read_hunk(hunk, dest[sector_offset * CDMaxSectorBytes ..][0 .. sectors_per_hunk * CDMaxSectorBytes]);
             std.debug.assert(bytes == sectors_per_hunk * CDMaxSectorBytes);
         }
         sector_offset += sectors_per_hunk;

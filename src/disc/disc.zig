@@ -64,6 +64,9 @@ pub const Disc = union(enum) {
         return lba + 0x96;
     }
 
+    /// Hackish way to handle CHD 'streamed' decompression.
+    /// This should probably be done in the CHD struct itself, but we're currently
+    /// accessing the tracks directly here.
     fn on_sector_access(self: *const @This(), fad: u32, count: u32) !void {
         switch (self.*) {
             .CHD => |*chd| try @constCast(chd).decompress_sectors(fad, count),
@@ -88,22 +91,21 @@ pub const Disc = union(enum) {
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
-                return self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
+                return try self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;
     }
 
-    // Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
+    /// Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
+    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) !u32 {
         const track = try self.get_corresponding_track(fad);
+
+        try self.on_sector_access(fad, 1 + length / 2048);
+
         var remaining = length;
         var curr_sector = fad;
         while (remaining > 0) {
-            self.on_sector_access(curr_sector, 1) catch |err| {
-                std.log.err("Error accessing sectors [{d}, {d}]: {}", .{ curr_sector, curr_sector, err });
-                return 0;
-            };
             remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
             curr_sector += 1;
         }
