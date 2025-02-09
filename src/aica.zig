@@ -14,6 +14,12 @@ const HardwareRegisters = @import("hardware_registers.zig");
 // Yamaha AICA Audio Chip
 // Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes
 
+// Make sure the right shift is signed (See notes in aida_dsp.zig)
+comptime {
+    std.debug.assert((@as(i32, -1) >> 2) < 0);
+    std.debug.assert((@as(i32, -16) >> 2) == -4);
+}
+
 const SampleFormat = enum(u2) {
     i16 = 0, // 16-bit signed little-endian
     i8 = 1, // 8-bit signed
@@ -422,7 +428,7 @@ pub const AICAChannelState = struct {
     }
 
     pub fn compute_adpcm(self: *AICAChannelState, adpcm_sample: u4) i32 {
-        var val = @divTrunc(self.adpcm_state.step * ADPCMDiff[adpcm_sample & 7], 8);
+        var val = self.adpcm_state.step * ADPCMDiff[adpcm_sample & 7] >> 3;
         val = @min(val, 0x7FFF);
         val *= @as(i32, 1) - ((adpcm_sample >> 2) & 2);
         val += self.adpcm_state.prev;
@@ -499,9 +505,9 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
     var left: i32 = 0;
     var right: i32 = 0;
     if (left_att < 0xF)
-        left = @divTrunc(sample, std.math.pow(i32, 2, left_att));
+        left = sample >> @truncate(left_att);
     if (right_att < 0xF)
-        right = @divTrunc(sample, std.math.pow(i32, 2, right_att));
+        right = sample >> @truncate(right_att);
     return .{ .left = left, .right = right };
 }
 
@@ -1049,15 +1055,13 @@ pub const AICA = struct {
                 self.sample_buffer[offset + 1] +|= sample.right;
             }
 
-            const attenuation = 0xF - (self.get_reg(i32, .MasterVolume).* & 0x0F);
+            const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
             if (attenuation == 0xF) {
                 self.sample_buffer[offset + 0] = 0;
                 self.sample_buffer[offset + 1] = 0;
             } else {
-                const factor = std.math.pow(i32, 2, attenuation);
-                // zig doesn't have a arithmetic shift right :(
-                self.sample_buffer[offset + 0] = @divTrunc(self.sample_buffer[offset + 0], factor);
-                self.sample_buffer[offset + 1] = @divTrunc(self.sample_buffer[offset + 1], factor);
+                self.sample_buffer[offset + 0] = self.sample_buffer[offset + 0] >> attenuation;
+                self.sample_buffer[offset + 1] = self.sample_buffer[offset + 1] >> attenuation;
             }
 
             self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
@@ -1245,7 +1249,7 @@ pub const AICA = struct {
 
         // Interpolate samples
         const f: i32 = @intCast((state.fractional_play_position >> 4) & 0x3FFF);
-        const sample = @divTrunc((state.curr_sample * f) + (state.prev_sample * (0x4000 - f)), 0x4000);
+        const sample: i32 = (state.curr_sample * f) + (state.prev_sample * (0x4000 - f)) >> 14;
         if (!state.debug.mute) {
             const disdl = registers.direct_pan_vol_send.volume; // Attenuation level when output to the DAC. I guess that means when bypassing the DSP?
             const dipan = if (self.get_reg(MasterVolume, .MasterVolume).mono) 0 else registers.direct_pan_vol_send.pan;
@@ -1258,7 +1262,7 @@ pub const AICA = struct {
             if (registers.dps_channel_send.level != 0) {
                 const channel = registers.dps_channel_send.channel;
                 const att: u4 = 0xF - registers.dps_channel_send.level;
-                const attenuated = @divTrunc(sample, std.math.pow(i32, 2, att));
+                const attenuated = sample >> att;
 
                 if (self.enable_dsp) {
                     self.dsp.add_mixs(channel, @truncate(@as(u32, @bitCast(attenuated))));
@@ -1322,7 +1326,7 @@ pub const AICA = struct {
                     state.curr_sample = 0;
                 } else {
                     // (every 0x40 on the envelope attenuation level is 3dB)
-                    state.curr_sample = @divTrunc(state.curr_sample, std.math.pow(i32, 2, @as(i32, @bitCast(attenuation)) >> 6));
+                    state.curr_sample = state.curr_sample >> @truncate(attenuation >> 6);
                 }
             }
 

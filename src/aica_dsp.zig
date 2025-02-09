@@ -10,8 +10,8 @@ const AICAModule = @import("aica.zig");
 //       In practice however, right shifts on signed integers does appear to be arithmetic (as of Zig 0.14.0-dev.2577+271452d22).
 //       Small checks in case this changes in the future :) (https://github.com/ziglang/zig/issues/20367)
 comptime {
-    const sign_test: i16 = -1;
-    std.debug.assert((sign_test >> 2) < 0);
+    std.debug.assert((@as(i16, -1) >> 2) < 0);
+    std.debug.assert((@as(i16, -16) >> 2) == -4);
 }
 
 const Instruction = packed struct(u64) {
@@ -229,12 +229,12 @@ fn read_mixs(self: *@This(), idx: usize) u20 {
     const high = self._regs[MIXS_base + 2 * idx + 1];
     return @truncate(((high & 0xFFFF) << 4) | (low & 0xF));
 }
-fn write_mixs(self: *@This(), idx: usize, value: u24) void {
-    self._regs[MIXS_base + 2 * idx] = value & 0xFF;
-    self._regs[MIXS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
+fn write_mixs(self: *@This(), idx: usize, value: u20) void {
+    self._regs[MIXS_base + 2 * idx] = value & 0xF;
+    self._regs[MIXS_base + 2 * idx + 1] = (value >> 4) & 0xFFFF;
 }
-pub fn add_mixs(self: *@This(), idx: usize, value: u24) void {
-    self.write_mixs(idx, self.read_mixs(idx) +| value);
+pub fn add_mixs(self: *@This(), idx: usize, value: u20) void {
+    self.write_mixs(idx, self.read_mixs(idx) +% value);
 }
 
 // 0x4580-0x45BF: Effect output data (EFREG), 16 registers, 16 bits each
