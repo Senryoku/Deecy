@@ -54,12 +54,6 @@ const Instruction = packed struct(u64) {
 /// 16-bit unsigned register which is decremented on every sample
 MDEC_CT: u16 = 1,
 
-internal_regs: struct {
-    MIXS: [16]i20 = [_]i20{0} ** 16,
-    MEMS: [16]u24 = [_]u24{0} ** 16,
-    TEMP: [128]i24 = [_]i24{0} ** 128,
-} = .{},
-
 _regs: []u32, // Memory backing for internal registers
 _memory: []u8,
 _ring_buffer: *const AICAModule.RingBufferAddress,
@@ -160,7 +154,7 @@ fn read_temp(self: *@This(), idx: usize) i24 {
         const u: u24 = @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
         return @bitCast(u);
     } else {
-        return self.internal_regs.TEMP[idx];
+        return @as([*]i24, @ptrCast(&self._regs[TEMP_base]))[idx];
     }
 }
 fn write_temp(self: *@This(), idx: usize, value: i24) void {
@@ -169,7 +163,7 @@ fn write_temp(self: *@This(), idx: usize, value: i24) void {
         self._regs[TEMP_base + 2 * idx + 0] = u & 0xFF;
         self._regs[TEMP_base + 2 * idx + 1] = (u >> 8) & 0xFFFF;
     } else {
-        self.internal_regs.TEMP[idx] = value;
+        @as([*]i24, @ptrCast(&self._regs[TEMP_base]))[idx] = value;
     }
 }
 
@@ -187,7 +181,7 @@ fn read_mems(self: *@This(), idx: usize) u24 {
         const hi = self._regs[MEMS_base + 2 * idx + 1];
         return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
     } else {
-        return self.internal_regs.MEMS[idx];
+        return @as([*]u24, @ptrCast(&self._regs[MEMS_base]))[idx];
     }
 }
 fn write_mems(self: *@This(), idx: usize, value: u24) void {
@@ -195,7 +189,7 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
         self._regs[MEMS_base + 2 * idx + 0] = value & 0xFF;
         self._regs[MEMS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
     } else {
-        self.internal_regs.MEMS[idx] = value;
+        @as([*]u24, @ptrCast(&self._regs[MEMS_base]))[idx] = value;
     }
 }
 
@@ -214,7 +208,7 @@ pub fn read_mixs(self: *@This(), idx: usize) i20 {
         const u: u20 = @truncate(((hi & 0xFFFF) << 4) | (lo & 0xF));
         return @bitCast(u);
     } else {
-        return self.internal_regs.MIXS[idx];
+        return @as([*]i20, @ptrCast(&self._regs[MIXS_base]))[idx];
     }
 }
 fn write_mixs(self: *@This(), idx: usize, value: i20) void {
@@ -223,7 +217,7 @@ fn write_mixs(self: *@This(), idx: usize, value: i20) void {
         self._regs[MIXS_base + 2 * idx + 0] = u & 0xF;
         self._regs[MIXS_base + 2 * idx + 1] = (u >> 4) & 0xFFFF;
     } else {
-        self.internal_regs.MIXS[idx] = value;
+        @as([*]i20, @ptrCast(&self._regs[MIXS_base]))[idx] = value;
     }
 }
 pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
@@ -256,11 +250,7 @@ pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
 }
 
 fn clear_mixs(self: *@This()) void {
-    if (FullRegisterEmulation) {
-        @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
-    } else {
-        self.internal_regs.MIXS = [_]i20{0} ** 16;
-    }
+    @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
 }
 
 fn saturate(comptime T: type, value: anytype) T {
@@ -542,13 +532,11 @@ test {
 pub fn serialize(self: @This(), writer: anytype) !usize {
     var bytes: usize = 0;
     bytes += try writer.write(std.mem.asBytes(&self.MDEC_CT));
-    bytes += try writer.write(std.mem.asBytes(&self.internal_regs));
     return bytes;
 }
 
 pub fn deserialize(self: *@This(), reader: anytype) !usize {
     var bytes: usize = 0;
     bytes += try reader.read(std.mem.asBytes(&self.MDEC_CT));
-    bytes += try reader.read(std.mem.asBytes(&self.internal_regs));
     return bytes;
 }
