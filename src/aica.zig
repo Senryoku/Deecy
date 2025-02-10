@@ -530,7 +530,7 @@ pub const AICA = struct {
     enable_arm_jit: bool = true,
     arm_jit: ARM7JIT = undefined,
     dsp: DSP = undefined,
-    enable_dsp: bool = true,
+    dsp_emulation: enum { Bypass, Interpreter, JIT } = .JIT,
 
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.
@@ -562,7 +562,7 @@ pub const AICA = struct {
         };
         r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
         r.arm_jit = try ARM7JIT.init(allocator, r.arm7.memory_address_mask);
-        r.dsp = DSP.init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory);
+        r.dsp = DSP.init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory, allocator);
         try r.reset();
 
         return r;
@@ -588,6 +588,7 @@ pub const AICA = struct {
     }
 
     pub fn deinit(self: *AICA) void {
+        self.dsp.deinit();
         self.arm_jit.deinit();
         self._allocator.free(self.regs);
     }
@@ -1029,10 +1030,16 @@ pub const AICA = struct {
             std.debug.assert(offset % 2 == 0);
             std.debug.assert(offset + 1 < self.sample_buffer.len);
 
-            if (self.enable_dsp) {
+            if (self.dsp_emulation != .Bypass) {
                 self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
                 self.dsp.set_exts(1, @bitCast(cdda_samples[1]));
-                self.dsp.generate_sample();
+                switch (self.dsp_emulation) {
+                    .Interpreter => self.dsp.generate_sample(),
+                    .JIT => self.dsp.generate_sample_jit() catch |err| {
+                        aica_log.err("Error in DSP JIT: {}", .{err});
+                    },
+                    else => unreachable,
+                }
                 for (0..16) |channel| {
                     const mix = self.get_dsp_mix_register(@intCast(channel)).*;
                     const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
@@ -1266,7 +1273,7 @@ pub const AICA = struct {
                 const att: u4 = 0xF - registers.dps_channel_send.level;
                 const attenuated: i32 = sample >> att;
 
-                if (self.enable_dsp) {
+                if (self.dsp_emulation != .Bypass) {
                     self.dsp.add_mixs(channel, @intCast(attenuated));
                 } else {
                     // Bypass DSP and output the sample directly

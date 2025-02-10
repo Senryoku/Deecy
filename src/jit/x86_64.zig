@@ -882,7 +882,7 @@ pub const Emitter = struct {
                     },
                     .freg32 => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .freg64 => try mov_reg_mem(self, .RegToMem, src, dst_m),
-                    else => return error.InvalidMovSource,
+                    else => return error.InvalidMovSourceFromMem,
                 }
             },
             .reg => |dst_reg| {
@@ -921,7 +921,7 @@ pub const Emitter = struct {
                     .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
                     .freg32 => |src_reg| try mov_reg_freg(self, ._32, dst_reg, src_reg),
                     .freg64 => |src_reg| try mov_reg_freg(self, ._64, dst_reg, src_reg),
-                    else => return error.InvalidMovSource,
+                    else => return error.InvalidMovSourceFromReg,
                 }
             },
             .reg64 => |dst_reg| {

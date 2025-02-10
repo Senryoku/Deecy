@@ -1,5 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const log = std.log.scoped(.dsp);
+
+const JITBlock = @import("jit/jit_block.zig").JITBlock;
+const Architecture = @import("jit/x86_64.zig");
 
 const AICAModule = @import("aica.zig");
 
@@ -58,10 +62,21 @@ _regs: []u32, // Memory backing for internal registers
 _memory: []u8,
 _ring_buffer: *const AICAModule.RingBufferAddress,
 
-_dirty_mpro: bool = false,
+_dirty_mpro: bool = true,
+_jit_buffer: ?[]align(std.mem.page_size) u8 = null,
+_allocator: std.mem.Allocator,
 
-pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8) @This() {
-    return .{ ._ring_buffer = ring_buffer, ._regs = registers, ._memory = memory };
+pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8, allocator: std.mem.Allocator) @This() {
+    return .{
+        ._ring_buffer = ring_buffer,
+        ._regs = registers,
+        ._memory = memory,
+        ._allocator = allocator,
+    };
+}
+
+pub fn deinit(self: *@This()) void {
+    if (self._jit_buffer) |buffer| self._allocator.free(buffer);
 }
 
 pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
@@ -147,6 +162,9 @@ fn read_mpro(self: *@This(), idx: usize) Instruction {
 ///                The temp buffer is configured as a ring buffer, so pointers
 ///                referring to it decrement by 1 each sample.
 const TEMP_base = 0x1000 / 4;
+fn get_temp_base_ptr(self: *@This()) [*]i24 {
+    return @as([*]i24, @ptrCast(&self._regs[TEMP_base]));
+}
 fn read_temp(self: *@This(), idx: usize) i24 {
     if (FullRegisterEmulation) {
         const lo = self._regs[TEMP_base + 2 * idx + 0];
@@ -154,7 +172,7 @@ fn read_temp(self: *@This(), idx: usize) i24 {
         const u: u24 = @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
         return @bitCast(u);
     } else {
-        return @as([*]i24, @ptrCast(&self._regs[TEMP_base]))[idx];
+        return self.get_temp_base_ptr()[idx];
     }
 }
 fn write_temp(self: *@This(), idx: usize, value: i24) void {
@@ -163,7 +181,7 @@ fn write_temp(self: *@This(), idx: usize, value: i24) void {
         self._regs[TEMP_base + 2 * idx + 0] = u & 0xFF;
         self._regs[TEMP_base + 2 * idx + 1] = (u >> 8) & 0xFFFF;
     } else {
-        @as([*]i24, @ptrCast(&self._regs[TEMP_base]))[idx] = value;
+        self.get_temp_base_ptr()[idx] = value;
     }
 }
 
@@ -175,13 +193,16 @@ fn write_temp(self: *@This(), idx: usize, value: i24) void {
 //                0x44FC: bits 15-0 = bits 23-8 of MEMS(31)
 //                Used for holding data that was read out of the ringbuffer.
 const MEMS_base: u32 = 0x1400 / 4;
+fn get_mems_base_ptr(self: *@This()) [*]u24 {
+    return @as([*]u24, @ptrCast(&self._regs[MEMS_base]));
+}
 fn read_mems(self: *@This(), idx: usize) u24 {
     if (FullRegisterEmulation) {
         const lo = self._regs[MEMS_base + 2 * idx + 0];
         const hi = self._regs[MEMS_base + 2 * idx + 1];
         return @truncate(((hi & 0xFFFF) << 8) | (lo & 0xFF));
     } else {
-        return @as([*]u24, @ptrCast(&self._regs[MEMS_base]))[idx];
+        return self.get_mems_base_ptr()[idx];
     }
 }
 fn write_mems(self: *@This(), idx: usize, value: u24) void {
@@ -189,7 +210,7 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
         self._regs[MEMS_base + 2 * idx + 0] = value & 0xFF;
         self._regs[MEMS_base + 2 * idx + 1] = (value >> 8) & 0xFFFF;
     } else {
-        @as([*]u24, @ptrCast(&self._regs[MEMS_base]))[idx] = value;
+        self.get_mems_base_ptr()[idx] = value;
     }
 }
 
@@ -201,6 +222,9 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
 //                0x457C: bits 15-0 = bits 19-4 of MIXS(15)
 //                These are the 16 send buses coming from the 64 main channels.
 const MIXS_base: u32 = 0x1500 / 4;
+fn get_mixs_base_ptr(self: *@This()) [*]i20 {
+    return @as([*]i20, @ptrCast(&self._regs[MIXS_base]));
+}
 pub fn read_mixs(self: *@This(), idx: usize) i20 {
     if (FullRegisterEmulation) {
         const lo = self._regs[MIXS_base + 2 * idx + 0];
@@ -208,7 +232,7 @@ pub fn read_mixs(self: *@This(), idx: usize) i20 {
         const u: u20 = @truncate(((hi & 0xFFFF) << 4) | (lo & 0xF));
         return @bitCast(u);
     } else {
-        return @as([*]i20, @ptrCast(&self._regs[MIXS_base]))[idx];
+        return self.get_mixs_base_ptr()[idx];
     }
 }
 fn write_mixs(self: *@This(), idx: usize, value: i20) void {
@@ -217,7 +241,7 @@ fn write_mixs(self: *@This(), idx: usize, value: i20) void {
         self._regs[MIXS_base + 2 * idx + 0] = u & 0xF;
         self._regs[MIXS_base + 2 * idx + 1] = (u >> 4) & 0xFFFF;
     } else {
-        @as([*]i20, @ptrCast(&self._regs[MIXS_base]))[idx] = value;
+        self.get_mixs_base_ptr()[idx] = value;
     }
 }
 pub fn add_mixs(self: *@This(), idx: usize, value: i20) void {
@@ -269,6 +293,282 @@ test {
     try std.testing.expectEqual(saturate(i24, @as(i26, 0x7FFFFF)), 0x7FFFFF);
     try std.testing.expectEqual(saturate(i24, @as(i26, 0x800000)), 0x7FFFFF);
     try std.testing.expectEqual(saturate(i24, @as(i26, 0xFFFFFF)), 0x7FFFFF);
+}
+
+// FIXME!
+var JIT_TEMP: [4]u16 = .{0} ** 4;
+
+pub fn compile(self: *@This()) !void {
+    std.debug.assert(!FullRegisterEmulation); // TODO: Not supported yet.
+
+    if (self._jit_buffer == null) {
+        self._jit_buffer = try self._allocator.alignedAlloc(u8, std.mem.page_size, 0x4000);
+        if (builtin.os.tag == .linux) {
+            try std.posix.mprotect(self._jit_buffer.?, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
+        } else {
+            try std.posix.mprotect(self._jit_buffer.?, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
+        }
+    }
+
+    var jit_block = try JITBlock.init(self._allocator);
+    defer jit_block.deinit();
+
+    const MDEC_CT = Architecture.Register.rbp;
+    const ACC = Architecture.SavedRegisters[0];
+    const Y_REG = Architecture.SavedRegisters[1];
+    const FRC_REG = Architecture.SavedRegisters[2];
+    const ADRS_REG = Architecture.SavedRegisters[3];
+
+    const SHIFTED = Architecture.SavedRegisters[4]; // FIXME
+
+    for (0..5) |i| {
+        try jit_block.push(.{ .reg = Architecture.SavedRegisters[i] });
+    }
+    try jit_block.push(.{ .reg = Architecture.SavedRegisters[4] }); // Ensure stack alignment
+
+    // Load MDEC_CT
+    try jit_block.mov(.{ .reg = MDEC_CT }, .{ .reg = Architecture.ArgRegisters[0] });
+
+    for (0..128) |step| {
+        const instruction = self.read_mpro(@intCast(step));
+
+        const INPUTS = Architecture.ArgRegisters[0];
+
+        const scratch = Architecture.ScratchRegisters[0];
+
+        switch (instruction.IRA) {
+            0x00...0x1F => |reg| {
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_mems_base_ptr()[reg]) });
+                try jit_block.mov(.{ .reg = INPUTS }, .{ .mem = .{ .base = .rax, .size = 32 } });
+                // Sign extend from i24 to i32
+                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 8 });
+                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = INPUTS }, .amount = .{ .imm8 = 8 } } });
+            },
+            0x20...0x2F => |reg| {
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_mixs_base_ptr()[reg - 0x20]) });
+                try jit_block.mov(.{ .reg = INPUTS }, .{ .mem = .{ .base = .rax, .size = 32 } });
+                // Shift 4 left then sign extend from i24 to i32
+                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 4 + 8 });
+                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = INPUTS }, .amount = .{ .imm8 = 8 } } });
+            },
+            0x30...0x31 => |reg| {
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self._exts(reg - 0x30)) });
+                try jit_block.movsx(.{ .reg = INPUTS }, .{ .mem = .{ .base = .rax, .size = 16 } });
+                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 8 });
+            },
+            else => {
+                try jit_block.mov(.{ .reg = INPUTS }, .{ .imm32 = 0 });
+            },
+        }
+
+        // NOTE: IWT is handled at the end of the step for simplicity (allow calling functions without worrying about registers)
+
+        {
+            const X = Architecture.ArgRegisters[1];
+            const Y = Architecture.ArgRegisters[2];
+            const B = Architecture.ArgRegisters[3];
+
+            if (instruction.ZERO) {
+                try jit_block.mov(.{ .reg = B }, .{ .imm32 = 0 });
+            } else {
+                if (instruction.BSEL == 0) {
+                    try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self.get_temp_base_ptr()) });
+                    const Index = B;
+                    try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TRA });
+                    try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
+                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
+                    try jit_block.mov(.{ .reg = B }, .{ .mem = .{ .base = .rax, .index = Index, .size = 32 } });
+                } else {
+                    try jit_block.mov(.{ .reg = B }, .{ .reg = ACC });
+                }
+
+                if (instruction.NEGB)
+                    try jit_block.append(.{ .Neg = .{ .dst = .{ .reg = B } } });
+            }
+
+            if (instruction.XSEL == 0) {
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_temp_base_ptr()) });
+                const Index = X;
+                try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TRA });
+                try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
+                try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
+                try jit_block.mov(.{ .reg = X }, .{ .mem = .{ .base = .rax, .index = Index, .size = 32 } });
+            } else {
+                try jit_block.mov(.{ .reg = X }, .{ .reg = INPUTS });
+            }
+
+            switch (instruction.YSEL) {
+                0 => {
+                    try jit_block.mov(.{ .reg = Y }, .{ .reg = FRC_REG });
+                },
+                1 => {
+                    try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self._regs[0]) });
+                    try jit_block.movsx(.{ .reg = Y }, .{ .mem = .{ .base = .rax, .size = 16 } });
+                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 3 } } });
+                },
+                2 => {
+                    try jit_block.mov(.{ .reg = Y }, .{ .reg = Y_REG });
+                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 11 } } });
+                },
+                3 => {
+                    try jit_block.mov(.{ .reg = Y }, .{ .reg = Y_REG });
+                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 4 } } });
+                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = Y }, .src = .{ .imm32 = 0xFFF } } });
+                },
+            }
+
+            if (instruction.YRL)
+                try jit_block.mov(.{ .reg = Y_REG }, .{ .reg = INPUTS });
+
+            try jit_block.mov(.{ .reg = SHIFTED }, .{ .reg = ACC });
+            if (instruction.SHFT == 1 or instruction.SHFT == 2) {
+                try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 1 });
+            }
+            if (instruction.SHFT == 0 or instruction.SHFT == 1) {
+                // Saturate
+                // TODO: cmov?
+            } else {
+                // Truncate to 24 bits.
+                try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 8 });
+                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = SHIFTED }, .amount = .{ .imm8 = 8 } } });
+            }
+
+            // Compute ACC
+            try jit_block.movsx(.{ .reg64 = ACC }, .{ .reg = X });
+            try jit_block.movsx(.{ .reg64 = Y }, .{ .reg = Y });
+            try jit_block.append(.{ .Mul = .{ .dst = .{ .reg64 = X }, .src = .{ .reg64 = Y } } });
+            try jit_block.append(.{ .Sar = .{ .dst = .{ .reg64 = ACC }, .amount = .{ .imm8 = 12 } } });
+            try jit_block.add(.{ .reg = ACC }, .{ .reg = B });
+        }
+
+        if (instruction.TWT) {
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_temp_base_ptr()) });
+            const Index = Architecture.ArgRegisters[1];
+            try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TWA });
+            try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
+            try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
+            try jit_block.mov(.{ .mem = .{ .base = .rax, .index = Index, .size = 32 } }, .{ .reg = SHIFTED });
+        }
+
+        if (instruction.FRCL) {
+            try jit_block.mov(.{ .reg = FRC_REG }, .{ .reg = SHIFTED });
+            switch (instruction.SHFT) {
+                3 => {
+                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0xFFF } } });
+                },
+                else => {
+                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 11 } } });
+                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0x1FFF } } });
+                },
+            }
+        }
+
+        if (instruction.EWT) {
+            try jit_block.mov(.{ .reg = scratch }, .{ .reg = SHIFTED });
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._efreg(instruction.EWA)) });
+            try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = scratch }, .amount = .{ .imm8 = 8 } } });
+            try jit_block.mov(.{ .mem = .{ .base = .rax, .size = 16 } }, .{ .reg = scratch });
+        }
+
+        // Out-of-order sections
+
+        if (instruction.MRD or instruction.MWT) {
+            const addr = Architecture.ScratchRegisters[1];
+
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._madrs(instruction.MASA)) });
+            try jit_block.mov(.{ .reg = addr }, .{ .mem = .{ .base = .rax, .size = 32 } });
+            if (instruction.TABLE == 0)
+                try jit_block.add(.{ .reg = addr }, .{ .reg = MDEC_CT });
+            if (instruction.ADREB)
+                try jit_block.add(.{ .reg = addr }, .{ .reg = ADRS_REG });
+            if (instruction.NXADR)
+                try jit_block.add(.{ .reg = addr }, .{ .imm8 = 1 });
+            // NOTE: We assume ring_buffer is constant here, we don't track it.
+            const mask: u32 = if (instruction.TABLE == 0)
+                switch (self._ring_buffer.size) {
+                    .@"8k" => 0x1FFF,
+                    .@"16k" => 0x3FFF,
+                    .@"32k" => 0x7FFF,
+                    .@"64k" => 0xFFFF,
+                }
+            else
+                0xFFFF;
+            try jit_block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = mask } } });
+            try jit_block.shl(.{ .reg = addr }, .{ .imm8 = 1 });
+            try jit_block.add(.{ .reg = addr }, .{ .imm32 = @as(u32, self._ring_buffer.pointer) << 11 });
+            try jit_block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x1FFFFF } } });
+
+            if (instruction.MRD) {
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
+                try jit_block.mov(.{ .reg = scratch }, .{ .mem = .{ .base = .rax, .index = addr, .size = 16 } });
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&JIT_TEMP[step % JIT_TEMP.len]) });
+                try jit_block.mov(.{ .mem = .{ .base = .rax, .size = 16 } }, .{ .reg = addr });
+            }
+
+            if (instruction.MWT) {
+                if (instruction.NOFL) {
+                    try jit_block.mov(.{ .reg = .rax }, .{ .reg = SHIFTED });
+                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = .rax }, .amount = .{ .reg = SHIFTED } } });
+                    // jit_block.append(.{ .And = .{ .dst = .{ .reg = .rax }, .src = .{ .imm32 = 0xFFFF } } });
+                } else {
+                    try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .reg = SHIFTED });
+
+                    try jit_block.push(.{ .reg = addr }); // Preserve addr and INPUTS through the call
+                    try jit_block.push(.{ .reg = INPUTS });
+
+                    try jit_block.call(&f16_from_i24);
+
+                    try jit_block.pop(.{ .reg = INPUTS });
+                    try jit_block.pop(.{ .reg = addr });
+                }
+                try jit_block.mov(.{ .reg64 = scratch }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
+                try jit_block.mov(.{ .mem = .{ .base = scratch, .index = addr, .size = 16 } }, .{ .reg = .rax });
+            }
+        }
+
+        // Should be after thre read/write section (only one that uses ADRS_REG)
+        if (instruction.ADRL) {
+            if (instruction.SHFT == 3) {
+                try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = INPUTS });
+                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 16 } } });
+            } else {
+                try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = SHIFTED });
+                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 12 } } });
+            }
+        }
+
+        if (instruction.IWT) {
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&JIT_TEMP[step % JIT_TEMP.len]) });
+            try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = .rax, .size = 16 } });
+            try jit_block.call(&i32_from_f16);
+            try jit_block.mov(.{ .reg64 = scratch }, .{ .imm64 = @intFromPtr(&self.get_mems_base_ptr()[instruction.IWA]) });
+            try jit_block.mov(.{ .mem = .{ .base = scratch, .size = 32 } }, .{ .reg = .rax });
+        }
+    }
+
+    try jit_block.pop(.{ .reg = Architecture.SavedRegisters[4] });
+    for (0..5) |i| {
+        try jit_block.pop(.{ .reg = Architecture.SavedRegisters[4 - i] });
+    }
+
+    _ = try jit_block.emit(self._jit_buffer.?);
+
+    self._dirty_mpro = false;
+}
+
+pub fn generate_sample_jit(self: *@This()) !void {
+    if (self._dirty_mpro) try self.compile();
+
+    @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
+
+    if (self._jit_buffer) |buffer|
+        @as(*const fn (u16) void, @ptrCast(&buffer[0]))(self.MDEC_CT);
+
+    self.MDEC_CT -= 1;
+    if (self.MDEC_CT == 0)
+        self.MDEC_CT = @intCast(self._ring_buffer.size_in_samples() - 1);
+
+    self.clear_mixs();
 }
 
 pub fn generate_sample(self: *@This()) void {
@@ -486,6 +786,10 @@ fn i24_from_f16(value: u16) i24 {
     return @as(i24, @bitCast(val)) >> exponent;
 }
 
+fn i32_from_f16(value: u16) i32 {
+    return i24_from_f16(value);
+}
+
 // To convert from 24-bit integer to 16-bit float (on write):
 // - While the top 2 bits are the same, shift left
 //   The number of times you have to shift becomes the exponent
@@ -538,5 +842,6 @@ pub fn serialize(self: @This(), writer: anytype) !usize {
 pub fn deserialize(self: *@This(), reader: anytype) !usize {
     var bytes: usize = 0;
     bytes += try reader.read(std.mem.asBytes(&self.MDEC_CT));
+    self._dirty_mpro = true;
     return bytes;
 }
