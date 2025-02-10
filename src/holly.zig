@@ -169,8 +169,10 @@ pub const SPG_CONTROL = packed struct(u32) {
 };
 
 pub const SPG_LOAD = packed struct(u32) {
+    /// Specify "number of video clock cycles per line - 1" for the CRT. (default = 0x359)
     hcount: u10 = 0x359,
     _r0: u6 = 0,
+    /// Specify "number of lines per field - 1" for the CRT; in interlace mode, specify "number of lines per field/2 - 1." (default = 0x106)
     vcount: u10 = 0x106,
     _r1: u6 = 0,
 };
@@ -307,12 +309,17 @@ pub const HALF_OFFSET = packed struct(u32) {
 pub const FB_R_CTRL = packed struct(u32) {
     enable: bool,
     line_double: bool,
-    format: u2, // Named "depth" in the documentation
+    /// Specifies the bit configuration of the pixel data that is read from the frame buffer. Named "fb_depth" in the documentation
+    format: enum(u2) { RGB555 = 0, RGB565 = 1, RGB888 = 2, RGB0888_32bit = 3 },
+    /// Specifies the value that is added to the lower end of 5-bit or 6-bit frame buffer color data in order to output 8 bits. (default = 0x0)
     concat: u3,
     _0: u1,
     chroma_threshold: u8,
+    /// Specifies the size of the strip buffer in units of 32 lines (default = 0x00).
     stripsize: u6,
+    /// Set this bit to "1" when using a strip buffer. (default = 0)
     strip_buf_en: bool,
+    /// Specifies the clock that is output on the PCLK pin. 0: PCLK = VLCK/2 (default) For NTSC/PAL / 1: PCLK = VLCK For VGA
     vclk_div: u1,
     _1: u8,
 };
@@ -1524,12 +1531,12 @@ pub const Holly = struct {
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
         const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_in_interrupt_line_number;
         const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
-        const max_scanline = spg_load.vcount;
+        const max_scanline = spg_load.vcount + 1;
         const line_diff = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (max_scanline - spg_status.scanline) + target_scanline;
-        const cycles = @divTrunc(cpp * spg_load.hcount * line_diff, 1000);
+        const cycles = @divTrunc(cpp * (spg_load.hcount + 1) * line_diff, 1000);
         self._dc.schedule_event(.VBlankIn, cycles);
     }
     pub fn schedule_vblank_out(self: *@This()) void {
@@ -1542,7 +1549,7 @@ pub const Holly = struct {
             target_scanline - spg_status.scanline
         else
             (max_scanline - spg_status.scanline) + target_scanline;
-        const cycles = @divTrunc(cpp * spg_load.hcount * line_diff, 1000);
+        const cycles = @divTrunc(cpp * (spg_load.hcount + 1) * line_diff, 1000);
         self._dc.schedule_event(.VBlankOut, cycles);
     }
 
@@ -1569,6 +1576,7 @@ pub const Holly = struct {
         self.schedule_vblank_in();
     }
     pub fn on_vblank_out(self: *@This()) void {
+        self._get_register(SPG_STATUS, .SPG_STATUS).fieldnum +%= 1;
         // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
         // FIXME: This probably shouldn't be here.
         if (self._dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and self._dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1) {
