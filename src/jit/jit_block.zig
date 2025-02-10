@@ -58,6 +58,10 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
     }
 
+    pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
+        try self.instructions.append(.{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
+    }
+
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Movsx = .{ .dst = dst, .src = src } });
     }
