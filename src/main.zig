@@ -95,6 +95,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .x86_64_emitter, .level = .info },
         .{ .scope = .syscall, .level = .debug },
         .{ .scope = .aica, .level = .info },
+        .{ .scope = .dsp, .level = .info },
         .{ .scope = .holly, .level = .info },
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .gdrom_hle, .level = .debug },

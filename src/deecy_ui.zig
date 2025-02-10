@@ -605,6 +605,13 @@ pub fn draw(self: *@This()) !void {
                 if (zgui.sliderFloat("Volume", .{ .v = &d.config.audio_volume, .min = 0.0, .max = 1.0, .flags = .{} })) {
                     try d.audio_device.setMasterVolume(d.config.audio_volume);
                 }
+                var dsp_emulation = d.dc.aica.dsp_emulation;
+                if (zgui.comboFromEnum("DSP", &dsp_emulation)) {
+                    const was_running = d.running;
+                    if (was_running) d.pause();
+                    defer if (was_running) d.start();
+                    d.dc.aica.dsp_emulation = dsp_emulation;
+                }
                 zgui.endTabItem();
             }
 

@@ -1758,9 +1758,9 @@ pub const Renderer = struct {
         const field_size: u32 = @as(u32, FB_R_SIZE.y_size) + 1; // Number of lines
 
         const bytes_per_pixels: u32 = switch (FB_R_CTRL.format) {
-            0, 1 => 2,
-            2 => 3,
-            3 => 4,
+            .RGB555, .RGB565 => 2,
+            .RGB888 => 3,
+            .RGB0888_32bit => 4,
         };
 
         const interlaced = SPG_CONTROL.interlace == 1;
@@ -1778,27 +1778,27 @@ pub const Renderer = struct {
                 const pixel_idx = x_size * y + x;
                 const pixel_addr: u32 = @intCast(addr + bytes_per_pixels * x);
                 switch (FB_R_CTRL.format) {
-                    0x0 => { // 0555 RGB 16 bit
+                    .RGB555 => { // 0555 RGB 16 bit
                         const pixel = holly.read_vram(Color16, pixel_addr);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.argb1555.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.argb1555.g) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.argb1555.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
-                    0x1 => { // 565 RGB
+                    .RGB565 => { // 565 RGB
                         const pixel = holly.read_vram(Color16, pixel_addr);
                         self._scratch_pad[pixel_idx * 4 + 0] = (@as(u8, pixel.rgb565.b) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 1] = (@as(u8, pixel.rgb565.g) << 2) | (FB_R_CTRL.concat & 0b11);
                         self._scratch_pad[pixel_idx * 4 + 2] = (@as(u8, pixel.rgb565.r) << 3) | FB_R_CTRL.concat;
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
-                    0x2 => { // 888 RGB 24 bit packed
+                    .RGB888 => { // 888 RGB 24 bit packed
                         self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 2);
                         self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
                         self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 0);
                         self._scratch_pad[pixel_idx * 4 + 3] = 255;
                     },
-                    0x3 => { // 0888 RGB 32 bit
+                    .RGB0888_32bit => { // 0888 RGB 32 bit
                         self._scratch_pad[pixel_idx * 4 + 0] = holly.read_vram(u8, pixel_addr + 0);
                         self._scratch_pad[pixel_idx * 4 + 1] = holly.read_vram(u8, pixel_addr + 1);
                         self._scratch_pad[pixel_idx * 4 + 2] = holly.read_vram(u8, pixel_addr + 2);

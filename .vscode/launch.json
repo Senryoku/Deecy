@@ -29,8 +29,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				//	"-g",
-				//	"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
+				"-g",
+				"D:\\DC Games\\[GDI] Grandia II (US)\\Grandia II v1.001 (2000)(Ubi Soft)(NTSC)(US)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
