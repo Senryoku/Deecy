@@ -110,7 +110,7 @@ fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
 pub fn read_coef(self: *@This(), idx: usize) i13 {
     const u: u16 = @truncate(self._regs[idx]);
     const s: i16 = @bitCast(u);
-    return @truncate(s >> 3);
+    return @intCast(s >> 3);
 }
 
 /// 0x3200-0x32FF: External memory addresses (MADRS), 64 registers, 16 bits each
@@ -268,6 +268,19 @@ fn saturate(comptime T: type, value: anytype) T {
     return @intCast(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
 }
 
+test {
+    try std.testing.expectEqual(saturate(i24, @as(i26, 0)), 0);
+    try std.testing.expectEqual(saturate(i24, @as(i26, 1)), 1);
+    try std.testing.expectEqual(saturate(i24, @as(i26, -1234)), -1234);
+    try std.testing.expectEqual(saturate(i24, @as(i26, 1234)), 1234);
+    try std.testing.expectEqual(saturate(i24, @as(i26, -0x800000)), -0x800000);
+    try std.testing.expectEqual(saturate(i24, @as(i26, -0x800001)), -0x800000);
+    try std.testing.expectEqual(saturate(i24, @as(i26, -0x8FFFFF)), -0x800000);
+    try std.testing.expectEqual(saturate(i24, @as(i26, 0x7FFFFF)), 0x7FFFFF);
+    try std.testing.expectEqual(saturate(i24, @as(i26, 0x800000)), 0x7FFFFF);
+    try std.testing.expectEqual(saturate(i24, @as(i26, 0xFFFFFF)), 0x7FFFFF);
+}
+
 pub fn generate_sample(self: *@This()) void {
     // 26-bit signed accumulator
     var ACC: i26 = 0;
@@ -314,7 +327,7 @@ pub fn generate_sample(self: *@This()) void {
         //     If BSEL=1: The accumulator (ACC), already 26 bits.
         // 26-bit signed addend (Always overwritten)
         var B: i26 = if (instruction.BSEL == 0)
-            @intCast(self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F))
+            @intCast(self.read_temp((instruction.TRA +% self.MDEC_CT) & 0x7F))
         else
             ACC;
         // If NEGB=1, this value is then made negative. (B becomes 0-B)
@@ -330,7 +343,7 @@ pub fn generate_sample(self: *@This()) void {
         //     If XSEL=1: The INPUTS register.
         // 24-bit signed multiplicand (Always overwritten)
         const X: i24 = if (instruction.XSEL == 0)
-            self.read_temp((instruction.TRA + self.MDEC_CT) & 0x7F)
+            self.read_temp((instruction.TRA +% self.MDEC_CT) & 0x7F)
         else
             INPUTS;
 
@@ -345,7 +358,7 @@ pub fn generate_sample(self: *@This()) void {
             0 => @bitCast(FRC_REG),
             1 => self.read_coef(step),
             2 => @truncate(Y_REG >> 11),
-            3 => @truncate(Y_REG >> 4),
+            3 => @truncate((Y_REG >> 4) & 0xFFF),
         };
 
         // - Y latch
@@ -363,7 +376,7 @@ pub fn generate_sample(self: *@This()) void {
         // 24-bit signed shifted output value (Always overwritten)
         const SHIFTED: i24 = switch (instruction.SHFT) {
             0 => saturate(i24, ACC),
-            1 => saturate(i24, ACC << 1),
+            1 => saturate(i24, @as(i32, @intCast(ACC)) << 1),
             2 => @truncate(ACC << 1),
             3 => @truncate(ACC),
         };
@@ -377,7 +390,7 @@ pub fn generate_sample(self: *@This()) void {
         // - Temp write
         //  If TWT is set, the value SHIFTED is written to the temp buffer address indicated by ((TWA + MDEC_CT) & 0x7F).
         if (instruction.TWT)
-            self.write_temp((instruction.TWA + self.MDEC_CT) & 0x7F, SHIFTED);
+            self.write_temp((instruction.TWA +% self.MDEC_CT) & 0x7F, SHIFTED);
 
         //  - Fractional address latch
         //   If FRCL is set, FRC_REG (13-bit) becomes one of the following:
@@ -453,20 +466,10 @@ pub fn generate_sample(self: *@This()) void {
             else
                 SHIFTED >> 12)));
 
-        //  if (self.MDEC_CT == 1) {
-        //      std.debug.print("[{d: >3}] ACC: {d: >6} INPUTS: {d: >6} Y_REG: {d: >6} FRC_REG: {d: >6} ADRS_REG: {d: >6} SHIFTED: {d: >6}\n", .{ step, ACC, INPUTS, Y_REG, FRC_REG, ADRS_REG, SHIFTED });
-        //  }
-
         // - Effect output write
         //   If EWT is set, write (SHIFTED >> 8) into the EFREG register specified by EWA (0x0-0xF).
         if (instruction.EWT) self._efreg(instruction.EWA).* = @intCast(SHIFTED >> 8);
     }
-    // if (self.MDEC_CT == 1) {
-    // for (0..16) |i| {
-    //     std.debug.print("{d: >7} ", .{self._efreg(i).*});
-    // }
-    // std.debug.print("\n", .{});
-    // }
 
     self.MDEC_CT -= 1;
     if (self.MDEC_CT == 0)
@@ -482,10 +485,14 @@ pub fn generate_sample(self: *@This()) void {
 //  - Shift right (signed) by the exponent
 fn i24_from_f16(value: u16) i24 {
     const sign_bit: u1 = @truncate(value >> 15);
-    const exponent: u4 = @truncate(value >> 11);
+    var exponent: u4 = @truncate(value >> 11);
     var val: u24 = (@as(u24, value) & 0x7FF) << 11;
+    if (exponent > 11) {
+        exponent = 11;
+    } else {
+        val |= @as(u24, 1 ^ sign_bit) << 22;
+    }
     val |= @as(u24, sign_bit) << 23;
-    val |= @as(u24, 1 ^ sign_bit) << 22;
     return @as(i24, @bitCast(val)) >> exponent;
 }
 
@@ -495,36 +502,41 @@ fn i24_from_f16(value: u16) i24 {
 // - Shift right (signed) by 11
 // - Set bits 14-11 to the exponent value
 fn f16_from_i24(value: i24) u16 {
-    const sign_bit: u1 = @truncate(@as(u24, @bitCast(value)) >> 23);
-    var u: u24 = @bitCast(value);
-
-    var exponent: u4 = 0;
-    const mask = @as(u24, 0b11 << 22);
-    while (exponent < 15 and ((u & mask) == 0 or (u & mask) == mask)) {
-        u <<= 1;
-        exponent += 1;
-    }
-    const tmp = @as(i24, @bitCast(u)) >> 11;
-    var val: u16 = @truncate(@as(u24, @bitCast(tmp)));
-    val &= 0x7FF;
-    val |= @as(u16, exponent) << 11;
-    val |= @as(u16, sign_bit) << 15;
-
-    return val;
+    const u: u24 = @bitCast(value);
+    const sign_bit: u1 = @truncate(u >> 23);
+    const exponent = @min(12, @clz((u ^ (u << 1))));
+    var val: i24 = if (exponent < 12)
+        (value << exponent) & 0x3FFFFF
+    else
+        value << 11;
+    val >>= 11;
+    var r: u16 = @truncate(@as(u24, @bitCast(val)));
+    r |= @as(u16, exponent) << 11;
+    r |= @as(u16, sign_bit) << 15;
+    return r;
 }
 
 test {
+    try std.testing.expectEqual(@as(i24, 0x400000), i24_from_f16(0));
     try std.testing.expectEqual(f16_from_i24(i24_from_f16(0)), 0);
-    try std.testing.expectEqual(i24_from_f16(0), @as(i24, 0x400000));
 
+    try std.testing.expectEqual(@as(i24, 0x400800), i24_from_f16(1));
     try std.testing.expectEqual(f16_from_i24(i24_from_f16(1)), 1);
-    try std.testing.expectEqual(i24_from_f16(1), @as(i24, 0x400800));
 
+    try std.testing.expectEqual(0x146800, i24_from_f16(0x1234));
     try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x1234)), 0x1234);
-    try std.testing.expectEqual(i24_from_f16(0x1234), @as(i24, 0x146800));
 
+    try std.testing.expectEqual(@as(i24, @bitCast(@as(u24, 0x91A000))), i24_from_f16(0x8234));
     try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x8234)), 0x8234);
-    try std.testing.expectEqual(i24_from_f16(0x8234), @as(i24, @bitCast(@as(u24, 0x91A000))));
+
+    try std.testing.expectEqual(@as(i24, @bitCast(@as(u24, 0xE46800))), i24_from_f16(0x9234));
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x9234)), 0x9234);
+
+    try std.testing.expectEqual(@as(i24, @bitCast(@as(u24, 0x7FF))), i24_from_f16(0x7FFF));
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x7FFF)), 0x67FF);
+
+    try std.testing.expectEqual(@as(i24, @bitCast(@as(u24, 0xFFF7FF))), i24_from_f16(0xFFFF));
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0xFFFF)), 0xDFFF);
 }
 
 pub fn serialize(self: @This(), writer: anytype) !usize {

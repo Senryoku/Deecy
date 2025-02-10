@@ -1036,8 +1036,12 @@ pub const AICA = struct {
                 for (0..16) |channel| {
                     const mix = self.get_dsp_mix_register(@intCast(channel)).*;
                     const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
-                    self.sample_buffer[offset + 0] +|= sample.left;
-                    self.sample_buffer[offset + 1] +|= sample.right;
+                    // FIXME: I have no idea why the DSP is so low, but it seems to works otherwise and I'm tired of searching for now.
+                    //        This *8 is totally arbitrary, I have no basis for it except that according to all to sources I found,
+                    //        the DSP outputs SHIFTED >> 8 to the EFREGs, and in practice I found that >> 5 works and >> 4 overflows.
+                    const fuckthat_factor = 8;
+                    self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
+                    self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
                 }
             }
 
