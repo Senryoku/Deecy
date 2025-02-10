@@ -162,8 +162,8 @@ fn read_mpro(self: *@This(), idx: usize) Instruction {
 ///                The temp buffer is configured as a ring buffer, so pointers
 ///                referring to it decrement by 1 each sample.
 const TEMP_base = 0x1000 / 4;
-fn get_temp_base_ptr(self: *@This()) [*]i24 {
-    return @as([*]i24, @ptrCast(&self._regs[TEMP_base]));
+fn get_temp_base_ptr(self: *@This()) [*]align(4) i24 {
+    return @as([*]align(4) i24, @ptrCast(&self._regs[TEMP_base]));
 }
 fn read_temp(self: *@This(), idx: usize) i24 {
     if (FullRegisterEmulation) {
@@ -193,8 +193,8 @@ fn write_temp(self: *@This(), idx: usize, value: i24) void {
 //                0x44FC: bits 15-0 = bits 23-8 of MEMS(31)
 //                Used for holding data that was read out of the ringbuffer.
 const MEMS_base: u32 = 0x1400 / 4;
-fn get_mems_base_ptr(self: *@This()) [*]u24 {
-    return @as([*]u24, @ptrCast(&self._regs[MEMS_base]));
+fn get_mems_base_ptr(self: *@This()) [*]align(4) u24 {
+    return @as([*]align(4) u24, @ptrCast(&self._regs[MEMS_base]));
 }
 fn read_mems(self: *@This(), idx: usize) u24 {
     if (FullRegisterEmulation) {
@@ -222,8 +222,8 @@ fn write_mems(self: *@This(), idx: usize, value: u24) void {
 //                0x457C: bits 15-0 = bits 19-4 of MIXS(15)
 //                These are the 16 send buses coming from the 64 main channels.
 const MIXS_base: u32 = 0x1500 / 4;
-fn get_mixs_base_ptr(self: *@This()) [*]i20 {
-    return @as([*]i20, @ptrCast(&self._regs[MIXS_base]));
+fn get_mixs_base_ptr(self: *@This()) [*]align(4) i20 {
+    return @as([*]align(4) i20, @ptrCast(&self._regs[MIXS_base]));
 }
 pub fn read_mixs(self: *@This(), idx: usize) i20 {
     if (FullRegisterEmulation) {
@@ -302,7 +302,7 @@ pub fn compile(self: *@This()) !void {
     std.debug.assert(!FullRegisterEmulation); // TODO: Not supported yet.
 
     if (self._jit_buffer == null) {
-        self._jit_buffer = try self._allocator.alignedAlloc(u8, std.mem.page_size, 0x4000);
+        self._jit_buffer = try self._allocator.alignedAlloc(u8, std.mem.page_size, 0x8000);
         if (builtin.os.tag == .linux) {
             try std.posix.mprotect(self._jit_buffer.?, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
         } else {
@@ -328,6 +328,11 @@ pub fn compile(self: *@This()) !void {
 
     // Load MDEC_CT
     try jit_block.mov(.{ .reg = MDEC_CT }, .{ .reg = Architecture.ArgRegisters[0] });
+
+    try jit_block.mov(.{ .reg = ACC }, .{ .imm32 = 0 });
+    try jit_block.mov(.{ .reg = Y_REG }, .{ .imm32 = 0 });
+    try jit_block.mov(.{ .reg = FRC_REG }, .{ .imm32 = 0 });
+    try jit_block.mov(.{ .reg = ADRS_REG }, .{ .imm32 = 0 });
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -377,7 +382,7 @@ pub fn compile(self: *@This()) !void {
                     try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TRA });
                     try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
                     try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
-                    try jit_block.mov(.{ .reg = B }, .{ .mem = .{ .base = .rax, .index = Index, .size = 32 } });
+                    try jit_block.mov(.{ .reg = B }, .{ .mem = .{ .base = .rax, .index = Index, .scale = ._4, .size = 32 } });
                 } else {
                     try jit_block.mov(.{ .reg = B }, .{ .reg = ACC });
                 }
@@ -387,12 +392,12 @@ pub fn compile(self: *@This()) !void {
             }
 
             if (instruction.XSEL == 0) {
-                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_temp_base_ptr()) });
-                const Index = X;
-                try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TRA });
-                try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
-                try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
-                try jit_block.mov(.{ .reg = X }, .{ .mem = .{ .base = .rax, .index = Index, .size = 32 } });
+                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self.get_temp_base_ptr()) });
+                const index = X;
+                try jit_block.mov(.{ .reg = index }, .{ .imm32 = instruction.TRA });
+                try jit_block.add(.{ .reg = index }, .{ .reg = MDEC_CT });
+                try jit_block.append(.{ .And = .{ .dst = .{ .reg = index }, .src = .{ .imm32 = 0x7F } } });
+                try jit_block.mov(.{ .reg = X }, .{ .mem = .{ .base = .rax, .index = index, .scale = ._4, .size = 32 } });
             } else {
                 try jit_block.mov(.{ .reg = X }, .{ .reg = INPUTS });
             }
@@ -401,8 +406,8 @@ pub fn compile(self: *@This()) !void {
                 0 => {
                     try jit_block.mov(.{ .reg = Y }, .{ .reg = FRC_REG });
                 },
-                1 => {
-                    try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self._regs[0]) });
+                1 => { // Y = COEF[step]
+                    try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self._regs[step]) });
                     try jit_block.movsx(.{ .reg = Y }, .{ .mem = .{ .base = .rax, .size = 16 } });
                     try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 3 } } });
                 },
@@ -425,29 +430,38 @@ pub fn compile(self: *@This()) !void {
                 try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 1 });
             }
             if (instruction.SHFT == 0 or instruction.SHFT == 1) {
-                // Saturate
-                // TODO: cmov?
+                // Saturate - TODO: cmov when the backend supports it?
+                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .imm32 = @bitCast(@as(i32, -0x800000)) } } });
+                var check_high_bound = try jit_block.jmp(.GreaterEqual);
+                try jit_block.mov(.{ .reg = SHIFTED }, .{ .imm32 = @bitCast(@as(i32, -0x800000)) });
+                var done = try jit_block.jmp(.Always);
+                check_high_bound.patch();
+                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .imm32 = 0x7FFFFF } } });
+                var done_2 = try jit_block.jmp(.LessEqual);
+                try jit_block.mov(.{ .reg = SHIFTED }, .{ .imm32 = 0x7FFFFF });
+                done.patch();
+                done_2.patch();
             } else {
                 // Truncate to 24 bits.
                 try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 8 });
                 try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = SHIFTED }, .amount = .{ .imm8 = 8 } } });
             }
 
-            // Compute ACC
+            // Compute ACC = ((X * Y) >> 12) + B
             try jit_block.movsx(.{ .reg64 = ACC }, .{ .reg = X });
             try jit_block.movsx(.{ .reg64 = Y }, .{ .reg = Y });
-            try jit_block.append(.{ .Mul = .{ .dst = .{ .reg64 = X }, .src = .{ .reg64 = Y } } });
+            try jit_block.append(.{ .Mul = .{ .dst = .{ .reg64 = ACC }, .src = .{ .reg64 = Y } } });
             try jit_block.append(.{ .Sar = .{ .dst = .{ .reg64 = ACC }, .amount = .{ .imm8 = 12 } } });
             try jit_block.add(.{ .reg = ACC }, .{ .reg = B });
         }
 
         if (instruction.TWT) {
-            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&self.get_temp_base_ptr()) });
-            const Index = Architecture.ArgRegisters[1];
-            try jit_block.mov(.{ .reg = Index }, .{ .imm32 = instruction.TWA });
-            try jit_block.add(.{ .reg = Index }, .{ .reg = MDEC_CT });
-            try jit_block.append(.{ .And = .{ .dst = .{ .reg = Index }, .src = .{ .imm32 = 0x7F } } });
-            try jit_block.mov(.{ .mem = .{ .base = .rax, .index = Index, .size = 32 } }, .{ .reg = SHIFTED });
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self.get_temp_base_ptr()) });
+            const index = Architecture.ArgRegisters[1];
+            try jit_block.mov(.{ .reg = index }, .{ .imm32 = instruction.TWA });
+            try jit_block.add(.{ .reg = index }, .{ .reg = MDEC_CT });
+            try jit_block.append(.{ .And = .{ .dst = .{ .reg = index }, .src = .{ .imm32 = 0x7F } } });
+            try jit_block.mov(.{ .mem = .{ .base = .rax, .index = index, .scale = ._4, .size = 32 } }, .{ .reg = SHIFTED });
         }
 
         if (instruction.FRCL) {
@@ -457,7 +471,7 @@ pub fn compile(self: *@This()) !void {
                     try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0xFFF } } });
                 },
                 else => {
-                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 11 } } });
+                    try jit_block.shr(.{ .reg = FRC_REG }, .{ .imm8 = 11 });
                     try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0x1FFF } } });
                 },
             }
@@ -502,7 +516,7 @@ pub fn compile(self: *@This()) !void {
                 try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
                 try jit_block.mov(.{ .reg = scratch }, .{ .mem = .{ .base = .rax, .index = addr, .size = 16 } });
                 try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&JIT_TEMP[step % JIT_TEMP.len]) });
-                try jit_block.mov(.{ .mem = .{ .base = .rax, .size = 16 } }, .{ .reg = addr });
+                try jit_block.mov(.{ .mem = .{ .base = .rax, .size = 16 } }, .{ .reg = scratch });
             }
 
             if (instruction.MWT) {
@@ -511,10 +525,11 @@ pub fn compile(self: *@This()) !void {
                     try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = .rax }, .amount = .{ .reg = SHIFTED } } });
                     // jit_block.append(.{ .And = .{ .dst = .{ .reg = .rax }, .src = .{ .imm32 = 0xFFFF } } });
                 } else {
-                    try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .reg = SHIFTED });
-
                     try jit_block.push(.{ .reg = addr }); // Preserve addr and INPUTS through the call
                     try jit_block.push(.{ .reg = INPUTS });
+
+                    try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .reg = SHIFTED });
+                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
 
                     try jit_block.call(&f16_from_i24);
 
@@ -526,7 +541,7 @@ pub fn compile(self: *@This()) !void {
             }
         }
 
-        // Should be after thre read/write section (only one that uses ADRS_REG)
+        // Should be after the read/write section (only one that uses ADRS_REG)
         if (instruction.ADRL) {
             if (instruction.SHFT == 3) {
                 try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = INPUTS });
@@ -535,12 +550,18 @@ pub fn compile(self: *@This()) !void {
                 try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = SHIFTED });
                 try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 12 } } });
             }
+            try jit_block.append(.{ .And = .{ .dst = .{ .reg = ADRS_REG }, .src = .{ .imm32 = 0xFFF } } });
         }
 
         if (instruction.IWT) {
-            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&JIT_TEMP[step % JIT_TEMP.len]) });
-            try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = .rax, .size = 16 } });
-            try jit_block.call(&i32_from_f16);
+            try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(&JIT_TEMP[(step - 2) % JIT_TEMP.len]) });
+            if (self.read_mpro(step - 2).NOFL) {
+                try jit_block.mov(.{ .reg = .rax }, .{ .mem = .{ .base = .rax, .size = 16 } });
+                try jit_block.shl(.{ .reg = .rax }, .{ .imm8 = 8 });
+            } else {
+                try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = .rax, .size = 16 } });
+                try jit_block.call(&i32_from_f16);
+            }
             try jit_block.mov(.{ .reg64 = scratch }, .{ .imm64 = @intFromPtr(&self.get_mems_base_ptr()[instruction.IWA]) });
             try jit_block.mov(.{ .mem = .{ .base = scratch, .size = 32 } }, .{ .reg = .rax });
         }
@@ -551,7 +572,11 @@ pub fn compile(self: *@This()) !void {
         try jit_block.pop(.{ .reg = Architecture.SavedRegisters[4 - i] });
     }
 
-    _ = try jit_block.emit(self._jit_buffer.?);
+    const block_size = try jit_block.emit(self._jit_buffer.?);
+
+    for (jit_block.instructions.items, 0..) |instr, idx|
+        log.debug("[{d: >4}] {any}", .{ idx, instr });
+    log.debug("Compiled: {X:0>2}", .{self._jit_buffer.?[0..block_size]});
 
     self._dirty_mpro = false;
 }
@@ -560,6 +585,7 @@ pub fn generate_sample_jit(self: *@This()) !void {
     if (self._dirty_mpro) try self.compile();
 
     @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
+    for (0..JIT_TEMP.len) |i| JIT_TEMP[i] = 0;
 
     if (self._jit_buffer) |buffer|
         @as(*const fn (u16) void, @ptrCast(&buffer[0]))(self.MDEC_CT);
@@ -603,7 +629,7 @@ pub fn generate_sample(self: *@This()) void {
             // Otherwise, it's converted from 16-bit float format to 24-bit integer.  (See float notes)
             std.debug.assert(step >= 2);
             const temp = temp_word[(step - 2) % temp_word.len];
-            const value: u24 = if (self.read_mpro(@intCast(step - 2)).NOFL)
+            const value: u24 = if (self.read_mpro(step - 2).NOFL)
                 @truncate(@as(u24, temp) << 8)
             else
                 @bitCast(i24_from_f16(temp));
