@@ -975,12 +975,11 @@ fn load_t(block: *JITBlock, _: *JITContext) !void {
 // TODO: We'll want to cache the T bit at some point too!
 fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
-    try block.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
-    try block.append(.{ .SetByteCondition = .{ .condition = condition, .dst = .{ .reg8 = ReturnRegister } } });
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = 0xFFFFFFFE } } });
-    try block.append(.{ .Or = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .reg = ReturnRegister } } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ArgRegisters[0] });
+    try block.append(.{ .SetByteCondition = .{ .condition = condition, .dst = .{ .reg8 = ArgRegisters[0] } } });
+    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.append(.{ .And = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .imm8 = 0xFE } } });
+    try block.append(.{ .Or = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .reg8 = ArgRegisters[0] } } });
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ReturnRegister });
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
@@ -2312,13 +2311,11 @@ pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 fn default_conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comptime jump_if: bool, comptime delay_slot: bool) !bool {
     const dest = sh4_interpreter.d8_disp(ctx.address, instr);
     try load_t(block, ctx);
-    var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
-    var to_end = try block.jmp(.Always);
 
-    not_taken.patch();
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
-    to_end.patch();
+    try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = dest });
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
+    try block.cmov(if (jump_if) .NotCarry else .Carry, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
+    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
 
     if (delay_slot) try ctx.compile_delay_slot(block);
 

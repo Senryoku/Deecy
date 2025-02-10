@@ -1120,11 +1120,26 @@ pub const Emitter = struct {
 
     // FIXME: I don't have a better name.
     pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm_opcode: RegOpcode, dst: Operand, src: Operand) !void {
-        _ = rax_dst_opcode_8;
         _ = mr_opcode_8;
-        _ = rm_opcode_8;
 
         switch (dst) {
+            .reg8 => |dst_reg| {
+                switch (src) {
+                    .reg8 => |src_reg| {
+                        try self.emit(u8, rm_opcode_8);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    .imm8 => |imm8| {
+                        if (dst_reg == .rax) {
+                            try self.emit(u8, rax_dst_opcode_8);
+                            try self.emit(u8, imm8);
+                        } else {
+                            return error.Unimplemented80;
+                        }
+                    },
+                    else => return error.Unimplemented80,
+                }
+            },
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
