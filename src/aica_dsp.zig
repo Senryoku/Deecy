@@ -430,17 +430,14 @@ pub fn compile(self: *@This()) !void {
                 try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 1 });
             }
             if (instruction.SHFT == 0 or instruction.SHFT == 1) {
-                // Saturate - TODO: cmov when the backend supports it?
-                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .imm32 = @bitCast(@as(i32, -0x800000)) } } });
-                var check_high_bound = try jit_block.jmp(.GreaterEqual);
-                try jit_block.mov(.{ .reg = SHIFTED }, .{ .imm32 = @bitCast(@as(i32, -0x800000)) });
-                var done = try jit_block.jmp(.Always);
-                check_high_bound.patch();
-                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .imm32 = 0x7FFFFF } } });
-                var done_2 = try jit_block.jmp(.LessEqual);
-                try jit_block.mov(.{ .reg = SHIFTED }, .{ .imm32 = 0x7FFFFF });
-                done.patch();
-                done_2.patch();
+                // Saturate
+                try jit_block.mov(.{ .reg = .rax }, .{ .imm32 = @bitCast(@as(i32, -0x800000)) });
+                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .reg = .rax } } });
+                try jit_block.cmov(.Less, .{ .reg = SHIFTED }, .{ .reg = .rax });
+
+                try jit_block.mov(.{ .reg = .rax }, .{ .imm32 = 0x7FFFFF });
+                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .reg = .rax } } });
+                try jit_block.cmov(.Greater, .{ .reg = SHIFTED }, .{ .reg = .rax });
             } else {
                 // Truncate to 24 bits.
                 try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 8 });
