@@ -51,49 +51,6 @@ const Instruction = packed struct(u64) {
     TRA: u7,
 };
 
-fn saturate(comptime T: type, value: anytype) T {
-    std.debug.assert(@bitSizeOf(T) < @bitSizeOf(@TypeOf(value)));
-    return @intCast(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
-}
-
-// To convert from 16-bit float to 24-bit integer (on read):
-//  - Take the mantissa and shift it left by 11
-//  - Make bit 23 be the sign bit
-//  - Make bit 22 be the reverse of the sign bit
-//  - Shift right (signed) by the exponent
-fn convert_from_16bit_float(value: u16) i24 {
-    const sign_bit: u1 = @truncate(value >> 15);
-    const exponent: u4 = @truncate(value >> 11);
-    var val: u24 = (@as(u24, value) & 0x7FF) << 11;
-    val |= @as(u24, sign_bit) << 23;
-    val |= @as(u24, 1 ^ sign_bit) << 22;
-    return @as(i24, @bitCast(val)) >> exponent;
-}
-
-// To convert from 24-bit integer to 16-bit float (on write):
-// - While the top 2 bits are the same, shift left
-//   The number of times you have to shift becomes the exponent
-// - Shift right (signed) by 11
-// - Set bits 14-11 to the exponent value
-fn convert_to_16bit_float(value: i24) u16 {
-    const sign_bit: u1 = @truncate(@as(u24, @bitCast(value)) >> 23);
-    var u: u24 = @bitCast(value);
-
-    var exponent: u4 = 0;
-    const mask = @as(u24, 0b11 << 22);
-    while (exponent < 15 and ((u & mask) == 0 or (u & mask) == mask)) {
-        u <<= 1;
-        exponent += 1;
-    }
-    const tmp = @as(i24, @bitCast(u)) >> 11;
-    var val: u16 = @truncate(@as(u24, @bitCast(tmp)));
-    val &= 0x7FF;
-    val |= @as(u16, exponent) << 11;
-    val |= @as(u16, sign_bit) << 15;
-
-    return val;
-}
-
 /// 16-bit unsigned register which is decremented on every sample
 MDEC_CT: u16 = 1,
 
@@ -111,14 +68,6 @@ _dirty_mpro: bool = false,
 
 pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8) @This() {
     return .{ ._ring_buffer = ring_buffer, ._regs = registers, ._memory = memory };
-}
-
-pub fn clear_mixs(self: *@This()) void {
-    if (FullRegisterEmulation) {
-        @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
-    } else {
-        self.internal_regs.MIXS = [_]i20{0} ** 16;
-    }
 }
 
 pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
@@ -306,6 +255,19 @@ pub fn set_exts(self: *@This(), idx: usize, value: u16) void {
     self._exts(idx).* = value;
 }
 
+fn clear_mixs(self: *@This()) void {
+    if (FullRegisterEmulation) {
+        @memset(self._regs[MIXS_base .. MIXS_base + 2 * 16], 0);
+    } else {
+        self.internal_regs.MIXS = [_]i20{0} ** 16;
+    }
+}
+
+fn saturate(comptime T: type, value: anytype) T {
+    std.debug.assert(@bitSizeOf(T) < @bitSizeOf(@TypeOf(value)));
+    return @intCast(@max(@min(value, @as(@TypeOf(value), std.math.maxInt(T))), @as(@TypeOf(value), std.math.minInt(T))));
+}
+
 pub fn generate_sample(self: *@This()) void {
     // 26-bit signed accumulator
     var ACC: i26 = 0;
@@ -319,7 +281,7 @@ pub fn generate_sample(self: *@This()) void {
     var temp_word: [4]u16 = .{0} ** 4;
 
     // Reset EFREGs
-    // @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
+    @memset(self._regs[0x1580 / 4 .. 0x1580 / 4 + 16], 0);
 
     for (0..128) |step| {
         const instruction = self.read_mpro(@intCast(step));
@@ -341,7 +303,7 @@ pub fn generate_sample(self: *@This()) void {
             const value: u24 = if (self.read_mpro(@intCast(step - 2)).NOFL)
                 @truncate(@as(u24, temp) << 8)
             else
-                @bitCast(convert_from_16bit_float(temp));
+                @bitCast(i24_from_f16(temp));
             self.write_mems(instruction.IWA, value);
         }
 
@@ -476,7 +438,7 @@ pub fn generate_sample(self: *@This()) void {
             //   address.  If NOFL=1, simply shift it right by 8 to make it 16-bit.
             //   Otherwise, convert from 24-bit integer to 16-bit float (see float notes).
             if (instruction.MWT) {
-                const value: u16 = if (instruction.NOFL) @truncate(@as(u24, @bitCast(SHIFTED)) >> 8) else convert_to_16bit_float(SHIFTED);
+                const value: u16 = if (instruction.NOFL) @truncate(@as(u24, @bitCast(SHIFTED)) >> 8) else f16_from_i24(SHIFTED);
                 self.write(u16, addr, value);
             }
         }
@@ -509,6 +471,60 @@ pub fn generate_sample(self: *@This()) void {
     self.MDEC_CT -= 1;
     if (self.MDEC_CT == 0)
         self.MDEC_CT = @intCast(self._ring_buffer.size_in_samples() - 1);
+
+    self.clear_mixs();
+}
+
+// To convert from 16-bit float to 24-bit integer (on read):
+//  - Take the mantissa and shift it left by 11
+//  - Make bit 23 be the sign bit
+//  - Make bit 22 be the reverse of the sign bit
+//  - Shift right (signed) by the exponent
+fn i24_from_f16(value: u16) i24 {
+    const sign_bit: u1 = @truncate(value >> 15);
+    const exponent: u4 = @truncate(value >> 11);
+    var val: u24 = (@as(u24, value) & 0x7FF) << 11;
+    val |= @as(u24, sign_bit) << 23;
+    val |= @as(u24, 1 ^ sign_bit) << 22;
+    return @as(i24, @bitCast(val)) >> exponent;
+}
+
+// To convert from 24-bit integer to 16-bit float (on write):
+// - While the top 2 bits are the same, shift left
+//   The number of times you have to shift becomes the exponent
+// - Shift right (signed) by 11
+// - Set bits 14-11 to the exponent value
+fn f16_from_i24(value: i24) u16 {
+    const sign_bit: u1 = @truncate(@as(u24, @bitCast(value)) >> 23);
+    var u: u24 = @bitCast(value);
+
+    var exponent: u4 = 0;
+    const mask = @as(u24, 0b11 << 22);
+    while (exponent < 15 and ((u & mask) == 0 or (u & mask) == mask)) {
+        u <<= 1;
+        exponent += 1;
+    }
+    const tmp = @as(i24, @bitCast(u)) >> 11;
+    var val: u16 = @truncate(@as(u24, @bitCast(tmp)));
+    val &= 0x7FF;
+    val |= @as(u16, exponent) << 11;
+    val |= @as(u16, sign_bit) << 15;
+
+    return val;
+}
+
+test {
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0)), 0);
+    try std.testing.expectEqual(i24_from_f16(0), @as(i24, 0x400000));
+
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(1)), 1);
+    try std.testing.expectEqual(i24_from_f16(1), @as(i24, 0x400800));
+
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x1234)), 0x1234);
+    try std.testing.expectEqual(i24_from_f16(0x1234), @as(i24, 0x146800));
+
+    try std.testing.expectEqual(f16_from_i24(i24_from_f16(0x8234)), 0x8234);
+    try std.testing.expectEqual(i24_from_f16(0x8234), @as(i24, @bitCast(@as(u24, 0x91A000))));
 }
 
 pub fn serialize(self: @This(), writer: anytype) !usize {

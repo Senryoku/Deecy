@@ -1019,8 +1019,6 @@ pub const AICA = struct {
             //        0xE       |   -3dB
             //        0xF       |    0dB
 
-            if (self.enable_dsp) self.dsp.clear_mixs();
-
             for (0..64) |i| {
                 self.update_channel(@intCast(i));
             }
