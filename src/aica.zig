@@ -973,9 +973,9 @@ pub const AICA = struct {
                     if (pending & (@as(u32, 1) << @intCast(i)) != 0) {
                         const bit = @min(7, i); // Interrupts higher than 7 share the same INTReq number.
                         self.get_reg(u32, .INTRequest).* =
-                            (((@as(u32, self.get_reg(u32, .SCILV0).*) >> bit) & 1) << 0) |
-                            (((@as(u32, self.get_reg(u32, .SCILV1).*) >> bit) & 1) << 1) |
-                            (((@as(u32, self.get_reg(u32, .SCILV2).*) >> bit) & 1) << 2);
+                            ((((self.get_reg(u32, .SCILV0).*) >> bit) & 1) << 0) |
+                            ((((self.get_reg(u32, .SCILV1).*) >> bit) & 1) << 1) |
+                            ((((self.get_reg(u32, .SCILV2).*) >> bit) & 1) << 2);
                         break;
                     }
                 }
