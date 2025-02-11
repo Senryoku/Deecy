@@ -354,7 +354,19 @@ pub fn compile(self: *@This()) !void {
     try jit_block.mov(.{ .reg = FRC_REG }, .{ .imm32 = 0 });
     try jit_block.mov(.{ .reg = ADRS_REG }, .{ .imm32 = 0 });
 
-    for (0..128) |step| {
+    // Look for instructions at the end of the program that don't write anything and thus
+    // have no visible effect outside of internal states, and discard them.
+    var max_step: u32 = 128;
+    while (max_step > 0) {
+        const instruction = self.read_mpro(max_step - 1);
+        if (!instruction.IWT and !instruction.TWT and !instruction.MWT and !instruction.EWT) {
+            max_step -= 1;
+        } else {
+            break;
+        }
+    }
+
+    for (0..max_step) |step| {
         const instruction = self.read_mpro(@intCast(step));
 
         const INPUTS = Architecture.ArgRegisters[0];
@@ -541,7 +553,6 @@ pub fn compile(self: *@This()) !void {
                 if (instruction.NOFL) {
                     try jit_block.mov(.{ .reg = .rax }, .{ .reg = SHIFTED });
                     try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = .rax }, .amount = .{ .reg = SHIFTED } } });
-                    // jit_block.append(.{ .And = .{ .dst = .{ .reg = .rax }, .src = .{ .imm32 = 0xFFFF } } });
                 } else {
                     try jit_block.push(.{ .reg = addr }); // Preserve addr and INPUTS through the call
                     try jit_block.push(.{ .reg = INPUTS });
