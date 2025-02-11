@@ -1106,7 +1106,7 @@ pub fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     cpu.pc = cpu.R(opcode.nmd.n).*;
-    cpu.pc -= 2; // -2 to account for the standard +2
+    cpu.pc -%= 2; // -2 to account for the standard +2
     execute_delay_slot(cpu, delay_slot);
 }
 pub fn rts(cpu: *SH4, _: Instr) void {
@@ -1218,16 +1218,29 @@ pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* += 4;
 }
 
-pub fn ldtlb(cpu: *SH4, opcode: Instr) void {
-    _ = cpu;
-    _ = opcode;
-    const static = struct {
-        var once = true;
+pub fn ldtlb(cpu: *SH4, _: Instr) void {
+    const urc = cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).urc;
+    const pteh = cpu.read_p4_register(sh4.mmu.PTEH, .PTEH);
+    const ptel = cpu.read_p4_register(sh4.mmu.PTEL, .PTEL);
+    const ptea = cpu.read_p4_register(sh4.mmu.PTEA, .PTEA);
+
+    cpu.utlb[urc] = .{
+        .asid = pteh.asid,
+        .vpn = pteh.vpn,
+
+        .ppn = ptel.ppn,
+        .v = ptel.v,
+        .sz = ptel.sz(),
+        .pr = ptel.pr,
+        .c = ptel.c,
+        .d = ptel.d,
+        .sh = ptel.sh,
+        .wt = ptel.wt,
+
+        .sa = ptea.sa,
+        .tc = ptea.tc,
     };
-    if (static.once) {
-        static.once = false;
-        sh4_log.warn(termcolor.yellow("Unimplemented instruction: ldtlb"), .{});
-    }
+    sh4_log.warn(termcolor.yellow("ldtlb : utlb[{d}] = {any}"), .{ urc, cpu.utlb[urc] });
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1358,7 +1371,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         //               The full address also includes the sq bit.
         var ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
 
-        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at == 1) {
+        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at) {
             // The SQ area (H'E000 0000 to H'E3FF FFFF) is set in VPN of the UTLB, and the transfer
             // destination external memory address in PPN. The ASID, V, SZ, SH, PR, and D bits have the
             // same meaning as for normal address translation, but the C and WT bits have no meaning

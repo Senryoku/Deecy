@@ -8,24 +8,42 @@ pub const PTEH = packed struct {
 };
 
 pub const PTEL = packed struct {
-    wt: u1 = undefined, // Write-through bit
-    sh: u1 = undefined, // Share status bit
-    d: u1 = undefined, // Dirty bit
-    c: u1 = undefined, // Cacheability bit
-    sz0: u1 = undefined, // Page size bit
-    pr: u2 = undefined, // Protection key data
-    sz1: u1 = undefined, // Page size bit
-    v: u1 = undefined, // Validity bit.
+    /// Write-through bit
+    wt: u1 = undefined,
+    /// Share status bit
+    sh: u1 = undefined,
+    /// Dirty bit
+    d: u1 = undefined,
+    /// Cacheability bit
+    c: u1 = undefined,
+    /// Page size bit
+    sz0: u1 = undefined,
+    /// Protection key data
+    pr: u2 = undefined,
+    /// Page size bit
+    sz1: u1 = undefined,
+    /// Validity bit
+    v: u1 = undefined,
 
     _r0: u1 = undefined,
+    /// Physical page number
+    ppn: u19 = undefined,
+    /// TC or Timing control bit in UTBL Entry, not used.
+    _r1: u3 = undefined,
 
-    ppn: u19 = undefined, // Physical page number
+    pub fn sz(self: @This()) u2 {
+        return @as(u2, self.sz1) << 1 | self.sz0;
+    }
+};
 
-    _r1: u3 = undefined, // TC or Timing control bit in UTBL Entry, not used.
+pub const PTEA = packed struct {
+    sa: u3 = undefined,
+    tc: u1 = undefined,
+    _: u28 = undefined,
 };
 
 pub const MMUCR = packed struct {
-    at: u1 = 0, // Address translation bit
+    at: bool = false, // Address translation bit
 
     _r0: u1 = undefined,
 
@@ -60,7 +78,7 @@ pub const UTLBEntry = packed struct {
     v: u1 = 0, // Validity bit
 
     tc: u1 = undefined, // Timing control bit
-    sa: u2 = undefined, // Space attribute bits
+    sa: u3 = undefined, // Space attribute bits
     wt: u1 = undefined, // Write-through bit
     d: u1 = undefined, // Dirty bit
     pr: u2 = undefined, // Protection key data
@@ -68,7 +86,7 @@ pub const UTLBEntry = packed struct {
     sh: u1 = undefined, // Share status bit, 1 => Shared
     sz: u2 = undefined, // Page size
     ppn: u19 = undefined, // Physical page number
-    _: u3 = 0,
+    _: u2 = 0,
 
     pub inline fn valid(self: @This()) bool {
         return self.v == 1;

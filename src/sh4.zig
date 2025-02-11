@@ -16,6 +16,8 @@ pub const P4Register = P4.P4Register;
 const Interrupts = @import("sh4_interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
+pub const Exception = @import("sh4_exceptions.zig").Exception;
+
 const addr_t = common.addr_t;
 
 pub const sh4_instructions = @import("sh4_instructions.zig");
@@ -205,7 +207,7 @@ pub const SH4 = struct {
         callback: *const fn (userdata: *anyopaque) void, // Debugging callback
         userdata: *anyopaque,
     } else void = if (EnableTRAPACallback) null else {},
-    debug_trace: bool = false,
+    debug_trace: bool = true, // FIXME: Turn this off :)
 
     _allocator: std.mem.Allocator,
     _dc: ?*Dreamcast = null,
@@ -583,7 +585,14 @@ pub const SH4 = struct {
         self.pc = self.vbr + 0x600;
     }
 
-    fn jump_to_exception(self: *@This()) void {
+    pub fn report_address_exception(self: *@This(), address: addr_t) void {
+        self.p4_register(u32, .TEA).* = address;
+        self.p4_register(mmu.PTEH, .PTEH).vpn = @truncate(address >> 10);
+    }
+
+    pub fn jump_to_exception(self: *@This(), exception: Exception) void {
+        sh4_log.warn("Jump to Exception: {}\n  VBR: {X:0>8}, Offset: {X:0>4}", .{ exception, self.vbr, exception.offset() });
+
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
         self.sgr = self.R(15).*;
@@ -594,12 +603,13 @@ pub const SH4 = struct {
         new_sr.rb = 1;
         self.set_sr(new_sr);
 
-        const offset = 0x600; // TODO
+        self.p4_register(u16, .EXPEVT).* = exception.code();
+
         const UserBreak = false; // TODO
-        if (self.dc.read_p4_register(HardwareRegisters.BRCR, .BRCR).ubde == 1 and UserBreak) {
+        if (self.read_p4_register(P4.BRCR, .BRCR).ubde == 1 and UserBreak) {
             self.pc = self.dbr;
         } else {
-            self.pc = self.vbr + offset;
+            self.pc = self.vbr + exception.offset();
         }
     }
 
@@ -805,14 +815,34 @@ pub const SH4 = struct {
         self._pending_cycles += cycles;
     }
 
-    pub inline fn _execute(self: *@This(), addr: addr_t) void {
+    pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: addr_t) addr_t {
+        sh4_log.warn("handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
+        const initial_pc = self.pc;
+
+        self.report_address_exception(virtual_addr);
+
+        self.jump_to_exception(exception);
+        while (self.pc != initial_pc) {
+            self._execute(self.pc);
+            self.pc +%= 2;
+        }
+        return self.translate_address(virtual_addr) catch |err| {
+            // Still didn't work: Give up.
+            std.log.err("[PC:{X:0>8}] MMU miss: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });
+            std.process.abort();
+        };
+    }
+
+    pub fn _execute(self: *@This(), virtual_addr: addr_t) void {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
         const opcode = if (comptime !builtin.is_test) oc: {
-            const physical_addr = if (comptime builtin.is_test) addr else (addr & 0x1FFFFFFF);
+            const physical_addr = self.translate_address(virtual_addr) catch a: {
+                break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
+            };
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
-            break :oc @call(.always_inline, @This().read, .{ self, u16, physical_addr });
-        } else self.read(u16, addr);
+            break :oc @call(.always_inline, @This().read_physical, .{ self, u16, physical_addr });
+        } else self.read(u16, virtual_addr);
 
         if (interpreter_handlers.Enable) {
             interpreter_handlers.InstructionHandlers[opcode](self);
@@ -821,7 +851,7 @@ pub const SH4 = struct {
             const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, sh4_disassembly.disassemble(instr, self._allocator) catch {
+                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, sh4_disassembly.disassemble(instr, self._allocator) catch {
                     std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
                     unreachable;
                 }, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
@@ -829,7 +859,7 @@ pub const SH4 = struct {
             desc.fn_(self, instr);
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-                std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+                std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
             self.add_cycles(desc.issue_cycles);
         }
@@ -970,18 +1000,6 @@ pub const SH4 = struct {
     pub inline fn _get_memory(self: *@This(), addr: addr_t) *u8 {
         std.debug.assert(addr <= 0x1FFFFFFF);
         const dc = self._dc.?;
-
-        if (false) {
-            // MMU: Looks like most game don't use it at all. TODO: Expose it as an option.
-            const physical_addr = self.mmu_translate_utbl(addr) catch |e| {
-                // FIXME: Handle exceptions
-                sh4_log.err("\u{001B}[31mError in utlb _read: {any} at {X:0>8}\u{001B}[0m", .{ e, addr });
-                unreachable;
-            };
-
-            if (physical_addr != addr)
-                sh4_log.info("  Write UTLB Hit: {x:0>8} => {x:0>8}", .{ addr, physical_addr });
-        }
 
         // NOTE: These cases are out of order as an optimization.
         //       Empirically tested on interpreter_perf (i.e. 200_000_000 first 'ticks' of Sonic Adventure and the Boot ROM).
@@ -1400,23 +1418,68 @@ pub const SH4 = struct {
         }
     }
 
+    pub fn mmu_translate_address(self: *const @This(), virtual_addr: addr_t) !addr_t {
+        std.debug.assert(self.read_p4_register(mmu.MMUCR, .MMUCR).at);
+
+        // P4 access
+        if (virtual_addr >= 0xE0000000) return virtual_addr;
+        // Return if not in P0 or P3 (FIXME: Cleanup this)
+        if (!(virtual_addr & 0xE000_0000 < 0x8000_0000 or virtual_addr & 0xE000_0000 == 0xC000_0000)) return virtual_addr & 0x1FFF_FFFF;
+
+        const vpn: u22 = @truncate(virtual_addr >> 10);
+        for (self.utlb) |entry| {
+            if (entry.match(vpn)) {
+                const ppn = @as(u32, @intCast(entry.ppn));
+                switch (entry.sz) {
+                    0b00 => { // 1-Kbyte page
+                        return ppn << 10 | (virtual_addr & 0b11_1111_1111);
+                    },
+                    0b01 => { // 4-Kbyte page
+                        return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
+                    },
+                    0b10 => { //64-Kbyte page
+                        return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
+                    },
+                    0b11 => { // 1-Mbyte page
+                        return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
+                    },
+                }
+            }
+        }
+        sh4_log.err("UTLB Miss: {x:0>8}", .{virtual_addr});
+        return error.TLBMiss;
+    }
+
+    pub fn translate_address(self: *const @This(), virtual_addr: addr_t) !addr_t {
+        if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) return self.mmu_translate_address(virtual_addr);
+        return virtual_addr;
+    }
+
     pub fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+        const physical_address = self.translate_address(virtual_addr) catch a: {
+            break :a @constCast(self).handle_tlb_miss(.DataTLBMissRead, virtual_addr);
+        };
+        return self.read_physical(T, physical_address);
+    }
+
+    pub fn read_physical(self: *const @This(), comptime T: type, physical_addr: addr_t) T {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
-                u8 => return DebugHooks.read8.?(virtual_addr),
-                u16 => return DebugHooks.read16.?(virtual_addr),
-                u32 => return DebugHooks.read32.?(virtual_addr),
-                u64 => return DebugHooks.read64.?(virtual_addr),
+                u8 => return DebugHooks.read8.?(physical_addr),
+                u16 => return DebugHooks.read16.?(physical_addr),
+                u32 => return DebugHooks.read32.?(physical_addr),
+                u64 => return DebugHooks.read64.?(physical_addr),
                 else => @compileError("Invalid read type"),
             }
         }
 
-        const addr = virtual_addr & 0x1FFFFFFF;
+        if (physical_addr >= 0x7C000000 and physical_addr <= 0x7FFFFFFF)
+            return self.read_operand_cache(T, physical_addr);
 
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.read_operand_cache(T, virtual_addr);
+        if (physical_addr >= 0xE0000000) return self.read_p4(T, physical_addr);
 
-        if (virtual_addr >= 0xE0000000) return self.read_p4(T, virtual_addr);
+        // const addr = self.translate_address(virtual_addr); // We don't want that in JIT mode
+        const addr = physical_addr & 0x1FFFFFFF;
 
         switch (addr) {
             // Area 0
@@ -1464,15 +1527,15 @@ pub const SH4 = struct {
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
                 if (T == u64) {
-                    sh4_log.debug("Read(64) from 0x{X:0>8}", .{virtual_addr});
-                    return @as(u64, self.read(u32, virtual_addr + 4)) << 32 | self.read(u32, virtual_addr);
+                    sh4_log.debug("Read(64) from 0x{X:0>8}", .{physical_addr});
+                    return @as(u64, self.read(u32, physical_addr + 4)) << 32 | self.read(u32, physical_addr);
                 }
                 return self._dc.?.gpu.read_vram(T, addr);
             },
             // Area 4 - Tile accelerator command input
             0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
-                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                if (physical_addr & (@as(u32, 1) << 25) != 0) {
                     const index: u32 = (addr / 32) & 255;
                     const offset: u32 = addr & 31;
 
@@ -1493,6 +1556,13 @@ pub const SH4 = struct {
     }
 
     pub fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+        const physical_address = self.translate_address(virtual_addr) catch a: {
+            break :a self.handle_tlb_miss(.DataTLBMissWrite, virtual_addr);
+        };
+        return self.write_physical(T, physical_address, value);
+    }
+
+    pub fn write_physical(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.write8.?(virtual_addr, value),
@@ -1509,7 +1579,9 @@ pub const SH4 = struct {
         if (virtual_addr >= 0xE0000000)
             return write_p4(self, T, virtual_addr, value);
 
+        // const addr = self.translate_address(virtual_addr); // We don't want that in JIT mode
         const addr = virtual_addr & 0x1FFFFFFF;
+
         switch (addr) {
             // Area 0, and mirrors
             0x00000000...0x01FFFFFF, 0x02000000...0x03FFFFFF => {
@@ -1681,69 +1753,18 @@ pub const SH4 = struct {
     // MMU Stub functions
     // NOTE: This is dead code, the MMU is not emulated and utlb_entries are not in this struct anymore (reducing the size of the struct helps a lot with performance).
 
-    pub fn mmu_utlb_match(self: *const @This(), virtual_addr: addr_t) !mmu.UTLBEntry {
-        const asid = self.dc.read_p4_register(mmu.PTEH, HardwareRegister.PTEH).asid;
-        const vpn: u22 = @truncate(virtual_addr >> 10);
-
-        const shared_access = self.dc.read_p4_register(mmu.MMUCR, HardwareRegister.MMUCR).sv == 0 or self.sr.md == 0;
-        var found: ?mmu.UTLBEntry = null;
-        for (self.utlb_entries) |entry| {
-            if (entry.v == 1 and mmu.vpn_match(vpn, entry.vpn, entry.sz) and ((entry.sh == 0 and shared_access) or
-                (entry.asid == asid)))
-            {
-                if (found != null)
-                    return error.DataTLBMutipleHitExpection;
-                found = entry;
-            }
-        }
-        if (found == null)
-            return error.DataTLBMissExpection;
-        return found.?;
-    }
-
-    pub fn mmu_translate_utbl(self: *const @This(), virtual_addr: addr_t) !addr_t {
-        std.debug.assert(virtual_addr & 0xE0000000 == 0 or virtual_addr & 0xE0000000 == 0x60000000);
-        if (self.dc.read_p4_register(mmu.MMUCR, HardwareRegister.MMUCR).at == 0) return virtual_addr;
-
-        const entry = try mmu_utlb_match(self, virtual_addr);
-
-        //try self.check_memory_protection(entry, write);
-
-        const ppn = @as(u32, @intCast(entry.ppn));
-        switch (entry.sz) {
-            0b00 => { // 1-Kbyte page
-                return ppn << 10 | (virtual_addr & 0b11_1111_1111);
-            },
-            0b01 => { // 4-Kbyte page
-                return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
-            },
-            0b10 => { //64-Kbyte page
-                return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
-            },
-            0b11 => { // 1-Mbyte page
-                return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
-            },
-        }
-    }
-
-    pub fn mmu_translate_itbl(self: *const @This(), virtual_addr: addr_t) !u32 {
-        _ = virtual_addr;
-        _ = self;
-        unreachable;
-    }
-
     pub fn check_memory_protection(self: *const @This(), entry: mmu.UTLBEntry, writing: bool) !void {
         if (self.sr.md == 0) {
             switch (entry.pr) {
-                0b00, 0b01 => return error.DataTLBProtectionViolationExpection,
-                0b10 => if (writing and entry.w) return error.DataTLBProtectionViolationExpection,
-                0b11 => if (writing and entry.w and entry.d == 0) return error.InitalPageWriteException,
+                0b00, 0b01 => return error.DataTLBProtectionViolation,
+                0b10 => if (writing and entry.w) return error.DataTLBProtectionViolation,
+                0b11 => if (writing and entry.w and entry.d == 0) return error.InitalPageWrite,
                 else => {},
             }
         } else {
             // switch (entry.pr) {
-            //    0b01, 0b11 => if(writing and entry.d) return error.InitalPageWriteException,
-            //    0b00, 0b01 => if(writing) return error.DataTLBProtectionViolationExpection,
+            //    0b01, 0b11 => if(writing and entry.d) return error.InitalPageWrite,
+            //    0b00, 0b01 => if(writing) return error.DataTLBProtectionViolation,
             // }
         }
     }

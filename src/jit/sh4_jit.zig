@@ -6,6 +6,7 @@ const termcolor = @import("termcolor");
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
 const sh4_disassembly = @import("../sh4_disassembly.zig");
+const MMU = @import("../mmu.zig");
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("jit_block.zig");
 const JITBlock = JIT.JITBlock;
@@ -360,7 +361,16 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const pc = cpu.pc & 0x1FFFFFFF;
+        var pc = cpu.pc & 0x1FFFFFFF;
+
+        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at) {
+            // P0 or P3
+            if (cpu.pc & 0xE000_0000 < 0x8000_0000 or cpu.pc & 0xE000_0000 == 0xC000_0000) {
+                pc = runtime_mmu_translation(.InstructionRead).handler(cpu, cpu.pc);
+                sh4_jit_log.warn("Translated PC: {X:0>8} => {X:0>8}", .{ cpu.pc, pc });
+            }
+        }
+
         return .{
             .cpu = cpu,
             .address = pc,
@@ -990,35 +1000,72 @@ fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
-    return @call(.always_inline, sh4.SH4.read, .{ cpu, u8, virtual_addr });
+    return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u8, virtual_addr });
 }
 pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.read, .{ cpu, u16, virtual_addr });
+    return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u16, virtual_addr });
 }
 pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.read, .{ cpu, u32, virtual_addr });
+    return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u32, virtual_addr });
 }
 pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.read, .{ cpu, u64, virtual_addr });
+    return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u64, virtual_addr });
 }
 pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.write, .{ cpu, u8, virtual_addr, value });
+    return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u8, virtual_addr, value });
 }
 pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.write, .{ cpu, u16, virtual_addr, value });
+    return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u16, virtual_addr, value });
 }
 pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.write, .{ cpu, u32, virtual_addr, value });
+    return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u32, virtual_addr, value });
 }
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
     if (!ExperimentalFastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
-    return @call(.always_inline, sh4.SH4.write, .{ cpu, u64, virtual_addr, value });
+    return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
+}
+
+fn runtime_mmu_translation(comptime t: enum { DataRead, DataWrite, InstructionRead }) type {
+    return struct {
+        fn handler(cpu: *sh4.SH4, virtual_addr: u32) u32 {
+            const physical = cpu.translate_address(virtual_addr) catch a: {
+                // Not found: Trigger and handle an exception.
+
+                sh4_jit_log.warn("MMU miss. UTLBs:", .{});
+                for (cpu.utlb, 0..) |utlb, idx| {
+                    if (utlb.valid()) {
+                        sh4_jit_log.warn("  [{d}] {any}", .{ idx, utlb });
+                    }
+                }
+
+                break :a cpu.handle_tlb_miss(switch (t) {
+                    .DataRead => .DataTLBMissRead,
+                    .DataWrite => .DataAddressErrorWrite,
+                    .InstructionRead => .InstructionTLBMiss,
+                }, virtual_addr);
+            };
+            return physical;
+        }
+    };
+}
+
+/// Will do the address translation, handle exception if necessary, and return the translated address to addr.
+fn mmu_translation(block: *JITBlock, ctx: *JITContext, addr: JIT.Register) !void {
+    try ctx.gpr_cache.commit_and_invalidate_all(block);
+    try ctx.fpr_cache.commit_and_invalidate_all(block);
+    try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.address });
+
+    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+    if (addr != ArgRegisters[1])
+        try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
+    try block.call(runtime_mmu_translation(.DataRead).handler);
+    try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
@@ -1033,6 +1080,10 @@ fn load_mem(block: *JITBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u
     if (addressing == .Reg_R0) {
         const r0 = try load_register(block, ctx, 0);
         try block.add(.{ .reg = addr }, .{ .reg = r0 });
+    }
+
+    if (ctx.cpu.read_p4_register(MMU.MMUCR, .MMUCR).at) {
+        try mmu_translation(block, ctx, addr);
     }
 
     if (ExperimentalFastMem) {
@@ -1092,6 +1143,21 @@ fn store_mem(block: *JITBlock, ctx: *JITContext, dest_guest_reg: u4, comptime ad
     if (addressing == .Reg_R0) {
         const r0 = try load_register(block, ctx, 0);
         try block.add(.{ .reg = addr }, .{ .reg = r0 });
+    }
+
+    if (ctx.cpu.read_p4_register(MMU.MMUCR, .MMUCR).at) {
+        // Make sure value isn't overwritten
+        if (value == .reg8 or value == .reg16 or value == .reg or value == .reg64) {
+            try block.push(value);
+            try block.push(value);
+        }
+
+        try mmu_translation(block, ctx, addr);
+
+        if (value == .reg8 or value == .reg16 or value == .reg or value == .reg64) {
+            try block.pop(value);
+            try block.pop(value);
+        }
     }
 
     if (ExperimentalFastMem) {
