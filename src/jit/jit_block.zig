@@ -106,6 +106,15 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .Shr = .{ .dst = dst, .amount = amount } });
     }
 
+    pub fn sar(self: *@This(), dst: Operand, amount: anytype) !void {
+        switch (@TypeOf(amount)) {
+            comptime_int, u8 => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .imm8 = amount } } }),
+            Register => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .reg = amount } } }),
+            Operand => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = amount } }),
+            else => @compileError("Invalid Type used as SAR amount"),
+        }
+    }
+
     // Forward Jump
     pub fn jmp(self: *@This(), condition: Condition) !PatchableJump {
         try self.instructions.append(.{ .Jmp = .{ .condition = condition, .dst = .{ .rel = 0x00C0FFEE } } });

@@ -328,31 +328,33 @@ pub fn compile(self: *@This()) !void {
         }
     }
 
-    var jit_block = try JITBlock.init(self._allocator);
-    defer jit_block.deinit();
+    var b = try JITBlock.init(self._allocator);
+    defer b.deinit();
+
+    const EAX: Architecture.Operand = .{ .reg = .rax };
 
     const RegistersBase = Architecture.Register.rbp;
-    const ACC = Architecture.SavedRegisters[0];
-    const Y_REG = Architecture.SavedRegisters[1];
-    const FRC_REG = Architecture.SavedRegisters[2];
-    const ADRS_REG = Architecture.SavedRegisters[3];
+    const ACC: Architecture.Operand = .{ .reg = Architecture.SavedRegisters[0] };
+    const Y_REG: Architecture.Operand = .{ .reg = Architecture.SavedRegisters[1] };
+    const FRC_REG: Architecture.Operand = .{ .reg = Architecture.SavedRegisters[2] };
+    const ADRS_REG: Architecture.Operand = .{ .reg = Architecture.SavedRegisters[3] };
 
-    const SHIFTED = Architecture.SavedRegisters[4]; // FIXME
+    const SHIFTED: Architecture.Operand = .{ .reg = Architecture.SavedRegisters[4] };
 
     // Should be 16-bits, be easier this way.
     const MDEC_CT_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = 4 * MDEC_CT_base, .size = 32 } };
 
     for (0..5) |i| {
-        try jit_block.push(.{ .reg = Architecture.SavedRegisters[i] });
+        try b.push(.{ .reg = Architecture.SavedRegisters[i] });
     }
-    try jit_block.push(.{ .reg = Architecture.SavedRegisters[4] }); // Ensure stack alignment
+    try b.push(.{ .reg = Architecture.SavedRegisters[4] }); // Ensure stack alignment
 
-    try jit_block.mov(.{ .reg = RegistersBase }, .{ .reg = Architecture.ArgRegisters[0] });
+    try b.mov(.{ .reg = RegistersBase }, .{ .reg = Architecture.ArgRegisters[0] });
 
-    try jit_block.mov(.{ .reg = ACC }, .{ .imm32 = 0 });
-    try jit_block.mov(.{ .reg = Y_REG }, .{ .imm32 = 0 });
-    try jit_block.mov(.{ .reg = FRC_REG }, .{ .imm32 = 0 });
-    try jit_block.mov(.{ .reg = ADRS_REG }, .{ .imm32 = 0 });
+    try b.mov(ACC, .{ .imm32 = 0 });
+    try b.mov(Y_REG, .{ .imm32 = 0 });
+    try b.mov(FRC_REG, .{ .imm32 = 0 });
+    try b.mov(ADRS_REG, .{ .imm32 = 0 });
 
     // Look for instructions at the end of the program that don't write anything and thus
     // have no visible effect outside of internal states, and discard them.
@@ -369,54 +371,52 @@ pub fn compile(self: *@This()) !void {
     for (0..max_step) |step| {
         const instruction = self.read_mpro(@intCast(step));
 
-        const INPUTS = Architecture.ArgRegisters[0];
-
-        const scratch = Architecture.ScratchRegisters[0];
+        const INPUTS: Architecture.Operand = .{ .reg = Architecture.ArgRegisters[0] };
 
         switch (instruction.IRA) {
             0x00...0x1F => |reg| {
-                try jit_block.mov(.{ .reg = INPUTS }, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MEMS_base + reg), .size = 32 } });
+                try b.mov(INPUTS, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MEMS_base + reg), .size = 32 } });
                 // Sign extend from i24 to i32
-                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 8 });
-                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = INPUTS }, .amount = .{ .imm8 = 8 } } });
+                try b.shl(INPUTS, .{ .imm8 = 8 });
+                try b.sar(INPUTS, 8);
             },
             0x20...0x2F => |reg| {
-                try jit_block.mov(.{ .reg = INPUTS }, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MIXS_base + (reg - 0x20)), .size = 32 } });
+                try b.mov(INPUTS, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MIXS_base + (reg - 0x20)), .size = 32 } });
                 // Shift 4 left then sign extend from i24 to i32
-                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 4 + 8 });
-                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = INPUTS }, .amount = .{ .imm8 = 8 } } });
+                try b.shl(INPUTS, .{ .imm8 = 4 + 8 });
+                try b.sar(INPUTS, 8);
             },
             0x30...0x31 => |reg| {
-                try jit_block.movsx(.{ .reg = INPUTS }, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (EXTS_base + (reg - 0x30)), .size = 16 } });
-                try jit_block.shl(.{ .reg = INPUTS }, .{ .imm8 = 8 });
+                try b.movsx(INPUTS, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (EXTS_base + (reg - 0x30)), .size = 16 } });
+                try b.shl(INPUTS, .{ .imm8 = 8 });
             },
             else => {
-                try jit_block.mov(.{ .reg = INPUTS }, .{ .imm32 = 0 });
+                try b.mov(INPUTS, .{ .imm32 = 0 });
             },
         }
 
         // NOTE: IWT is handled at the end of the step for simplicity (allow calling functions without worrying about registers)
 
         {
-            const X = Architecture.ArgRegisters[1];
-            const Y = Architecture.ArgRegisters[2];
-            const B = Architecture.ArgRegisters[3];
+            const X: Architecture.Operand = .{ .reg = Architecture.ArgRegisters[1] };
+            const Y: Architecture.Operand = .{ .reg = Architecture.ArgRegisters[2] };
+            const B: Architecture.Operand = .{ .reg = Architecture.ArgRegisters[3] };
 
             // Load TEMP[TRA + MDEC_CT] for X, B, or both. Optimizes the 'both' case, seems unlikely, but idk.
             const b_temp = (!instruction.ZERO and instruction.BSEL == 0);
             const x_temp = instruction.XSEL == 0;
             if (b_temp or x_temp) {
-                const index = .rax;
-                try jit_block.mov(.{ .reg = index }, .{ .imm32 = instruction.TRA });
-                try jit_block.add(.{ .reg = index }, MDEC_CT_op);
-                try jit_block.append(.{ .And = .{ .dst = .{ .reg = index }, .src = .{ .imm32 = 0x7F } } });
+                try b.mov(EAX, .{ .imm32 = instruction.TRA });
+                try b.add(EAX, MDEC_CT_op);
+                try b.append(.{ .And = .{ .dst = EAX, .src = .{ .imm32 = 0x7F } } });
+                const TRA_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .index = EAX.reg, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } };
                 if (x_temp and b_temp) {
-                    try jit_block.mov(.{ .reg = X }, .{ .mem = .{ .base = RegistersBase, .index = index, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } });
-                    try jit_block.mov(.{ .reg = B }, .{ .reg = X });
+                    try b.mov(X, TRA_op);
+                    try b.mov(B, X);
                 } else if (x_temp) {
-                    try jit_block.mov(.{ .reg = X }, .{ .mem = .{ .base = RegistersBase, .index = index, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } });
+                    try b.mov(X, TRA_op);
                 } else {
-                    try jit_block.mov(.{ .reg = B }, .{ .mem = .{ .base = RegistersBase, .index = index, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } });
+                    try b.mov(B, TRA_op);
                 }
             }
 
@@ -426,108 +426,107 @@ pub fn compile(self: *@This()) !void {
                 if (instruction.BSEL == 0) {
                     // Already loaded
                 } else {
-                    try jit_block.mov(.{ .reg = B }, .{ .reg = ACC });
+                    try b.mov(B, ACC);
                 }
 
                 if (instruction.NEGB)
-                    try jit_block.append(.{ .Neg = .{ .dst = .{ .reg = B } } });
+                    try b.append(.{ .Neg = .{ .dst = B } });
             }
 
             if (instruction.XSEL == 0) {
                 // Already loaded
             } else {
-                try jit_block.mov(.{ .reg = X }, .{ .reg = INPUTS });
+                try b.mov(X, INPUTS);
             }
 
             switch (instruction.YSEL) {
                 0 => {
-                    try jit_block.mov(.{ .reg = Y }, .{ .reg = FRC_REG });
+                    try b.mov(Y, FRC_REG);
                 },
                 1 => { // Y = COEF[step]
-                    try jit_block.movsx(.{ .reg = Y }, .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * step), .size = 16 } });
-                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 3 } } });
+                    try b.movsx(Y, .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * step), .size = 16 } });
+                    try b.sar(Y, 3);
                 },
                 2 => {
-                    try jit_block.mov(.{ .reg = Y }, .{ .reg = Y_REG });
-                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 11 } } });
+                    try b.mov(Y, Y_REG);
+                    try b.sar(Y, 11);
                 },
                 3 => {
-                    try jit_block.mov(.{ .reg = Y }, .{ .reg = Y_REG });
-                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = Y }, .amount = .{ .imm8 = 4 } } });
-                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = Y }, .src = .{ .imm32 = 0xFFF } } });
+                    try b.mov(Y, Y_REG);
+                    try b.sar(Y, 4);
+                    try b.append(.{ .And = .{ .dst = Y, .src = .{ .imm32 = 0xFFF } } });
                 },
             }
 
             if (instruction.YRL)
-                try jit_block.mov(.{ .reg = Y_REG }, .{ .reg = INPUTS });
+                try b.mov(Y_REG, INPUTS);
 
-            try jit_block.mov(.{ .reg = SHIFTED }, .{ .reg = ACC });
+            try b.mov(SHIFTED, ACC);
             if (instruction.SHFT == 1 or instruction.SHFT == 2) {
-                try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 1 });
+                try b.shl(SHIFTED, .{ .imm8 = 1 });
             }
             if (instruction.SHFT == 0 or instruction.SHFT == 1) {
                 // Saturate
-                try jit_block.mov(.{ .reg = .rax }, .{ .imm32 = @bitCast(@as(i32, -0x800000)) });
-                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .reg = .rax } } });
-                try jit_block.cmov(.Less, .{ .reg = SHIFTED }, .{ .reg = .rax });
+                try b.mov(EAX, .{ .imm32 = @bitCast(@as(i32, -0x800000)) });
+                try b.append(.{ .Cmp = .{ .lhs = SHIFTED, .rhs = EAX } });
+                try b.cmov(.Less, SHIFTED, EAX);
 
-                try jit_block.mov(.{ .reg = .rax }, .{ .imm32 = 0x7FFFFF });
-                try jit_block.append(.{ .Cmp = .{ .lhs = .{ .reg = SHIFTED }, .rhs = .{ .reg = .rax } } });
-                try jit_block.cmov(.Greater, .{ .reg = SHIFTED }, .{ .reg = .rax });
+                try b.mov(EAX, .{ .imm32 = 0x7FFFFF });
+                try b.append(.{ .Cmp = .{ .lhs = SHIFTED, .rhs = EAX } });
+                try b.cmov(.Greater, SHIFTED, EAX);
             } else {
                 // Truncate to 24 bits.
-                try jit_block.shl(.{ .reg = SHIFTED }, .{ .imm8 = 8 });
-                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = SHIFTED }, .amount = .{ .imm8 = 8 } } });
+                try b.shl(SHIFTED, .{ .imm8 = 8 });
+                try b.sar(SHIFTED, 8);
             }
 
             // Compute ACC = ((X * Y) >> 12) + B
-            try jit_block.movsx(.{ .reg64 = ACC }, .{ .reg = X });
-            try jit_block.movsx(.{ .reg64 = Y }, .{ .reg = Y });
-            try jit_block.append(.{ .Mul = .{ .dst = .{ .reg64 = ACC }, .src = .{ .reg64 = Y } } });
-            try jit_block.append(.{ .Sar = .{ .dst = .{ .reg64 = ACC }, .amount = .{ .imm8 = 12 } } });
+            try b.movsx(.{ .reg64 = ACC.reg }, X);
+            try b.movsx(.{ .reg64 = Y.reg }, Y);
+            try b.append(.{ .Mul = .{ .dst = .{ .reg64 = ACC.reg }, .src = .{ .reg64 = Y.reg } } });
+            try b.sar(.{ .reg64 = ACC.reg }, 12);
             if (!instruction.ZERO)
-                try jit_block.add(.{ .reg = ACC }, .{ .reg = B });
+                try b.add(ACC, B);
         }
 
         if (instruction.TWT) {
-            const index = .rax;
-            try jit_block.mov(.{ .reg = index }, .{ .imm32 = instruction.TWA });
-            try jit_block.add(.{ .reg = index }, MDEC_CT_op);
-            try jit_block.append(.{ .And = .{ .dst = .{ .reg = index }, .src = .{ .imm32 = 0x7F } } });
-            try jit_block.mov(.{ .mem = .{ .base = RegistersBase, .index = index, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } }, .{ .reg = SHIFTED });
+            try b.mov(EAX, .{ .imm32 = instruction.TWA });
+            try b.add(EAX, MDEC_CT_op);
+            try b.append(.{ .And = .{ .dst = EAX, .src = .{ .imm32 = 0x7F } } });
+            try b.mov(.{ .mem = .{ .base = RegistersBase, .index = EAX.reg, .scale = ._4, .displacement = 4 * TEMP_base, .size = 32 } }, SHIFTED);
         }
 
         if (instruction.FRCL) {
-            try jit_block.mov(.{ .reg = FRC_REG }, .{ .reg = SHIFTED });
+            try b.mov(FRC_REG, SHIFTED);
             switch (instruction.SHFT) {
                 3 => {
-                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0xFFF } } });
+                    try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0xFFF } } });
                 },
                 else => {
-                    try jit_block.shr(.{ .reg = FRC_REG }, .{ .imm8 = 11 });
-                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = FRC_REG }, .src = .{ .imm32 = 0x1FFF } } });
+                    try b.shr(FRC_REG, .{ .imm8 = 11 });
+                    try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0x1FFF } } });
                 },
             }
         }
 
         if (instruction.EWT) {
-            try jit_block.mov(.{ .reg = .rax }, .{ .reg = SHIFTED });
-            try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = .rax }, .amount = .{ .imm8 = 8 } } });
-            try jit_block.mov(.{ .mem = .{ .base = RegistersBase, .displacement = 4 * (EFREG_base + instruction.EWA), .size = 16 } }, .{ .reg = .rax });
+            try b.mov(EAX, SHIFTED);
+            try b.sar(EAX, 8);
+            try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = 4 * (EFREG_base + instruction.EWA), .size = 16 } }, EAX);
         }
 
         // Out-of-order sections
 
         if (instruction.MRD or instruction.MWT) {
-            const addr = Architecture.ScratchRegisters[1];
+            const addr: Architecture.Operand = .{ .reg = Architecture.ScratchRegisters[0] };
 
-            try jit_block.mov(.{ .reg = addr }, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MADRS_base + instruction.MASA), .size = 32 } });
+            try b.mov(addr, .{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MADRS_base + instruction.MASA), .size = 32 } });
             if (instruction.TABLE == 0)
-                try jit_block.add(.{ .reg = addr }, MDEC_CT_op);
+                try b.add(addr, MDEC_CT_op);
             if (instruction.ADREB)
-                try jit_block.add(.{ .reg = addr }, .{ .reg = ADRS_REG });
+                try b.add(addr, ADRS_REG);
             if (instruction.NXADR)
-                try jit_block.add(.{ .reg = addr }, .{ .imm8 = 1 });
+                try b.add(addr, .{ .imm8 = 1 });
             // NOTE: We assume ring_buffer is constant here, we don't track it.
             const mask: u32 = if (instruction.TABLE == 0)
                 switch (self._ring_buffer.size) {
@@ -538,70 +537,71 @@ pub fn compile(self: *@This()) !void {
                 }
             else
                 0xFFFF;
-            try jit_block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = mask } } });
-            try jit_block.shl(.{ .reg = addr }, .{ .imm8 = 1 });
-            try jit_block.add(.{ .reg = addr }, .{ .imm32 = @as(u32, self._ring_buffer.pointer) << 11 });
-            try jit_block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x1FFFFF } } });
+            try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = mask } } });
+            try b.shl(addr, .{ .imm8 = 1 });
+            try b.add(addr, .{ .imm32 = @as(u32, self._ring_buffer.pointer) << 11 });
+            try b.append(.{ .And = .{ .dst = addr, .src = .{ .imm32 = 0x1FFFFF } } });
 
             if (instruction.MRD) {
-                try jit_block.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
-                try jit_block.mov(.{ .reg = scratch }, .{ .mem = .{ .base = .rax, .index = addr, .size = 16 } });
-                try jit_block.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % 4))), .size = 16 } }, .{ .reg = scratch });
+                try b.mov(.{ .reg64 = .rax }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
+                try b.mov(EAX, .{ .mem = .{ .base = .rax, .index = addr.reg, .size = 16 } });
+                try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + (step % 4))), .size = 16 } }, EAX);
             }
 
             if (instruction.MWT) {
                 if (instruction.NOFL) {
-                    try jit_block.mov(.{ .reg = .rax }, .{ .reg = SHIFTED });
-                    try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = .rax }, .amount = .{ .reg = SHIFTED } } });
+                    try b.mov(EAX, SHIFTED);
+                    try b.sar(EAX, 8);
                 } else {
-                    try jit_block.push(.{ .reg = addr }); // Preserve addr and INPUTS through the call
-                    try jit_block.push(.{ .reg = INPUTS });
+                    try b.push(addr); // Preserve addr and INPUTS through the call
+                    try b.push(INPUTS);
 
-                    try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .reg = SHIFTED });
-                    try jit_block.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
+                    try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, SHIFTED);
+                    try b.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
 
-                    try jit_block.call(&f16_from_i24);
+                    try b.call(&f16_from_i24);
 
-                    try jit_block.pop(.{ .reg = INPUTS });
-                    try jit_block.pop(.{ .reg = addr });
+                    try b.pop(INPUTS);
+                    try b.pop(addr);
                 }
-                try jit_block.mov(.{ .reg64 = scratch }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
-                try jit_block.mov(.{ .mem = .{ .base = scratch, .index = addr, .size = 16 } }, .{ .reg = .rax });
+                try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
+                try b.mov(.{ .mem = .{ .base = Architecture.ArgRegisters[0], .index = addr.reg, .size = 16 } }, EAX);
             }
         }
 
         // Should be after the read/write section (only one that uses ADRS_REG)
         if (instruction.ADRL) {
             if (instruction.SHFT == 3) {
-                try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = INPUTS });
-                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 16 } } });
+                try b.mov(ADRS_REG, INPUTS);
+                try b.sar(FRC_REG, 16);
             } else {
-                try jit_block.mov(.{ .reg = ADRS_REG }, .{ .reg = SHIFTED });
-                try jit_block.append(.{ .Sar = .{ .dst = .{ .reg = FRC_REG }, .amount = .{ .imm8 = 12 } } });
+                try b.mov(ADRS_REG, SHIFTED);
+                try b.sar(FRC_REG, 12);
             }
-            try jit_block.append(.{ .And = .{ .dst = .{ .reg = ADRS_REG }, .src = .{ .imm32 = 0xFFF } } });
+            try b.append(.{ .And = .{ .dst = ADRS_REG, .src = .{ .imm32 = 0xFFF } } });
         }
 
         if (instruction.IWT) {
+            const TEMP_MEM_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((step - 2) % 4))), .size = 16 } };
             if (self.read_mpro(step - 2).NOFL) {
-                try jit_block.mov(.{ .reg = .rax }, .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((step - 2) % 4))), .size = 16 } });
-                try jit_block.shl(.{ .reg = .rax }, .{ .imm8 = 8 });
+                try b.mov(EAX, TEMP_MEM_op);
+                try b.shl(EAX, .{ .imm8 = 8 });
             } else {
-                try jit_block.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = RegistersBase, .displacement = @intCast(4 * (TEMP_MEM_base + ((step - 2) % 4))), .size = 16 } });
-                try jit_block.call(&i32_from_f16);
+                try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, TEMP_MEM_op);
+                try b.call(&i32_from_f16);
             }
-            try jit_block.mov(.{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MEMS_base + instruction.IWA), .size = 32 } }, .{ .reg = .rax });
+            try b.mov(.{ .mem = .{ .base = RegistersBase, .displacement = 4 * (MEMS_base + instruction.IWA), .size = 32 } }, EAX);
         }
     }
 
-    try jit_block.pop(.{ .reg = Architecture.SavedRegisters[4] });
+    try b.pop(.{ .reg = Architecture.SavedRegisters[4] });
     for (0..5) |i| {
-        try jit_block.pop(.{ .reg = Architecture.SavedRegisters[4 - i] });
+        try b.pop(.{ .reg = Architecture.SavedRegisters[4 - i] });
     }
 
-    const block_size = try jit_block.emit(self._jit_buffer.?);
+    const block_size = try b.emit(self._jit_buffer.?);
 
-    for (jit_block.instructions.items, 0..) |instr, idx|
+    for (b.instructions.items, 0..) |instr, idx|
         log.debug("[{d: >4}] {any}", .{ idx, instr });
     log.debug("Compiled: {X:0>2}", .{self._jit_buffer.?[0..block_size]});
 
