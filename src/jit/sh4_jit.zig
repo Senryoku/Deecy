@@ -650,11 +650,11 @@ pub const SH4JIT = struct {
         // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
         // cpu.pc += 2;
         if (!branch) {
-            try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
+            try b.mov(sh4_mem("pc"), .{ .imm32 = ctx.address });
         } else if (ctx.outdated_pc) {
-            try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } });
+            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
-            try b.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+            try b.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
         }
 
         try ctx.gpr_cache.commit_and_invalidate_all(b);
@@ -664,8 +664,8 @@ pub const SH4JIT = struct {
 
         try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
         if (ctx.may_have_pending_cycles) {
-            try b.add(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } });
-            try b.append(.{ .Mov = .{ .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .src = .{ .imm32 = 0 }, .preserve_flags = false } });
+            try b.add(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
+            try b.append(.{ .Mov = .{ .dst = sh4_mem("_pending_cycles"), .src = .{ .imm32 = 0 }, .preserve_flags = false } });
         }
 
         if (Architecture.JITABI == .Win64) {
@@ -898,7 +898,7 @@ pub fn interpreter_fallback_cached(block: *JITBlock, ctx: *JITContext, instr: sh
     }
 
     if (cache_access.r.pc) {
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.address });
     }
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // FIXME: Hopefully we'll be able to remove this soon!
@@ -916,7 +916,7 @@ pub fn interpreter_fallback(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr
 
 pub fn interpreter_fallback_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Restore PC in memory.
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address });
+    try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.address });
     _ = try interpreter_fallback(block, ctx, instr);
     return true;
 }
@@ -965,9 +965,15 @@ fn store_dfp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: 
     try block.mov(.{ .freg64 = try ctx.guest_freg_cache(block, 64, guest_reg, false, true) }, value);
 }
 
+/// Returns a JIT Operand to the memory location of the supplied SH4 struct member.
+fn sh4_mem(comptime name: []const u8) Architecture.Operand {
+    std.debug.assert(@sizeOf(@FieldType(sh4.SH4, name)) == 4);
+    return .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, name), .size = 32 } };
+}
+
 // Loads the guest t bit into the host carry flag
 fn load_t(block: *JITBlock, _: *JITContext) !void {
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
     try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
 }
 
@@ -976,10 +982,10 @@ fn load_t(block: *JITBlock, _: *JITContext) !void {
 fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
     try block.append(.{ .SetByteCondition = .{ .condition = condition, .dst = .{ .reg8 = ArgRegisters[0] } } });
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
     try block.append(.{ .And = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .imm8 = 0xFE } } });
     try block.append(.{ .Or = .{ .dst = .{ .reg8 = ReturnRegister }, .src = .{ .reg8 = ArgRegisters[0] } } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("sr"), .{ .reg = ReturnRegister });
 }
 
 pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
@@ -1330,7 +1336,7 @@ pub fn movl_Rm_atR0Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
 pub fn movt_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
     const rn = try get_register_for_writing(block, ctx, instr.nmd.n);
-    try block.mov(rn, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+    try block.mov(rn, sh4_mem("sr"));
     try block.append(.{ .And = .{ .dst = rn, .src = .{ .imm32 = 0x00000001 } } });
     return false;
 }
@@ -1569,12 +1575,12 @@ pub fn fldi0_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn flds_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const frn = try load_fp_register(block, ctx, instr.nmd.n);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, frn);
+    try block.mov(sh4_mem("fpul"), frn);
     return false;
 }
 
 pub fn fsts_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try store_fp_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } });
+    try store_fp_register(block, ctx, instr.nmd.n, sh4_mem("fpul"));
     return false;
 }
 
@@ -1750,12 +1756,12 @@ pub fn float_FPUL_FRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !boo
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Convert = .{
             .dst = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) },
-            .src = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } },
+            .src = sh4_mem("fpul"),
         } }),
         .Double => return interpreter_fallback_cached(block, ctx, instr),
         // try block.append(.{ .Convert = .{
         //     .dst = .{ .freg64 = try ctx.guest_freg_cache(block, 64, instr.nmd.n, false, true) },
-        //     .src = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } },
+        //     .src = SH4Member("fpul"),
         // } }),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
@@ -1791,7 +1797,7 @@ pub fn ftrc_FRn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool
         .Double => return interpreter_fallback_cached(block, ctx, instr),
         else => return interpreter_fallback_cached(block, ctx, instr),
     }
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, dest_tmp);
+    try block.mov(sh4_mem("fpul"), dest_tmp);
     return false;
 }
 
@@ -1854,18 +1860,18 @@ pub fn ldsl_atRnInc_FPSCR(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) 
 
 pub fn lds_Rn_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, .{ .reg = rn });
+    try block.mov(sh4_mem("fpul"), .{ .reg = rn });
     return false;
 }
 
 pub fn sts_FPUL_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } });
+    try store_register(block, ctx, instr.nmd.n, sh4_mem("fpul"));
     return false;
 }
 
 pub fn ldsl_atRnInc_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("fpul"), .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
     return false;
@@ -1874,7 +1880,7 @@ pub fn ldsl_atRnInc_FPUL(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !
 pub fn fschg(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     try block.append(.{
         .Xor = .{
-            .dst = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpscr"), .size = 32 } },
+            .dst = sh4_mem("fpscr"),
             .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.FPSCR, "sz") },
         },
     });
@@ -2038,7 +2044,7 @@ pub fn mull_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const tmp: JIT.Operand = .{ .reg = ReturnRegister };
     try block.mov(tmp, .{ .reg = rn });
     try block.append(.{ .Mul = .{ .dst = tmp, .src = .{ .reg = rm } } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, tmp);
+    try block.mov(sh4_mem("macl"), tmp);
     return false;
 }
 
@@ -2048,7 +2054,7 @@ pub fn mulsw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.movsx(.{ .reg = ReturnRegister }, .{ .reg16 = rn });
     try block.movsx(.{ .reg = ArgRegisters[0] }, .{ .reg16 = rm });
     try block.append(.{ .Mul = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = ArgRegisters[0] } } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("macl"), .{ .reg = ReturnRegister });
     return false;
 }
 
@@ -2058,7 +2064,7 @@ pub fn muluw_Rm_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg16 = rn });
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg16 = rm });
     try block.append(.{ .Mul = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = ArgRegisters[0] } } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("macl"), .{ .reg = ReturnRegister });
     return false;
 }
 
@@ -2315,7 +2321,7 @@ fn default_conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Ins
     try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = dest });
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
     try block.cmov(if (jump_if) .NotCarry else .Carry, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     if (delay_slot) try ctx.compile_delay_slot(block);
 
@@ -2330,7 +2336,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
     if (Optimizations.inline_jumps_to_start_of_block and dest == ctx.entry_point_address and ctx.cycles < MaxCyclesPerBlock) {
         if (delay_slot) {
             // Delay slot might change the T bit, push it.
-            try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+            try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
             try block.push(.{ .reg = ReturnRegister });
             try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
             try ctx.compile_delay_slot(block);
@@ -2346,29 +2352,29 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
             try block.pop(.{ .reg = ReturnRegister });
             try block.pop(.{ .reg = ReturnRegister });
         } else {
-            try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+            try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
         }
         try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
         var not_taken = try block.jmp(if (jump_if) .NotCarry else .Carry);
 
         // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
-        try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } });
+        try block.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
         try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
         var break_loop = try block.jmp(.Greater);
 
         // Count cycles spent into one traversal of the loop.
         try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = loop_cycles });
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .reg = ReturnRegister });
+        try block.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
 
         const rel: i32 = @as(i32, @intCast(ctx.start_index)) - @as(i32, @intCast(block.instructions.items.len));
         try block.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .rel = rel } } }); // Jump back
 
         break_loop.patch(); // Branch taken, but we already spend enough cycles here. Break out to handle interrupts.
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+        try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
         var to_end = try block.jmp(.Always);
 
         not_taken.patch();
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.address + if (delay_slot) 4 else 2 });
         to_end.patch();
 
         ctx.may_have_pending_cycles = true;
@@ -2392,7 +2398,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
 
             if (delay_slot) {
                 // Delay slot might change the T bit, push it.
-                try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+                try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
                 try block.push(.{ .reg = ReturnRegister });
                 try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
                 try ctx.compile_delay_slot(block);
@@ -2409,7 +2415,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 try block.pop(.{ .reg = ReturnRegister });
                 try block.pop(.{ .reg = ReturnRegister });
             } else {
-                try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "sr"), .size = 32 } });
+                try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
             }
             try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
             var taken = try block.jmp(if (jump_if) .Carry else .NotCarry);
@@ -2430,7 +2436,7 @@ fn conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr, comp
                 std.debug.assert(!branch);
                 optional_cycles += op.issue_cycles;
             }
-            try block.add(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "_pending_cycles"), .size = 32 } }, .{ .imm32 = optional_cycles });
+            try block.add(sh4_mem("_pending_cycles"), .{ .imm32 = optional_cycles });
 
             ctx.may_have_pending_cycles = true;
 
@@ -2477,7 +2483,7 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         ctx.start_address = dest - 2;
         return false;
     } else {
-        try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+        try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
         try ctx.compile_delay_slot(block);
         ctx.outdated_pc = false;
         return true;
@@ -2489,7 +2495,7 @@ pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn });
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.address });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2498,9 +2504,9 @@ pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn bsr_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pr = pc + 4
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.address + 4 });
     const dest = sh4_interpreter.d12_disp(ctx.address, instr);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .imm32 = dest });
+    try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2509,12 +2515,12 @@ pub fn bsr_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pr = pc + 4
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.address + 4 });
     // pc += Rn + 4;
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn });
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.address });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2524,7 +2530,7 @@ pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn jmp_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // pc = Rn
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
+    try block.mov(sh4_mem("pc"), .{ .reg = rn });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2533,10 +2539,10 @@ pub fn jmp_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // cpu.pr = cpu.pc + 4;
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } }, .{ .imm32 = ctx.address + 4 });
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.address + 4 });
     // cpu.pc = Rn
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = rn });
+    try block.mov(sh4_mem("pc"), .{ .reg = rn });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2545,8 +2551,8 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     // cpu.pc = cpu.pr
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pr"), .size = 32 } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(.{ .reg = ReturnRegister }, sh4_mem("pr"));
+    try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2554,8 +2560,8 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
 }
 
 pub fn clrmac(block: *JITBlock, _: *JITContext, _: sh4.Instr) !bool {
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "mach"), .size = 32 } }, .{ .imm32 = 0 });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "macl"), .size = 32 } }, .{ .imm32 = 0 });
+    try block.mov(sh4_mem("mach"), .{ .imm32 = 0 });
+    try block.mov(sh4_mem("macl"), .{ .imm32 = 0 });
     return false;
 }
 
@@ -2574,10 +2580,10 @@ fn set_sr(block: *JITBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
 pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     // NOTE: This differs from the interpreter behavior, but I'm nut sure which one is actually correct, and
     //       the other one is harder to implement in JIT.
-    try set_sr(block, ctx, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "ssr"), .size = 32 } });
+    try set_sr(block, ctx, sh4_mem("ssr"));
     // pc = spc
-    try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "spc"), .size = 32 } });
-    try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "pc"), .size = 32 } }, .{ .reg = ReturnRegister });
+    try block.mov(.{ .reg = ReturnRegister }, sh4_mem("spc"));
+    try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
     try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
@@ -2589,7 +2595,7 @@ pub fn ldc_Rn_Reg(comptime reg: []const u8) fn (block: *JITBlock, ctx: *JITConte
     const T = struct {
         fn ldc(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const rn = try load_register(block, ctx, instr.nmd.n);
-            try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } }, .{ .reg = rn });
+            try block.mov(sh4_mem(reg), .{ .reg = rn });
             return false;
         }
     };
@@ -2607,7 +2613,7 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *JITBlock, ctx: *JI
     const T = struct {
         fn ldcl(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
-            try block.mov(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } }, .{ .reg = ReturnRegister });
+            try block.mov(sh4_mem(reg), .{ .reg = ReturnRegister });
 
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
             try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
