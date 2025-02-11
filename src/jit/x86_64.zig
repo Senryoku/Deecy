@@ -314,6 +314,7 @@ pub const Instruction = union(enum) {
             .Break => writer.print("break", .{}),
             .FunctionCall => |function| writer.print("call {any}", .{function}),
             .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
+            .Cmov => |cmov| writer.print("cmov {} {}, {}", .{ cmov.condition, cmov.dst, cmov.src }),
             .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
             .Push => |reg| writer.print("push {any}", .{reg}),
             .Pop => |reg| writer.print("pop {any}", .{reg}),
