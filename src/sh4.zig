@@ -826,6 +826,9 @@ pub const SH4 = struct {
             self._execute(self.pc);
             self.pc +%= 2;
         }
+
+        sh4_log.warn("  Returned from exception handler PC={X:0>8}", .{self.pc});
+
         return self.translate_address(virtual_addr) catch |err| {
             // Still didn't work: Give up.
             std.log.err("[PC:{X:0>8}] MMU missed twice: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });

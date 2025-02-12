@@ -109,17 +109,14 @@ pub const UTLBEntry = packed struct {
     }
 
     pub inline fn translate(self: @This(), virtual_address: u32) u32 {
-        const physical_page = @as(u32, @intCast(self.ppn));
-        return switch (self.sz) {
-            // 1-Kbyte page
-            0b00 => physical_page << 10 | (virtual_address & ((@as(u32, 1) << 10) - 1)),
-            // 4-Kbyte page
-            0b01 => physical_page << 12 | (virtual_address & ((@as(u32, 1) << 12) - 1)),
-            //64-Kbyte page
-            0b10 => physical_page << 16 | (virtual_address & ((@as(u32, 1) << 16) - 1)),
-            // 1-Mbyte page
-            0b11 => physical_page << 20 | (virtual_address & ((@as(u32, 1) << 20) - 1)),
-        };
+        const physical_page = @as(u32, @intCast(self.ppn)) << 10;
+        const mask = (@as(u32, 1) << switch (self.sz) {
+            0b00 => 10, // 1-Kbyte page
+            0b01 => 12, // 4-Kbyte page
+            0b10 => 16, // 64-Kbyte page
+            0b11 => 20, // 1-Mbyte page
+        }) - 1;
+        return (physical_page & ~mask) | (virtual_address & mask);
     }
 };
 
