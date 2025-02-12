@@ -40,7 +40,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
     std.debug.assert(fad >= self.fad);
     var sector_start = (fad - self.fad) * self.format;
     if (sector_start >= self.data.len) {
-        log.warn(termcolor.yellow("lba out of range (track offset: {d}, size: {d}, lba: {d})"), .{ self.fad, self.data.len, fad });
+        log.warn(termcolor.yellow("fad out of range (track offset: {d}, size: {d}, fad: {d})"), .{ self.fad, self.data.len, fad });
         return 0;
     }
 
@@ -73,8 +73,9 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
             const header = self.data[sector_start .. sector_start + self.header_size()];
             // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
             if (header[0x0F] != 1 and header[0x0F] != 2) {
-                log.warn(termcolor.yellow("Invalid sector mode: {X:0>2}"), .{header[0x0F]});
-                return copied;
+                log.warn(termcolor.yellow("({d}) Invalid sector mode: {X:0>2}"), .{ fad, header[0x0F] });
+                @panic("Invalid sector mode");
+                // return copied;
             }
             const data_size: u32 = if (header[0x0F] == 1) 2048 else 2336;
 

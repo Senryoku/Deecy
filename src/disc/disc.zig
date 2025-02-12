@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const GDI = @import("gdi.zig").GDI;
-const CDI = @import("cdi.zig").CDI;
+const CDI = @import("cdi.zig");
+const CHD = @import("chd.zig");
 
 pub const CD = @import("iso9660.zig");
 pub const Track = @import("track.zig");
@@ -20,12 +21,15 @@ pub const DiscFormat = enum(u4) {
 pub const Disc = union(enum) {
     GDI: GDI,
     CDI: CDI,
+    CHD: CHD,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
             return Disc{ .GDI = try GDI.init(filepath, allocator) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
             return Disc{ .CDI = try CDI.init(filepath, allocator) };
+        } else if (std.mem.endsWith(u8, filepath, ".chd")) {
+            return Disc{ .CHD = try CHD.init(filepath, allocator) };
         } else return error.UnknownDiscFormat;
     }
 
@@ -38,6 +42,7 @@ pub const Disc = union(enum) {
     pub fn get_format(self: *const @This()) DiscFormat {
         switch (self.*) {
             .GDI => return .GDROM,
+            .CHD => return .GDROM,
             .CDI => return .CDROM_XA,
         }
     }
@@ -59,7 +64,19 @@ pub const Disc = union(enum) {
         return lba + 0x96;
     }
 
+    /// Hackish way to handle CHD 'streamed' decompression.
+    /// This should probably be done in the CHD struct itself, but we're currently
+    /// accessing the tracks directly here.
+    fn on_sector_access(self: *const @This(), fad: u32, count: u32) !void {
+        switch (self.*) {
+            .CHD => |*chd| try @constCast(chd).decompress_sectors(fad, count),
+            inline else => {},
+        }
+    }
+
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
+        try self.on_sector_access(self.get_first_data_track().?.fad, 32);
+
         const pvd = try self.get_primary_volume_descriptor();
         const root_directory_entry = pvd.root_directory_entry;
         const root_directory_length = root_directory_entry.length;
@@ -67,20 +84,25 @@ pub const Disc = union(enum) {
         const root_track = try self.get_corresponding_track(root_directory_fad);
         const sector_start = (root_directory_fad - root_track.fad) * root_track.format;
 
+        try self.on_sector_access(root_directory_fad, 16);
+
         var curr_offset = sector_start + root_track.header_size(); // Skip header if any.
         // TODO: Handle directories, and not just root files.
         for (0..root_directory_length) |_| {
             const dir_record = root_track.get_directory_record(curr_offset);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
-                return self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
+                return try self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;
     }
 
-    // Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
+    /// Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
+    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) !u32 {
         const track = try self.get_corresponding_track(fad);
+
+        try self.on_sector_access(fad, 1 + length / 2048);
+
         var remaining = length;
         var curr_sector = fad;
         while (remaining > 0) {
@@ -91,11 +113,21 @@ pub const Disc = union(enum) {
     }
 
     pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+        self.on_sector_access(fad, count) catch |err| {
+            std.log.err("Error accessing sectors [{d}, {d}]: {}", .{ fad, fad + count - 1, err });
+            return 0;
+        };
+
         const track = try self.get_corresponding_track(fad);
         return track.load_sectors(fad, count, dest);
     }
 
     pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+        self.on_sector_access(fad, count) catch |err| {
+            std.log.err("Error accessing sectors [{d}, {d}]: {}", .{ fad, fad + count - 1, err });
+            return 0;
+        };
+
         const track = try self.get_corresponding_track(fad);
         @memcpy(dest[0 .. track.format * count], track.data[(fad - track.fad) * track.format .. track.format * ((fad - track.fad) + count)]);
         return track.format * count;
@@ -120,7 +152,7 @@ pub const Disc = union(enum) {
     // Returns the first track from the high density area if present, or just the first track otherwise.
     pub fn get_first_data_track(self: @This()) ?Track {
         const idx: u8 = switch (self) {
-            .GDI => 2,
+            .GDI, .CHD => 2,
             else => 0,
         };
         return if (self.get_tracks().items.len > idx)

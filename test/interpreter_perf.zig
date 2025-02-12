@@ -26,7 +26,7 @@ pub fn main() !void {
             allocator.destroy(dc);
         }
 
-        dc.skip_bios(true);
+        try dc.skip_bios(true);
         // Skip IP.bin.
         dc.cpu.pc = 0xAC010000;
 
@@ -69,7 +69,7 @@ pub fn main() !void {
             allocator.destroy(dc);
         }
 
-        dc.skip_bios(true);
+        try dc.skip_bios(true);
         dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init("D:/DC Games/[GDI] Sonic Adventure (US)[51000-A]/Sonic Adventure v1.005 (1999)(Sega)(NTSC)(US)(M5)[!][%51000-A].gdi", allocator);
         _ = dc.gdrom.disc.?.load_sectors(45150, 16 * 2048, dc.ram[0x00008000..]);
         _ = try dc.gdrom.disc.?.load_file("1ST_READ.BIN;1", dc.ram[0x00010000..]);
