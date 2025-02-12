@@ -1391,9 +1391,10 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
                 const translated = ppn | (addr & 0xFFFE0);
                 ext_addr = translated;
             } else {
+                // FIXME/TODO: This is the simplified version.
                 const vpn: u22 = @truncate(addr >> 10);
                 for (cpu.utlb) |entry| {
-                    if (entry.match(vpn)) {
+                    if (entry.match(false, 0, vpn)) {
                         ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
                         break;
                     }

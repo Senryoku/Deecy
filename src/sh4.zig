@@ -336,7 +336,7 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCLSR2).* = 0x0000;
 
         for (0..self.utlb.len) |i| {
-            self.utlb[i].v = 0;
+            self.utlb[i].v = false;
         }
     }
 
@@ -585,9 +585,9 @@ pub const SH4 = struct {
         self.pc = self.vbr + 0x600;
     }
 
-    pub fn report_address_exception(self: *@This(), address: addr_t) void {
-        self.p4_register(u32, .TEA).* = address;
-        self.p4_register(mmu.PTEH, .PTEH).vpn = @truncate(address >> 10);
+    pub fn report_address_exception(self: *@This(), virtual_address: addr_t) void {
+        self.p4_register(u32, .TEA).* = virtual_address;
+        self.p4_register(mmu.PTEH, .PTEH).vpn = @truncate(virtual_address >> 10);
     }
 
     pub fn jump_to_exception(self: *@This(), exception: Exception) void {
@@ -828,7 +828,12 @@ pub const SH4 = struct {
         }
         return self.translate_address(virtual_addr) catch |err| {
             // Still didn't work: Give up.
-            std.log.err("[PC:{X:0>8}] MMU miss: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });
+            std.log.err("[PC:{X:0>8}] MMU missed twice: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });
+            for (self.utlb, 0..) |utlb, idx| {
+                if (utlb.valid()) {
+                    sh4_log.err("  [{d}] {any}", .{ idx, utlb });
+                }
+            }
             std.process.abort();
         };
     }
@@ -837,9 +842,15 @@ pub const SH4 = struct {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
         const opcode = if (comptime !builtin.is_test) oc: {
+            // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
+            //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
+            //       this won't matter... Unless the software accesses ITLB entries directly.
             const physical_addr = self.translate_address(virtual_addr) catch a: {
                 break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
             };
+            if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000))) {
+                std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
+            }
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
             break :oc @call(.always_inline, @This().read_physical, .{ self, u16, physical_addr });
         } else self.read(u16, virtual_addr);
@@ -1109,7 +1120,7 @@ pub const SH4 = struct {
             },
             0xE4000000...0xEFFFFFFF => {
                 // Reserved
-                sh4_log.err(termcolor.red("Read from Reserved space in P4 (PC: {X:0>8}): {X:0>8}"), .{ self.pc, virtual_addr });
+                sh4_log.err(termcolor.red("Read({any}) from Reserved space in P4 (PC: {X:0>8}): {X:0>8}"), .{ T, self.pc, virtual_addr });
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
@@ -1118,10 +1129,12 @@ pub const SH4 = struct {
                 // Instruction cache data array
             },
             0xF2000000...0xF2FFFFFF => {
-                // Instruction TLB address array
+                // Instruction TLB address array (ITLB)
+                sh4_log.warn(termcolor.yellow("Read({any}) from Instruction TLB address array (ITLB): {X:0>8}"), .{ T, virtual_addr });
             },
             0xF3000000...0xF3FFFFFF => {
-                // Instruction TLB data arrays 1 and 2
+                // Instruction TLB data arrays 1 and 2 (ITLB)
+                sh4_log.warn(termcolor.yellow("Read({any}) from Instruction TLB data array (ITLB): {X:0>8}"), .{ T, virtual_addr });
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
@@ -1260,10 +1273,12 @@ pub const SH4 = struct {
                 // Instruction cache data array
             },
             0xF2000000...0xF2FFFFFF => {
-                // Instruction TLB address array
+                // Instruction TLB address array (ITLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF3000000...0xF3FFFFFF => {
-                // Instruction TLB data arrays 1 and 2
+                // Instruction TLB data arrays 1 and 2 (ITLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB data array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
@@ -1272,8 +1287,8 @@ pub const SH4 = struct {
                 // Operand cache data array
             },
             0xF6000000...0xF6FFFFFF => {
-                // Unified TLB address array
-                sh4_log.warn(termcolor.yellow("Unhandled write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                // Unified TLB address array (UTLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
@@ -1286,8 +1301,8 @@ pub const SH4 = struct {
                 }
             },
             0xF7000000...0xF7FFFFFF => {
-                // Unified TLB data arrays 1 and 2
-                sh4_log.warn(termcolor.yellow("Unhandled write({any}) to Unified TLB data arrays:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                // Unified TLB data arrays 1 and 2 (UTLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data arrays:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
@@ -1296,7 +1311,7 @@ pub const SH4 = struct {
                     self.utlb[entry].sh = val.sh;
                     self.utlb[entry].d = val.d;
                     self.utlb[entry].c = val.c;
-                    self.utlb[entry].sz = (@as(u2, val.sz1) << 1) | val.sz0;
+                    self.utlb[entry].sz = val.sz();
                     self.utlb[entry].pr = val.pr;
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].ppn = val.ppn;
@@ -1418,46 +1433,48 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn mmu_translate_address(self: *const @This(), virtual_addr: addr_t) !addr_t {
-        std.debug.assert(self.read_p4_register(mmu.MMUCR, .MMUCR).at);
+    pub fn mmu_translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+        std.debug.assert(mmucr.at);
 
         // P4 access
         if (virtual_addr >= 0xE0000000) return virtual_addr;
-        // Return if not in P0 or P3 (FIXME: Cleanup this)
-        if (!(virtual_addr & 0xE000_0000 < 0x8000_0000 or virtual_addr & 0xE000_0000 == 0xC000_0000)) return virtual_addr & 0x1FFF_FFFF;
+        // Operand Cache RAM Mode
+        if (virtual_addr >= 0x7C00_0000 and virtual_addr <= 0x7FFF_FFFF) return virtual_addr;
+        // Return if not in P0 (excluding 0x7C00_0000-0x7FFF_FFFF) or P3 (FIXME: Cleanup this)
+        if (!(virtual_addr < 0x7C00_0000 or virtual_addr & 0xE000_0000 == 0xC000_0000)) return virtual_addr & 0x1FFF_FFFF;
 
+        // URC: Random counter for indicating the UTLB entry for which replacement is to be
+        // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
+        // When URB > 0, URC is reset to 0 when the condition URC = URB occurs
+        mmucr.urc +%= 1;
+        if (mmucr.urb > 0 and mmucr.urc >= mmucr.urb) mmucr.urc = 0;
+
+        const check_asid = mmucr.sv or self.sr.md == 0;
+
+        const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
         for (self.utlb) |entry| {
-            if (entry.match(vpn)) {
-                const ppn = @as(u32, @intCast(entry.ppn));
-                switch (entry.sz) {
-                    0b00 => { // 1-Kbyte page
-                        return ppn << 10 | (virtual_addr & 0b11_1111_1111);
-                    },
-                    0b01 => { // 4-Kbyte page
-                        return ppn << 12 | (virtual_addr & 0b1111_1111_1111);
-                    },
-                    0b10 => { //64-Kbyte page
-                        return ppn << 16 | (virtual_addr & 0b1111_1111_1111_1111);
-                    },
-                    0b11 => { // 1-Mbyte page
-                        return ppn << 20 | (virtual_addr & 0b1111_1111_1111_1111_1111);
-                    },
-                }
+            // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
+            if (entry.match(check_asid, asid, vpn)) {
+                const physical_address = entry.translate(virtual_addr);
+                sh4_log.warn("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                sh4_log.warn("  Entry: {any}", .{entry});
+                return physical_address;
             }
         }
         sh4_log.err("UTLB Miss: {x:0>8}", .{virtual_addr});
         return error.TLBMiss;
     }
 
-    pub fn translate_address(self: *const @This(), virtual_addr: addr_t) !addr_t {
+    pub fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
         if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) return self.mmu_translate_address(virtual_addr);
         return virtual_addr;
     }
 
-    pub fn read(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+    pub fn read(self: *@This(), comptime T: type, virtual_addr: addr_t) T {
         const physical_address = self.translate_address(virtual_addr) catch a: {
-            break :a @constCast(self).handle_tlb_miss(.DataTLBMissRead, virtual_addr);
+            break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr);
         };
         return self.read_physical(T, physical_address);
     }
@@ -1528,7 +1545,7 @@ pub const SH4 = struct {
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
                 if (T == u64) {
                     sh4_log.debug("Read(64) from 0x{X:0>8}", .{physical_addr});
-                    return @as(u64, self.read(u32, physical_addr + 4)) << 32 | self.read(u32, physical_addr);
+                    return @as(u64, self.read_physical(u32, physical_addr + 4)) << 32 | self.read_physical(u32, physical_addr);
                 }
                 return self._dc.?.gpu.read_vram(T, addr);
             },
@@ -1547,6 +1564,18 @@ pub const SH4 = struct {
                     return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
                 }
             },
+            // Area 7
+            0x1C000000...0x1FFFFFFF => {
+                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
+                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
+                // control register area in the physical memory space
+                if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) {
+                    return self.read_p4(T, addr | 0xE000_0000);
+                } else {
+                    sh4_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
+                    return 0;
+                }
+            },
             else => {},
         }
 
@@ -1562,25 +1591,25 @@ pub const SH4 = struct {
         return self.write_physical(T, physical_address, value);
     }
 
-    pub fn write_physical(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    pub fn write_physical(self: *@This(), comptime T: type, physical_addr: addr_t, value: T) void {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
-                u8 => return DebugHooks.write8.?(virtual_addr, value),
-                u16 => return DebugHooks.write16.?(virtual_addr, value),
-                u32 => return DebugHooks.write32.?(virtual_addr, value),
-                u64 => return DebugHooks.write64.?(virtual_addr, value),
+                u8 => return DebugHooks.write8.?(physical_addr, value),
+                u16 => return DebugHooks.write16.?(physical_addr, value),
+                u32 => return DebugHooks.write32.?(physical_addr, value),
+                u64 => return DebugHooks.write64.?(physical_addr, value),
                 else => @compileError("Invalid write type"),
             }
         }
 
-        if (virtual_addr >= 0x7C000000 and virtual_addr <= 0x7FFFFFFF)
-            return self.write_operand_cache(T, virtual_addr, value);
+        if (physical_addr >= 0x7C000000 and physical_addr <= 0x7FFFFFFF)
+            return self.write_operand_cache(T, physical_addr, value);
 
-        if (virtual_addr >= 0xE0000000)
-            return write_p4(self, T, virtual_addr, value);
+        if (physical_addr >= 0xE0000000)
+            return write_p4(self, T, physical_addr, value);
 
         // const addr = self.translate_address(virtual_addr); // We don't want that in JIT mode
-        const addr = virtual_addr & 0x1FFFFFFF;
+        const addr = physical_addr & 0x1FFFFFFF;
 
         switch (addr) {
             // Area 0, and mirrors
@@ -1708,9 +1737,9 @@ pub const SH4 = struct {
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
                 if (T == u64) {
-                    sh4_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ virtual_addr, value });
-                    self.write(u32, virtual_addr, @truncate(value));
-                    self.write(u32, virtual_addr + 4, @truncate(value >> 32));
+                    sh4_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
+                    self.write_physical(u32, addr, @truncate(value));
+                    self.write_physical(u32, addr + 4, @truncate(value >> 32));
                     return;
                 }
                 return self._dc.?.gpu.write_vram(T, addr, value);
@@ -1718,7 +1747,7 @@ pub const SH4 = struct {
             // Area 4
             0x10000000...0x13FFFFFF => {
                 // DCA3 Hack
-                if (virtual_addr & (@as(u32, 1) << 25) != 0) {
+                if (physical_addr & (@as(u32, 1) << 25) != 0) {
                     const index: u32 = (addr / 32) & 255;
                     const offset: u32 = addr & 31;
 
@@ -1735,6 +1764,18 @@ pub const SH4 = struct {
                 const LMMode = self._dc.?.read_hw_register(u32, if (addr >= 0x11000000 and addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
                 const access_32bit = LMMode != 0;
                 return self._dc.?.gpu.write_ta(addr, &[1]u32{value}, if (access_32bit) .b32 else .b64);
+            },
+            // Area 7
+            0x1C000000...0x1FFFFFFF => {
+                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
+                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
+                // control register area in the physical memory space
+                if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) {
+                    return self.write_p4(T, addr | 0xE000_0000, value);
+                } else {
+                    sh4_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
+                    return;
+                }
             },
             else => {},
         }
