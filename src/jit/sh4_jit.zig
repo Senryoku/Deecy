@@ -557,9 +557,9 @@ pub const SH4JIT = struct {
     }
 
     pub fn request_reset(self: *@This()) void {
-        // sh4_jit_log.warn("Reset requested.", .{});
-        // self._reset_requested = true;
+        sh4_jit_log.warn("Reset requested.", .{});
 
+        // self._reset_requested = true;
         // FIXME: Delaying feels safer, but it works without it, and it's faster...
         self.reset() catch |err| {
             sh4_jit_log.err("Failed to reset JIT: {}", .{err});

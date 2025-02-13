@@ -32,11 +32,11 @@ pub const PTEL = packed struct {
     /// Validity bit
     v: bool = undefined,
 
-    _r0: u1 = undefined,
+    _r0: u1 = 0,
     /// Physical page number
     ppn: u19 = undefined,
     /// TC or Timing control bit in UTBL Entry, not used.
-    _r1: u3 = undefined,
+    _r1: u3 = 0,
 
     pub fn sz(self: @This()) u2 {
         return @as(u2, self.sz1) << 1 | self.sz0;
@@ -46,7 +46,7 @@ pub const PTEL = packed struct {
 pub const PTEA = packed struct {
     sa: u3 = undefined,
     tc: u1 = undefined,
-    _: u28 = undefined,
+    _: u28 = 0,
 };
 
 pub const MMUCR = packed struct {
@@ -144,23 +144,9 @@ pub const UTLBAddressData = packed struct(u32) {
     vpn: u22,
 };
 
-pub const UTLBArrayData1 = packed struct(u32) {
-    wt: bool,
-    sh: bool,
-    d: bool,
-    c: bool,
-    sz0: u1,
-    pr: ProtectionKey,
-    sz1: u1,
-    v: bool,
-    _0: u1 = 0,
-    ppn: u19,
-    _1: u3 = 0,
+pub const UTLBArrayData1 = PTEL;
 
-    pub fn sz(self: @This()) u2 {
-        return @as(u2, self.sz1) << 1 | self.sz0;
-    }
-};
+pub const UTLBArrayData2 = PTEA;
 
 pub fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
     switch (sz) {

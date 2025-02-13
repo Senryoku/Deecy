@@ -1167,24 +1167,40 @@ pub const SH4 = struct {
                     return @bitCast(val);
                 }
             },
-            0xF7000000...0xF7FFFFFF => {
-                // Unified TLB data arrays 1 and 2
-                if (T == u32) {
-                    const entry_index: u6 = @truncate(virtual_addr >> 8);
-                    const entry = self.utlb[entry_index];
-                    const val: mmu.UTLBArrayData1 = .{
-                        .wt = entry.wt,
-                        .sh = entry.sh,
-                        .d = entry.d,
-                        .c = entry.c,
-                        .sz0 = @truncate(entry.sz),
-                        .pr = entry.pr,
-                        .sz1 = @truncate(entry.sz >> 1),
-                        .v = entry.v,
-                        .ppn = entry.ppn,
-                    };
-                    return @bitCast(val);
-                }
+            0xF7800000...0xF7FFFFFF => {
+                // Unified TLB data array 1
+                const entry_index: u6 = @truncate(virtual_addr >> 8);
+                const entry = self.utlb[entry_index];
+                const val: mmu.UTLBArrayData1 = .{
+                    .wt = entry.wt,
+                    .sh = entry.sh,
+                    .d = entry.d,
+                    .c = entry.c,
+                    .sz0 = @truncate(entry.sz),
+                    .pr = entry.pr,
+                    .sz1 = @truncate(entry.sz >> 1),
+                    .v = entry.v,
+                    .ppn = entry.ppn,
+                };
+                const r: u32 = @bitCast(val);
+                return switch (T) {
+                    u64 => r,
+                    else => @truncate(r),
+                };
+            },
+            0xF7000000...0xF77FFFFF => {
+                // Unified TLB data array 2
+                const entry_index: u6 = @truncate(virtual_addr >> 8);
+                const entry = self.utlb[entry_index];
+                const val: mmu.UTLBArrayData2 = .{
+                    .sa = entry.sa,
+                    .tc = entry.tc,
+                };
+                const r: u32 = @bitCast(val);
+                return switch (T) {
+                    u64 => r,
+                    else => @truncate(r),
+                };
             },
             0xF8000000...0xFBFFFFFF => {
                 // Reserved
@@ -1286,10 +1302,12 @@ pub const SH4 = struct {
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
                 sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                if (self._dc) |dc| dc.sh4_jit.request_reset();
             },
             0xF3000000...0xF3FFFFFF => {
                 // Instruction TLB data arrays 1 and 2 (ITLB)
                 sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB data array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                if (self._dc) |dc| dc.sh4_jit.request_reset();
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
@@ -1305,15 +1323,31 @@ pub const SH4 = struct {
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
                     const val: mmu.UTLBAddressData = @bitCast(value);
                     sh4_log.warn(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+
+                    std.debug.assert(association_bit == 0); // 1: Not implemented
+                    // When a write is performed with the A bit in the address field set to 1, comparison of all the
+                    // UTLB entries is carried out using the VPN specified in the data field and PTEH.ASID. The
+                    // usual address comparison rules are followed, but if a UTLB miss occurs, the result is no
+                    // operation, and an exception is not generated. If the comparison identifies a UTLB entry
+                    // corresponding to the VPN specified in the data field, D and V specified in the data field are
+                    // written to that entry. If there is more than one matching entry, a data TLB multiple hit
+                    // exception results. This associative operation is simultaneously carried out on the ITLB, and
+                    // if a matching entry is found in the ITLB, V is written to that entry. Even if the UTLB
+                    // comparison results in no operation, a write to the ITLB side only is performed as long as
+                    // there is an ITLB match. If there is a match in both the UTLB and ITLB, the UTLB
+                    // information is also written to the ITLB.
+
                     self.utlb[entry].asid = val.asid;
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].d = val.d;
                     self.utlb[entry].vpn = val.vpn;
+
+                    if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
             },
-            0xF7000000...0xF7FFFFFF => {
-                // Unified TLB data arrays 1 and 2 (UTLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data arrays:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+            0xF7000000...0xF77FFFFF => {
+                // Unified TLB data array 1  (UTLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
@@ -1326,6 +1360,21 @@ pub const SH4 = struct {
                     self.utlb[entry].pr = val.pr;
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].ppn = val.ppn;
+
+                    if (self._dc) |dc| dc.sh4_jit.request_reset();
+                }
+            },
+            0xF7800000...0xF7FFFFFF => {
+                // Unified TLB data array 2 (UTLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                if (T == u32) {
+                    const entry: u6 = @truncate(virtual_addr >> 8);
+                    const val: mmu.UTLBArrayData2 = @bitCast(value);
+                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
+                    self.utlb[entry].sa = val.sa;
+                    self.utlb[entry].tc = val.tc;
+
+                    if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
             },
             0xF8000000...0xFBFFFFFF => {
@@ -1464,12 +1513,18 @@ pub const SH4 = struct {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
-        // P4 access
-        if (virtual_addr >= 0xE0000000) return virtual_addr;
-        // Operand Cache RAM Mode
-        if (virtual_addr >= 0x7C00_0000 and virtual_addr <= 0x7FFF_FFFF) return virtual_addr;
-        // Return if not in P0 (excluding 0x7C00_0000-0x7FFF_FFFF) or P3 (FIXME: Cleanup this)
-        if (!(virtual_addr < 0x7C00_0000 or virtual_addr & 0xE000_0000 == 0xC000_0000)) return virtual_addr & 0x1FFF_FFFF;
+        switch (virtual_addr) {
+            // Operand Cache RAM Mode
+            0x7C00_0000...0x7FFF_FFFF,
+            // P1
+            0x8000_0000...0x9FFF_FFFF,
+            // P2
+            0xA000_0000...0xBFFF_FFFF,
+            // P4
+            0xE000_0000...0xFFFF_FFFF,
+            => return virtual_addr,
+            else => {},
+        }
 
         // URC: Random counter for indicating the UTLB entry for which replacement is to be
         // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
