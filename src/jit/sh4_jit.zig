@@ -551,6 +551,7 @@ pub const SH4JIT = struct {
     }
 
     pub fn request_reset(self: *@This()) void {
+        sh4_jit_log.warn("Reset requested.", .{});
         self._reset_requested = true;
     }
 
@@ -563,7 +564,17 @@ pub const SH4JIT = struct {
         if (self._reset_requested) {
             @branchHint(.cold);
             self._reset_requested = false;
-            try self.reset();
+            sh4_jit_log.warn("Executing requested reset.", .{});
+            if (false) {
+                // FIXME: This should be simply
+                try self.reset();
+                //        But this segfaults immediately without even being called... How is it possible?
+            } else {
+                self.reset() catch |err| {
+                    sh4_jit_log.err(termcolor.red("Failed to reset JIT: {}"), .{err});
+                    std.process.exit(1);
+                };
+            }
         }
 
         cpu.handle_interrupts();
