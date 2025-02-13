@@ -1089,10 +1089,12 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
 fn mmu_translation(comptime exception: sh4.Exception, block: *JITBlock, ctx: *JITContext, addr: JIT.Register) !void {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
-    if (ctx.in_delay_slot) {
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
-    } else {
-        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+    if (ctx.outdated_pc) {
+        if (ctx.in_delay_slot) {
+            try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
+        } else {
+            try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+        }
     }
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -2425,9 +2427,9 @@ fn default_conditional_branch(block: *JITBlock, ctx: *JITContext, instr: sh4.Ins
     try block.cmov(if (jump_if) .NotCarry else .Carry, .{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[0] });
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
+    ctx.outdated_pc = false;
     if (delay_slot) try ctx.compile_delay_slot(block);
 
-    ctx.outdated_pc = false;
     return true;
 }
 
@@ -2593,8 +2595,8 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         return false;
     } else {
         try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
-        try ctx.compile_delay_slot(block);
         ctx.outdated_pc = false;
+        try ctx.compile_delay_slot(block);
         return true;
     }
 }
@@ -2606,8 +2608,8 @@ pub fn braf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.current_pc });
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2617,8 +2619,8 @@ pub fn bsr_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.current_pc, instr);
     try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2631,8 +2633,8 @@ pub fn bsrf_Rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try block.add(.{ .reg = ReturnRegister }, .{ .imm32 = 4 + ctx.current_pc });
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2641,8 +2643,8 @@ pub fn jmp_atRn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(sh4_mem("pc"), .{ .reg = rn });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2653,8 +2655,8 @@ pub fn jsr_rn(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(sh4_mem("pc"), .{ .reg = rn });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2663,8 +2665,8 @@ pub fn rts(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     try block.mov(.{ .reg = ReturnRegister }, sh4_mem("pr"));
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
@@ -2694,8 +2696,8 @@ pub fn rte(block: *JITBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     try block.mov(.{ .reg = ReturnRegister }, sh4_mem("spc"));
     try block.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
 
-    try ctx.compile_delay_slot(block);
     ctx.outdated_pc = false;
+    try ctx.compile_delay_slot(block);
     return true;
 }
 
