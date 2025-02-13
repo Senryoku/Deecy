@@ -2589,7 +2589,7 @@ pub fn bra_label(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         ctx.current_pc = dest - 2;
         ctx.start_pc = dest - 2;
         if (ctx.mmu_enabled) {
-            ctx.current_physical_pc = try ctx.cpu.translate_address(dest - 2);
+            ctx.current_physical_pc = (try ctx.cpu.translate_address(dest - 2)) & 0x1FFFFFFF;
         } else {
             ctx.current_physical_pc = (dest - 2) & 0x1FFFFFFF;
         }
