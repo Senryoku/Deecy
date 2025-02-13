@@ -367,13 +367,16 @@ pub const JITContext = struct {
 
     pub fn init(cpu: *sh4.SH4) @This() {
         const pc = cpu.pc;
-        const physical_pc = runtime_mmu_translation(.InstructionTLBMiss).handler(cpu, cpu.pc) & 0x1FFF_FFFF;
+        const physical_pc = if (sh4.ExperimentalFullMMUSupport)
+            runtime_mmu_translation(.InstructionTLBMiss).handler(cpu, cpu.pc) & 0x1FFF_FFFF
+        else
+            cpu.pc & 0x1FFF_FFFF;
         std.debug.assert((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000));
 
         return .{
             .cpu = cpu,
             .entry_point_address = pc,
-            .mmu_enabled = cpu._mmu_enabled,
+            .mmu_enabled = sh4.ExperimentalFullMMUSupport and cpu._mmu_enabled,
             .start_pc = pc,
             .start_physical_pc = physical_pc,
             .current_pc = pc,
@@ -512,7 +515,10 @@ pub const SH4JIT = struct {
 
     virtual_address_space: VirtualAddressSpace = undefined,
 
-    _reset_requested: bool = false,
+    // FIXME: Use to delay reset AFTER the current block is done excecuting...
+    //        Honestly I don't know why it seems to work that reliably without it,
+    //        but since it does, and the check is so slow, I'm removing it for now.
+    // _reset_requested: bool = false,
 
     _working_block: JITBlock,
     _allocator: std.mem.Allocator,
@@ -551,8 +557,13 @@ pub const SH4JIT = struct {
     }
 
     pub fn request_reset(self: *@This()) void {
-        sh4_jit_log.warn("Reset requested.", .{});
-        self._reset_requested = true;
+        // sh4_jit_log.warn("Reset requested.", .{});
+        // self._reset_requested = true;
+
+        // FIXME: Delaying feels safer, but it works without it, and it's faster...
+        self.reset() catch |err| {
+            sh4_jit_log.err("Failed to reset JIT: {}", .{err});
+        };
     }
 
     pub fn reset(self: *@This()) !void {
@@ -561,12 +572,12 @@ pub const SH4JIT = struct {
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
-        if (self._reset_requested) {
-            @branchHint(.cold);
-            self._reset_requested = false;
-            sh4_jit_log.warn("Executing requested reset.", .{});
-            try self.reset();
-        }
+        //if (self._reset_requested) {
+        //    @branchHint(.cold);
+        //    self._reset_requested = false;
+        //    sh4_jit_log.warn("Executing requested reset.", .{});
+        //    try self.reset();
+        //}
 
         cpu.handle_interrupts();
 

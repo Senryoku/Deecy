@@ -1106,7 +1106,7 @@ pub fn jsr_Rn(cpu: *SH4, opcode: Instr) void {
     const delay_slot = cpu.pc + 2;
     cpu.pr = cpu.pc + 4;
     cpu.pc = cpu.R(opcode.nmd.n).*;
-    cpu.pc -%= 2; // -2 to account for the standard +2
+    cpu.pc -= 2; // -2 to account for the standard +2
     execute_delay_slot(cpu, delay_slot);
 }
 pub fn rts(cpu: *SH4, _: Instr) void {
@@ -1373,7 +1373,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         //               The full address also includes the sq bit.
         var ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
 
-        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at) {
+        if (cpu._mmu_enabled) {
             // The SQ area (H'E000 0000 to H'E3FF FFFF) is set in VPN of the UTLB, and the transfer
             // destination external memory address in PPN. The ASID, V, SZ, SH, PR, and D bits have the
             // same meaning as for normal address translation, but the C and WT bits have no meaning
@@ -1385,21 +1385,12 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
-            if (comptime false) {
-                // Ikaruga Hack, hardcoded translation from looking at the writes to UTBL it performs
-                // (1MB pages, VPN 0x380000 => PPN 0x30000, 0x380400 => 0x30400... and some for VRAM).
-                const vpn: u32 = ((addr >> 20) & 0x3F);
-                const ppn: u32 = if (vpn >= 0x10) (0x10000000 + 0x00100000 * (vpn - 0x10)) else ((0x30000 + 0x400 * vpn) << 10);
-                const translated = ppn | (addr & 0xFFFE0);
-                ext_addr = translated;
-            } else {
-                // FIXME/TODO: This is the simplified version.
-                const vpn: u22 = @truncate(addr >> 10);
-                for (cpu.utlb) |entry| {
-                    if (entry.match(false, 0, vpn)) {
-                        ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
-                        break;
-                    }
+            // FIXME/TODO: This is the simplified version for Ikaruga and other similar games, not a general solution.
+            const vpn: u22 = @truncate(addr >> 10);
+            for (cpu.utlb) |entry| {
+                if (entry.match(false, 0, vpn)) {
+                    ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
+                    break;
                 }
             }
         }

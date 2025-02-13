@@ -27,6 +27,8 @@ pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
+pub const ExperimentalFullMMUSupport = false;
+
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
     s: bool = false, // Specifies a saturation operation for a MAC instruction. NOTE: Undefined at startup, set for repeatability.
@@ -381,6 +383,8 @@ pub const SH4 = struct {
 
         // BCR1 Held
         // BCR2 Held
+
+        self._mmu_enabled = false;
     }
 
     // Reset state to after bios.
@@ -1491,7 +1495,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
-        if (self._mmu_enabled) return self.mmu_translate_address(virtual_addr);
+        if (ExperimentalFullMMUSupport and self._mmu_enabled) return self.mmu_translate_address(virtual_addr);
         return virtual_addr;
     }
 
@@ -1591,7 +1595,7 @@ pub const SH4 = struct {
                 // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
                 // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
                 // control register area in the physical memory space
-                if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) {
+                if (self._mmu_enabled) {
                     return self.read_p4(T, addr | 0xE000_0000);
                 } else {
                     sh4_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
@@ -1792,7 +1796,7 @@ pub const SH4 = struct {
                 // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
                 // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
                 // control register area in the physical memory space
-                if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) {
+                if (self._mmu_enabled) {
                     return self.write_p4(T, addr | 0xE000_0000, value);
                 } else {
                     sh4_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
