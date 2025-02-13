@@ -210,7 +210,7 @@ pub const SH4 = struct {
         callback: *const fn (userdata: *anyopaque) void, // Debugging callback
         userdata: *anyopaque,
     } else void = if (EnableTRAPACallback) null else {},
-    debug_trace: bool = true, // FIXME: Turn this off :)
+    debug_trace: bool = false,
 
     _allocator: std.mem.Allocator,
     _dc: ?*Dreamcast = null,
@@ -1388,7 +1388,7 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.MMUCR) => {
                             if (T == u32) {
                                 var val: mmu.MMUCR = @bitCast(value);
-                                sh4_log.warn("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
+                                sh4_log.debug("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
                                 if (val.ti) {
                                     // Invalidate all TLB entries
                                     for (self.utlb) |*entry|
@@ -1398,7 +1398,6 @@ pub const SH4 = struct {
                                 }
                                 self._mmu_enabled = val.at;
                                 self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
-                                self.debug_trace = true;
                                 return;
                             } else {
                                 sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
@@ -1540,12 +1539,12 @@ pub const SH4 = struct {
             // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
             if (entry.match(check_asid, asid, vpn)) {
                 const physical_address = entry.translate(virtual_addr);
-                sh4_log.warn("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                sh4_log.warn("  Entry: {any}", .{entry});
+                sh4_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                sh4_log.debug("  Entry: {any}", .{entry});
                 return physical_address;
             }
         }
-        sh4_log.err("UTLB Miss: {x:0>8}", .{virtual_addr});
+        sh4_log.warn("UTLB Miss: {x:0>8}", .{virtual_addr});
         return error.TLBMiss;
     }
 

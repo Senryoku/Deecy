@@ -557,7 +557,7 @@ pub const SH4JIT = struct {
     }
 
     pub fn request_reset(self: *@This()) void {
-        sh4_jit_log.warn("Reset requested.", .{});
+        sh4_jit_log.debug("Reset requested.", .{});
 
         // self._reset_requested = true;
         // FIXME: Delaying feels safer, but it works without it, and it's faster...
@@ -1078,6 +1078,7 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                     }
                 }
 
+                // FIXME/TODO: Don't fallback to the interpreter anymore.
                 break :a cpu.handle_tlb_miss(exception, virtual_addr);
             };
             return physical;
