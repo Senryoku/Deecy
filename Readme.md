@@ -48,9 +48,14 @@ sudo apt install libgtk-3-dev
 ## Things I know I have to do
 
 -   Debug, debug, debug.
--   MMU: Only supported for store queue writes using the pref intruction (used by Ikaruga for example)
+-   MMU: Currently disabled by default as it is still incomplete, and a performance hit.
+    -   Games using it only for store queue writes with the pref intruction (like Ikaruga) should work without enabling the full support.
+    -   Windows CE don't work at all yet, even with full emulation on (Crashes with PC=FFFFFD1F).
+    -   It is slow:
+        -   Exception handling resort back to the interpreter.
+        -   No effort was made to speed up normal operation either: It is still non functioning where it matters.
 -   AICA:
-    -   DSP
+    -   Debug
 -   Renderer:
     -   Framebuffer:
         -   Improve detection of writes to framebuffer (false positives?)
@@ -83,6 +88,7 @@ sudo apt install libgtk-3-dev
 -   https://segaretro.org/Dreamcast_official_documentation
 -   Dreamcast Programming by Marcus Comstedt : https://mc.pp.se/dc/
 -   Boot ROM disassembly by Lars Olsson (https://lars-olsson.sizious.com/, originally https://www.ludd.ltu.se/~jlo/dc/)
+-   [Neill Corlett's Yamaha AICA notes](https://github.com/Senryoku/dreamcast-docs/raw/refs/heads/master/AICA/DOCS/myaica.txt)
 -   AICA ARM7 Core tester by snickerbockers: https://github.com/snickerbockers/dc-arm7wrestler/
 -   Reicast https://github.com/skmp/reicast-emulator
 

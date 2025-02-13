@@ -263,7 +263,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
         const end_addr = addr + range;
         while (addr < end_addr) {
-            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read(u16, @intCast(addr)) }, self._allocator);
+            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
             zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
             addr += 2;
         }
@@ -401,7 +401,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 });
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
-                    const instr = dc.cpu.read(u16, addr);
+                    const instr = dc.cpu.read_physical(u16, addr);
                     const op = sh4.sh4_instructions.Opcodes[sh4.sh4_instructions.JumpTable[instr]];
                     zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
@@ -720,22 +720,22 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         while (addr < end_addr) {
             zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}  {c}{c}{c}{c}{c}{c}{c}{c}", .{
                 addr,
-                dc.cpu.read(u8, @intCast(addr)),
-                dc.cpu.read(u8, @intCast(addr + 1)),
-                dc.cpu.read(u8, @intCast(addr + 2)),
-                dc.cpu.read(u8, @intCast(addr + 3)),
-                dc.cpu.read(u8, @intCast(addr + 4)),
-                dc.cpu.read(u8, @intCast(addr + 5)),
-                dc.cpu.read(u8, @intCast(addr + 6)),
-                dc.cpu.read(u8, @intCast(addr + 7)),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 1))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 2))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 3))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 4))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 5))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 6))),
-                printable_ascii(dc.cpu.read(u8, @intCast(addr + 7))),
+                dc.cpu.read_physical(u8, @intCast(addr)),
+                dc.cpu.read_physical(u8, @intCast(addr + 1)),
+                dc.cpu.read_physical(u8, @intCast(addr + 2)),
+                dc.cpu.read_physical(u8, @intCast(addr + 3)),
+                dc.cpu.read_physical(u8, @intCast(addr + 4)),
+                dc.cpu.read_physical(u8, @intCast(addr + 5)),
+                dc.cpu.read_physical(u8, @intCast(addr + 6)),
+                dc.cpu.read_physical(u8, @intCast(addr + 7)),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 1))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 2))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 3))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 4))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 5))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 6))),
+                printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 7))),
             });
             addr += 8;
         }
@@ -955,7 +955,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 if (addr >= 0x04800000 - bytes_per_pixels) break;
                 switch (static.format & 0b111) {
                     0x0, 0x3 => { // 0555 KRGB 16 bits
-                        const color: Color16 = .{ .value = dc.cpu.read(u16, addr) };
+                        const color: Color16 = .{ .value = dc.cpu.read_physical(u16, addr) };
                         self.pixels[4 * i + 0] = @as(u8, @intCast(color.argb1555.r)) << 3;
                         self.pixels[4 * i + 1] = @as(u8, @intCast(color.argb1555.g)) << 3;
                         self.pixels[4 * i + 2] = @as(u8, @intCast(color.argb1555.b)) << 3;
@@ -963,7 +963,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         i += 1;
                     },
                     0x1 => { // 565 RGB 16 bit
-                        const color: Color16 = .{ .value = dc.cpu.read(u16, addr) };
+                        const color: Color16 = .{ .value = dc.cpu.read_physical(u16, addr) };
                         self.pixels[4 * i + 0] = @as(u8, @intCast(color.rgb565.r)) << 3;
                         self.pixels[4 * i + 1] = @as(u8, @intCast(color.rgb565.g)) << 2;
                         self.pixels[4 * i + 2] = @as(u8, @intCast(color.rgb565.b)) << 3;
@@ -972,10 +972,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     },
                     // ARGB 32-Bits
                     0x6 => {
-                        self.pixels[4 * i + 0] = dc.cpu.read(u8, @intCast(addr + 3));
-                        self.pixels[4 * i + 1] = dc.cpu.read(u8, @intCast(addr + 2));
-                        self.pixels[4 * i + 2] = dc.cpu.read(u8, @intCast(addr + 1));
-                        self.pixels[4 * i + 3] = dc.cpu.read(u8, @intCast(addr + 0));
+                        self.pixels[4 * i + 0] = dc.cpu.read_physical(u8, @intCast(addr + 3));
+                        self.pixels[4 * i + 1] = dc.cpu.read_physical(u8, @intCast(addr + 2));
+                        self.pixels[4 * i + 2] = dc.cpu.read_physical(u8, @intCast(addr + 1));
+                        self.pixels[4 * i + 3] = dc.cpu.read_physical(u8, @intCast(addr + 0));
                         i += 1;
                     },
                     else => {

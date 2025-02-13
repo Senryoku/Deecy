@@ -30,7 +30,7 @@
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
 				"-g",
-				"D:\\DC Games\\[GDI] Grandia II (US)\\Grandia II v1.001 (2000)(Ubi Soft)(NTSC)(US)[!].gdi"
+				"D:\\DC Games\\[GDI] Sega Rally 2 (US)\\Sega Rally 2 v1.003 (1999)(Sega)(NTSC)(US)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
