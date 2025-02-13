@@ -1338,6 +1338,7 @@ pub const SH4 = struct {
                                     for (self.utlb) |*entry|
                                         entry.v = false;
                                     val.ti = false; // Always return 0 when read.
+                                    if (self._dc) |dc| dc.sh4_jit.request_reset();
                                 }
                                 self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
                                 self.debug_trace = true;
@@ -1400,10 +1401,7 @@ pub const SH4 = struct {
                             if (ccr.ici == 1 or ccr.oci == 1) {
                                 // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
                                 sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
-                                self._dc.?.sh4_jit.reset() catch {
-                                    sh4_log.err(termcolor.red("Failed to purge JIT cache."), .{});
-                                    @panic("Failed to purge JIT cache.");
-                                };
+                                if (self._dc) |dc| dc.sh4_jit.request_reset();
                             }
                             if (ccr.oci == 1)
                                 @memset(&self._operand_cache_state.dirty, false);

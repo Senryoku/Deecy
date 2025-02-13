@@ -512,6 +512,8 @@ pub const SH4JIT = struct {
 
     virtual_address_space: VirtualAddressSpace = undefined,
 
+    _reset_requested: bool = false,
+
     _working_block: JITBlock,
     _allocator: std.mem.Allocator,
 
@@ -548,12 +550,22 @@ pub const SH4JIT = struct {
         self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
     }
 
+    pub fn request_reset(self: *@This()) void {
+        self._reset_requested = true;
+    }
+
     pub fn reset(self: *@This()) !void {
         try self.block_cache.reset();
         try self.init_compile_and_run_handler();
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+        if (self._reset_requested) {
+            @branchHint(.cold);
+            self._reset_requested = false;
+            try self.reset();
+        }
+
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
@@ -573,7 +585,7 @@ pub const SH4JIT = struct {
 
             return cycles;
         } else {
-            @branchHint(.unlikely);
+            @branchHint(.cold);
             return 8;
         }
     }

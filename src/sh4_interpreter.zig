@@ -1242,6 +1242,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) void {
     };
     sh4_log.warn(termcolor.yellow("ldtlb : utlb[{d}] = {any}"), .{ urc, cpu.utlb[urc] });
     cpu.debug_trace = true;
+    if (cpu._dc) |dc| dc.sh4_jit.request_reset();
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
