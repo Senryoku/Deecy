@@ -199,6 +199,7 @@ pub const SH4 = struct {
     _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
+    _mmu_enabled: bool = false, // Cached value of MMUCR.at
     _last_timer_update: [3]u64 = .{0} ** 3,
 
     execution_state: ExecutionState = .Running,
@@ -325,6 +326,7 @@ pub const SH4 = struct {
             self.p4_register(u32, timer.counter).* = 0xFFFFFFFF;
             self.p4_register(u16, timer.control).* = 0x0000;
         }
+        self._last_timer_update = .{0} ** 3;
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
@@ -338,6 +340,7 @@ pub const SH4 = struct {
         for (0..self.utlb.len) |i| {
             self.utlb[i].v = false;
         }
+        self._mmu_enabled = false;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -1340,6 +1343,7 @@ pub const SH4 = struct {
                                     val.ti = false; // Always return 0 when read.
                                     if (self._dc) |dc| dc.sh4_jit.request_reset();
                                 }
+                                self._mmu_enabled = val.at;
                                 self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
                                 self.debug_trace = true;
                                 return;
@@ -1486,8 +1490,8 @@ pub const SH4 = struct {
         return error.TLBMiss;
     }
 
-    pub fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
-        if (self.read_p4_register(mmu.MMUCR, .MMUCR).at) return self.mmu_translate_address(virtual_addr);
+    pub inline fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
+        if (self._mmu_enabled) return self.mmu_translate_address(virtual_addr);
         return virtual_addr;
     }
 
@@ -1869,6 +1873,7 @@ pub const SH4 = struct {
 
         self.compute_interrupt_priorities();
         self.update_sse_settings();
+        self._mmu_enabled = self.read_p4_register(mmu.MMUCR, .MMUCR).at;
 
         return bytes;
     }

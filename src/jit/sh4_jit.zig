@@ -373,7 +373,7 @@ pub const JITContext = struct {
         return .{
             .cpu = cpu,
             .entry_point_address = pc,
-            .mmu_enabled = cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at,
+            .mmu_enabled = cpu._mmu_enabled,
             .start_pc = pc,
             .start_physical_pc = physical_pc,
             .current_pc = pc,
