@@ -1317,12 +1317,12 @@ pub const SH4 = struct {
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array (UTLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
                     const val: mmu.UTLBAddressData = @bitCast(value);
-                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
 
                     std.debug.assert(association_bit == 0); // 1: Not implemented
                     // When a write is performed with the A bit in the address field set to 1, comparison of all the
@@ -1347,11 +1347,11 @@ pub const SH4 = struct {
             },
             0xF7000000...0xF77FFFFF => {
                 // Unified TLB data array 1  (UTLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
-                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
                     self.utlb[entry].wt = val.wt;
                     self.utlb[entry].sh = val.sh;
                     self.utlb[entry].d = val.d;
@@ -1366,11 +1366,11 @@ pub const SH4 = struct {
             },
             0xF7800000...0xF7FFFFFF => {
                 // Unified TLB data array 2 (UTLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
-                    sh4_log.warn(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
                     self.utlb[entry].sa = val.sa;
                     self.utlb[entry].tc = val.tc;
 
