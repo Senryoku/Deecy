@@ -848,9 +848,10 @@ pub const SH4 = struct {
             // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
             //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
             //       this won't matter... Unless the software accesses ITLB entries directly.
-            const physical_addr = self.translate_address(virtual_addr) catch a: {
+            var physical_addr = self.translate_address(virtual_addr) catch a: {
                 break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
             };
+            physical_addr &= 0x1FFFFFFF;
             if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000))) {
                 std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
             }
@@ -1328,6 +1329,23 @@ pub const SH4 = struct {
                 // Control register area
                 if (virtual_addr >= 0xFF000000) {
                     switch (virtual_addr) {
+                        @intFromEnum(P4Register.MMUCR) => {
+                            if (T == u32) {
+                                var val: mmu.MMUCR = @bitCast(value);
+                                sh4_log.warn("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
+                                if (val.ti) {
+                                    // Invalidate all TLB entries
+                                    for (self.utlb) |*entry|
+                                        entry.v = false;
+                                    val.ti = false; // Always return 0 when read.
+                                }
+                                self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
+                                self.debug_trace = true;
+                                return;
+                            } else {
+                                sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
+                            }
+                        },
                         // SDMR2/SDMR3
                         0xFF900000...0xFF90FFFF, 0xFF940000...0xFF94FFFF => {
                             // Ignore it, it's not implemented but it also doesn't fit in our P4 register remapping.
@@ -1451,7 +1469,7 @@ pub const SH4 = struct {
         // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
         // When URB > 0, URC is reset to 0 when the condition URC = URB occurs
         mmucr.urc +%= 1;
-        if (mmucr.urb > 0 and mmucr.urc >= mmucr.urb) mmucr.urc = 0;
+        if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
 
         const check_asid = mmucr.sv or self.sr.md == 0;
 
@@ -1498,7 +1516,6 @@ pub const SH4 = struct {
 
         if (physical_addr >= 0xE0000000) return self.read_p4(T, physical_addr);
 
-        // const addr = self.translate_address(virtual_addr); // We don't want that in JIT mode
         const addr = physical_addr & 0x1FFFFFFF;
 
         switch (addr) {
@@ -1791,25 +1808,6 @@ pub const SH4 = struct {
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
         if (EnableTRAPACallback) {
             self.on_trapa = .{ .callback = callback, .userdata = userdata };
-        }
-    }
-
-    // MMU Stub functions
-    // NOTE: This is dead code, the MMU is not emulated and utlb_entries are not in this struct anymore (reducing the size of the struct helps a lot with performance).
-
-    pub fn check_memory_protection(self: *const @This(), entry: mmu.UTLBEntry, writing: bool) !void {
-        if (self.sr.md == 0) {
-            switch (entry.pr) {
-                0b00, 0b01 => return error.DataTLBProtectionViolation,
-                0b10 => if (writing and entry.w) return error.DataTLBProtectionViolation,
-                0b11 => if (writing and entry.w and entry.d == 0) return error.InitalPageWrite,
-                else => {},
-            }
-        } else {
-            // switch (entry.pr) {
-            //    0b01, 0b11 => if(writing and entry.d) return error.InitalPageWrite,
-            //    0b00, 0b01 => if(writing) return error.DataTLBProtectionViolation,
-            // }
         }
     }
 

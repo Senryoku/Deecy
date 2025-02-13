@@ -55,7 +55,7 @@ pub const MMUCR = packed struct {
 
     _r0: u1 = undefined,
     /// TLB invalidate
-    ti: u1 = 0,
+    ti: bool = false,
 
     _r1: u5 = undefined,
     /// Single virtual mode bit.
@@ -117,6 +117,23 @@ pub const UTLBEntry = packed struct {
             0b11 => 20, // 1-Mbyte page
         }) - 1;
         return (physical_page & ~mask) | (virtual_address & mask);
+    }
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("UTLB(.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {}, .c = {}, .sh = {}, .sz = {})", .{
+            @as(u32, self.vpn) << 10,
+            @as(u32, self.ppn) << 10,
+            self.asid,
+            self.v,
+            self.tc,
+            self.sa,
+            self.wt,
+            self.d,
+            self.pr,
+            self.c,
+            self.sh,
+            self.sz,
+        });
     }
 };
 
