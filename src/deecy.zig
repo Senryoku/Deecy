@@ -924,13 +924,19 @@ fn run_for(self: *@This(), sh4_cycles: u64) void {
     self._cycles_to_run += @intCast(sh4_cycles);
     if (self.enable_jit) {
         while (self._cycles_to_run > 0) {
-            self._cycles_to_run -= self.dc.tick_jit() catch unreachable;
+            self._cycles_to_run -= self.dc.tick_jit() catch |err| {
+                deecy_log.err("Error running JIT: {}", .{err});
+                return;
+            };
         }
     } else {
         const max_instructions: u8 = if (self.breakpoints.items.len == 0) 16 else 1;
 
         while (self.running and self._cycles_to_run > 0) {
-            self._cycles_to_run -= self.dc.tick(max_instructions) catch unreachable;
+            self._cycles_to_run -= self.dc.tick(max_instructions) catch |err| {
+                deecy_log.err("Error running interpreter: {}", .{err});
+                return;
+            };
 
             // Doesn't make sense to try to have breakpoints if the interpreter can execute more than one instruction at a time.
             if (max_instructions == 1) {
