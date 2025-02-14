@@ -727,7 +727,7 @@ pub const SH4JIT = struct {
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
             try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
-            var skip = try b.jmp(.GreaterEqual); // Avoid cycles of small blocks
+            var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             try b.mov(Key, sh4_mem("pc"));
             var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
