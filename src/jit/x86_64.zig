@@ -267,7 +267,7 @@ pub const Operand = union(enum) {
 pub const Instruction = union(enum) {
     Nop, // Usefull to patch out instructions without having to rewrite the entire block.
     Break, // For Debugging
-    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
+    FunctionCall: ?*const anyopaque, // FIXME: Is there a better type for generic function pointers? NOTE: If null, expects the function pointer to be in rax
     Mov: struct { dst: Operand, src: Operand, preserve_flags: bool = false }, // Mov with zero extention (NOTE: This is NOT the same as the x86 mov instruction, which doesn't zero extend from 8 and 16-bit memory accesses)
     Cmov: struct { condition: Condition, dst: Operand, src: Operand }, // Conditional Move
     Movsx: struct { dst: Operand, src: Operand }, // Mov with sign extension
@@ -952,6 +952,7 @@ pub const Emitter = struct {
             },
             .reg64 => |dst_reg| {
                 switch (src) {
+                    .reg64 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
@@ -962,7 +963,11 @@ pub const Emitter = struct {
                             try self.emit(u64, imm);
                         }
                     },
-                    else => return error.Unimplemented,
+                    .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
+                    else => {
+                        std.debug.print("Mov Unimplemented: {any}, {any}\n", .{ dst, src });
+                        return error.Unimplemented;
+                    },
                 }
             },
             .freg32 => |dst_reg| {
@@ -1177,6 +1182,16 @@ pub const Emitter = struct {
                         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, mr_opcode);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                    },
+                    .mem => |src_m| {
+                        switch (src_m.size) {
+                            64 => {
+                                try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                                try self.emit(u8, rm_opcode);
+                                try self.emit_mem_addressing(encode(dst_reg), src_m);
+                            },
+                            else => return error.OperandSizeMismatch,
+                        }
                     },
                     else => return error.InvalidSource,
                 }
@@ -1614,11 +1629,13 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn native_call(self: *@This(), function: *const anyopaque) !void {
-        // mov rax, function
-        try self.emit(u8, 0x48);
-        try self.emit(u8, 0xB8);
-        try self.emit(u64, @intFromPtr(function));
+    pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
+        if (function) |fp| {
+            // mov rax, function
+            try self.emit(u8, 0x48);
+            try self.emit(u8, 0xB8);
+            try self.emit(u64, @intFromPtr(fp));
+        }
 
         if (builtin.os.tag == .windows) {
             // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.

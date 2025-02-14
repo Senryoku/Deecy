@@ -503,7 +503,7 @@ pub fn compile(self: *@This()) !void {
                     try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0xFFF } } });
                 },
                 else => {
-                    try b.shr(FRC_REG, .{ .imm8 = 11 });
+                    try b.shr(FRC_REG, 11);
                     try b.append(.{ .And = .{ .dst = FRC_REG, .src = .{ .imm32 = 0x1FFF } } });
                 },
             }

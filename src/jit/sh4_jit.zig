@@ -37,9 +37,15 @@ const MaxCyclesPerBlock = 32;
 
 // Enable or Disable some optimizations
 const Optimizations = .{
+    // Allow resetting the block while in the JIT.
+    // IMPORTANT: Do not allow this when link_small_blocks is enabled: It would allow jumps
+    //            to released blocks (this is somehow fine otherwise, but this might be abusing cache or something)
+    .allow_immediate_reset = false,
+
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
-    .inline_jumps_to_start_of_block = true,
+    .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
+    .link_small_blocks = .{ .enabled = true, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
     .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
@@ -517,10 +523,8 @@ pub const SH4JIT = struct {
 
     virtual_address_space: VirtualAddressSpace = undefined,
 
-    // FIXME: Use to delay reset AFTER the current block is done excecuting...
-    //        Honestly I don't know why it seems to work that reliably without it,
-    //        but since it does, and the check is so slow, I'm removing it for now.
-    // _reset_requested: bool = false,
+    /// Used to delay reset AFTER the current block is done excecuting.
+    _reset_requested: if (Optimizations.allow_immediate_reset) void else bool = if (Optimizations.allow_immediate_reset) {} else false,
 
     _working_block: JITBlock,
     _allocator: std.mem.Allocator,
@@ -560,12 +564,14 @@ pub const SH4JIT = struct {
 
     pub fn request_reset(self: *@This()) void {
         sh4_jit_log.debug("Reset requested.", .{});
-
-        // self._reset_requested = true;
-        // FIXME: Delaying feels safer, but it works without it, and it's faster...
-        self.reset() catch |err| {
-            sh4_jit_log.err("Failed to reset JIT: {}", .{err});
-        };
+        if (Optimizations.allow_immediate_reset) {
+            // Delaying is safer, but it works without it, and it's faster...
+            self.reset() catch |err| {
+                sh4_jit_log.err("Failed to reset JIT: {}", .{err});
+            };
+        } else {
+            self._reset_requested = true;
+        }
     }
 
     pub fn reset(self: *@This()) !void {
@@ -574,12 +580,12 @@ pub const SH4JIT = struct {
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
-        //if (self._reset_requested) {
-        //    @branchHint(.cold);
-        //    self._reset_requested = false;
-        //    sh4_jit_log.warn("Executing requested reset.", .{});
-        //    try self.reset();
-        //}
+        if (!Optimizations.allow_immediate_reset and self._reset_requested) {
+            @branchHint(.cold);
+            self._reset_requested = false;
+            sh4_jit_log.warn("Executing requested reset.", .{});
+            try self.reset();
+        }
 
         cpu.handle_interrupts();
 
@@ -708,7 +714,54 @@ pub const SH4JIT = struct {
 
         try self.idle_speedup(&ctx);
 
-        try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
+        if (Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
+            ctx.may_have_pending_cycles = true;
+            const const_key = BlockCache.Key{
+                .addr = 0,
+                .ram = 0,
+                .pr = if (ctx.fpscr_pr == .Single) 0 else 1,
+                .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
+            };
+            const Key: JIT.Operand = .{ .reg = Architecture.ArgRegisters[0] };
+            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
+            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
+            try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
+            var skip = try b.jmp(.GreaterEqual); // Avoid cycles of small blocks
+
+            try b.mov(Key, sh4_mem("pc"));
+            var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
+                try b.append(.{ .Cmp = .{ .lhs = Key, .rhs = .{ .imm32 = ctx.start_pc } } }); // Forbid recursive calls.
+                break :s try b.jmp(.Equal);
+            } else {};
+
+            // Compute block key
+            try b.mov(.{ .reg = ReturnRegister }, Key);
+            try b.shr(.{ .reg = ReturnRegister }, 3);
+            try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x80_0000 } } });
+            try b.shr(Key, 1);
+            try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x7F_FFFF } } });
+            try b.append(.{ .Or = .{ .dst = Key, .src = .{ .reg = ReturnRegister } } });
+            try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = @bitCast(const_key) } } });
+            // Retrieve offset
+            if (@sizeOf(BasicBlock) != 4)
+                @compileError("TODO: Implement with instrumentation enabled (or disable the optimisation)");
+            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) });
+            try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = ReturnRegister, .index = Key.reg, .scale = ._4, .size = 32 } });
+            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+            try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = Architecture.ArgRegisters[0] });
+            try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
+            try b.call(null);
+            // ReturnRegister holds the cycle count
+
+            if (!Optimizations.link_small_blocks.allow_recursion)
+                skip_recursion.patch();
+
+            skip.patch();
+        } else {
+            try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
+        }
+
         if (ctx.may_have_pending_cycles) {
             try b.add(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
             try b.append(.{ .Mov = .{ .dst = sh4_mem("_pending_cycles"), .src = .{ .imm32 = 0 }, .preserve_flags = false } });
@@ -2397,7 +2450,7 @@ pub fn shll16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.shr(.{ .reg = rn }, .{ .imm8 = 1 });
+    try block.shr(.{ .reg = rn }, 1);
     // The CF flag contains the value of the last bit shifted out of the destination operand.
     try set_t(block, ctx, .Carry);
     return false;
@@ -2405,19 +2458,19 @@ pub fn shlr(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn shlr2(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.shr(.{ .reg = rn }, .{ .imm8 = 2 });
+    try block.shr(.{ .reg = rn }, 2);
     return false;
 }
 
 pub fn shlr8(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.shr(.{ .reg = rn }, .{ .imm8 = 8 });
+    try block.shr(.{ .reg = rn }, 8);
     return false;
 }
 
 pub fn shlr16(block: *JITBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.shr(.{ .reg = rn }, .{ .imm8 = 16 });
+    try block.shr(.{ .reg = rn }, 16);
     return false;
 }
 
