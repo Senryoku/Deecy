@@ -158,20 +158,22 @@ const BlockCache = struct {
         }
     }
 
+    // NOTE: I could save a shift in compute_key_from_fpscr by moving the ram bit after
+    //       pr and sz, but it was measurably slower in my testing.
     const Key = packed struct(u32) {
         addr: u23,
-        boot: bool,
-        sz: u1,
+        ram: u1,
         pr: u1,
+        sz: u1,
         _: u6 = 0,
     };
 
     inline fn compute_key(address: u32, sz: u1, pr: u1) u32 {
         return @bitCast(Key{
             .addr = @truncate(address >> 1),
-            .boot = address < BootEntryCount,
-            .sz = sz,
+            .ram = @truncate(address >> 26),
             .pr = pr,
+            .sz = sz,
         });
     }
 
