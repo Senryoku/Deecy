@@ -1132,6 +1132,12 @@ pub const Emitter = struct {
             .reg8 => |dst_reg| {
                 switch (src) {
                     .reg8 => |src_reg| {
+                        // Always emit a REX prefix for these registers.
+                        if (dst_reg == .rsp or dst_reg == .rbp or dst_reg == .rsi or dst_reg == .rdi or src_reg == .rsp or src_reg == .rbp or src_reg == .rsi or src_reg == .rdi) {
+                            try self.emit(REX, .{ .r = need_rex(src), .b = need_rex(dst) });
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(src), .b = need_rex(dst) });
+                        }
                         try self.emit(u8, rm_opcode_8);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
                     },
