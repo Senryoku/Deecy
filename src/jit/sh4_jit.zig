@@ -1064,19 +1064,19 @@ fn store_dfp_register(block: *JITBlock, ctx: *JITContext, guest_reg: u4, value: 
     try block.mov(.{ .freg64 = try ctx.guest_freg_cache(block, 64, guest_reg, false, true) }, value);
 }
 
-/// Returns a JIT Operand to the memory location of the supplied SH4 struct member.
+//// Returns a JIT Operand to the memory location of the supplied SH4 struct member.
 fn sh4_mem(comptime name: []const u8) Architecture.Operand {
     std.debug.assert(@sizeOf(@FieldType(sh4.SH4, name)) == 4);
     return .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, name), .size = 32 } };
 }
 
-// Loads the guest t bit into the host carry flag
+/// Loads the guest t bit into the host carry flag. NOTE: Overwrites ReturnRegister.
 fn load_t(block: *JITBlock, _: *JITContext) !void {
     try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
     try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "t"));
 }
 
-// Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
+/// Sets T bit in SR if Condition is fullfilled (In the Host!), otherwise clears it.
 // TODO: We'll want to cache the T bit at some point too!
 fn set_t(block: *JITBlock, _: *JITContext, condition: JIT.Condition) !void {
     std.debug.assert(@bitOffsetOf(sh4.SR, "t") == 0);
