@@ -1,6 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
+const host_memory = @import("../host_memory.zig");
 const MemoryMappedFile = @import("../memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
@@ -26,7 +27,7 @@ _file_view: []const u8 = undefined,
 
 _allocator: std.mem.Allocator,
 
-// NOTE: All number are big endian.
+// NOTE: All numbers in CHD headers are big endian.
 
 const Tag = "MComprHD";
 const CDMaxSectorBytes = 2352;
@@ -256,7 +257,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const sectors_per_hunk = self.hunk_bytes / CDFrameSize;
                         const track_type: u8 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 0 else 4;
                         const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CDMaxSectorBytes else return error.UnsupportedFormat;
-                        const data = try allocator.alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
+                        const data = try host_memory.virtual_alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
                         try self.tracks.append(.{
                             .num = track_num,
@@ -292,7 +293,7 @@ pub fn deinit(self: *@This()) void {
     self.sessions.deinit();
     self.track_offsets.deinit();
     for (self.tracks.items) |track|
-        self._allocator.free(track.data);
+        host_memory.virtual_dealloc(@constCast(track.data));
     self.tracks.deinit();
     self._file.deinit();
 }
