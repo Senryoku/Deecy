@@ -478,20 +478,21 @@ pub const Dreamcast = struct {
 
     pub fn tick(self: *@This(), max_instructions: u8) !u32 {
         const cycles = self.cpu.execute(max_instructions);
-        return self.tick_peripherals(cycles);
+        try self.tick_peripherals(cycles);
+        return cycles;
     }
 
     pub fn tick_jit(self: *@This()) !u32 {
         var cycles: u32 = 0;
         while (cycles < 64)
             cycles += try self.sh4_jit.execute(&self.cpu);
-        return self.tick_peripherals(cycles);
+        try self.tick_peripherals(cycles);
+        return cycles;
     }
 
-    fn tick_peripherals(self: *@This(), cycles: u32) !u32 {
+    fn tick_peripherals(self: *@This(), cycles: u32) !void {
         self.advance_scheduled_interrupts(cycles);
         try self.aica.update(self, cycles);
-        return cycles;
     }
 
     // TODO: Add helpers for external interrupts and errors.

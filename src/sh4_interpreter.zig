@@ -1218,16 +1218,30 @@ pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) void {
     cpu.R(opcode.nmd.n).* += 4;
 }
 
-pub fn ldtlb(cpu: *SH4, opcode: Instr) void {
-    _ = cpu;
-    _ = opcode;
-    const static = struct {
-        var once = true;
+pub fn ldtlb(cpu: *SH4, _: Instr) void {
+    const urc = cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).urc;
+    const pteh = cpu.read_p4_register(sh4.mmu.PTEH, .PTEH);
+    const ptel = cpu.read_p4_register(sh4.mmu.PTEL, .PTEL);
+    const ptea = cpu.read_p4_register(sh4.mmu.PTEA, .PTEA);
+
+    cpu.utlb[urc] = .{
+        .asid = pteh.asid,
+        .vpn = pteh.vpn,
+
+        .ppn = ptel.ppn,
+        .v = ptel.v,
+        .sz = ptel.sz(),
+        .pr = ptel.pr,
+        .c = ptel.c,
+        .d = ptel.d,
+        .sh = ptel.sh,
+        .wt = ptel.wt,
+
+        .sa = ptea.sa,
+        .tc = ptea.tc,
     };
-    if (static.once) {
-        static.once = false;
-        sh4_log.warn(termcolor.yellow("Unimplemented instruction: ldtlb"), .{});
-    }
+    sh4_log.warn(termcolor.yellow("ldtlb : utlb[{d}] = {any}"), .{ urc, cpu.utlb[urc] });
+    if (cpu._dc) |dc| dc.sh4_jit.request_reset();
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) void {
@@ -1358,7 +1372,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         //               The full address also includes the sq bit.
         var ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
 
-        if (cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).at == 1) {
+        if (cpu._mmu_enabled) {
             // The SQ area (H'E000 0000 to H'E3FF FFFF) is set in VPN of the UTLB, and the transfer
             // destination external memory address in PPN. The ASID, V, SZ, SH, PR, and D bits have the
             // same meaning as for normal address translation, but the C and WT bits have no meaning
@@ -1370,20 +1384,12 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
-            if (comptime false) {
-                // Ikaruga Hack, hardcoded translation from looking at the writes to UTBL it performs
-                // (1MB pages, VPN 0x380000 => PPN 0x30000, 0x380400 => 0x30400... and some for VRAM).
-                const vpn: u32 = ((addr >> 20) & 0x3F);
-                const ppn: u32 = if (vpn >= 0x10) (0x10000000 + 0x00100000 * (vpn - 0x10)) else ((0x30000 + 0x400 * vpn) << 10);
-                const translated = ppn | (addr & 0xFFFE0);
-                ext_addr = translated;
-            } else {
-                const vpn: u22 = @truncate(addr >> 10);
-                for (cpu.utlb) |entry| {
-                    if (entry.match(vpn)) {
-                        ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
-                        break;
-                    }
+            // FIXME/TODO: This is the simplified version for Ikaruga and other similar games, not a general solution.
+            const vpn: u22 = @truncate(addr >> 10);
+            for (cpu.utlb) |entry| {
+                if (entry.match(false, 0, vpn)) {
+                    ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
+                    break;
                 }
             }
         }

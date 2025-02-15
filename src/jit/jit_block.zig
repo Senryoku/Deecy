@@ -50,12 +50,16 @@ pub const JITBlock = struct {
         try self.instructions.append(.Break);
     }
 
-    pub fn call(self: *@This(), func: *const anyopaque) !void {
+    pub fn call(self: *@This(), func: ?*const anyopaque) !void {
         try self.instructions.append(.{ .FunctionCall = func });
     }
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
+    }
+
+    pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
+        try self.instructions.append(.{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
     }
 
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
@@ -90,7 +94,16 @@ pub const JITBlock = struct {
         try self.instructions.append(.{ .Shl = .{ .dst = dst, .amount = amount } });
     }
 
-    pub fn shr(self: *@This(), dst: Operand, amount: Operand) !void {
+    pub fn shr(self: *@This(), dst: Operand, amount: anytype) !void {
+        switch (@TypeOf(amount)) {
+            comptime_int, u8 => try self._shr(dst, .{ .imm8 = amount }),
+            Register => try self._shr(dst, .{ .reg = amount }),
+            Operand => try self._shr(dst, amount),
+            else => @compileError("Invalid Type used as SHR amount"),
+        }
+    }
+
+    fn _shr(self: *@This(), dst: Operand, amount: Operand) !void {
         // Combine shift instructions if possible
         if (self.instructions.items.len > 0 and amount == .imm8) {
             const prev = &self.instructions.items[self.instructions.items.len - 1];
@@ -100,6 +113,15 @@ pub const JITBlock = struct {
             }
         }
         try self.instructions.append(.{ .Shr = .{ .dst = dst, .amount = amount } });
+    }
+
+    pub fn sar(self: *@This(), dst: Operand, amount: anytype) !void {
+        switch (@TypeOf(amount)) {
+            comptime_int, u8 => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .imm8 = amount } } }),
+            Register => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .reg = amount } } }),
+            Operand => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = amount } }),
+            else => @compileError("Invalid Type used as SAR amount"),
+        }
     }
 
     // Forward Jump

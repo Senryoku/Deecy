@@ -148,6 +148,29 @@ pub const Condition = enum {
         _ = options;
         return writer.print("{s}", .{@tagName(value)});
     }
+
+    /// Returns the low nibble of opcode using this condition
+    pub fn nibble(self: @This()) u8 {
+        return switch (self) {
+            .Overflow => 0x0,
+            .NotOverflow => 0x1,
+            .Carry, .Below => 0x2,
+            .NotCarry, .AboveEqual, .NotBelow => 0x3,
+            .Equal, .Zero => 0x4,
+            .NotEqual, .NotZero => 0x5,
+            .NotAbove, .BelowEqual => 0x6,
+            .Above, .NotBelowEqual => 0x7,
+            .Sign => 0x8,
+            .NotSign => 0x9,
+            .ParityEven => 0xA,
+            .ParityOdd => 0xB,
+            .Less, .NotGreaterEqual => 0xC,
+            .GreaterEqual, .NotLess => 0xD,
+            .LessEqual, .NotGreater => 0xE,
+            .Greater, .NotLessEqual => 0xF,
+            else => unreachable,
+        };
+    }
 };
 
 pub const EFLAGSCondition = enum(u4) {
@@ -239,13 +262,24 @@ pub const Operand = union(enum) {
             .mem => |mem| writer.print("{any}", .{mem}),
         };
     }
+
+    pub fn size(self: @This()) u8 {
+        return switch (self) {
+            .imm8, .reg8 => 8,
+            .imm16, .reg16 => 16,
+            .imm32, .reg, .freg32 => 32,
+            .imm64, .reg64, .freg64, .freg128 => 64,
+            .mem => |mem| mem.size,
+        };
+    }
 };
 
 pub const Instruction = union(enum) {
     Nop, // Usefull to patch out instructions without having to rewrite the entire block.
     Break, // For Debugging
-    FunctionCall: *const anyopaque, // FIXME: Is there a better type for generic function pointers?
+    FunctionCall: ?*const anyopaque, // FIXME: Is there a better type for generic function pointers? NOTE: If null, expects the function pointer to be in rax
     Mov: struct { dst: Operand, src: Operand, preserve_flags: bool = false }, // Mov with zero extention (NOTE: This is NOT the same as the x86 mov instruction, which doesn't zero extend from 8 and 16-bit memory accesses)
+    Cmov: struct { condition: Condition, dst: Operand, src: Operand }, // Conditional Move
     Movsx: struct { dst: Operand, src: Operand }, // Mov with sign extension
     Push: Operand,
     Pop: Operand,
@@ -290,6 +324,7 @@ pub const Instruction = union(enum) {
             .Break => writer.print("break", .{}),
             .FunctionCall => |function| writer.print("call {any}", .{function}),
             .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
+            .Cmov => |cmov| writer.print("cmov {} {}, {}", .{ cmov.condition, cmov.dst, cmov.src }),
             .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
             .Push => |reg| writer.print("push {any}", .{reg}),
             .Pop => |reg| writer.print("pop {any}", .{reg}),
@@ -349,6 +384,16 @@ pub const Register = enum(u4) {
         _ = fmt;
         _ = options;
         return writer.print("{s}", .{@tagName(value)});
+    }
+
+    /// Returns true for registers requiring a REX prefix for 8bit operations, when they normally would not.
+    ///   Without REX prefix, only AL, CL, DL, BL, AH,  CH,  DH,  BH   are accessible (NOTE: xH registers are supported by this emitter anyway).
+    ///   With REX prefix:         AL, CL, DL, BL, SPL, BPL, SIL, DIL, R8B, R9B, R10B, R11B, R12B, R13B, R14B, R15B
+    pub fn require_rex_8bit(self: @This()) bool {
+        return switch (self) {
+            .rsp, .rbp, .rsi, .rdi => true,
+            else => false,
+        };
     }
 };
 
@@ -559,10 +604,11 @@ pub const Emitter = struct {
                 },
                 .FunctionCall => |function| try self.native_call(function),
                 .Mov => |m| try self.mov(m.dst, m.src, m.preserve_flags),
+                .Cmov => |m| try self.cmov(m.condition, m.dst, m.src),
                 .Movsx => |m| try self.movsx(m.dst, m.src),
                 .Push => |reg_or_imm| {
                     switch (reg_or_imm) {
-                        .reg => |reg| {
+                        .reg8, .reg16, .reg, .reg64 => |reg| {
                             try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
                             try self.emit(u8, encode_opcode(0x50, reg));
                         },
@@ -571,7 +617,7 @@ pub const Emitter = struct {
                 },
                 .Pop => |reg_or_imm| {
                     switch (reg_or_imm) {
-                        .reg => |reg| {
+                        .reg8, .reg16, .reg, .reg64 => |reg| {
                             try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
                             try self.emit(u8, encode_opcode(0x58, reg));
                         },
@@ -835,7 +881,7 @@ pub const Emitter = struct {
         if (mem.size == 16 or reg == .freg32 or reg == .freg64)
             try self.emit(u8, 0x66);
 
-        if (reg == .reg8 and (reg.reg8 == .rsp or reg.reg8 == .rbp or reg.reg8 == .rsi or reg.reg8 == .rdi)) {
+        if (reg == .reg8 and reg.reg8.require_rex_8bit()) {
             // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
             // emit it unconditionally.
             // FIXME: This should probably be done elsewhere too...
@@ -864,12 +910,8 @@ pub const Emitter = struct {
         switch (dst) {
             .mem => |dst_m| {
                 switch (src) {
-                    .reg8 => {
-                        if (dst.mem.size != 8) return error.OperandSizeMismatch;
-                        try mov_reg_mem(self, .RegToMem, src, dst_m);
-                    },
-                    .reg16 => {
-                        if (dst.mem.size != 16) return error.OperandSizeMismatch;
+                    .reg8, .reg16 => {
+                        if (src.size() != dst.mem.size) return error.OperandSizeMismatch;
                         try mov_reg_mem(self, .RegToMem, src, dst_m);
                     },
                     .reg => try mov_reg_mem(self, .RegToMem, src, dst_m),
@@ -926,6 +968,7 @@ pub const Emitter = struct {
             },
             .reg64 => |dst_reg| {
                 switch (src) {
+                    .reg64 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
@@ -936,7 +979,11 @@ pub const Emitter = struct {
                             try self.emit(u64, imm);
                         }
                     },
-                    else => return error.Unimplemented,
+                    .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
+                    else => {
+                        std.debug.print("Mov Unimplemented: {any}, {any}\n", .{ dst, src });
+                        return error.Unimplemented;
+                    },
                 }
             },
             .freg32 => |dst_reg| {
@@ -962,6 +1009,42 @@ pub const Emitter = struct {
         }
     }
 
+    pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
+        if (condition == .Always) return error.InvalidCondition;
+
+        switch (dst) {
+            .reg16, .reg, .reg64 => |reg| {
+                const b64 = (dst == .reg64);
+                if (dst == .reg16)
+                    try self.emit(u8, 0x66);
+                switch (src) {
+                    .reg16, .reg, .reg64 => {
+                        if (std.meta.activeTag(dst) != std.meta.activeTag(src)) return error.IncompatibleSourceAndDestination;
+                        try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(dst), .b = need_rex(src) });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0x40 | condition.nibble());
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+                    },
+                    .mem => |mem| {
+                        if (dst.size() != mem.size) return error.OperandSizeMismatch;
+                        try self.emit(REX, .{
+                            .w = b64,
+                            .r = need_rex(reg),
+                            .x = if (mem.index) |i| need_rex(i) else false,
+                            .b = need_rex(mem.base),
+                        });
+                        try self.emit(u8, 0x0F);
+                        try self.emit(u8, 0x40 | condition.nibble());
+                        try self.emit_mem_addressing(encode(reg), mem);
+                        return error.UntestedCmovEmit; // Implemented but unused, thus untested! Be careful!
+                    },
+                    else => return error.InvalidCmovSource,
+                }
+            },
+            else => return error.InvalidCmovDestination,
+        }
+    }
+
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         switch (dst) {
             // FIXME: We don't keep track of registers sizes and default to 32bit. We might want to support explicit 64bit at some point.
@@ -979,7 +1062,7 @@ pub const Emitter = struct {
                         try self.emit_mem_addressing(encode(dst_reg), src_m);
                     },
                     .reg8 => |src_reg| {
-                        if (src_reg == .rsp or src_reg == .rbp or src_reg == .rsi or src_reg == .rdi) {
+                        if (src_reg.require_rex_8bit()) {
                             // NOTE: Byte access to the lower 8 bits of these registers is only possible with a rex prefix,
                             // emit it unconditionally.
                             try self.emit(REX, .{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
@@ -1054,11 +1137,31 @@ pub const Emitter = struct {
 
     // FIXME: I don't have a better name.
     pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm_opcode: RegOpcode, dst: Operand, src: Operand) !void {
-        _ = rax_dst_opcode_8;
         _ = mr_opcode_8;
-        _ = rm_opcode_8;
 
         switch (dst) {
+            .reg8 => |dst_reg| {
+                switch (src) {
+                    .reg8 => |src_reg| {
+                        if (dst_reg.require_rex_8bit() or src_reg.require_rex_8bit()) {
+                            try self.emit(REX, .{ .r = need_rex(src), .b = need_rex(dst) });
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(src), .b = need_rex(dst) });
+                        }
+                        try self.emit(u8, rm_opcode_8);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                    },
+                    .imm8 => |imm8| {
+                        if (dst_reg == .rax) {
+                            try self.emit(u8, rax_dst_opcode_8);
+                            try self.emit(u8, imm8);
+                        } else {
+                            return error.Unimplemented80;
+                        }
+                    },
+                    else => return error.Unimplemented80,
+                }
+            },
             .reg => |dst_reg| {
                 switch (src) {
                     .reg => |src_reg| {
@@ -1095,6 +1198,16 @@ pub const Emitter = struct {
                         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, mr_opcode);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                    },
+                    .mem => |src_m| {
+                        switch (src_m.size) {
+                            64 => {
+                                try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                                try self.emit(u8, rm_opcode);
+                                try self.emit_mem_addressing(encode(dst_reg), src_m);
+                            },
+                            else => return error.OperandSizeMismatch,
+                        }
                     },
                     else => return error.InvalidSource,
                 }
@@ -1218,42 +1331,15 @@ pub const Emitter = struct {
         // NOTE: In 64-bit mode, r/m8 can not be encoded to access the following byte registers if a REX prefix is used: AH, BH, CH, DH.
         switch (dst) {
             .reg8 => |dst_reg| {
-                // Always emit a REX prefix for these registers.
-                if (dst_reg == .rsp or dst_reg == .rbp or dst_reg == .rsi or dst_reg == .rdi) {
+                if (dst_reg.require_rex_8bit()) {
                     try self.emit(REX, .{ .w = false, .b = need_rex(dst_reg) });
                 } else {
                     try self.emit_rex_if_needed(.{ .w = false, .b = need_rex(dst_reg) });
                 }
                 try self.emit(u8, 0x0F);
                 try self.emit(u8, switch (condition) {
-                    .Above => 0x97,
-                    .AboveEqual => 0x93,
-                    .Below => 0x92,
-                    .BelowEqual => 0x96,
-                    .Carry => 0x92,
-                    .Equal => 0x94,
-                    .NotEqual => 0x95,
-                    .Greater => 0x9F,
-                    .GreaterEqual => 0x9D,
-                    .Less => 0x9C,
-                    .LessEqual => 0x9E,
-                    .NotAbove => 0x96,
-                    .NotBelow => 0x93,
-                    .NotBelowEqual => 0x97,
-                    .NotCarry => 0x93,
-                    .NotGreater => 0x9E,
-                    .NotGreaterEqual => 0x9C,
-                    .NotLess => 0x9D,
-                    .NotLessEqual => 0x9F,
-                    .NotOverflow => 0x91,
-                    .NotSign => 0x99,
-                    .NotZero => 0x95,
-                    .Overflow => 0x90,
-                    .ParityEven => 0x9A,
-                    .ParityOdd => 0x9B,
-                    .Sign => 0x98,
-                    .Zero => 0x94,
                     .Always => return error.InvalidSetByteCondition,
+                    else => |c| 0x90 | c.nibble(),
                 });
                 try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 0, .r_m = encode(dst_reg) });
             },
@@ -1370,9 +1456,8 @@ pub const Emitter = struct {
                         }
                     },
                     .reg => |src_reg| {
-                        if (src_reg != .rcx) {
+                        if (src_reg != .rcx)
                             return error.InvalidShiftRegister; // Only rcx is supported as a source for the shift amount in x86!
-                        }
                         try self.emit(u8, 0xD2 + opcode_offset);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
                     },
@@ -1495,22 +1580,7 @@ pub const Emitter = struct {
     fn emit_jmp_rel8(self: *@This(), condition: JIT.Condition, rel: i8) !void {
         try self.emit(u8, switch (condition) {
             .Always => 0xEB,
-            .Overflow => 0x70,
-            .NotOverflow => 0x71,
-            .Carry, .Below => 0x72,
-            .NotCarry, .AboveEqual, .NotBelow => 0x73,
-            .Equal, .Zero => 0x74,
-            .NotEqual, .NotZero => 0x75,
-            .NotAbove, .BelowEqual => 0x76,
-            .Above, .NotBelowEqual => 0x77,
-            .Sign => 0x78,
-            .NotSign => 0x79,
-            .ParityEven => 0x7A,
-            .ParityOdd => 0x7B,
-            .Less, .NotGreaterEqual => 0x7C,
-            .GreaterEqual, .NotLess => 0x7D,
-            .LessEqual, .NotGreater => 0x7E,
-            .Greater, .NotLessEqual => 0x7F,
+            else => |c| 0x70 | c.nibble(),
         });
         try self.emit(i8, rel);
     }
@@ -1549,22 +1619,7 @@ pub const Emitter = struct {
 
         try self.emit(u8, switch (condition) {
             .Always => 0xE9,
-            .Overflow => 0x80,
-            .NotOverflow => 0x81,
-            .Carry, .Below => 0x82,
-            .NotCarry, .AboveEqual, .NotBelow => 0x83,
-            .Equal, .Zero => 0x84,
-            .NotEqual, .NotZero => 0x85,
-            .NotAbove, .BelowEqual => 0x86,
-            .Above, .NotBelowEqual => 0x87,
-            .Sign => 0x88,
-            .NotSign => 0x89,
-            .ParityEven => 0x8A,
-            .ParityOdd => 0x8B,
-            .Less, .NotGreaterEqual => 0x8C,
-            .GreaterEqual, .NotLess => 0x8D,
-            .LessEqual, .NotGreater => 0x8E,
-            .Greater, .NotLessEqual => 0x8F,
+            else => |c| 0x80 | c.nibble(),
         });
 
         const address_to_patch = self.block_size;
@@ -1588,11 +1643,13 @@ pub const Emitter = struct {
         }
     }
 
-    pub fn native_call(self: *@This(), function: *const anyopaque) !void {
-        // mov rax, function
-        try self.emit(u8, 0x48);
-        try self.emit(u8, 0xB8);
-        try self.emit(u64, @intFromPtr(function));
+    pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
+        if (function) |fp| {
+            // mov rax, function
+            try self.emit(u8, 0x48);
+            try self.emit(u8, 0xB8);
+            try self.emit(u64, @intFromPtr(fp));
+        }
 
         if (builtin.os.tag == .windows) {
             // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.

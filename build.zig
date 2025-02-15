@@ -152,15 +152,19 @@ pub fn build(b: *std.Build) void {
     });
     jit_perf.root_module.addImport("termcolor", termcolor_module);
     jit_perf.root_module.addImport("dreamcast", dc_module);
+
+    const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
+
     const run_jit_perf_tests = b.addRunArtifact(jit_perf);
     const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
     jit_perf_step.dependOn(&run_jit_perf_tests.step);
+    jit_perf_step.dependOn(&jit_pref_install.step);
 
     const perf_step = b.step("perf", "Run performance tests");
     perf_step.dependOn(&run_jit_perf_tests.step);
+    perf_step.dependOn(&jit_pref_install.step);
 
     const pref_install = b.addInstallArtifact(interpreter_perf, .{});
-    const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
     const perf_install_step = b.step("perf_install", "Install the performance tests");
     perf_install_step.dependOn(&pref_install.step);
     perf_install_step.dependOn(&jit_pref_install.step);
