@@ -123,7 +123,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             try self.tracks.append(.{
                 .num = @truncate(self.tracks.items.len + 1),
                 .fad = start_lba + pregap,
-                .track_type = @truncate(sector_type),
+                .track_type = @enumFromInt(sector_type),
                 .format = sector_size,
                 .pregap = pregap,
                 .data = try self._file.create_view(track_offset + pregap * sector_size, length * sector_size),
@@ -156,6 +156,48 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     log.debug("Sector count: {X}, Volume Name Length: {d}, Volume Name: {s}", .{ total_number_of_sectors, volume_name_length, volume_name });
 
     return self;
+}
+
+pub fn deinit(self: *@This()) void {
+    self.sessions.deinit();
+    self.tracks.deinit();
+    self._file.deinit();
+}
+
+pub fn get_first_data_track(self: *const @This()) ?Track {
+    for (self.tracks.items) |track| {
+        if (track.track_type == .Data)
+            return track;
+    }
+    return null;
+}
+
+pub fn read_sector(self: *const @This(), fad: u32) []const u8 {
+    const track = Track.get_corresponding_track(&self.tracks, fad);
+    return track.read_sector(fad);
+}
+
+pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+    const track = Track.get_corresponding_track(&self.tracks, fad);
+    return track.load_sectors(fad, count, dest);
+}
+
+pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+    const track = Track.get_corresponding_track(&self.tracks, fad);
+    return track.load_sectors_raw(fad, count, dest);
+}
+
+pub fn get_session_count(self: *const @This()) u32 {
+    return @intCast(self.sessions.items.len);
+}
+
+pub fn get_session(self: *const @This(), session_number: u32) Session {
+    return self.sessions.items[session_number - 1];
+}
+
+pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
+    std.debug.assert(area == .SingleDensity);
+    return .{ 0, @intCast(self.tracks.items.len - 1) };
 }
 
 fn track_header(reader: anytype) !void {
@@ -195,23 +237,4 @@ fn track_header(reader: anytype) !void {
         return error.InvalidCDI;
     }
     log.debug("    Max CD Length: {X}", .{max_cd_length});
-}
-
-pub fn deinit(self: *@This()) void {
-    self.sessions.deinit();
-    self.tracks.deinit();
-    self._file.deinit();
-}
-
-pub fn get_session_count(self: *const @This()) u32 {
-    return @intCast(self.sessions.items.len);
-}
-
-pub fn get_session(self: *const @This(), session_number: u32) Session {
-    return self.sessions.items[session_number - 1];
-}
-
-pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
-    std.debug.assert(area == .SingleDensity);
-    return .{ 0, @intCast(self.tracks.items.len - 1) };
 }
