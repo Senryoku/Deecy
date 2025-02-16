@@ -949,7 +949,7 @@ pub const SH4 = struct {
                 // YUV Converter Path
                 0x10800000...0x11000000 - 1, 0x12800000...0x13000000 - 1 => {
                     var src: [*]u8 = @alignCast(@ptrCast(self._get_memory(src_addr)));
-                    self._dc.?.gpu.ta_fifo_yuv_converter_path(src[0..byte_len]);
+                    self._dc.?.gpu.write_ta_fifo_yuv_converter_path(src[0..byte_len]);
                 },
                 // Direct Texture Path
                 0x11000000...0x12000000 - 1, 0x13000000...0x14000000 - 1 => {

@@ -1767,6 +1767,96 @@ pub const Holly = struct {
         self.handle_command();
     }
 
+    pub fn write_ta_direct_texture_path(self: *@This(), addr: u32, access_type: enum(u32) { b64 = 0, b32 = 1 }, v: @Vector(8, u32)) void {
+        switch (access_type) {
+            .b64 => @as(*@Vector(8, u32), @alignCast(@ptrCast(&self.vram[addr & VRAMMask]))).* = v,
+            .b32 => {
+                for (0..8) |idx|
+                    self.write_vram(u32, @intCast(addr + 4 * idx), v[idx]);
+            },
+        }
+    }
+
+    pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
+        holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
+        @memcpy(self.vram[addr & VRAMMask .. (addr & VRAMMask) + value.len], value);
+    }
+
+    pub fn write_ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
+        const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
+        const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
+        const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
+        const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
+        var tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
+        const line_size = u_size * 16 / 2; // in YUV422
+        if (ctrl.format == 0) {
+            // YUV 420
+            if (ctrl.tex == 0) {
+                //   YUV_Tex = 0
+                // The YUV data that is input is stored in texture memory as one texture with a size of
+                // [(YUV_U_Size + 1) * 16] (H) * [(YUV_V_Size + 1) * 16] (V). This format has a weakness
+                // in that storage time is longer because the storage addresses in texture memory will
+                // not be continuous every 16 pixels (32 bytes) in the horizontal direction.
+                var offset: u32 = 0;
+                for (0..v_size) |y| {
+                    for (0..u_size) |x| {
+                        const block_start = (16 * y * line_size) + (16 / 2 * x);
+                        const pixels = tex[block_start..];
+
+                        const u = data[offset .. offset + 64];
+                        offset += 64;
+                        const v = data[offset .. offset + 64];
+                        offset += 64;
+                        const y0 = data[offset .. offset + 64]; // (0,0) to (7,7)
+                        offset += 64;
+                        const y1 = data[offset .. offset + 64]; // (8,0) to (15,7)
+                        offset += 64;
+                        const y2 = data[offset .. offset + 64]; // (0,8) to (7,15)
+                        offset += 64;
+                        const y3 = data[offset .. offset + 64]; // (8,8) to (15,15)
+                        offset += 64;
+
+                        for (0..8) |j| {
+                            for (0..8) |i| {
+                                pixels[(2 * j + 0) * line_size + i].u = u[8 * j + i];
+                                pixels[(2 * j + 0) * line_size + i].v = v[8 * j + i];
+                                pixels[(2 * j + 1) * line_size + i].u = u[8 * j + i];
+                                pixels[(2 * j + 1) * line_size + i].v = v[8 * j + i];
+                            }
+                        }
+
+                        for (0..8) |j| {
+                            for (0..4) |i| {
+                                pixels[(j + 0) * line_size + i + 0].y0 = y0[8 * j + 2 * i];
+                                pixels[(j + 0) * line_size + i + 0].y1 = y0[8 * j + 2 * i + 1];
+
+                                pixels[(j + 0) * line_size + i + 4].y0 = y1[8 * j + 2 * i];
+                                pixels[(j + 0) * line_size + i + 4].y1 = y1[8 * j + 2 * i + 1];
+
+                                pixels[(j + 8) * line_size + i + 0].y0 = y2[8 * j + 2 * i];
+                                pixels[(j + 8) * line_size + i + 0].y1 = y2[8 * j + 2 * i + 1];
+
+                                pixels[(j + 8) * line_size + i + 4].y0 = y3[8 * j + 2 * i];
+                                pixels[(j + 8) * line_size + i + 4].y1 = y3[8 * j + 2 * i + 1];
+                            }
+                        }
+                    }
+                }
+                self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.
+                // FIXME: Delay is arbitrary.
+                if (self._get_register(u32, .TA_YUV_TEX_CNT).* == u_size * v_size)
+                    self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
+            } else {
+                //   YUV_Tex = 1
+                // [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of the macro size (16 * 16 pixels) are
+                // stored in texture memory. Storage time is shorter, because the storage addresses in
+                // texture memory are continuous. However, each texture must be used with a different
+                // polygon and arranged on screen.
+                @panic("ta_fifo_yuv_converter_path: Unimplemented tex=1");
+            }
+        } else std.debug.panic("ta_fifo_yuv_converter_path: Unimplemented format: {d}", .{ctrl.format});
+    }
+
     fn ta_list_index(self: *const @This()) u4 {
         // Should I record the value of TA_ISP_BASE on LIST_INIT?
         // NOTE: We also assume that TA_OL_BASE is in the same 1MB range here.
@@ -2010,86 +2100,6 @@ pub const Holly = struct {
                 }
             }
         }
-    }
-
-    pub fn ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
-        const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
-        const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
-        const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
-        const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
-        var tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
-        const line_size = u_size * 16 / 2; // in YUV422
-        if (ctrl.format == 0) {
-            // YUV 420
-            if (ctrl.tex == 0) {
-                //   YUV_Tex = 0
-                // The YUV data that is input is stored in texture memory as one texture with a size of
-                // [(YUV_U_Size + 1) * 16] (H) * [(YUV_V_Size + 1) * 16] (V). This format has a weakness
-                // in that storage time is longer because the storage addresses in texture memory will
-                // not be continuous every 16 pixels (32 bytes) in the horizontal direction.
-                var offset: u32 = 0;
-                for (0..v_size) |y| {
-                    for (0..u_size) |x| {
-                        const block_start = (16 * y * line_size) + (16 / 2 * x);
-                        const pixels = tex[block_start..];
-
-                        const u = data[offset .. offset + 64];
-                        offset += 64;
-                        const v = data[offset .. offset + 64];
-                        offset += 64;
-                        const y0 = data[offset .. offset + 64]; // (0,0) to (7,7)
-                        offset += 64;
-                        const y1 = data[offset .. offset + 64]; // (8,0) to (15,7)
-                        offset += 64;
-                        const y2 = data[offset .. offset + 64]; // (0,8) to (7,15)
-                        offset += 64;
-                        const y3 = data[offset .. offset + 64]; // (8,8) to (15,15)
-                        offset += 64;
-
-                        for (0..8) |j| {
-                            for (0..8) |i| {
-                                pixels[(2 * j + 0) * line_size + i].u = u[8 * j + i];
-                                pixels[(2 * j + 0) * line_size + i].v = v[8 * j + i];
-                                pixels[(2 * j + 1) * line_size + i].u = u[8 * j + i];
-                                pixels[(2 * j + 1) * line_size + i].v = v[8 * j + i];
-                            }
-                        }
-
-                        for (0..8) |j| {
-                            for (0..4) |i| {
-                                pixels[(j + 0) * line_size + i + 0].y0 = y0[8 * j + 2 * i];
-                                pixels[(j + 0) * line_size + i + 0].y1 = y0[8 * j + 2 * i + 1];
-
-                                pixels[(j + 0) * line_size + i + 4].y0 = y1[8 * j + 2 * i];
-                                pixels[(j + 0) * line_size + i + 4].y1 = y1[8 * j + 2 * i + 1];
-
-                                pixels[(j + 8) * line_size + i + 0].y0 = y2[8 * j + 2 * i];
-                                pixels[(j + 8) * line_size + i + 0].y1 = y2[8 * j + 2 * i + 1];
-
-                                pixels[(j + 8) * line_size + i + 4].y0 = y3[8 * j + 2 * i];
-                                pixels[(j + 8) * line_size + i + 4].y1 = y3[8 * j + 2 * i + 1];
-                            }
-                        }
-                    }
-                }
-                self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.
-                // FIXME: Delay is arbitrary.
-                if (self._get_register(u32, .TA_YUV_TEX_CNT).* == u_size * v_size)
-                    self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, u_size * v_size * 8000);
-            } else {
-                //   YUV_Tex = 1
-                // [(YUV_U_Size + 1) * (YUV_V_Size + 1)] textures of the macro size (16 * 16 pixels) are
-                // stored in texture memory. Storage time is shorter, because the storage addresses in
-                // texture memory are continuous. However, each texture must be used with a different
-                // polygon and arranged on screen.
-                @panic("ta_fifo_yuv_converter_path: Unimplemented tex=1");
-            }
-        } else std.debug.panic("ta_fifo_yuv_converter_path: Unimplemented format: {d}", .{ctrl.format});
-    }
-
-    pub fn write_ta_fifo_direct_texture_path(self: *@This(), addr: u32, value: []u8) void {
-        holly_log.debug("  NOTE: DMA to Direct Texture Path to {X:0>8} (len: {X:0>8})", .{ addr, value.len });
-        @memcpy(self.vram[addr & VRAMMask .. (addr & VRAMMask) + value.len], value);
     }
 
     pub inline fn read_register(self: *const @This(), comptime T: type, r: HollyRegister) T {

@@ -1404,6 +1404,12 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
         // pref is often used to send commands to the GPU, we can optimize this use case.
         switch (ext_addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path_command(cpu.store_queues[sq_addr.sq]),
+            0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
+                if (cpu._dc) |dc| {
+                    const LMMode = dc.read_hw_register(u32, if (ext_addr >= 0x11000000 and ext_addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                    dc.gpu.write_ta_direct_texture_path(addr, if (LMMode != 0) .b32 else .b64, cpu.store_queues[sq_addr.sq]);
+                }
+            },
             // AICA Memory           System RAM               Texture Memory
             0x00800000...0x009FFFFF, 0x0C000000...0x0FFFFFFF, 0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
                 @setRuntimeSafety(false);
