@@ -3,7 +3,7 @@ const termcolor = @import("termcolor");
 
 const aica_log = std.log.scoped(.aica);
 
-const arm7 = @import("arm7");
+pub const arm7 = @import("arm7");
 const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 const DSP = @import("aica_dsp.zig");
 

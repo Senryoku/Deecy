@@ -5,7 +5,7 @@ const zgui = @import("zgui");
 const zglfw = @import("zglfw");
 
 const DreamcastModule = @import("dreamcast");
-const arm7 = @import("arm7");
+const arm7 = DreamcastModule.AICAModule.arm7;
 
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 

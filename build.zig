@@ -15,25 +15,34 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+
     const arm7 = b.dependency("arm7", .{});
     const arm7_module = arm7.module("arm7");
 
-    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+    const mmu = b.option(bool, "mmu", "Enable experimental Full MMU Emulation (default: false)") orelse false;
+    const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
+
+    const dc_options = b.addOptions();
+    dc_options.addOption(bool, "mmu", mmu);
+    dc_options.addOption(bool, "fast_mem", fast_mem);
 
     const dc_module = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
         .root_source_file = b.path("src/dreamcast/dreamcast.zig"),
         .imports = &.{
-            .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "arm7", .module = arm7_module },
         },
     });
+    dc_module.addOptions("config", dc_options);
 
     const deecy_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/main.zig"),
         .imports = &.{
-            .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
             .{ .name = "dreamcast", .module = dc_module },
         },
@@ -175,12 +184,10 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_module = dc_module,
         .target = target,
         .optimize = optimize,
     });
-    unit_tests.root_module.addImport("arm7", arm7_module);
-    unit_tests.root_module.addImport("termcolor", termcolor_module);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
@@ -190,11 +197,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
 
     const sh4_tests = b.addTest(.{ .root_source_file = b.path("test/sh4_SingleStepTests.zig"), .target = target, .optimize = optimize });
-    const sh4_module = b.createModule(.{ .root_source_file = b.path("src/sh4.zig") });
-    sh4_module.addImport("arm7", arm7_module);
-    sh4_module.addImport("termcolor", termcolor_module);
-    sh4_tests.root_module.addImport("sh4", sh4_module);
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
+    sh4_tests.root_module.addImport("dreamcast", dc_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
     const sh4_test_step = b.step("sh4_test", "Run sh4 tests");
     sh4_test_step.dependOn(&run_sh4_tests.step);

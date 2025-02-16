@@ -2,6 +2,7 @@
 // FIXME: Exact model is actually SH7091, I think.
 
 const std = @import("std");
+const config = @import("config");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 
@@ -24,7 +25,7 @@ pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-pub const ExperimentalFullMMUSupport = false;
+pub const ExperimentalFullMMUSupport = config.mmu;
 
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.

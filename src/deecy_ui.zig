@@ -13,7 +13,6 @@ const Deecy = @import("deecy.zig");
 const DreamcastModule = @import("dreamcast");
 const MapleModule = DreamcastModule.Maple;
 const Disc = DreamcastModule.GDROM.Disc;
-const Colors = DreamcastModule.HollyModule.Colors;
 const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");

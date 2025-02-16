@@ -154,7 +154,7 @@ pub const Dreamcast = struct {
             ._allocator = allocator,
         };
 
-        if (SH4JITModule.ExperimentalFastMem) {
+        if (SH4JITModule.FastMem) {
             dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
@@ -214,7 +214,7 @@ pub const Dreamcast = struct {
         self.cpu.deinit();
         self.flash.deinit();
 
-        if (!SH4JITModule.ExperimentalFastMem) {
+        if (!SH4JITModule.FastMem) {
             self._allocator.free(self.aram);
             self._allocator.free(self.vram);
             self._allocator.free(self.ram);
