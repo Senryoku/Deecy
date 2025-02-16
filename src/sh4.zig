@@ -1337,12 +1337,15 @@ pub const SH4 = struct {
                     // there is an ITLB match. If there is a match in both the UTLB and ITLB, the UTLB
                     // information is also written to the ITLB.
 
+                    const before = self.utlb[entry];
+
                     self.utlb[entry].asid = val.asid;
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].d = val.d;
                     self.utlb[entry].vpn = val.vpn;
 
-                    if (self._dc) |dc| dc.sh4_jit.request_reset();
+                    if (!std.meta.eql(before, self.utlb[entry]))
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
             },
             0xF7000000...0xF77FFFFF => {
@@ -1352,6 +1355,9 @@ pub const SH4 = struct {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
                     sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+
+                    const before = self.utlb[entry];
+
                     self.utlb[entry].wt = val.wt;
                     self.utlb[entry].sh = val.sh;
                     self.utlb[entry].d = val.d;
@@ -1361,7 +1367,8 @@ pub const SH4 = struct {
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].ppn = val.ppn;
 
-                    if (self._dc) |dc| dc.sh4_jit.request_reset();
+                    if (!std.meta.eql(before, self.utlb[entry]))
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
             },
             0xF7800000...0xF7FFFFFF => {
