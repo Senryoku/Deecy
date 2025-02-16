@@ -47,9 +47,9 @@ pub const Disc = union(enum) {
         }
     }
 
-    pub fn get_tracks(self: *const @This()) *const std.ArrayList(Track) {
+    pub inline fn get_tracks(self: *const @This()) std.ArrayList(Track) {
         switch (self.*) {
-            inline else => |d| return &d.tracks,
+            inline else => |d| return d.tracks,
         }
     }
 
