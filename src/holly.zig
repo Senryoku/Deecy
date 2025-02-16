@@ -1415,7 +1415,7 @@ pub const Holly = struct {
     _ta_lists: [16]TALists = undefined,
 
     _pixel: u64 = 0,
-    _tmp_cycles: u64 = 0,
+    _tmp_subcycles: u64 = 0,
     _last_spg_update: u64 = 0,
 
     pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !Holly {
@@ -1510,40 +1510,40 @@ pub const Holly = struct {
         self.schedule_interrupts();
     }
 
-    fn milli_cycles_per_pixel(self: *const @This()) u64 {
+    inline fn pixels_to_sh4_cycles(self: *const @This(), pixels: u64) u64 {
         const fb_r_ctrl = self.read_register(FB_R_CTRL, .FB_R_CTRL);
-        return (if (fb_r_ctrl.vclk_div == 0) @as(u32, 2) else 1) * 7407; // FIXME: Approximation. ~200/27.
+        const factor: u64 = if (fb_r_ctrl.vclk_div == 0) 2 else 1;
+        return @divTrunc(factor * 200 * pixels, 27);
     }
 
     pub fn schedule_hblank_in(self: *@This()) void {
-        const cpp: u64 = self.milli_cycles_per_pixel();
         const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
-        self._dc.schedule_event(.HBlankIn, @divTrunc(cpp * spg_hblank_int.hblank_in_interrupt, 1000));
+        self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(spg_hblank_int.hblank_in_interrupt));
     }
     pub fn schedule_vblank_in(self: *@This()) void {
-        const cpp: u64 = self.milli_cycles_per_pixel();
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
         const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_in_interrupt_line_number;
         const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
         const max_scanline = spg_load.vcount + 1;
-        const line_diff = if (spg_status.scanline < target_scanline)
+        const line_diff: u64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (max_scanline - spg_status.scanline) + target_scanline;
-        const cycles = @divTrunc(cpp * (spg_load.hcount + 1) * line_diff, 1000);
-        self._dc.schedule_event(.VBlankIn, cycles);
+        const hcount: u64 = spg_load.hcount;
+        const sh4_cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
+        self._dc.schedule_event(.VBlankIn, sh4_cycles);
     }
     pub fn schedule_vblank_out(self: *@This()) void {
-        const cpp: u64 = self.milli_cycles_per_pixel();
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
         const target_scanline = self.read_register(SPG_VBLANK_INT, .SPG_VBLANK_INT).vblank_out_interrupt_line_number;
         const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
         const max_scanline = spg_load.vcount + 1;
-        const line_diff = if (spg_status.scanline < target_scanline)
+        const line_diff: u64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
             (max_scanline - spg_status.scanline) + target_scanline;
-        const cycles = @divTrunc(cpp * (spg_load.hcount + 1) * line_diff, 1000);
+        const hcount: u64 = spg_load.hcount;
+        const cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
         self._dc.schedule_event(.VBlankOut, cycles);
     }
 
@@ -1595,17 +1595,24 @@ pub const Holly = struct {
         self._dc.clear_event(.VBlankOut);
     }
 
+    const ClocksLCM = 5400; // Least Common Multiple of the SH4 clock (200MHz) and the Pixel clock (27MHz)
+
+    inline fn subcycles_per_pixel(self: *const @This()) u64 {
+        const fb_r_ctrl = self.read_register(FB_R_CTRL, .FB_R_CTRL);
+        return (if (fb_r_ctrl.vclk_div == 0) @as(u32, 2) else 1) * (200 * ClocksLCM / 27);
+    }
+
     pub fn update_spg_status(self: *@This()) void {
         if (self._dc._global_cycles == self._last_spg_update) return;
-        self._tmp_cycles += 1000 * (self._dc._global_cycles - self._last_spg_update);
+        self._tmp_subcycles += ClocksLCM * (self._dc._global_cycles - self._last_spg_update);
         self._last_spg_update = self._dc._global_cycles;
-        const cpp = self.milli_cycles_per_pixel();
+        const cpp = self.subcycles_per_pixel();
 
-        if (self._tmp_cycles >= cpp) {
+        if (self._tmp_subcycles >= cpp) {
             const spg_hblank = self.read_register(SPG_HBLANK, .SPG_HBLANK);
             const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
-            self._pixel += self._tmp_cycles / cpp;
-            self._tmp_cycles %= cpp;
+            self._pixel += self._tmp_subcycles / cpp;
+            self._tmp_subcycles %= cpp;
 
             const spg_status = self._get_register(SPG_STATUS, .SPG_STATUS);
 
@@ -2300,7 +2307,7 @@ pub const Holly = struct {
             bytes += try list.serialize(writer);
         }
         bytes += try writer.write(std.mem.asBytes(&self._pixel));
-        bytes += try writer.write(std.mem.asBytes(&self._tmp_cycles));
+        bytes += try writer.write(std.mem.asBytes(&self._tmp_subcycles));
         bytes += try writer.write(std.mem.asBytes(&self._last_spg_update));
         return bytes;
     }
@@ -2320,7 +2327,7 @@ pub const Holly = struct {
             bytes += try list.deserialize(reader);
         }
         bytes += try reader.read(std.mem.asBytes(&self._pixel));
-        bytes += try reader.read(std.mem.asBytes(&self._tmp_cycles));
+        bytes += try reader.read(std.mem.asBytes(&self._tmp_subcycles));
         bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));
 
         return bytes;
