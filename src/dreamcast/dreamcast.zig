@@ -1,19 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const common = @import("common.zig");
-const addr_t = common.addr_t;
 const termcolor = @import("termcolor");
 
-const HardwareRegisters = @import("hardware_registers.zig");
+pub const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const Interrupts = @import("sh4_interrupts.zig");
 const Interrupt = Interrupts.Interrupt;
 
 pub const SH4Module = @import("sh4.zig");
-const SH4 = SH4Module.SH4;
-const SH4JITModule = @import("jit/sh4_jit.zig");
+pub const SH4 = SH4Module.SH4;
+pub const SH4JITModule = @import("jit/sh4_jit.zig");
 const SH4JIT = SH4JITModule.SH4JIT;
 const Flash = @import("flash.zig");
 pub const HollyModule = @import("holly.zig");
@@ -339,7 +337,7 @@ pub const Dreamcast = struct {
         system_block.update_crc();
     }
 
-    pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
+    pub fn load_at(self: *@This(), addr: u32, bin: []const u8) void {
         const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
@@ -480,7 +478,7 @@ pub const Dreamcast = struct {
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
-    pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+    pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
     }

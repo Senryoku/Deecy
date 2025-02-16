@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log.scoped(.dsp);
 
-const host_memory = @import("host_memory.zig");
+const host_memory = @import("host/host_memory.zig");
 
 const JITBlock = @import("jit/jit_block.zig").JITBlock;
 const Architecture = @import("jit/x86_64.zig");

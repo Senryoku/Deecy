@@ -4,12 +4,12 @@ const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
 const holly_log = std.log.scoped(.holly);
 
-const HardwareRegisters = @import("hardware_registers.zig");
+pub const HardwareRegisters = @import("hardware_registers.zig");
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 const termcolor = @import("termcolor");
 
-const Colors = @import("colors.zig");
+pub const Colors = @import("colors.zig");
 const PackedColor = Colors.PackedColor;
 const YUV422 = Colors.YUV422;
 const fARGB = Colors.fARGB;

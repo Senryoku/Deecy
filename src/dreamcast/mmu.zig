@@ -1,5 +1,4 @@
 const std = @import("std");
-const common = @import("common.zig");
 
 pub const ProtectionKey = enum(u2) {
     PrivilegedReadOnly = 0,

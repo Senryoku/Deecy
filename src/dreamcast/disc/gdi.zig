@@ -1,12 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const common = @import("../common.zig");
 const termcolor = @import("termcolor");
 
 const gdi_log = std.log.scoped(.gdi);
 
-const windows = @import("../windows.zig");
-const MemoryMappedFile = @import("../memory_mapped_file.zig");
+const windows = @import("../host/windows.zig");
+const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 
 const CD = @import("iso9660.zig");
 const Track = @import("track.zig");

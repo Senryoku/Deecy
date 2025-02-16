@@ -3,9 +3,6 @@ const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
-const common = @import("common.zig");
-const addr_t = common.addr_t;
-
 const sh4 = @import("sh4.zig");
 const SH4 = sh4.SH4;
 const Instr = sh4.Instr;
@@ -1020,7 +1017,7 @@ inline fn d12_label(cpu: *SH4, opcode: Instr) void {
     cpu.pc -= 2;
 }
 
-inline fn execute_delay_slot(cpu: *SH4, addr: addr_t) void {
+inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
     // TODO: If the instruction at addr is a branch instruction, raise a Slot illegal instruction exception
 
     // FIXME: If the delayed instruction references PC in any way (e.g. @(disp,PC)), it will be wrong because

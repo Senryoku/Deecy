@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
-const host_memory = @import("../host_memory.zig");
+const host_memory = @import("../host/host_memory.zig");
 
 const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");

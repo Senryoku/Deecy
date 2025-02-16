@@ -1,6 +1,5 @@
 const std = @import("std");
 
-const common = @import("../src/common.zig");
 const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
 

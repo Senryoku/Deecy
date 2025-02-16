@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const MemoryMappedFile = @import("../memory_mapped_file.zig");
+const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
 

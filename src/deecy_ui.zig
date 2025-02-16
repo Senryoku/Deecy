@@ -10,9 +10,10 @@ const ui_log = std.log.scoped(.ui);
 const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig");
-const MapleModule = @import("maple.zig");
-const Disc = @import("./disc/disc.zig").Disc;
-const Colors = @import("colors.zig");
+const DreamcastModule = @import("dreamcast");
+const MapleModule = DreamcastModule.Maple;
+const Disc = DreamcastModule.GDROM.Disc;
+const Colors = DreamcastModule.HollyModule.Colors;
 const PVRFile = @import("pvr_file.zig");
 
 const Notifications = @import("./ui/notifications.zig");

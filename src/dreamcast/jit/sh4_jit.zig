@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
-const host_memory = @import("../host_memory.zig");
+const host_memory = @import("../host/host_memory.zig");
 
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
@@ -21,7 +21,7 @@ const SavedRegisters = Architecture.SavedRegisters;
 const FPSavedRegisters = Architecture.FPSavedRegisters;
 const FPScratchRegisters = Architecture.FPScratchRegisters;
 
-const BasicBlock = @import("sh4_basic_block.zig");
+pub const BasicBlock = @import("sh4_basic_block.zig");
 
 const sh4_instructions = @import("../sh4_instructions.zig");
 const sh4_interpreter_handlers = @import("../sh4_interpreter_handlers.zig");
@@ -31,7 +31,7 @@ const sh4_jit_log = std.log.scoped(.sh4_jit);
 const DreamcastModule = @import("../dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
 
-const windows = @import("../windows.zig");
+const windows = @import("../host/windows.zig");
 
 const BlockBufferSize = 16 * 1024 * 1024;
 

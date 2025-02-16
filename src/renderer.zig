@@ -7,15 +7,15 @@ const wgpu = zgpu.wgpu;
 
 const termcolor = @import("termcolor");
 
-const Colors = @import("colors.zig");
+const DreamcastModule = @import("dreamcast");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HollyModule = DreamcastModule.HollyModule;
+const Colors = HollyModule.Colors;
 const PackedColor = Colors.PackedColor;
 const fRGBA = Colors.fRGBA;
 const fARGB = Colors.fARGB;
 const Color16 = Colors.Color16;
 const YUV422 = Colors.YUV422;
-
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
-const HollyModule = @import("holly.zig");
 
 const MipMap = @import("mipmap.zig");
 

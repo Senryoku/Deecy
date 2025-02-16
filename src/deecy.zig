@@ -18,10 +18,10 @@ const icons = [_]zglfw.Image{
 
 const termcolor = @import("termcolor");
 
-const DreamcastModule = @import("./dreamcast.zig");
+const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
-const Disc = @import("./disc/disc.zig").Disc;
+const Disc = DreamcastModule.GDROM.Disc;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 

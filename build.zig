@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
 
     const dc_module = b.createModule(.{
-        .root_source_file = b.path("src/dreamcast.zig"),
+        .root_source_file = b.path("src/dreamcast/dreamcast.zig"),
         .imports = &.{
             .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
@@ -35,6 +35,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "dreamcast", .module = dc_module },
         },
         // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
         // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
