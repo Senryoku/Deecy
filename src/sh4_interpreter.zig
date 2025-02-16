@@ -1382,12 +1382,20 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
-            // FIXME/TODO: This is the simplified version for Ikaruga and other similar games, not a general solution.
-            const vpn: u22 = @truncate(addr >> 10);
-            for (cpu.utlb) |entry| {
-                if (entry.match(false, 0, vpn)) {
-                    ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
-                    break;
+            if (sh4.ExperimentalFullMMUSupport) {
+                ext_addr = cpu.utlb_lookup(addr) catch a: {
+                    sh4_log.warn("TLB miss in pref instruction: {X:0>8}", .{addr});
+                    break :a cpu.handle_tlb_miss(.DataTLBMissWrite, addr);
+                };
+                ext_addr &= 0xFFFFFFE0;
+            } else {
+                //  This is the simplified version for Ikaruga and other similar games, not a general solution.
+                const vpn: u22 = @truncate(addr >> 10);
+                for (cpu.utlb) |entry| {
+                    if (entry.match(false, 0, vpn)) {
+                        ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
+                        break;
+                    }
                 }
             }
         }
@@ -1410,7 +1418,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             else => {
                 sh4_log.warn("pref: Slow store queue write back to {X:0>8}", .{ext_addr});
                 inline for (0..8) |i|
-                    cpu.write(u32, @intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
+                    cpu.write_physical(u32, @intCast(ext_addr + 4 * i), cpu.store_queues[sq_addr.sq][i]);
             },
         }
     } else {

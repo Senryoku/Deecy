@@ -1510,22 +1510,9 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn mmu_translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: addr_t) !addr_t {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
-
-        switch (virtual_addr) {
-            // Operand Cache RAM Mode
-            0x7C00_0000...0x7FFF_FFFF,
-            // P1
-            0x8000_0000...0x9FFF_FFFF,
-            // P2
-            0xA000_0000...0xBFFF_FFFF,
-            // P4
-            0xE000_0000...0xFFFF_FFFF,
-            => return virtual_addr,
-            else => {},
-        }
 
         // URC: Random counter for indicating the UTLB entry for which replacement is to be
         // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
@@ -1551,7 +1538,20 @@ pub const SH4 = struct {
     }
 
     pub inline fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
-        if (ExperimentalFullMMUSupport and self._mmu_enabled) return self.mmu_translate_address(virtual_addr);
+        if (ExperimentalFullMMUSupport and self._mmu_enabled) {
+            return switch (virtual_addr) {
+                // Operand Cache RAM Mode
+                0x7C00_0000...0x7FFF_FFFF,
+                // P1
+                0x8000_0000...0x9FFF_FFFF,
+                // P2
+                0xA000_0000...0xBFFF_FFFF,
+                // P4
+                0xE000_0000...0xFFFF_FFFF,
+                => return virtual_addr,
+                else => self.utlb_lookup(virtual_addr),
+            };
+        }
         return virtual_addr;
     }
 
