@@ -753,7 +753,7 @@ pub const SH4 = struct {
             // 5 - Reserved (Do not set)
             // 6 - Counts on on-chip RTC output clock
             // 7 - Counts on external clock
-            else => @panic("Invalid prescaler"),
+            else => std.debug.panic("Invalid prescaler: {d}", .{value}),
         }
     }
 
@@ -897,7 +897,7 @@ pub const SH4 = struct {
                 self.store_queues[sq_addr.sq][sq_addr.lw_spec] = @truncate(value);
                 self.store_queues[sq_addr.sq][sq_addr.lw_spec + 1] = @truncate(value >> 32);
             },
-            else => unreachable,
+            else => std.debug.panic("Invalid store queue write type {any}", .{T}),
         }
     }
 
@@ -921,13 +921,13 @@ pub const SH4 = struct {
             0 => 0,
             1 => 1,
             2 => -1,
-            else => @panic("Invalid destination stride"),
+            else => std.debug.panic("Invalid destination stride: {}", .{chcr.dm}),
         };
         const src_stride: i32 = switch (chcr.sm) {
             0 => 0,
             1 => 1,
             2 => -1,
-            else => @panic("Invalid source stride"),
+            else => std.debug.panic("Invalid source stride: {}", .{chcr.sm}),
         };
 
         const is_memcpy_safe = dst_stride == 1 and src_stride == 1;
@@ -1272,9 +1272,9 @@ pub const SH4 = struct {
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
                     }
-                } else @panic("Unhandled Control register area read.");
+                } else std.debug.panic("Unhandled Control register area read: {X:0>8}", .{virtual_addr});
             },
-            else => @panic("Unhandled P4 read."),
+            else => std.debug.panic("Unhandled P4 read: {X:0>8}", .{virtual_addr}),
         }
 
         return 0;
@@ -1411,7 +1411,9 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.SCFTDR2) => {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
 
-                            std.fmt.format(std.io.getStdOut().writer(), "\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch unreachable;
+                            std.fmt.format(std.io.getStdOut().writer(), "\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
+                                sh4_log.err(termcolor.red("Error formatting serial output: {}\n"), .{err});
+                            };
 
                             // Immediately mark transfer as complete.
                             //   Or rather, attempts to, this is not enough.
@@ -1502,9 +1504,9 @@ pub const SH4 = struct {
                     }
 
                     self.p4_register_addr(T, virtual_addr).* = value;
-                } else @panic("Unhandled Control register area write.");
+                } else std.debug.panic("Unhandled Control register area write: {X:0>8} = {X:0>8}", .{ virtual_addr, value });
             },
-            else => @panic("Unhandled P4 write."),
+            else => std.debug.panic("Unhandled P4 write: {X:0>8} = {X:0>8}", .{ virtual_addr, value }),
         }
     }
 

@@ -71,10 +71,8 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
         const first_sector_header = self.data[sector_start .. sector_start + self.header_size()];
         // Mode 1 (2048 bytes plus error correction) or Mode 2 (2336 bytes)
         const data_size: u32 = if (first_sector_header[0x0F] == 1) 2048 else 2336; // FIXME/TODO: Depending on the request, we might want to skip the subheader and copy only 2324 bytes
-        if (first_sector_header[0x0F] != 1 and first_sector_header[0x0F] != 2) {
-            log.err(termcolor.red("({d}) Invalid sector mode: {X:0>2}"), .{ fad, first_sector_header[0x0F] });
-            @panic("Invalid sector mode");
-        }
+        if (first_sector_header[0x0F] != 1 and first_sector_header[0x0F] != 2)
+            std.debug.panic(termcolor.red("({d}) Invalid sector mode: {X:0>2}"), .{ fad, first_sector_header[0x0F] });
 
         for (0..count) |_| {
             if (sector_start >= self.data.len or self.data[sector_start..].len < 0x10)
@@ -90,10 +88,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
             sector_start += self.format;
         }
         return copied;
-    } else {
-        log.err(termcolor.red("Unsupported sector format: {d}"), .{self.format});
-        @panic("Unimplemented");
-    }
+    } else std.debug.panic(termcolor.red("Unsupported sector format: {d}"), .{self.format});
 }
 
 pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {

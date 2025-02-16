@@ -565,8 +565,7 @@ fn handle_branch_and_exchange(b: *JITBlock, ctx: *JITContext, instruction: u32) 
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented branch and exchange", .{});
-    @panic("Unimplemented branch and exchange");
+    std.debug.panic("Unimplemented branch and exchange", .{});
 }
 
 fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
@@ -755,48 +754,42 @@ fn handle_multiply_long(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool 
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented multiply long", .{});
-    @panic("Unimplemented multiply long");
+    std.debug.panic("Unimplemented multiply long", .{});
 }
 
 fn handle_halfword_data_transfer_register_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented halfword data transfer register offset", .{});
-    @panic("Unimplemented halfword data transfer register offset");
+    std.debug.panic("Unimplemented halfword data transfer register offset", .{});
 }
 
 fn handle_halfword_data_transfer_immediate_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented halfword data transfer immediate offset", .{});
-    @panic("Unimplemented halfword data transfer immediate offset");
+    std.debug.panic("Unimplemented halfword data transfer immediate offset", .{});
 }
 
 fn handle_coprocessor_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor data transfer", .{});
-    @panic("Unimplemented coprocessor data transfer");
+    std.debug.panic("Unimplemented coprocessor data transfer", .{});
 }
 
 fn handle_coprocessor_data_operation(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor data operation", .{});
-    @panic("Unimplemented coprocessor data operation");
+    std.debug.panic("Unimplemented coprocessor data operation", .{});
 }
 
 fn handle_coprocessor_register_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor register transfer", .{});
-    @panic("Unimplemented coprocessor register transfer");
+    std.debug.panic("Unimplemented coprocessor register transfer", .{});
 }
 
 fn handle_mrs(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {

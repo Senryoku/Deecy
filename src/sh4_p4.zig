@@ -243,7 +243,7 @@ pub const CHCR = packed struct(u32) {
             2 => 2, // Word
             3 => 4, // Longword
             4 => 32, // 32-bytes block
-            else => @panic("Invalid transfer size"),
+            else => std.debug.panic("Invalid transfer size: {d}", .{self.ts}),
         };
     }
 };
@@ -306,7 +306,7 @@ pub const FRQCR = packed struct(u16) {
             0b010 => 4,
             0b011 => 6,
             0b100 => 8,
-            else => @panic("Prohibited value in FRQCR.pfc"),
+            else => std.debug.panic("Prohibited value in FRQCR.pfc: {b}", .{self.pfc}),
         };
         std.debug.assert(PeripheralClockRatio == 4); // For optimisation purposes
         return PeripheralClockRatio;

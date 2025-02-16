@@ -130,7 +130,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             .start_fad = self.tracks.items[2].fad,
             .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
         },
-        else => @panic("GDI: Invalid session number"),
+        else => std.debug.panic("GDI: Invalid session number: {d}", .{session_number}),
     };
 }
 

@@ -36,8 +36,7 @@ pub fn unknown(cpu: *SH4, opcode: Instr) void {
 pub fn nop(_: *SH4, _: Instr) void {}
 
 pub fn unimplemented(_: *SH4, opcode: Instr) void {
-    std.debug.print("Unimplemented opcode: {s}\n", .{sh4_instructions.Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(opcode))]].name});
-    @panic("Unimplemented");
+    std.debug.panic("Unimplemented opcode: {s}\n", .{sh4_instructions.Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(opcode))]].name});
 }
 
 pub fn mov_Rm_Rn(cpu: *SH4, opcode: Instr) void {
@@ -361,8 +360,7 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) void {
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) void {
     _ = opcode;
     _ = cpu;
-    std.debug.print(termcolor.red("Unimplemented addv Rm, Rn\n"), .{});
-    @panic("Unimplemented");
+    std.debug.panic(termcolor.red("Unimplemented addv Rm, Rn\n"), .{});
 }
 
 // Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.

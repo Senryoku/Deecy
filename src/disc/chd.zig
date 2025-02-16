@@ -660,7 +660,7 @@ pub fn get_session(self: *const @This(), session_number: u32) Session {
             .start_fad = self.tracks.items[2].fad,
             .end_fad = @intCast(self.tracks.items[self.tracks.items.len - 1].get_end_fad()),
         },
-        else => @panic("CDH: Invalid session number"),
+        else => std.debug.panic("CDH: Invalid session number: {d}", .{session_number}),
     };
 }
 

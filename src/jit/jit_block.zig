@@ -15,7 +15,7 @@ pub const PatchableJump = struct {
     pub fn patch(self: *@This()) void {
         switch (self.block.instructions.items[self.source_index]) {
             .Jmp => |*jmp| jmp.dst.rel = @intCast(self.block.instructions.items.len - self.source_index),
-            else => unreachable,
+            else => @panic("Jump source is not a jump instruction."),
         }
     }
 };

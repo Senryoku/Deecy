@@ -754,7 +754,7 @@ pub const AICA = struct {
                             const val: PlayControl = @bitCast(@as(u32, value) << 8);
                             if (val.key_on_execute) self.key_on_execute();
                         },
-                        else => unreachable,
+                        else => std.debug.panic("Unaligned write({any}) to Play control - High byte: 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value }),
                     }
                     return;
                 },
@@ -833,7 +833,10 @@ pub const AICA = struct {
 
                         self._arm_cycles_counter = 0;
                         self.arm7.signal_reset(value & 1 == 0);
-                        self.arm_jit.reset() catch unreachable;
+                        self.arm_jit.reset() catch |err| {
+                            aica_log.err("Failed to reset ARM JIT: {}", .{err});
+                            self.arm7.running = false;
+                        };
                         if (value & 1 == 0 and self.wave_memory[0] == 0x00000000) {
                             aica_log.err(termcolor.red("  No code uploaded to ARM7, ignoring reset. FIXME: This is a hack."), .{});
                             self.arm7.running = false;
@@ -880,7 +883,7 @@ pub const AICA = struct {
         return switch (addr - 0x00710000) {
             0x00 => (dc_timestamp >> 16) & 0x0000FFFFF,
             0x04 => dc_timestamp & 0x0000FFFFF,
-            else => @panic("Read to unimplemented RTC register."),
+            else => std.debug.panic("Read to unimplemented RTC register: 0x{X:0>8}", .{addr}),
         };
     }
 
@@ -891,15 +894,9 @@ pub const AICA = struct {
         // written, write protection is enabled again.
         switch (addr - 0x00710000) {
             0x00 => {},
-            0x04 => {
-                self.rtc_write_enabled = false;
-            },
-            0x08 => {
-                self.rtc_write_enabled = value == 1;
-            },
-            else => {
-                @panic("Write to unimplemented RTC register.");
-            },
+            0x04 => self.rtc_write_enabled = false,
+            0x08 => self.rtc_write_enabled = value == 1,
+            else => std.debug.panic("Write to unimplemented RTC register: 0x{X:0>8}", .{addr}),
         }
     }
 
@@ -924,16 +921,28 @@ pub const AICA = struct {
 
     pub fn dump_wave_memory(self: *const @This()) void {
         const path = "logs/wave_memory_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch unreachable;
+        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
+            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
+            return;
+        };
         defer file.close();
-        _ = file.write(self.wave_memory) catch unreachable;
+        _ = file.write(self.wave_memory) catch |err| {
+            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
+            return;
+        };
         aica_log.info("[+] Wrote wave memory dump to '{s}'.", .{path});
     }
     pub fn dump_registers(self: *const @This()) void {
         const path = "logs/aica_registers_dump.bin";
-        const file = std.fs.cwd().createFile(path, .{}) catch unreachable;
+        const file = std.fs.cwd().createFile(path, .{}) catch |err| {
+            aica_log.err("Failed to create file '{s}': {}", .{ path, err });
+            return;
+        };
         defer file.close();
-        _ = file.write(std.mem.sliceAsBytes(self.regs)) catch unreachable;
+        _ = file.write(std.mem.sliceAsBytes(self.regs)) catch |err| {
+            aica_log.err("Failed to write to file '{s}': {}", .{ path, err });
+            return;
+        };
         aica_log.info("[+] Wrote registers dump to '{s}'.", .{path});
     }
 
