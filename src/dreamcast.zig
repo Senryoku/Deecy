@@ -454,6 +454,15 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
+
+        self.gpu._get_register(u32, .SPG_HBLANK_INT).* = 0x03450000;
+        self.gpu._get_register(u32, .SPG_VBLANK_INT).* = 0x00150208;
+        self.gpu._get_register(u32, .SPG_CONTROL).* = 0x00000100;
+        self.gpu._get_register(u32, .SPG_HBLANK).* = 0x007E0345;
+        self.gpu._get_register(u32, .SPG_VBLANK).* = 0x00280208;
+        self.gpu._get_register(u32, .SPG_WIDTH).* = 0x03F1933F;
+        self.gpu._get_register(u32, .SPG_LOAD).* = 0x020C0359;
+        self.gpu.finalize_deserialization();
     }
 
     pub fn set_flash_settings(self: *@This(), region: Region, lang: Language, video_mode: VideoMode) void {
@@ -772,6 +781,9 @@ pub const Dreamcast = struct {
         }
 
         bytes += try reader.read(std.mem.asBytes(&self._global_cycles));
+
+        self.gpu.finalize_deserialization();
+
         return bytes;
     }
 };

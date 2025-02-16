@@ -2279,6 +2279,12 @@ pub const Holly = struct {
         }
     }
 
+    /// Should be called after full deserialization: Requires the the global cycle counter to be updated as well.
+    pub fn finalize_deserialization(self: *@This()) void {
+        self.clear_scheduled_interrupts();
+        self.schedule_interrupts();
+    }
+
     pub fn serialize(self: *const @This(), writer: anytype) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.registers[0..]));
@@ -2316,6 +2322,7 @@ pub const Holly = struct {
         bytes += try reader.read(std.mem.asBytes(&self._pixel));
         bytes += try reader.read(std.mem.asBytes(&self._tmp_cycles));
         bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));
+
         return bytes;
     }
 };
