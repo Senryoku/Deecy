@@ -4,16 +4,10 @@ const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("dreamcast");
-const Dreamcast = DreamcastModule.Dreamcast;
 const Holly = DreamcastModule.HollyModule;
 const MapleModule = DreamcastModule.Maple;
 
-const zgui = @import("zgui");
-const zgpu = @import("zgpu");
 const zglfw = @import("zglfw");
-
-const RendererModule = @import("renderer.zig");
-const Renderer = RendererModule.Renderer;
 
 const Deecy = @import("deecy.zig");
 
