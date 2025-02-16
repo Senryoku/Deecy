@@ -40,10 +40,7 @@ pub fn syscall_sysinfo(dc: *Dreamcast) void {
             // Returns: A pointer to where the ID is stored as 8 contiguous bytes
             dc.cpu.R(0).* = 0x8c000068;
         },
-        else => {
-            syscall_log.err("  syscall_sysinfo with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
-            @panic("syscall_sysinfo with unhandled R7");
-        },
+        else => std.debug.panic("  syscall_sysinfo with unhandled R7: R7={d}", .{dc.cpu.R(7).*}),
     }
 
     return_from_syscall(dc);
@@ -62,10 +59,7 @@ pub fn syscall_romfont(dc: *Dreamcast) void {
         2 => {
             // ROMFONT_UNLOCK - Nothing to do, I guess?
         },
-        else => {
-            syscall_log.err("  syscall_romfont with unhandled R1: R1={d}", .{dc.cpu.R(1).*});
-            @panic("syscall_romfont with unhandled R1");
-        },
+        else => std.debug.panic("  syscall_romfont with unhandled R1: R1={d}", .{dc.cpu.R(1).*}),
     }
 
     return_from_syscall(dc);
@@ -142,10 +136,7 @@ pub fn syscall_flashrom(dc: *Dreamcast) void {
             // Returns: zero if successful, -1 if delete failed
             dc.cpu.R(0).* = 0xFFFFFFFF;
         },
-        else => {
-            syscall_log.err("  syscall_flashrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
-            @panic("syscall_flashrom with unhandled R7");
-        },
+        else => std.debug.panic("  syscall_flashrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*}),
     }
     return_from_syscall(dc);
 }
@@ -255,10 +246,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             }
             dc.cpu.R(0).* = 0;
         },
-        else => {
-            syscall_log.err("  syscall_gdrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*});
-            @panic("syscall_gdrom with unhandled R7");
-        },
+        else => std.debug.panic("  syscall_gdrom with unhandled R7: R7={d}", .{dc.cpu.R(7).*}),
     }
     return_from_syscall(dc);
 }
@@ -279,10 +267,7 @@ pub fn syscall_misc(dc: *Dreamcast) void {
             syscall_log.err("                              PC={X:0>8} PR={X:0>8} ", .{ dc.cpu.pc, dc.cpu.pr });
             @panic("Return to BIOS?");
         },
-        else => {
-            syscall_log.err("  syscall_misc with unhandled R4: R4={d}", .{dc.cpu.R(4).*});
-            @panic("syscall_misc with unhandled R4");
-        },
+        else => std.debug.panic("  syscall_misc with unhandled R4: R4={d}", .{dc.cpu.R(4).*}),
     }
     return_from_syscall(dc);
 }

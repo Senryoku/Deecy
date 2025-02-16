@@ -168,7 +168,7 @@ pub const Condition = enum {
             .GreaterEqual, .NotLess => 0xD,
             .LessEqual, .NotGreater => 0xE,
             .Greater, .NotLessEqual => 0xF,
-            else => unreachable,
+            else => std.debug.panic("Invalid condition: {any}", .{self}),
         };
     }
 };

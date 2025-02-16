@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const log = std.log.scoped(.dsp);
 
+const host_memory = @import("host_memory.zig");
+
 const JITBlock = @import("jit/jit_block.zig").JITBlock;
 const Architecture = @import("jit/x86_64.zig");
 
@@ -319,14 +321,8 @@ test {
 pub fn compile(self: *@This()) !void {
     std.debug.assert(!FullRegisterEmulation); // TODO: Not supported yet.
 
-    if (self._jit_buffer == null) {
-        self._jit_buffer = try self._allocator.alignedAlloc(u8, std.mem.page_size, 0x8000);
-        if (builtin.os.tag == .linux) {
-            try std.posix.mprotect(self._jit_buffer.?, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
-        } else {
-            try std.posix.mprotect(self._jit_buffer.?, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-        }
-    }
+    if (self._jit_buffer == null)
+        self._jit_buffer = try host_memory.allocate_executable(self._allocator, 0x8000);
 
     var b = try JITBlock.init(self._allocator);
     defer b.deinit();

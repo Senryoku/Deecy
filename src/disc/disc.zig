@@ -1,7 +1,8 @@
 const std = @import("std");
 
-const GDI = @import("gdi.zig").GDI;
-const CDI = @import("cdi.zig").CDI;
+const GDI = @import("gdi.zig");
+const CDI = @import("cdi.zig");
+const CHD = @import("chd.zig");
 
 pub const CD = @import("iso9660.zig");
 pub const Track = @import("track.zig");
@@ -20,12 +21,15 @@ pub const DiscFormat = enum(u4) {
 pub const Disc = union(enum) {
     GDI: GDI,
     CDI: CDI,
+    CHD: CHD,
 
     pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !Disc {
         if (std.mem.endsWith(u8, filepath, ".gdi")) {
             return Disc{ .GDI = try GDI.init(filepath, allocator) };
         } else if (std.mem.endsWith(u8, filepath, ".cdi")) {
             return Disc{ .CDI = try CDI.init(filepath, allocator) };
+        } else if (std.mem.endsWith(u8, filepath, ".chd")) {
+            return Disc{ .CHD = try CHD.init(filepath, allocator) };
         } else return error.UnknownDiscFormat;
     }
 
@@ -38,21 +42,15 @@ pub const Disc = union(enum) {
     pub fn get_format(self: *const @This()) DiscFormat {
         switch (self.*) {
             .GDI => return .GDROM,
+            .CHD => return .GDROM,
             .CDI => return .CDROM_XA,
         }
     }
 
-    pub fn get_tracks(self: *const @This()) std.ArrayList(Track) {
+    pub inline fn get_tracks(self: *const @This()) std.ArrayList(Track) {
         switch (self.*) {
             inline else => |d| return d.tracks,
         }
-    }
-
-    pub fn get_corresponding_track(self: *const @This(), fad: u32) !*const Track {
-        std.debug.assert(self.get_tracks().items.len > 0);
-        var idx: u32 = 0;
-        while (idx + 1 < self.get_tracks().items.len and self.get_tracks().items[idx + 1].fad <= fad) : (idx += 1) {}
-        return &self.get_tracks().items[idx];
     }
 
     pub fn lba_to_fad(lba: u32) u32 {
@@ -61,44 +59,50 @@ pub const Disc = union(enum) {
 
     pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
         const pvd = try self.get_primary_volume_descriptor();
-        const root_directory_entry = pvd.root_directory_entry;
-        const root_directory_length = root_directory_entry.length;
-        const root_directory_fad = lba_to_fad(root_directory_entry.location);
-        const root_track = try self.get_corresponding_track(root_directory_fad);
-        const sector_start = (root_directory_fad - root_track.fad) * root_track.format;
+        std.debug.assert(pvd.root_directory_entry.length <= 2048);
+        const root_directory_fad = lba_to_fad(pvd.root_directory_entry.location);
 
-        var curr_offset = sector_start + root_track.header_size(); // Skip header if any.
+        const sector = try self.read_sector(root_directory_fad);
+
+        var curr_offset: u32 = 0;
         // TODO: Handle directories, and not just root files.
-        for (0..root_directory_length) |_| {
-            const dir_record = root_track.get_directory_record(curr_offset);
+        for (0..pvd.root_directory_entry.length) |_| {
+            const dir_record: *const CD.DirectoryRecord = @ptrCast(sector[curr_offset..].ptr);
             if (std.mem.eql(u8, dir_record.get_file_identifier(), filename))
-                return self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
+                return try self.load_bytes(lba_to_fad(dir_record.location), dir_record.data_length, dest);
             curr_offset += dir_record.length; // FIXME: Handle sector boundaries?
         }
         return error.NotFound;
     }
 
-    // Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
+    /// Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
+    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) !u32 {
         var remaining = length;
         var curr_sector = fad;
         while (remaining > 0) {
-            remaining -= track.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
+            remaining -= self.load_sectors(curr_sector, 1, dest[length - remaining .. length]);
             curr_sector += 1;
         }
         return length;
     }
 
+    /// Returns a view into a single sector
+    pub fn read_sector(self: *const @This(), fad: u32) ![]const u8 {
+        switch (self.*) {
+            inline else => |d| return d.read_sector(fad),
+        }
+    }
+
     pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
-        return track.load_sectors(fad, count, dest);
+        switch (self.*) {
+            inline else => |d| return d.load_sectors(fad, count, dest),
+        }
     }
 
     pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-        const track = try self.get_corresponding_track(fad);
-        @memcpy(dest[0 .. track.format * count], track.data[(fad - track.fad) * track.format .. track.format * ((fad - track.fad) + count)]);
-        return track.format * count;
+        switch (self.*) {
+            inline else => |d| return d.load_sectors_raw(fad, count, dest),
+        }
     }
 
     pub fn get_session_count(self: *const @This()) u32 {
@@ -117,23 +121,17 @@ pub const Disc = union(enum) {
         return self.get_tracks().items[self.get_tracks().items.len - 1].get_end_fad();
     }
 
-    // Returns the first track from the high density area if present, or just the first track otherwise.
-    pub fn get_first_data_track(self: @This()) ?Track {
-        const idx: u8 = switch (self) {
-            .GDI => 2,
-            else => 0,
-        };
-        return if (self.get_tracks().items.len > idx)
-            self.get_tracks().items[idx]
-        else
-            null;
+    pub fn get_first_data_track(self: *const @This()) ?Track {
+        switch (self.*) {
+            inline else => |d| return d.get_first_data_track(),
+        }
     }
 
     pub fn get_primary_volume_descriptor(self: *const @This()) !*const CD.PVD {
         if (self.get_first_data_track()) |t| {
-            const offset = 0x10 * t.format + t.sector_data_offset(); // 16th sector + skip sector header
-            const pvd: *const CD.PVD = @ptrCast(@alignCast(t.data.ptr + offset));
-            if (pvd.type_code != .PrimaryVolumeDescriptor or !std.mem.eql(u8, &pvd.standard_identifier, "CD001") or pvd.version != 0x01)
+            const sector = try self.read_sector(t.fad + 0x10);
+            const pvd: *const CD.PVD = @ptrCast(@alignCast(sector.ptr));
+            if (!pvd.is_valid())
                 return error.InvalidPVD;
             return pvd;
         }
@@ -141,17 +139,21 @@ pub const Disc = union(enum) {
     }
 
     pub fn get_product_id(self: *const @This()) ?[]const u8 {
-        if (self.get_first_data_track()) |t| return t.data[t.sector_data_offset()..][0x40..0x50];
+        if (self.get_first_data_track()) |t| {
+            const sector = self.read_sector(t.fad) catch return null;
+            return sector[0x40..0x50];
+        }
         return null;
     }
 
     pub fn get_region(self: *const @This()) Region {
         if (self.get_first_data_track()) |t| {
-            if (t.data[t.sector_data_offset() + 0x30] == 'J')
+            const sector = self.read_sector(t.fad) catch return .Unknown;
+            if (sector[0x30] == 'J')
                 return .Japan;
-            if (t.data[t.sector_data_offset() + 0x31] == 'U')
+            if (sector[0x31] == 'U')
                 return .USA;
-            if (t.data[t.sector_data_offset() + 0x32] == 'E')
+            if (sector[0x32] == 'E')
                 return .Europe;
         }
         return .Unknown;
@@ -159,7 +161,8 @@ pub const Disc = union(enum) {
 
     pub fn get_product_name(self: *const @This()) ?[]const u8 {
         if (self.get_first_data_track()) |t| {
-            const name = t.data[t.sector_data_offset()..][0x80..0x90];
+            const sector = self.read_sector(t.fad) catch return null;
+            const name = sector[0x80..0x90];
             // Trim spaces
             var end = name.len - 1;
             while (end > 0 and name[end] == ' ') end -= 1;

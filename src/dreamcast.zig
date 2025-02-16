@@ -344,7 +344,7 @@ pub const Dreamcast = struct {
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
 
-    pub fn skip_bios(self: *@This(), hle_syscalls: bool) void {
+    pub fn skip_bios(self: *@This(), hle_syscalls: bool) !void {
         self.cpu.state_after_boot_rom();
 
         @memset(self.ram[0x00200000..0x00300000], 0x00); // FIXME: I think KallistiOS relies on that, or maybe I messed up somewhere else. (the BootROM does clear this section of RAM)
@@ -417,7 +417,7 @@ pub const Dreamcast = struct {
         // Load IP.bin from disc (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
         if (self.gdrom.disc) |disc|
-            _ = disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
+            _ = try disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
 
         // IP.bin patches
         inline for (.{
@@ -974,7 +974,7 @@ test "IP.bin init boot" {
         std.testing.allocator.destroy(dc);
     }
 
-    dc.skip_bios(true);
+    try dc.skip_bios(true);
 
     // Example IP.bin file
     const IPbin_file = try std.fs.cwd().openFile("./bin/IP.bin", .{});

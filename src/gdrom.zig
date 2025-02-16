@@ -366,11 +366,13 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                     // 9. When the host has sent (sic?) entire data, the device clears the DRQ bit.
                     self.status_register.drq = 0;
                     // Check if there's more data to be sent.
-                    self.cd_read_pio_fetch() catch unreachable;
+                    self.cd_read_pio_fetch() catch |err| {
+                        gdrom_log.err(termcolor.red("Error reading CD data: {}"), .{err});
+                    };
                 }
                 return val;
             }
-            @panic("8-bit read to GD_Data");
+            std.debug.panic("Invalid Read({any}) to GD_Data: {X:0>8}", .{ T, addr });
         },
         .GD_Error_Features => {
             // 7    6    5    4   3    2    1    0
@@ -480,17 +482,17 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                         0x0, // 0x00 Manufacturer's ID
                         0x0, // 0x01 Model ID
                         0x0, // 0x02 Version ID
-                    }) catch unreachable;
+                    }) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x03 - 0x0F Reserved
-                    self.pio_data_queue.write(&([1]u8{0x0} ** (0x10 - 0x03))) catch unreachable;
+                    self.pio_data_queue.write(&([1]u8{0x0} ** (0x10 - 0x03))) catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x10 - 0x1F Manufacturer's name (16 ASCII characters)
-                    self.pio_data_queue.write("            SEGA") catch unreachable;
+                    self.pio_data_queue.write("            SEGA") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x20 - 0x2F Model name (16 ASCII characters)
-                    self.pio_data_queue.write("                ") catch unreachable;
+                    self.pio_data_queue.write("                ") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x30 - 0x3F Firmware version (16 ASCII characters)
-                    self.pio_data_queue.write("                ") catch unreachable;
+                    self.pio_data_queue.write("                ") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
                     // 0x40 - 0x4F Reserved
-                    self.pio_data_queue.write("                ") catch unreachable;
+                    self.pio_data_queue.write("                ") catch |err| gdrom_log.err("Error writing to PIO data queue: {}\n", .{err});
 
                     self.pio_prep_complete();
                 },

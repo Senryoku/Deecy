@@ -80,6 +80,10 @@ pub const PVD = extern struct {
     _unused2: u8,
     application_used: [512]u8,
     _reserved: [653]u8,
+
+    pub fn is_valid(self: *const @This()) bool {
+        return self.type_code == .PrimaryVolumeDescriptor and std.mem.eql(u8, &self.standard_identifier, "CD001") and self.version == 0x01;
+    }
 };
 
 test "PVD" {

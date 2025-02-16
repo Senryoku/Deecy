@@ -158,7 +158,7 @@ const Test = struct {
         self.initial.log();
 
         for (self.opcodes) |opcode| {
-            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator) catch unreachable});
+            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator) catch |err| std.debug.panic("Failed to disassemble instruction {X:0>16}: {}\n", .{ opcode, err })});
         }
 
         for (self.cycles) |cycle| {
@@ -342,10 +342,8 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
         const instr = SH4Module.Instr{ .value = opcode };
         const desc = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[opcode]];
 
-        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator) catch {
-            std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
-            unreachable;
-        }, instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
+        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator) catch |err|
+            std.debug.panic("Failed to disassemble instruction {X:0>16}: {}\n", .{ opcode, err }), instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
 
         desc.fn_(cpu, instr);
 

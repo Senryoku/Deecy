@@ -370,7 +370,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (dc.sh4_jit.block_cache.blocks[i].offset > 0) {
                         const block = dc.sh4_jit.block_cache.blocks[i];
                         if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
-                            static.top.add(block) catch unreachable;
+                            try static.top.add(block);
                         }
                         if (static.top.count() > max) {
                             _ = static.top.remove();

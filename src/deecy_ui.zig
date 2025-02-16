@@ -263,7 +263,7 @@ pub fn refresh_games(self: *@This()) !void {
             defer walker.deinit();
 
             while (try walker.next()) |entry| {
-                if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi"))) {
+                if (entry.kind == .file and (std.mem.endsWith(u8, entry.path, ".gdi") or std.mem.endsWith(u8, entry.path, ".cdi") or std.mem.endsWith(u8, entry.path, ".chd"))) {
                     const path = try std.fs.path.joinZ(self.allocator, &[_][]const u8{ dir_path, entry.path });
 
                     const name = try self.allocator.dupeZ(u8, entry.basename);
@@ -306,7 +306,7 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Load Disc", .{})) {
                 const was_running = d.running;
                 if (was_running) d.pause();
-                const open_path = try nfd.openFileDialog("gdi,cdi", null);
+                const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
                 if (open_path) |path| {
                     defer nfd.freePath(path);
                     d.load_and_start(path) catch |err| {
@@ -408,7 +408,7 @@ pub fn draw(self: *@This()) !void {
             }
             zgui.separator();
             if (zgui.menuItem("Swap Disc", .{})) {
-                const open_path = try nfd.openFileDialog("gdi,cdi", null);
+                const open_path = try nfd.openFileDialog("gdi,cdi,chd", null);
                 const was_running = d.running;
                 if (was_running) d.pause();
                 if (open_path) |path| err_brk: {

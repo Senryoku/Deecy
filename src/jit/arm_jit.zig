@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
+const host_memory = @import("../host_memory.zig");
+
 const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("jit_block.zig");
@@ -50,15 +52,8 @@ const BlockCache = struct {
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
-        const buffer = try allocator.alignedAlloc(u8, std.mem.page_size, BlockBufferSize);
-        if (builtin.os.tag == .linux) {
-            try std.posix.mprotect(buffer, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
-        } else {
-            try std.posix.mprotect(buffer, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-        }
-
         var r: @This() = .{
-            .buffer = buffer,
+            .buffer = try host_memory.allocate_executable(allocator, BlockBufferSize),
             .addr_mask = addr_mask,
             ._allocator = allocator,
         };
@@ -68,7 +63,6 @@ const BlockCache = struct {
 
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self.buffer);
-
         self.deallocate_blocks();
     }
 
@@ -90,41 +84,12 @@ const BlockCache = struct {
     }
 
     fn allocate_blocks(self: *@This()) !void {
-        switch (builtin.os.tag) {
-            .windows => {
-                const blocks = try std.os.windows.VirtualAlloc(
-                    null,
-                    @sizeOf(BasicBlock) * BlockEntryCount,
-                    std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
-                    std.os.windows.PAGE_READWRITE,
-                );
-                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
-            },
-            .linux => {
-                const blocks = try std.posix.mmap(
-                    null,
-                    @sizeOf(BasicBlock) * BlockEntryCount,
-                    std.posix.PROT.READ | std.posix.PROT.WRITE,
-                    .{ .TYPE = .PRIVATE, .EXECUTABLE = false, .ANONYMOUS = true },
-                    -1,
-                    0,
-                );
-                self.blocks = @as([*]BasicBlock, @alignCast(@ptrCast(blocks)))[0..BlockEntryCount];
-            },
-            else => @compileError("Unsupported OS."),
-        }
+        self.blocks = try host_memory.virtual_alloc(BasicBlock, BlockEntryCount);
     }
 
     fn deallocate_blocks(self: *@This()) void {
-        switch (builtin.os.tag) {
-            .windows => {
-                std.os.windows.VirtualFree(self.blocks.ptr, 0, std.os.windows.MEM_RELEASE);
-            },
-            .linux => {
-                std.posix.munmap(@as([*]align(std.mem.page_size) const u8, @alignCast(@ptrCast(self.blocks.ptr)))[0 .. self.blocks.len * @sizeOf(BasicBlock)]);
-            },
-            else => @compileError("Unsupported OS."),
-        }
+        host_memory.virtual_dealloc(self.blocks);
+        self.blocks = &[0]BasicBlock{};
     }
 
     pub fn reset(self: *@This()) !void {
@@ -600,8 +565,7 @@ fn handle_branch_and_exchange(b: *JITBlock, ctx: *JITContext, instruction: u32) 
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented branch and exchange", .{});
-    @panic("Unimplemented branch and exchange");
+    std.debug.panic("Unimplemented branch and exchange", .{});
 }
 
 fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
@@ -790,48 +754,42 @@ fn handle_multiply_long(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool 
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented multiply long", .{});
-    @panic("Unimplemented multiply long");
+    std.debug.panic("Unimplemented multiply long", .{});
 }
 
 fn handle_halfword_data_transfer_register_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented halfword data transfer register offset", .{});
-    @panic("Unimplemented halfword data transfer register offset");
+    std.debug.panic("Unimplemented halfword data transfer register offset", .{});
 }
 
 fn handle_halfword_data_transfer_immediate_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented halfword data transfer immediate offset", .{});
-    @panic("Unimplemented halfword data transfer immediate offset");
+    std.debug.panic("Unimplemented halfword data transfer immediate offset", .{});
 }
 
 fn handle_coprocessor_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor data transfer", .{});
-    @panic("Unimplemented coprocessor data transfer");
+    std.debug.panic("Unimplemented coprocessor data transfer", .{});
 }
 
 fn handle_coprocessor_data_operation(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor data operation", .{});
-    @panic("Unimplemented coprocessor data operation");
+    std.debug.panic("Unimplemented coprocessor data operation", .{});
 }
 
 fn handle_coprocessor_register_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
-    arm_jit_log.err("Unimplemented coprocessor register transfer", .{});
-    @panic("Unimplemented coprocessor register transfer");
+    std.debug.panic("Unimplemented coprocessor register transfer", .{});
 }
 
 fn handle_mrs(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {

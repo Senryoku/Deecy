@@ -100,6 +100,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .gdrom, .level = .info },
         .{ .scope = .gdrom_hle, .level = .debug },
         .{ .scope = .cdi, .level = .info },
+        .{ .scope = .chd, .level = .info },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },
@@ -223,7 +224,7 @@ pub fn main() !void {
         // FIXME: I'd rather be using LLE syscalls here,
         //        but at least the ROM font one requires some initialization
         //        and won't work if the boot ROM is skipped.
-        dc.skip_bios(true);
+        try dc.skip_bios(true);
 
         var bin_file = try std.fs.cwd().openFile(path, .{});
         defer bin_file.close();
@@ -254,7 +255,7 @@ pub fn main() !void {
         try d.on_game_load();
 
         if (skip_bios) {
-            dc.skip_bios(true);
+            try dc.skip_bios(true);
 
             // Load 1STREAD.BIN (Actual name might change)
             const header_size: u32 = dc.gdrom.disc.?.get_first_data_track().?.header_size();
@@ -283,7 +284,7 @@ pub fn main() !void {
         if (skip_bios) {
             try dc.set_region(.USA);
             // Boot to menu
-            dc.skip_bios(true);
+            try dc.skip_bios(true);
             // Skip IP.bin (Maybe we should bundle one to load here).
             dc.cpu.pc = 0xAC010000;
         }

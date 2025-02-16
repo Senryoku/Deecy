@@ -777,7 +777,10 @@ pub fn toggle_fullscreen(self: *@This()) void {
     } else {
         self.previous_window_position = .{ .x = self.window.getPos()[0], .y = self.window.getPos()[1], .w = self.window.getSize()[0], .h = self.window.getSize()[1] };
         const monitor = zglfw.Monitor.getPrimary().?;
-        const mode = monitor.getVideoMode() catch unreachable;
+        const mode = monitor.getVideoMode() catch |err| {
+            deecy_log.err(termcolor.red("Failed to get video mode: {}"), .{err});
+            return;
+        };
         self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
         self.fullscreen = true;
     }
@@ -786,15 +789,13 @@ pub fn toggle_fullscreen(self: *@This()) void {
 pub fn start(self: *@This()) void {
     if (!self.running) {
         if (self.dc.region == .Unknown) {
-            self.dc.set_region(.USA) catch {
-                @panic("Failed to set default region");
-            };
+            self.dc.set_region(.USA) catch |err| std.debug.panic("Failed to set default region: {}", .{err});
         }
 
         if (!self.realtime) {
             self.running = true;
             self._dc_thread = std.Thread.spawn(.{}, dc_thread_loop, .{self}) catch |err| {
-                deecy_log.err(termcolor.red("Failed to spawn DC thread: {any}"), .{err});
+                deecy_log.err(termcolor.red("Failed to spawn DC thread: {}"), .{err});
                 self.running = false;
                 return;
             };
@@ -803,7 +804,7 @@ pub fn start(self: *@This()) void {
                 self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
 
             self.audio_device.start() catch |err| {
-                deecy_log.err(termcolor.red("Failed to start audio device: {any}"), .{err});
+                deecy_log.err(termcolor.red("Failed to start audio device: {}"), .{err});
                 return;
             };
             self.running = true;
@@ -819,7 +820,7 @@ pub fn pause(self: *@This()) void {
             self._dc_thread = null;
         } else {
             self.audio_device.stop() catch |err| {
-                deecy_log.err(termcolor.red("Failed to stop audio device: {any}"), .{err});
+                deecy_log.err(termcolor.red("Failed to stop audio device: {}"), .{err});
                 return;
             };
             self.running = false;

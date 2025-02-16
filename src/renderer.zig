@@ -133,10 +133,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                 }
             }
         },
-        else => {
-            renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{pixel_format});
-            @panic("Unsupported pixel format");
-        },
+        else => std.debug.panic(termcolor.red("Unsupported pixel format {any}"), .{pixel_format}),
     }
 }
 
@@ -333,7 +330,7 @@ fn translate_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor
         .InverseSourceAlpha => .one_minus_src_alpha,
         .DestAlpha => .dst_alpha,
         .InverseDestAlpha => .one_minus_dst_alpha,
-        else => @panic("Invalid blend factor"),
+        else => std.debug.panic("Invalid blend factor: {any}", .{factor}),
     };
 }
 
@@ -504,10 +501,7 @@ pub fn vq_mipmap_offset(u_size: u32) u32 {
         256 => 0x1556,
         512 => 0x5556,
         1024 => 0x15556,
-        else => {
-            renderer_log.err(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{});
-            @panic("Invalid u_size for vq_compressed mip mapped texture");
-        },
+        else => std.debug.panic(termcolor.red("Invalid u_size for vq_compressed mip mapped texture"), .{}),
     };
 }
 pub fn palette_mipmap_offset(u_size: u32) u32 {
