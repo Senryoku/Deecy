@@ -8,7 +8,10 @@ const termcolor = @import("termcolor");
 
 pub const sh4_log = std.log.scoped(.sh4);
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 pub const mmu = @import("./mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
@@ -21,9 +24,6 @@ pub const Exception = @import("sh4_exceptions.zig").Exception;
 pub const sh4_instructions = @import("sh4_instructions.zig");
 pub const sh4_disassembly = @import("sh4_disassembly.zig");
 pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
-
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
 

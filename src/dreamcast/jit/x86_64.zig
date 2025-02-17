@@ -4,9 +4,6 @@ const termcolor = @import("termcolor");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
-const JIT = @import("jit_block.zig");
-const JITBlock = @import("jit_block.zig").JITBlock;
-
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
@@ -1577,7 +1574,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn emit_jmp_rel8(self: *@This(), condition: JIT.Condition, rel: i8) !void {
+    fn emit_jmp_rel8(self: *@This(), condition: Condition, rel: i8) !void {
         try self.emit(u8, switch (condition) {
             .Always => 0xEB,
             else => |c| 0x70 | c.nibble(),
@@ -1585,7 +1582,7 @@ pub const Emitter = struct {
         try self.emit(i8, rel);
     }
 
-    pub fn jmp(self: *@This(), condition: JIT.Condition, current_idx: u32, rel: i32) !void {
+    pub fn jmp(self: *@This(), condition: Condition, current_idx: u32, rel: i32) !void {
         // TODO: Support more destination than just immediate relative.
         //       Support different sizes of rel (rel8 in particular).
         //         We don't know the size of the jump yet, and we have to reserve enough space

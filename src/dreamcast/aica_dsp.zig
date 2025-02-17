@@ -4,7 +4,7 @@ const log = std.log.scoped(.dsp);
 
 const host_memory = @import("host/host_memory.zig");
 
-const JITBlock = @import("jit/jit_block.zig").JITBlock;
+const IRBlock = @import("jit/ir_block.zig").IRBlock;
 const Architecture = @import("jit/x86_64.zig");
 
 const AICAModule = @import("aica.zig");
@@ -324,7 +324,7 @@ pub fn compile(self: *@This()) !void {
     if (self._jit_buffer == null)
         self._jit_buffer = try host_memory.allocate_executable(self._allocator, 0x8000);
 
-    var b = try JITBlock.init(self._allocator);
+    var b = try IRBlock.init(self._allocator);
     defer b.deinit();
 
     const EAX: Architecture.Operand = .{ .reg = .rax };

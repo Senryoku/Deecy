@@ -7,8 +7,8 @@ const host_memory = @import("../host/host_memory.zig");
 
 const arm7 = @import("arm7");
 const bit_manip = @import("../bit_manip.zig");
-const JIT = @import("jit_block.zig");
-const JITBlock = JIT.JITBlock;
+const JIT = @import("ir_block.zig");
+const IRBlock = JIT.IRBlock;
 
 const Architecture = @import("x86_64.zig");
 const ReturnRegister = Architecture.ReturnRegister;
@@ -131,13 +131,13 @@ pub const JITContext = struct {
 pub const ARM7JIT = struct {
     block_cache: BlockCache,
 
-    _working_block: JITBlock,
+    _working_block: IRBlock,
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
         var r = @This(){
             .block_cache = try BlockCache.init(allocator, addr_mask),
-            ._working_block = try JITBlock.init(allocator),
+            ._working_block = try IRBlock.init(allocator),
             ._allocator = allocator,
         };
         try r.init_compile_and_run_handler();
@@ -287,11 +287,11 @@ fn guest_register(arm_reg: u5) JIT.Operand {
     return .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "r") + @sizeOf(u32) * @as(u32, arm_reg), .size = 32 } };
 }
 
-fn load_register(b: *JITBlock, host_register: JIT.Register, arm_reg: u5) !void {
+fn load_register(b: *IRBlock, host_register: JIT.Register, arm_reg: u5) !void {
     try b.mov(.{ .reg = host_register }, guest_register(arm_reg));
 }
 
-fn store_register(b: *JITBlock, arm_reg: u5, value: JIT.Operand) !void {
+fn store_register(b: *IRBlock, arm_reg: u5, value: JIT.Operand) !void {
     try b.mov(guest_register(arm_reg), value);
 }
 
@@ -308,7 +308,7 @@ noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
     self.write(u32, address, value);
 }
 
-fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
+fn load_wave_memory(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
     const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
     try b.mov(.{ .reg64 = dst }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
@@ -319,7 +319,7 @@ fn load_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst:
 }
 
 // NOTE: Uses ReturnRegister as a temporary!
-fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
+fn store_wave_memory(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: u32, value: JIT.Register) !void {
     const aligned_addr = if (T == u32) addr & 0xFFFFFFFC else addr;
     // TODO: This could be turned into a single movabs, but emitter doesn't support it yet.
     try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) + aligned_addr });
@@ -328,7 +328,7 @@ fn store_wave_memory(b: *JITBlock, ctx: *const JITContext, comptime T: type, add
 
 /// Loads into ReturnRegister
 /// NOTE: Uses ArgRegisters 0 and 1. And calls a function, so don't rely on caller saved registers anyway.
-fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
+fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: JIT.Operand) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
@@ -364,7 +364,7 @@ fn load_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Reg
 }
 
 /// NOTE: Overwrites ArgRegisters 0, 1 and 2 (ReturnRegister too). And calls a function, so don't rely on caller saved registers anyway.
-fn store_mem(b: *JITBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
+fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
@@ -408,19 +408,19 @@ fn cpsr_mask(comptime flags: []const []const u8) u32 {
     return mask;
 }
 
-fn extract_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8) !void {
+fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const []const u8) !void {
     try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
     try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
 }
 
-fn test_cpsr_flags(b: *JITBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
+fn test_cpsr_flags(b: *IRBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
     try extract_cpsr_flags(b, flags);
     try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
     return b.jmp(.NotEqual);
 }
 
 // Emits code testing the flags in the CPSR and returns a patchable jump meant to point at the next instruction, taken if the condition is not met.
-fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.PatchableJump {
+fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.PatchableJump {
     _ = ctx;
     const condition = arm7.ARM7.get_instr_condition(instruction);
     switch (condition) {
@@ -536,7 +536,7 @@ fn handle_condition(b: *JITBlock, ctx: *JITContext, instruction: u32) !?JIT.Patc
     }
 }
 
-pub const InstructionHandlers = [_]*const fn (b: *JITBlock, ctx: *JITContext, instruction: u32) anyerror!bool{
+pub const InstructionHandlers = [_]*const fn (b: *IRBlock, ctx: *JITContext, instruction: u32) anyerror!bool{
     handle_branch_and_exchange,
     handle_block_data_transfer,
     handle_branch,
@@ -561,20 +561,20 @@ pub const InstructionHandlers = [_]*const fn (b: *JITBlock, ctx: *JITContext, in
 // NOTE: With this stupid setup, SavedRegisters[0] is a pointer to the cpu struct and should not be changed.
 //       SavedRegisters[1] is the only register we save and that will survive a function call (e.g. load_mem/store_mem).
 
-fn handle_branch_and_exchange(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented branch and exchange", .{});
 }
 
-fn handle_block_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_block_data_transfer(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
     try interpreter_fallback(b, ctx, instruction);
     return inst.l == 1 and inst.reg(15);
 }
 
-fn handle_branch(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_branch(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.BranchInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
         try interpreter_fallback(b, ctx, instruction);
@@ -596,12 +596,12 @@ fn handle_branch(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     return true;
 }
 
-fn handle_software_interrupt(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_software_interrupt(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     try interpreter_fallback(b, ctx, instruction);
     return true;
 }
 
-fn handle_undefined(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_undefined(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
@@ -659,7 +659,7 @@ fn comptime_handle_single_data_transfer(comptime i: u1, comptime u: u1, comptime
     };
 }
 
-fn handle_single_data_transfer(block: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
         try interpreter_fallback(block, ctx, instruction);
@@ -686,7 +686,7 @@ fn handle_single_data_transfer(block: *JITBlock, ctx: *JITContext, instruction: 
     return inst.l == 1 and inst.rd == 15;
 }
 
-fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_single_data_swap(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataSwapInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
         try interpreter_fallback(b, ctx, instruction);
@@ -721,7 +721,7 @@ fn handle_single_data_swap(b: *JITBlock, ctx: *JITContext, instruction: u32) !bo
     return inst.rd == 15; // Illegal?
 }
 
-fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_multiply(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.MultiplyInstruction = @bitCast(instruction);
     std.debug.assert(inst.rd != inst.rm);
     std.debug.assert(inst.rd != 15);
@@ -750,63 +750,63 @@ fn handle_multiply(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
     return false;
 }
 
-fn handle_multiply_long(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_multiply_long(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented multiply long", .{});
 }
 
-fn handle_halfword_data_transfer_register_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_halfword_data_transfer_register_offset(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented halfword data transfer register offset", .{});
 }
 
-fn handle_halfword_data_transfer_immediate_offset(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_halfword_data_transfer_immediate_offset(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented halfword data transfer immediate offset", .{});
 }
 
-fn handle_coprocessor_data_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_coprocessor_data_transfer(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented coprocessor data transfer", .{});
 }
 
-fn handle_coprocessor_data_operation(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_coprocessor_data_operation(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented coprocessor data operation", .{});
 }
 
-fn handle_coprocessor_register_transfer(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_coprocessor_register_transfer(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
     _ = ctx;
     _ = instruction;
     std.debug.panic("Unimplemented coprocessor register transfer", .{});
 }
 
-fn handle_mrs(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_mrs(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.MRSInstruction = @bitCast(instruction);
     try interpreter_fallback(b, ctx, instruction);
     std.debug.assert(inst.rd != 15);
     return false;
 }
 
-fn handle_msr(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_msr(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.MSRInstruction = @bitCast(instruction);
     _ = inst;
     try interpreter_fallback(b, ctx, instruction);
     return false;
 }
 
-fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !bool {
+fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
         try interpreter_fallback(b, ctx, instruction);
@@ -975,12 +975,12 @@ fn handle_data_processing(b: *JITBlock, ctx: *JITContext, instruction: u32) !boo
     }
 }
 
-fn handle_invalid(_: *JITBlock, _: *JITContext, _: u32) !bool {
+fn handle_invalid(_: *IRBlock, _: *JITContext, _: u32) !bool {
     arm_jit_log.err("Invalid instruction", .{});
     @panic("Invalid instruction");
 }
 
-fn interpreter_fallback(b: *JITBlock, ctx: *JITContext, instruction: u32) !void {
+fn interpreter_fallback(b: *IRBlock, ctx: *JITContext, instruction: u32) !void {
     try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
     try b.call(arm7.interpreter.InstructionHandlers[arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]]);

@@ -10,7 +10,7 @@ pub const Condition = Architecture.Condition;
 
 pub const PatchableJump = struct {
     source_index: usize,
-    block: *JITBlock,
+    block: *IRBlock,
 
     pub fn patch(self: *@This()) void {
         switch (self.block.instructions.items[self.source_index]) {
@@ -20,12 +20,13 @@ pub const PatchableJump = struct {
     }
 };
 
-pub const JITBlock = struct {
+/// Intermediate Representation, actually way too close to x86 to be very useful.
+pub const IRBlock = struct {
     instructions: std.ArrayList(Instruction),
 
     _emitter: Architecture.Emitter,
 
-    pub fn init(allocator: std.mem.Allocator) !JITBlock {
+    pub fn init(allocator: std.mem.Allocator) !IRBlock {
         return .{
             .instructions = std.ArrayList(Instruction).init(allocator),
             ._emitter = try Architecture.Emitter.init(allocator),

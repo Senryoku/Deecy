@@ -5,11 +5,9 @@ const gdrom_log = std.log.scoped(.gdrom);
 
 pub const Disc = @import("./disc/disc.zig").Disc;
 const Session = @import("./disc/disc.zig").Session;
-const SH4 = @import("sh4.zig").SH4;
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
-
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegister = DreamcastModule.HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
 
