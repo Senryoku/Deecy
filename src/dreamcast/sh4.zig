@@ -82,11 +82,6 @@ const TimerRegisters = [3]struct { counter: P4Register, control: P4Register, con
     .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2, .interrupt = Interrupt.TUNI2 },
 };
 
-pub const VirtualAddr = packed struct {
-    region: u3,
-    addr: u29,
-};
-
 pub const StoreQueueAddr = packed struct(u32) {
     _: u2 = 0,
     lw_spec: u3 = 0,

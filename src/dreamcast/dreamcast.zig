@@ -3,27 +3,24 @@ const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
 
+const dc_log = std.log.scoped(.dc);
+
 pub const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
-
-const Interrupts = @import("sh4_interrupts.zig");
-const Interrupt = Interrupts.Interrupt;
-
 pub const SH4Module = @import("sh4.zig");
-pub const SH4 = SH4Module.SH4;
 pub const SH4JITModule = @import("jit/sh4_jit.zig");
-const SH4JIT = SH4JITModule.SH4JIT;
-const Flash = @import("flash.zig");
 pub const HollyModule = @import("holly.zig");
-const Holly = HollyModule.Holly;
 pub const AICAModule = @import("aica.zig");
-const AICA = AICAModule.AICA;
 pub const Maple = @import("maple.zig");
-const MapleHost = Maple.MapleHost;
 pub const GDROM = @import("gdrom.zig");
 pub const GDROM_HLE = @import("gdrom_hle.zig");
 
-const dc_log = std.log.scoped(.dc);
+const HardwareRegister = HardwareRegisters.HardwareRegister;
+const SH4 = SH4Module.SH4;
+const SH4JIT = SH4JITModule.SH4JIT;
+const Holly = HollyModule.Holly;
+const AICA = AICAModule.AICA;
+const MapleHost = Maple.MapleHost;
+const Flash = @import("flash.zig");
 
 pub const Region = enum(u8) {
     Japan = 0,
@@ -610,11 +607,11 @@ pub const Dreamcast = struct {
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
         if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL9);
+            self.cpu.request_interrupt(.IRL9);
         } else if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL11);
+            self.cpu.request_interrupt(.IRL11);
         } else if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
+            self.cpu.request_interrupt(.IRL13);
         }
     }
 
