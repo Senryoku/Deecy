@@ -39,6 +39,15 @@ pub fn build(b: *std.Build) void {
     });
     dc_module.addOptions("dc_config", dc_options);
 
+    const ziglz4 = b.dependency("zig-lz4", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    const nfd = b.dependency("nfd", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
     const deecy_options = b.addOptions();
     deecy_options.addOption(bool, "fb_writeback", fb_writeback);
 
@@ -49,6 +58,8 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "termcolor", .module = termcolor_module },
             .{ .name = "dreamcast", .module = dc_module },
+            .{ .name = "lz4", .module = ziglz4.module("zig-lz4") },
+            .{ .name = "nfd", .module = nfd.module("nfd") },
         },
         // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
         // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
@@ -106,16 +117,6 @@ pub fn build(b: *std.Build) void {
         deecy_module.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
-    const ziglz4 = b.dependency("zig-lz4", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    deecy_module.addImport("lz4", ziglz4.module("zig-lz4"));
-
-    const nfd = b.dependency("nfd", .{});
-    const nfd_mod = nfd.module("nfd");
-    deecy_module.addImport("nfd", nfd_mod);
-
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -137,9 +138,7 @@ pub fn build(b: *std.Build) void {
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    if (b.args) |args| run_cmd.addArgs(args);
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
