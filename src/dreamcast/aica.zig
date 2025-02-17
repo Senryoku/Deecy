@@ -9,7 +9,7 @@ const DSP = @import("aica_dsp.zig");
 
 const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
-const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
 // Yamaha AICA Audio Chip
 // Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes
