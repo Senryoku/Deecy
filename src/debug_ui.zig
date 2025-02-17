@@ -4,17 +4,19 @@ const zgpu = @import("zgpu");
 const zgui = @import("zgui");
 const zglfw = @import("zglfw");
 
-const P4Register = @import("./sh4.zig").P4Register;
-const HardwareRegisters = @import("./hardware_registers.zig");
+const DreamcastModule = @import("dreamcast");
+const arm7 = DreamcastModule.AICAModule.arm7;
 
-const sh4 = @import("./sh4.zig");
-const sh4_disassembly = sh4.sh4_disassembly;
-const BasicBlock = @import("jit/sh4_basic_block.zig");
-const arm7 = @import("arm7");
-const Holly = @import("./holly.zig");
-const AICAModule = @import("./aica.zig");
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
-const Colors = @import("colors.zig");
+const SH4Module = DreamcastModule.SH4Module;
+const P4Register = SH4Module.P4Register;
+const sh4_disassembly = SH4Module.sh4_disassembly;
+const BasicBlock = DreamcastModule.SH4JITModule.BasicBlock;
+const Holly = DreamcastModule.HollyModule;
+const AICAModule = DreamcastModule.AICAModule;
+
+const Colors = DreamcastModule.HollyModule.Colors;
 const Color16 = Colors.Color16;
 const fRGBA = Colors.fRGBA;
 
@@ -316,7 +318,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const TSTR = dc.cpu.read_p4_register(u32, .TSTR);
         inline for (0..3) |i| {
             zgui.beginGroup();
-            const control = dc.cpu.read_p4_register(sh4.P4.TCR, timers[i].control);
+            const control = dc.cpu.read_p4_register(SH4Module.P4.TCR, timers[i].control);
             const enabled = ((TSTR >> i) & 1) == 1;
             text_highlighted(enabled, "Timer {d:0>1}: {X:0>8} / {X:0>8}", .{
                 i,
@@ -333,17 +335,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         zgui.beginGroup();
         zgui.text("IPRA: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRA)});
-        display(dc.cpu.read_p4_register(sh4.P4.IPRA, .IPRA));
+        display(dc.cpu.read_p4_register(SH4Module.P4.IPRA, .IPRA));
         zgui.endGroup();
         zgui.sameLine(.{});
         zgui.beginGroup();
         zgui.text("IPRB: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRB)});
-        display(dc.cpu.read_p4_register(sh4.P4.IPRB, .IPRB));
+        display(dc.cpu.read_p4_register(SH4Module.P4.IPRB, .IPRB));
         zgui.endGroup();
         zgui.sameLine(.{});
         zgui.beginGroup();
         zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
-        display(dc.cpu.read_p4_register(sh4.P4.IPRC, .IPRC));
+        display(dc.cpu.read_p4_register(SH4Module.P4.IPRC, .IPRC));
         zgui.endGroup();
     }
     zgui.end();
@@ -402,7 +404,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
                     const instr = dc.cpu.read_physical(u16, addr);
-                    const op = sh4.sh4_instructions.Opcodes[sh4.sh4_instructions.JumpTable[instr]];
+                    const op = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[instr]];
                     zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
             }

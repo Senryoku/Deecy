@@ -1,25 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const common = @import("./common.zig");
-const arm7 = @import("arm7");
 const termcolor = @import("termcolor");
-const sh4 = @import("./sh4.zig");
-const P4Register = sh4.P4Register;
-const sh4_disassembly = @import("./sh4_disassembly.zig");
-const HardwareRegisters = @import("./hardware_registers.zig");
-const DreamcastModule = @import("./dreamcast.zig");
-const Dreamcast = DreamcastModule.Dreamcast;
-const Holly = @import("./holly.zig");
-const Colors = @import("./colors.zig");
-const MapleModule = @import("./maple.zig");
 
-const zgui = @import("zgui");
-const zgpu = @import("zgpu");
+const DreamcastModule = @import("dreamcast");
+const Holly = DreamcastModule.HollyModule;
+const MapleModule = DreamcastModule.Maple;
+
 const zglfw = @import("zglfw");
-
-const RendererModule = @import("renderer.zig");
-const Renderer = RendererModule.Renderer;
 
 const Deecy = @import("deecy.zig");
 
@@ -358,9 +346,4 @@ pub fn main() !void {
             d.renderer.update_blit_to_screen_vertex_buffer();
         }
     }
-}
-
-test "all tests" {
-    _ = sh4;
-    _ = Dreamcast;
 }

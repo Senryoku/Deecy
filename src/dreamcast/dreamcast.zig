@@ -1,31 +1,26 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const common = @import("common.zig");
-const addr_t = common.addr_t;
 const termcolor = @import("termcolor");
 
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
+const dc_log = std.log.scoped(.dc);
 
-const Interrupts = @import("sh4_interrupts.zig");
-const Interrupt = Interrupts.Interrupt;
-
+pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
-const SH4 = SH4Module.SH4;
-const SH4JITModule = @import("jit/sh4_jit.zig");
-const SH4JIT = SH4JITModule.SH4JIT;
-const Flash = @import("flash.zig");
+pub const SH4JITModule = @import("jit/sh4_jit.zig");
 pub const HollyModule = @import("holly.zig");
-const Holly = HollyModule.Holly;
 pub const AICAModule = @import("aica.zig");
-const AICA = AICAModule.AICA;
 pub const Maple = @import("maple.zig");
-const MapleHost = Maple.MapleHost;
 pub const GDROM = @import("gdrom.zig");
 pub const GDROM_HLE = @import("gdrom_hle.zig");
 
-const dc_log = std.log.scoped(.dc);
+const HardwareRegister = HardwareRegisters.HardwareRegister;
+const SH4 = SH4Module.SH4;
+const SH4JIT = SH4JITModule.SH4JIT;
+const Holly = HollyModule.Holly;
+const AICA = AICAModule.AICA;
+const MapleHost = Maple.MapleHost;
+const Flash = @import("flash.zig");
 
 pub const Region = enum(u8) {
     Japan = 0,
@@ -156,7 +151,7 @@ pub const Dreamcast = struct {
             ._allocator = allocator,
         };
 
-        if (SH4JITModule.ExperimentalFastMem) {
+        if (SH4JITModule.FastMem) {
             dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
@@ -216,7 +211,7 @@ pub const Dreamcast = struct {
         self.cpu.deinit();
         self.flash.deinit();
 
-        if (!SH4JITModule.ExperimentalFastMem) {
+        if (!SH4JITModule.FastMem) {
             self._allocator.free(self.aram);
             self._allocator.free(self.vram);
             self._allocator.free(self.ram);
@@ -339,7 +334,7 @@ pub const Dreamcast = struct {
         system_block.update_crc();
     }
 
-    pub fn load_at(self: *@This(), addr: addr_t, bin: []const u8) void {
+    pub fn load_at(self: *@This(), addr: u32, bin: []const u8) void {
         const start_addr = ((addr & 0x1FFFFFFF) - 0x0C000000);
         @memcpy(self.ram[start_addr .. start_addr + bin.len], bin);
     }
@@ -480,7 +475,7 @@ pub const Dreamcast = struct {
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
-    pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+    pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
     }
@@ -612,11 +607,11 @@ pub const Dreamcast = struct {
         const istext = self.read_hw_register(u32, .SB_ISTEXT);
         const isterr = self.read_hw_register(u32, .SB_ISTERR);
         if ((istnrm & self.read_hw_register(u32, .SB_IML6NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML6EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML6ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL9);
+            self.cpu.request_interrupt(.IRL9);
         } else if ((istnrm & self.read_hw_register(u32, .SB_IML4NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML4EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML4ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL11);
+            self.cpu.request_interrupt(.IRL11);
         } else if ((istnrm & self.read_hw_register(u32, .SB_IML2NRM)) != 0 or (istext & self.read_hw_register(u32, .SB_IML2EXT)) != 0 or (isterr & self.read_hw_register(u32, .SB_IML2ERR)) != 0) {
-            self.cpu.request_interrupt(Interrupts.Interrupt.IRL13);
+            self.cpu.request_interrupt(.IRL13);
         }
     }
 

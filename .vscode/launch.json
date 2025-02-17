@@ -29,8 +29,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				"-g",
-				"D:\\DC Games\\[GDI] Sega Rally 2 (US)\\Sega Rally 2 v1.003 (1999)(Sega)(NTSC)(US)[!].gdi"
+				//"-g",
+				//"game/path.gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
@@ -42,8 +42,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				"-g",
-				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
+				//"-g",
+				//"game/path.gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
@@ -55,8 +55,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				"-g",
-				"D:\\DC Games\\[GDI] Ikaruga (JP)\\Ikaruga v1.002 (2002)(ESP)(NTSC)(JP)[!].gdi"
+				//"-g",
+				//"game/path.gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

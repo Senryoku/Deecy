@@ -1,8 +1,8 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
-const host_memory = @import("../host_memory.zig");
-const MemoryMappedFile = @import("../memory_mapped_file.zig");
+const host_memory = @import("../host/host_memory.zig");
+const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
 const Session = @import("session.zig");
 

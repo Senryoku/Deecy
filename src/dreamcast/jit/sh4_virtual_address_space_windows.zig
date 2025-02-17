@@ -1,5 +1,5 @@
 const std = @import("std");
-const windows = @import("../windows.zig");
+const windows = @import("../host/windows.zig");
 const termcolor = @import("termcolor");
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");

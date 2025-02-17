@@ -15,26 +15,51 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+
     const arm7 = b.dependency("arm7", .{});
     const arm7_module = arm7.module("arm7");
 
-    const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+    const mmu = b.option(bool, "mmu", "Enable experimental Full MMU Emulation (default: false)") orelse false;
+    const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
+    const fb_writeback = b.option(bool, "fb_writeback", "Write the rendered frame back to the guest VRAM. Slow, but necessary for some effects (default: false)") orelse false;
+
+    const dc_options = b.addOptions();
+    dc_options.addOption(bool, "mmu", mmu);
+    dc_options.addOption(bool, "fast_mem", fast_mem);
 
     const dc_module = b.createModule(.{
-        .root_source_file = b.path("src/dreamcast.zig"),
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("src/dreamcast/dreamcast.zig"),
         .imports = &.{
-            .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "arm7", .module = arm7_module },
         },
     });
+    dc_module.addOptions("dc_config", dc_options);
+
+    const ziglz4 = b.dependency("zig-lz4", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+    const nfd = b.dependency("nfd", .{
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    const deecy_options = b.addOptions();
+    deecy_options.addOption(bool, "fb_writeback", fb_writeback);
 
     const deecy_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/main.zig"),
         .imports = &.{
-            .{ .name = "arm7", .module = arm7_module },
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "dreamcast", .module = dc_module },
+            .{ .name = "lz4", .module = ziglz4.module("zig-lz4") },
+            .{ .name = "nfd", .module = nfd.module("nfd") },
         },
         // For some reason, on Windows, ___chkstk_ms takes up to 10% of the DC thread.
         // This is an attempts at getting rid of it, but doesn't seem functional as of zig 0.14.0-dev.2577+271452d22
@@ -42,6 +67,7 @@ pub fn build(b: *std.Build) void {
         // Also https://nullprogram.com/blog/2024/02/05/ for more info.
         .stack_check = false,
     });
+    deecy_module.addOptions("config", deecy_options);
 
     const exe = b.addExecutable(.{
         .name = "Deecy",
@@ -91,16 +117,6 @@ pub fn build(b: *std.Build) void {
         deecy_module.linkLibrary(zaudio.artifact("miniaudio"));
     }
 
-    const ziglz4 = b.dependency("zig-lz4", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    deecy_module.addImport("lz4", ziglz4.module("zig-lz4"));
-
-    const nfd = b.dependency("nfd", .{});
-    const nfd_mod = nfd.module("nfd");
-    deecy_module.addImport("nfd", nfd_mod);
-
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
@@ -122,9 +138,7 @@ pub fn build(b: *std.Build) void {
 
     // This allows the user to pass arguments to the application in the build
     // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    if (b.args) |args| run_cmd.addArgs(args);
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
@@ -132,54 +146,60 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const interpreter_perf = b.addExecutable(.{
-        .name = "InterpreterPerf",
-        .root_source_file = b.path("test/interpreter_perf.zig"),
-        .target = target,
-        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
-    });
-    interpreter_perf.root_module.addImport("termcolor", termcolor_module);
-    interpreter_perf.root_module.addImport("dreamcast", dc_module);
-    const run_perf_tests = b.addRunArtifact(interpreter_perf);
-    const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
-    interpreter_perf_step.dependOn(&run_perf_tests.step);
+    {
+        const interpreter_perf = b.addExecutable(.{
+            .name = "InterpreterPerf",
+            .root_source_file = b.path("test/interpreter_perf.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+        });
+        interpreter_perf.root_module.addImport("termcolor", termcolor_module);
+        interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
+        interpreter_perf.root_module.addImport("dreamcast", dc_module);
 
-    const jit_perf = b.addExecutable(.{
-        .name = "JITPerf",
-        .root_source_file = b.path("test/jit_perf.zig"),
-        .target = target,
-        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
-    });
-    jit_perf.root_module.addImport("termcolor", termcolor_module);
-    jit_perf.root_module.addImport("dreamcast", dc_module);
+        const interpreter_pref_install = b.addInstallArtifact(interpreter_perf, .{});
 
-    const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
+        const run_interpreter_perf_tests = b.addRunArtifact(interpreter_perf);
+        const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
+        interpreter_perf_step.dependOn(&run_interpreter_perf_tests.step);
+        interpreter_perf_step.dependOn(&interpreter_pref_install.step);
+        if (b.args) |args| run_interpreter_perf_tests.addArgs(args);
 
-    const run_jit_perf_tests = b.addRunArtifact(jit_perf);
-    const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
-    jit_perf_step.dependOn(&run_jit_perf_tests.step);
-    jit_perf_step.dependOn(&jit_pref_install.step);
+        const perf_install_step = b.step("interpreter_perf_install", "Install the interpreter performance tests");
+        perf_install_step.dependOn(&interpreter_pref_install.step);
+    }
+    {
+        const jit_perf = b.addExecutable(.{
+            .name = "JITPerf",
+            .root_source_file = b.path("test/jit_perf.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+        });
+        jit_perf.root_module.addImport("termcolor", termcolor_module);
+        jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
+        jit_perf.root_module.addImport("dreamcast", dc_module);
 
-    const perf_step = b.step("perf", "Run performance tests");
-    perf_step.dependOn(&run_jit_perf_tests.step);
-    perf_step.dependOn(&jit_pref_install.step);
+        const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
 
-    const pref_install = b.addInstallArtifact(interpreter_perf, .{});
-    const perf_install_step = b.step("perf_install", "Install the performance tests");
-    perf_install_step.dependOn(&pref_install.step);
-    perf_install_step.dependOn(&jit_pref_install.step);
+        const run_jit_perf_tests = b.addRunArtifact(jit_perf);
+        const perf_run_step = b.step("perf", "Run performance tests");
+        perf_run_step.dependOn(&run_jit_perf_tests.step);
+        perf_run_step.dependOn(&jit_pref_install.step);
+        if (b.args) |args| run_jit_perf_tests.addArgs(args);
+
+        const perf_install_step = b.step("perf_install", "Install the JIT performance tests");
+        perf_install_step.dependOn(&jit_pref_install.step);
+    }
 
     // ----- Tests ------
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_module = dc_module,
         .target = target,
         .optimize = optimize,
     });
-    unit_tests.root_module.addImport("arm7", arm7_module);
-    unit_tests.root_module.addImport("termcolor", termcolor_module);
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
@@ -189,11 +209,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_unit_tests.step);
 
     const sh4_tests = b.addTest(.{ .root_source_file = b.path("test/sh4_SingleStepTests.zig"), .target = target, .optimize = optimize });
-    const sh4_module = b.createModule(.{ .root_source_file = b.path("src/sh4.zig") });
-    sh4_module.addImport("arm7", arm7_module);
-    sh4_module.addImport("termcolor", termcolor_module);
-    sh4_tests.root_module.addImport("sh4", sh4_module);
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
+    sh4_tests.root_module.addImport("dreamcast", dc_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);
     const sh4_test_step = b.step("sh4_test", "Run sh4 tests");
     sh4_test_step.dependOn(&run_sh4_tests.step);

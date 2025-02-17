@@ -3,13 +3,13 @@ const termcolor = @import("termcolor");
 
 const aica_log = std.log.scoped(.aica);
 
-const arm7 = @import("arm7");
+pub const arm7 = @import("arm7");
 const ARM7JIT = @import("jit/arm_jit.zig").ARM7JIT;
 const DSP = @import("aica_dsp.zig");
 
 const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
-const HardwareRegisters = @import("hardware_registers.zig");
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
 // Yamaha AICA Audio Chip
 // Most notable source outside of official docs: Neill Corlett's Yamaha AICA notes

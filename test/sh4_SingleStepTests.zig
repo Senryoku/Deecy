@@ -1,7 +1,7 @@
 // https://github.com/SingleStepTests/sh4
 
 const std = @import("std");
-const SH4Module = @import("sh4");
+const SH4Module = @import("dreamcast").SH4Module;
 
 const termcolor = @import("termcolor");
 

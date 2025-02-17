@@ -1,6 +1,5 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
-const common = @import("common.zig");
 
 const maple_log = std.log.scoped(.maple);
 

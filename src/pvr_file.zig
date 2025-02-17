@@ -1,5 +1,5 @@
 const std = @import("std");
-const Colors = @import("colors.zig");
+const Colors = @import("dreamcast").HollyModule.Colors;
 const Renderer = @import("renderer.zig");
 
 const Version: u32 = 0x03525650;

@@ -5,11 +5,9 @@ const gdrom_log = std.log.scoped(.gdrom);
 
 pub const Disc = @import("./disc/disc.zig").Disc;
 const Session = @import("./disc/disc.zig").Session;
-const SH4 = @import("sh4.zig").SH4;
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
-
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegister = DreamcastModule.HardwareRegisters.HardwareRegister;
 
 const GDROMCommand71Reply = @import("gdrom_secu.zig").GDROMCommand71Reply;
 
@@ -992,7 +990,7 @@ fn cd_read(self: *@This()) !void {
     const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
     if (transfer_type == .PIO) {
-        gdrom_log.warn(termcolor.yellow("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}"), .{ start_addr, transfer_length });
+        gdrom_log.debug("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
         self.cd_read_state = .{
             .fad = start_addr,
             .remaining_sectors = transfer_length,

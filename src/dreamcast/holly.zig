@@ -1,18 +1,15 @@
 const std = @import("std");
-
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const termcolor = @import("termcolor");
 
 const holly_log = std.log.scoped(.holly);
 
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
+const Dreamcast = @import("dreamcast.zig").Dreamcast;
 
-const termcolor = @import("termcolor");
-
-const Colors = @import("colors.zig");
+pub const Colors = @import("colors.zig");
 const PackedColor = Colors.PackedColor;
 const YUV422 = Colors.YUV422;
 const fARGB = Colors.fARGB;
+const fRGBA = Colors.fRGBA;
 
 pub const HollyRegister = enum(u32) {
     ID = 0x005F8000,
@@ -854,7 +851,7 @@ pub const Polygon = union(enum) {
         return switch (self) {
             inline .PolygonType1, .PolygonType2 => |p| .{ p.face_color.r, p.face_color.g, p.face_color.b, p.face_color.a },
             .PolygonType4 => |p| .{ p.face_color_0.r, p.face_color_0.g, p.face_color_0.b, p.face_color_0.a },
-            .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.base_color, true)),
+            .Sprite => |p| @bitCast(fRGBA.from_packed(p.base_color, true)),
             else => null,
         };
     }
@@ -863,7 +860,7 @@ pub const Polygon = union(enum) {
         return switch (self) {
             .PolygonType2 => |p| .{ p.face_offset_color.r, p.face_offset_color.g, p.face_offset_color.b, p.face_offset_color.a },
             .PolygonType4 => |p| .{ p.face_color_0.r, p.face_color_0.g, p.face_color_0.b, p.face_color_0.a }, // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
-            .Sprite => |p| @bitCast(Colors.fRGBA.from_packed(p.offset_color, true)),
+            .Sprite => |p| @bitCast(fRGBA.from_packed(p.offset_color, true)),
             else => null,
         };
     }
@@ -1307,11 +1304,6 @@ pub const DisplayList = struct {
         self.vertex_strips.clearRetainingCapacity();
         self.next_first_vertex_parameters_index = 0;
     }
-};
-
-const ScheduledInterrupt = struct {
-    cycles: u32,
-    int: HardwareRegisters.SB_ISTNRM,
 };
 
 pub const TALists = struct {

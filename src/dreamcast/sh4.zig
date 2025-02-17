@@ -2,13 +2,16 @@
 // FIXME: Exact model is actually SH7091, I think.
 
 const std = @import("std");
+const dc_config = @import("dc_config");
 const builtin = @import("builtin");
-const common = @import("./common.zig");
 const termcolor = @import("termcolor");
 
 pub const sh4_log = std.log.scoped(.sh4);
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
+const HardwareRegister = HardwareRegisters.HardwareRegister;
 
 pub const mmu = @import("./mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
@@ -18,16 +21,11 @@ const Interrupt = Interrupts.Interrupt;
 
 pub const Exception = @import("sh4_exceptions.zig").Exception;
 
-const addr_t = common.addr_t;
-
 pub const sh4_instructions = @import("sh4_instructions.zig");
 pub const sh4_disassembly = @import("sh4_disassembly.zig");
 pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
-const HardwareRegisters = @import("hardware_registers.zig");
-const HardwareRegister = HardwareRegisters.HardwareRegister;
-
-pub const ExperimentalFullMMUSupport = false;
+pub const ExperimentalFullMMUSupport = dc_config.mmu;
 
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
@@ -84,11 +82,6 @@ const TimerRegisters = [3]struct { counter: P4Register, control: P4Register, con
     .{ .counter = P4Register.TCNT2, .control = P4Register.TCR2, .constant = P4Register.TCOR2, .interrupt = Interrupt.TUNI2 },
 };
 
-pub const VirtualAddr = packed struct {
-    region: u3,
-    addr: u29,
-};
-
 pub const StoreQueueAddr = packed struct(u32) {
     _: u2 = 0,
     lw_spec: u3 = 0,
@@ -124,14 +117,14 @@ const DMACChannels: [3]struct { chcr: P4Register, sar: P4Register, dar: P4Regist
 };
 
 pub var DebugHooks: struct {
-    read8: ?*const fn (addr: addr_t) u8 = null,
-    read16: ?*const fn (addr: addr_t) u16 = null,
-    read32: ?*const fn (addr: addr_t) u32 = null,
-    read64: ?*const fn (addr: addr_t) u64 = null,
-    write8: ?*const fn (addr: addr_t, value: u8) void = null,
-    write16: ?*const fn (addr: addr_t, value: u16) void = null,
-    write32: ?*const fn (addr: addr_t, value: u32) void = null,
-    write64: ?*const fn (addr: addr_t, value: u64) void = null,
+    read8: ?*const fn (addr: u32) u8 = null,
+    read16: ?*const fn (addr: u32) u16 = null,
+    read32: ?*const fn (addr: u32) u32 = null,
+    read64: ?*const fn (addr: u32) u64 = null,
+    write8: ?*const fn (addr: u32, value: u8) void = null,
+    write16: ?*const fn (addr: u32, value: u16) void = null,
+    write32: ?*const fn (addr: u32, value: u32) void = null,
+    write64: ?*const fn (addr: u32, value: u64) void = null,
 } = .{};
 
 comptime {
@@ -467,11 +460,11 @@ pub const SH4 = struct {
         self.update_sse_settings();
     }
 
-    inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+    inline fn read_operand_cache(self: *const @This(), comptime T: type, virtual_addr: u32) T {
         return @constCast(self).operand_cache(T, virtual_addr).*;
     }
 
-    inline fn write_operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    inline fn write_operand_cache(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
         if (self.read_p4_register(P4.CCR, .CCR).ora == 0) {
             sh4_log.err(termcolor.red("Write to operand cache with RAM mode disabled: @{X:0>8} = {X:0>8}"), .{ virtual_addr, value });
             return;
@@ -483,7 +476,7 @@ pub const SH4 = struct {
         return @as([*][32 / 4]u32, @alignCast(@ptrCast(self._operand_cache.ptr)))[0..256];
     }
 
-    inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: addr_t) *T {
+    inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: u32) *T {
         if ((comptime builtin.mode == .Debug) and self.read_p4_register(P4.CCR, .CCR).ora == 0)
             sh4_log.err(termcolor.red("Read to operand cache with RAM mode disabled: @{X:0>8}"), .{virtual_addr});
 
@@ -536,7 +529,7 @@ pub const SH4 = struct {
         return self.p4_register_addr(T, @intFromEnum(r));
     }
 
-    pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: addr_t) *T {
+    pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr & 0xFF000000 == 0xFF000000 or addr & 0xFF000000 == 0x1F000000);
         std.debug.assert(addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0);
 
@@ -592,7 +585,7 @@ pub const SH4 = struct {
         self.pc = self.vbr + 0x600;
     }
 
-    pub fn report_address_exception(self: *@This(), virtual_address: addr_t) void {
+    pub fn report_address_exception(self: *@This(), virtual_address: u32) void {
         self.p4_register(u32, .TEA).* = virtual_address;
         self.p4_register(mmu.PTEH, .PTEH).vpn = @truncate(virtual_address >> 10);
     }
@@ -667,9 +660,7 @@ pub const SH4 = struct {
             self._pending_cycles = 0;
             return cycles;
         } else {
-            const cycles = self._pending_cycles;
-            self._pending_cycles = 0;
-            return cycles;
+            return 8;
         }
     }
 
@@ -822,7 +813,7 @@ pub const SH4 = struct {
         self._pending_cycles += cycles;
     }
 
-    pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: addr_t) addr_t {
+    pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: u32) u32 {
         sh4_log.warn("handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
         const initial_pc = self.pc;
 
@@ -848,7 +839,7 @@ pub const SH4 = struct {
         };
     }
 
-    pub fn _execute(self: *@This(), virtual_addr: addr_t) void {
+    pub fn _execute(self: *@This(), virtual_addr: u32) void {
         // Guiding the compiler a bit. Yes, that helps a lot :)
         // Instruction should be in Boot ROM, or RAM.
         const opcode = if (comptime !builtin.is_test) oc: {
@@ -887,7 +878,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
         const sq_addr: StoreQueueAddr = @bitCast(virtual_addr);
         // sh4_log.debug("  StoreQueue write @{X:0>8} = 0x{X:0>8} ({any})", .{ virtual_addr, value, sq_addr });
         std.debug.assert(sq_addr.spec == 0b111000);
@@ -1019,7 +1010,7 @@ pub const SH4 = struct {
     //       the proper functions, but it was also worse performance wise (although a little less
     //       that calling directly to DC).
 
-    pub inline fn _get_memory(self: *@This(), addr: addr_t) *u8 {
+    pub inline fn _get_memory(self: *@This(), addr: u32) *u8 {
         std.debug.assert(addr <= 0x1FFFFFFF);
         const dc = self._dc.?;
 
@@ -1121,7 +1112,7 @@ pub const SH4 = struct {
         unreachable;
     }
 
-    pub fn read_p4(self: *const @This(), comptime T: type, virtual_addr: addr_t) T {
+    pub fn read_p4(self: *const @This(), comptime T: type, virtual_addr: u32) T {
         std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
 
         switch (virtual_addr) {
@@ -1280,7 +1271,7 @@ pub const SH4 = struct {
         return 0;
     }
 
-    pub fn write_p4(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    pub fn write_p4(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
         std.debug.assert(virtual_addr & 0xE0000000 == 0xE0000000);
 
         switch (virtual_addr) {
@@ -1517,7 +1508,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: addr_t) !addr_t {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) !u32 {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1544,7 +1535,7 @@ pub const SH4 = struct {
         return error.TLBMiss;
     }
 
-    pub inline fn translate_address(self: *@This(), virtual_addr: addr_t) !addr_t {
+    pub inline fn translate_address(self: *@This(), virtual_addr: u32) !u32 {
         if (ExperimentalFullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
@@ -1562,14 +1553,14 @@ pub const SH4 = struct {
         return virtual_addr;
     }
 
-    pub fn read(self: *@This(), comptime T: type, virtual_addr: addr_t) T {
+    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) T {
         const physical_address = self.translate_address(virtual_addr) catch a: {
             break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr);
         };
         return self.read_physical(T, physical_address);
     }
 
-    pub fn read_physical(self: *const @This(), comptime T: type, physical_addr: addr_t) T {
+    pub fn read_physical(self: *const @This(), comptime T: type, physical_addr: u32) T {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.read8.?(physical_addr),
@@ -1673,14 +1664,14 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn write(self: *@This(), comptime T: type, virtual_addr: addr_t, value: T) void {
+    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
         const physical_address = self.translate_address(virtual_addr) catch a: {
             break :a self.handle_tlb_miss(.DataTLBMissWrite, virtual_addr);
         };
         return self.write_physical(T, physical_address, value);
     }
 
-    pub fn write_physical(self: *@This(), comptime T: type, physical_addr: addr_t, value: T) void {
+    pub fn write_physical(self: *@This(), comptime T: type, physical_addr: u32, value: T) void {
         if ((comptime builtin.is_test) and self._dc == null) {
             switch (T) {
                 u8 => return DebugHooks.write8.?(physical_addr, value),

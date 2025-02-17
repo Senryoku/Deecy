@@ -4,7 +4,7 @@ const sh4 = @import("sh4.zig");
 const interpreter = @import("sh4_interpreter.zig");
 
 const sh4_jit = @import("jit/sh4_jit.zig");
-const JITBlock = @import("jit/jit_block.zig").JITBlock;
+const IRBlock = @import("jit/ir_block.zig").IRBlock;
 
 // FIXME: This slows down compile time a lot. From 46sec to 1.2min in ReleaseSafe and 15sec to 41sec in Debug.
 // pub const JumpTable: [0x10000]u8 = t: {
@@ -62,7 +62,7 @@ pub const OpcodeDescription = struct {
     issue_cycles: u5 = 1,
     latency_cycles: u5 = 1,
 
-    jit_emit_fn: *const fn (*JITBlock, *sh4_jit.JITContext, sh4.Instr) anyerror!bool = sh4_jit.interpreter_fallback_cached,
+    jit_emit_fn: *const fn (*IRBlock, *sh4_jit.JITContext, sh4.Instr) anyerror!bool = sh4_jit.interpreter_fallback_cached,
 
     access: struct { r: CacheAccess = .{}, w: CacheAccess = .{} } = .{}, // Used only by interpreter fallback, it's not defined for all instructions.
 

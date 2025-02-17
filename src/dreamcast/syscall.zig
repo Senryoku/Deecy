@@ -1,10 +1,11 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
-const HardwareRegisters = @import("hardware_registers.zig");
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
+const HardwareRegisters = DreamcastModule.HardwareRegisters;
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
 const gdrom_hle = @import("gdrom_hle.zig");
 
 const syscall_log = std.log.scoped(.syscall);

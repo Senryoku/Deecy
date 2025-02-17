@@ -1,6 +1,6 @@
 const std = @import("std");
 const sh4 = @import("sh4.zig");
-const sh4_instructions = @import("sh4_instructions.zig");
+const sh4_instructions = sh4.sh4_instructions;
 const Instr = sh4.Instr;
 const bit_manip = @import("bit_manip.zig");
 

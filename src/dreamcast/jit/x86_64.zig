@@ -4,9 +4,6 @@ const termcolor = @import("termcolor");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
-const JIT = @import("jit_block.zig");
-const JITBlock = @import("jit_block.zig").JITBlock;
-
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
@@ -199,6 +196,15 @@ pub const Scale = enum(u2) {
     _2 = 0b01,
     _4 = 0b10,
     _8 = 0b11,
+
+    pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (value) {
+            ._1 => try writer.writeAll("1"),
+            ._2 => try writer.writeAll("2"),
+            ._4 => try writer.writeAll("4"),
+            ._8 => try writer.writeAll("8"),
+        }
+    }
 };
 
 pub const MemOperand = struct {
@@ -212,8 +218,9 @@ pub const MemOperand = struct {
         _ = fmt;
         _ = options;
         if (value.index) |index| {
-            return writer.print("[{any}+1*{any}+0x{X}]", .{
+            return writer.print("[{any}+{any}*{any}+0x{X}]", .{
                 value.base,
+                value.scale,
                 index,
                 value.displacement,
             });
@@ -1577,7 +1584,7 @@ pub const Emitter = struct {
         }
     }
 
-    fn emit_jmp_rel8(self: *@This(), condition: JIT.Condition, rel: i8) !void {
+    fn emit_jmp_rel8(self: *@This(), condition: Condition, rel: i8) !void {
         try self.emit(u8, switch (condition) {
             .Always => 0xEB,
             else => |c| 0x70 | c.nibble(),
@@ -1585,7 +1592,7 @@ pub const Emitter = struct {
         try self.emit(i8, rel);
     }
 
-    pub fn jmp(self: *@This(), condition: JIT.Condition, current_idx: u32, rel: i32) !void {
+    pub fn jmp(self: *@This(), condition: Condition, current_idx: u32, rel: i32) !void {
         // TODO: Support more destination than just immediate relative.
         //       Support different sizes of rel (rel8 in particular).
         //         We don't know the size of the jump yet, and we have to reserve enough space
