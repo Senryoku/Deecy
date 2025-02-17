@@ -147,44 +147,50 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    const interpreter_perf = b.addExecutable(.{
-        .name = "InterpreterPerf",
-        .root_source_file = b.path("test/interpreter_perf.zig"),
-        .target = target,
-        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
-    });
-    interpreter_perf.root_module.addImport("termcolor", termcolor_module);
-    interpreter_perf.root_module.addImport("dreamcast", dc_module);
-    const run_perf_tests = b.addRunArtifact(interpreter_perf);
-    const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
-    interpreter_perf_step.dependOn(&run_perf_tests.step);
+    {
+        const interpreter_perf = b.addExecutable(.{
+            .name = "InterpreterPerf",
+            .root_source_file = b.path("test/interpreter_perf.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+        });
+        interpreter_perf.root_module.addImport("termcolor", termcolor_module);
+        interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
+        interpreter_perf.root_module.addImport("dreamcast", dc_module);
 
-    const jit_perf = b.addExecutable(.{
-        .name = "JITPerf",
-        .root_source_file = b.path("test/jit_perf.zig"),
-        .target = target,
-        .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
-    });
-    jit_perf.root_module.addImport("termcolor", termcolor_module);
-    jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
-    jit_perf.root_module.addImport("dreamcast", dc_module);
+        const interpreter_pref_install = b.addInstallArtifact(interpreter_perf, .{});
 
-    const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
+        const run_interpreter_perf_tests = b.addRunArtifact(interpreter_perf);
+        const interpreter_perf_step = b.step("interpreter_perf", "Run interpreter performance tests");
+        interpreter_perf_step.dependOn(&run_interpreter_perf_tests.step);
+        interpreter_perf_step.dependOn(&interpreter_pref_install.step);
+        if (b.args) |args| run_interpreter_perf_tests.addArgs(args);
 
-    const run_jit_perf_tests = b.addRunArtifact(jit_perf);
-    const jit_perf_step = b.step("jit_perf", "Run JIT performance tests");
-    jit_perf_step.dependOn(&run_jit_perf_tests.step);
-    jit_perf_step.dependOn(&jit_pref_install.step);
+        const perf_install_step = b.step("interpreter_perf_install", "Install the interpreter performance tests");
+        perf_install_step.dependOn(&interpreter_pref_install.step);
+    }
+    {
+        const jit_perf = b.addExecutable(.{
+            .name = "JITPerf",
+            .root_source_file = b.path("test/jit_perf.zig"),
+            .target = target,
+            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+        });
+        jit_perf.root_module.addImport("termcolor", termcolor_module);
+        jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
+        jit_perf.root_module.addImport("dreamcast", dc_module);
 
-    const perf_run_step = b.step("perf", "Run performance tests");
-    perf_run_step.dependOn(&run_jit_perf_tests.step);
-    perf_run_step.dependOn(&jit_pref_install.step);
-    if (b.args) |args| run_jit_perf_tests.addArgs(args);
+        const jit_pref_install = b.addInstallArtifact(jit_perf, .{});
 
-    const pref_install = b.addInstallArtifact(interpreter_perf, .{});
-    const perf_install_step = b.step("perf_install", "Install the performance tests");
-    perf_install_step.dependOn(&pref_install.step);
-    perf_install_step.dependOn(&jit_pref_install.step);
+        const run_jit_perf_tests = b.addRunArtifact(jit_perf);
+        const perf_run_step = b.step("perf", "Run performance tests");
+        perf_run_step.dependOn(&run_jit_perf_tests.step);
+        perf_run_step.dependOn(&jit_pref_install.step);
+        if (b.args) |args| run_jit_perf_tests.addArgs(args);
+
+        const perf_install_step = b.step("perf_install", "Install the JIT performance tests");
+        perf_install_step.dependOn(&jit_pref_install.step);
+    }
 
     // ----- Tests ------
 

@@ -660,9 +660,7 @@ pub const SH4 = struct {
             self._pending_cycles = 0;
             return cycles;
         } else {
-            const cycles = self._pending_cycles;
-            self._pending_cycles = 0;
-            return cycles;
+            return 8;
         }
     }
 
