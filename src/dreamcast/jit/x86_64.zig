@@ -196,6 +196,15 @@ pub const Scale = enum(u2) {
     _2 = 0b01,
     _4 = 0b10,
     _8 = 0b11,
+
+    pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (value) {
+            ._1 => try writer.writeAll("1"),
+            ._2 => try writer.writeAll("2"),
+            ._4 => try writer.writeAll("4"),
+            ._8 => try writer.writeAll("8"),
+        }
+    }
 };
 
 pub const MemOperand = struct {
@@ -209,8 +218,9 @@ pub const MemOperand = struct {
         _ = fmt;
         _ = options;
         if (value.index) |index| {
-            return writer.print("[{any}+1*{any}+0x{X}]", .{
+            return writer.print("[{any}+{any}*{any}+0x{X}]", .{
                 value.base,
+                value.scale,
                 index,
                 value.displacement,
             });
