@@ -60,6 +60,7 @@ fn glfw_key_callback(
                     }
                 },
                 .d => app.config.display_debug_ui = !app.config.display_debug_ui,
+                .f => app.toggle_fullscreen(),
                 .l => app.set_realtime(!app.realtime),
                 .n => {
                     if (app.running) {
@@ -137,12 +138,36 @@ fn file_exists(path: []const u8) !bool {
     return true;
 }
 
+const ConfigurationJSON = struct {
+    per_game_vmu: ?bool = true,
+    display_vmus: ?bool = true,
+    game_directory: ?[]const u8 = null,
+    display_debug_ui: ?bool = false,
+
+    window_size: ?struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
+    fullscreen: ?bool = false,
+
+    internal_resolution_factor: ?u32 = 1,
+    display_mode: ?Renderer.DisplayMode = .Center,
+
+    audio_volume: ?f32 = 0.3,
+    dsp_emulation: ?DreamcastModule.AICAModule.DSPEmulation = .JIT,
+};
+
 const Configuration = struct {
     per_game_vmu: bool = true,
-    display_debug_ui: bool = false,
     display_vmus: bool = true,
     game_directory: ?[]const u8 = null,
+    display_debug_ui: bool = false,
+
+    window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
+    fullscreen: bool = false,
+
+    internal_resolution_factor: u32 = 2,
+    display_mode: Renderer.DisplayMode = .Center,
+
     audio_volume: f32 = 0.3,
+    dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         if (self.game_directory) |game_directory|
@@ -165,7 +190,6 @@ renderer: *Renderer = undefined,
 audio_device: *zaudio.Device = undefined,
 
 config: Configuration = .{},
-fullscreen: bool = false,
 toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
@@ -209,16 +233,25 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             defer file.close();
             const conf_str = try file.readToEndAlloc(allocator, 1024 * 1024);
             defer allocator.free(conf_str);
-            const json = try std.json.parseFromSlice(Configuration, allocator, conf_str, .{});
+            const json = try std.json.parseFromSlice(ConfigurationJSON, allocator, conf_str, .{});
             defer json.deinit();
 
             var conf: Configuration = .{};
-            conf.display_debug_ui = json.value.display_debug_ui;
-            conf.per_game_vmu = json.value.per_game_vmu;
-            conf.display_vmus = json.value.display_vmus;
+            conf.display_debug_ui = json.value.display_debug_ui orelse false;
+            conf.per_game_vmu = json.value.per_game_vmu orelse true;
+            conf.display_vmus = json.value.display_vmus orelse true;
             if (json.value.game_directory) |game_directory|
                 conf.game_directory = try allocator.dupe(u8, game_directory);
-            conf.audio_volume = json.value.audio_volume;
+            if (json.value.window_size) |window_size| {
+                conf.window_size.width = window_size.width;
+                conf.window_size.height = window_size.height;
+            }
+            conf.fullscreen = json.value.fullscreen orelse false;
+            conf.internal_resolution_factor = json.value.internal_resolution_factor orelse 2;
+            conf.display_mode = json.value.display_mode orelse .Center;
+
+            conf.audio_volume = json.value.audio_volume orelse 0.3;
+            conf.dsp_emulation = json.value.dsp_emulation orelse .JIT;
 
             break :config conf;
         } else |_| {
@@ -227,9 +260,6 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     };
 
     try zglfw.init();
-
-    // TODO: Load from config.
-    const default_resolution = Renderer.Resolution{ .width = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), .height = 2 * Renderer.NativeResolution.height };
 
     const self = try allocator.create(@This());
     self.* = .{
@@ -254,10 +284,14 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             // IDK, prevents device lost crash on Linux. See https://github.com/zig-gamedev/zig-gamedev/commit/9bd4cf860c8e295f4f0db9ec4357905e090b5b98
             zglfw.windowHint(.client_api, .no_api);
             zglfw.windowHint(.visible, false); // Hide window until the first frame is drawn to avoid a white flash. Don't forget to .show() it eventually!
-            self.window = try zglfw.Window.create(default_resolution.width, default_resolution.height, "Deecy", null);
+            self.window = try zglfw.Window.create(@intCast(config.window_size.width), @intCast(config.window_size.height), "Deecy", null);
             glfwSetWindowIcon(self.window, icons.len, &icons);
             if (builtin.os.tag == .windows)
                 @import("dwmapi.zig").allow_dark_mode(self.window, true);
+            if (self.config.fullscreen) {
+                self.config.fullscreen = false;
+                self.toggle_fullscreen();
+            }
 
             self.window.setUserPointer(self);
             _ = self.window.setKeyCallback(glfw_key_callback);
@@ -338,7 +372,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         };
     }
 
-    self.renderer = try Renderer.create(self._allocator, self.gctx);
+    self.renderer = try Renderer.create(self._allocator, self.gctx, config.internal_resolution_factor, config.display_mode);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
@@ -517,7 +551,7 @@ fn ui_init(self: *@This()) !void {
     style.setColor(.nav_highlight, EULogoColor);
     style.setColor(.nav_windowing_highlight, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.7 });
     style.setColor(.nav_windowing_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.2 });
-    style.setColor(.modal_window_dim_bg, .{ EULogoColor[0], EULogoColor[1], EULogoColor[2], 0.35 });
+    style.setColor(.modal_window_dim_bg, .{ 0, 0, 0, 0.6 });
 
     zgui.backend.init(
         self.window,
@@ -782,8 +816,8 @@ fn check_save_state_slots(self: *@This()) !void {
 }
 
 pub fn toggle_fullscreen(self: *@This()) void {
-    if (self.fullscreen) {
-        self.fullscreen = false;
+    if (self.config.fullscreen) {
+        self.config.fullscreen = false;
         self.window.setMonitor(null, self.previous_window_position.x, self.previous_window_position.y, self.previous_window_position.w, self.previous_window_position.h, 0);
     } else {
         self.previous_window_position = .{ .x = self.window.getPos()[0], .y = self.window.getPos()[1], .w = self.window.getSize()[0], .h = self.window.getSize()[1] };
@@ -793,7 +827,7 @@ pub fn toggle_fullscreen(self: *@This()) void {
             return;
         };
         self.window.setMonitor(monitor, 0, 0, mode.width, mode.height, mode.refresh_rate);
-        self.fullscreen = true;
+        self.config.fullscreen = true;
     }
 }
 
@@ -853,6 +887,16 @@ pub fn dc_thread_loop(self: *@This()) void {
     while (self.running) {
         self.run_for(128);
     }
+}
+
+pub fn on_resize(self: *@This()) void {
+    if (!self.config.fullscreen) {
+        const ww = self.gctx.swapchain_descriptor.width;
+        const wh = self.gctx.swapchain_descriptor.height;
+        self.config.window_size.width = ww;
+        self.config.window_size.height = wh;
+    }
+    self.renderer.update_blit_to_screen_vertex_buffer();
 }
 
 pub fn draw_ui(self: *@This()) !void {

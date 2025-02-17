@@ -511,6 +511,8 @@ fn apply_pan_attenuation(sample: i32, level: u4, pan: u5) struct { left: i32, ri
     return .{ .left = left, .right = right };
 }
 
+pub const DSPEmulation = enum { Bypass, Interpreter, JIT };
+
 // Memory Map
 // SH4 Side             Internal
 // 00800000 - 00FFFFFF  00000000 - 007FFFFF  DRAM_AREA*
@@ -530,7 +532,7 @@ pub const AICA = struct {
     enable_arm_jit: bool = true,
     arm_jit: ARM7JIT = undefined,
     dsp: DSP = undefined,
-    dsp_emulation: enum { Bypass, Interpreter, JIT } = .JIT,
+    dsp_emulation: DSPEmulation = .JIT,
 
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.

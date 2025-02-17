@@ -328,7 +328,7 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
 
-        if (zgui.beginMenu("DC", true)) {
+        if (zgui.beginMenu("Dreamcast", true)) {
             if (!d.running) {
                 if (zgui.menuItem("Start", .{ .shortcut = "Space" }))
                     d.start();
@@ -472,22 +472,28 @@ pub fn draw(self: *@This()) !void {
             }
         };
 
+    zgui.setNextWindowSize(.{ .w = 290, .h = 800, .cond = .first_use_ever });
+    zgui.setNextWindowPos(.{ .x = 1408, .y = 32, .cond = .first_use_ever });
+
     if (zgui.begin("Settings", .{})) {
         if (zgui.beginTabBar("SettingsTabBar", .{})) {
             if (zgui.beginTabItem("Renderer", .{})) {
-                var fullscreen = self.deecy.fullscreen;
+                var fullscreen = self.deecy.config.fullscreen;
                 if (zgui.checkbox("Fullscreen", .{ .v = &fullscreen })) {
                     self.deecy.toggle_fullscreen();
                 }
                 zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
                 var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
+                    d.config.internal_resolution_factor = @intFromEnum(resolution);
                     // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
                     d.renderer.on_inner_resolution_change();
                 }
-                if (zgui.comboFromEnum("Display Mode", &d.renderer.display_mode))
+                if (zgui.comboFromEnum("Display Mode", &d.renderer.display_mode)) {
+                    d.config.display_mode = d.renderer.display_mode;
                     d.renderer.update_blit_to_screen_vertex_buffer();
+                }
                 zgui.endTabItem();
             }
 

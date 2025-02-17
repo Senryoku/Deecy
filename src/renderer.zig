@@ -670,8 +670,8 @@ pub const Renderer = struct {
     texture_arrays: [8]TextureAndView,
     palette_buffer: zgpu.BufferHandle,
 
-    display_mode: DisplayMode = .Center,
-    resolution: Resolution = .{ .width = 2 * NativeResolution.width, .height = 2 * NativeResolution.height },
+    display_mode: DisplayMode,
+    resolution: Resolution,
 
     /// Intermediate texture to upload framebuffer from VRAM at native resolution
     framebuffer: TextureAndView,
@@ -720,7 +720,7 @@ pub const Renderer = struct {
     _gctx: *zgpu.GraphicsContext,
     _allocator: std.mem.Allocator,
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, internal_resolution_factor: u32, display_mode: DisplayMode) !*Renderer {
         const start = std.time.milliTimestamp();
         defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -1124,6 +1124,9 @@ pub const Renderer = struct {
 
         var renderer = try allocator.create(Renderer);
         renderer.* = .{
+            .resolution = .{ .width = internal_resolution_factor * NativeResolution.width, .height = internal_resolution_factor * NativeResolution.height },
+            .display_mode = display_mode,
+
             .blit_vertex_buffer = blit_vertex_buffer,
             .blit_index_buffer = blit_index_buffer,
             .blit_to_window_vertex_buffer = blit_to_window_vertex_buffer,
