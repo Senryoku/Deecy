@@ -122,7 +122,7 @@ const DefaultFont = @embedFile(assets_dir ++ "fonts/Hack-Regular.ttf");
 // Replaces invalid characters with underscores
 fn safe_path(path: []u8) void {
     for (path) |*c| {
-        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/')) {
+        if (!((c.* >= 'a' and c.* <= 'z') or (c.* >= 'A' and c.* <= 'Z') or (c.* >= '0' and c.* <= '9') or c.* == '.' or c.* == '/' or c.* == '[' or c.* == ']')) {
             c.* = '_';
         }
     }
@@ -717,23 +717,33 @@ pub fn get_product_id(self: *const @This()) ?[]const u8 {
     return if (self.dc.gdrom.disc) |disc| disc.get_product_id() else null;
 }
 
+/// Game specific sub directory name (for VMUs, save states...)
+/// Caller owns the returned string.
+fn userdata_game_directory(self: *const @This()) ![]const u8 {
+    const product_id = self.get_product_id() orelse "default";
+    const product_name = self.get_product_name() orelse "default";
+    const path = try std.fmt.allocPrint(self._allocator, "./userdata/{s}[{s}]", .{ product_name, product_id });
+    safe_path(path);
+    return path;
+}
+
 pub fn on_game_load(self: *@This()) !void {
     if (self.config.per_game_vmu) {
-        if (self.get_product_id()) |product_id| {
-            var vmu_path = std.ArrayList(u8).init(self._allocator);
-            defer vmu_path.deinit();
-            try vmu_path.writer().print("./userdata/{s}/vmu_0.bin", .{product_id});
-            safe_path(vmu_path.items);
+        const game_dir = try self.userdata_game_directory();
+        defer self._allocator.free(game_dir);
+        var vmu_path = std.ArrayList(u8).init(self._allocator);
+        defer vmu_path.deinit();
+        try vmu_path.writer().print("{s}/vmu_0.bin", .{game_dir});
+        safe_path(vmu_path.items);
 
-            if (self.dc.maple.ports[0].subperipherals[0]) |*peripheral| {
-                switch (peripheral.*) {
-                    .VMU => |*vmu| vmu.deinit(self._allocator),
-                    else => {},
-                }
+        if (self.dc.maple.ports[0].subperipherals[0]) |*peripheral| {
+            switch (peripheral.*) {
+                .VMU => |*vmu| vmu.deinit(self._allocator),
+                else => {},
             }
-            self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
-            self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
         }
+        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
+        self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
     }
     try self.check_save_state_slots();
 
@@ -755,9 +765,10 @@ pub fn on_game_load(self: *@This()) !void {
 
 // Caller owns the returned ArrayList
 fn save_state_path(self: *const @This(), index: usize) !std.ArrayList(u8) {
-    const product_id = self.get_product_id() orelse "default";
+    const game_dir = try self.userdata_game_directory();
+    defer self._allocator.free(game_dir);
     var save_slot_path = std.ArrayList(u8).init(self._allocator);
-    try save_slot_path.writer().print("./userdata/{s}/save_{d}.sav", .{ product_id, index });
+    try save_slot_path.writer().print("{s}/save_{d}.sav", .{ game_dir, index });
     safe_path(save_slot_path.items);
     return save_slot_path;
 }
@@ -980,7 +991,7 @@ fn audio_callback(
     }
 }
 
-const SaveStateHeader = extern struct {
+pub const SaveStateHeader = extern struct {
     const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
     const Version: u32 = 5;
 
