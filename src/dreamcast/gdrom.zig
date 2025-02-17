@@ -992,7 +992,7 @@ fn cd_read(self: *@This()) !void {
     const transfer_type: enum { PIO, DMA } = if (self.features.DMA == 1) .DMA else .PIO;
 
     if (transfer_type == .PIO) {
-        gdrom_log.warn(termcolor.yellow("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}"), .{ start_addr, transfer_length });
+        gdrom_log.debug("  GDROM CDRead PIO mode: start_addr: {X:0>8}, transfer_length: {X:0>4}", .{ start_addr, transfer_length });
         self.cd_read_state = .{
             .fad = start_addr,
             .remaining_sectors = transfer_length,
