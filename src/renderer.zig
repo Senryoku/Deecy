@@ -1,11 +1,11 @@
 const std = @import("std");
+const config = @import("config");
+const termcolor = @import("termcolor");
 
 const renderer_log = std.log.scoped(.renderer);
 
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
-
-const termcolor = @import("termcolor");
 
 const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -20,7 +20,7 @@ const YUV422 = Colors.YUV422;
 const MipMap = @import("mipmap.zig");
 
 /// Write the framebuffer back to the guest VRAM after each render.
-pub const ExperimentalFramebufferWriteBack = false;
+pub const ExperimentalFramebufferWriteBack = config.fb_writeback;
 /// Correctly handle rendering to a texture. Renders to another target and writes it back to guest VRAM.
 pub const ExperimentalRenderToTexture = true;
 

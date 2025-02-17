@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const config = @import("config");
+const dc_config = @import("dc_config");
 
 const termcolor = @import("termcolor");
 
@@ -35,7 +35,7 @@ const windows = @import("../host/windows.zig");
 
 const BlockBufferSize = 16 * 1024 * 1024;
 const MaxCyclesPerBlock = 32;
-pub const FastMem = config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
+pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
 
 // Enable or Disable some optimizations
 const Optimizations = .{

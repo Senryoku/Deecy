@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
 
     const mmu = b.option(bool, "mmu", "Enable experimental Full MMU Emulation (default: false)") orelse false;
     const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
+    const fb_writeback = b.option(bool, "fb_writeback", "Write the rendered frame back to the guest VRAM. Slow, but necessary for some effects (default: false)") orelse false;
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
@@ -36,7 +37,10 @@ pub fn build(b: *std.Build) void {
             .{ .name = "arm7", .module = arm7_module },
         },
     });
-    dc_module.addOptions("config", dc_options);
+    dc_module.addOptions("dc_config", dc_options);
+
+    const deecy_options = b.addOptions();
+    deecy_options.addOption(bool, "fb_writeback", fb_writeback);
 
     const deecy_module = b.createModule(.{
         .target = target,
@@ -52,6 +56,7 @@ pub fn build(b: *std.Build) void {
         // Also https://nullprogram.com/blog/2024/02/05/ for more info.
         .stack_check = false,
     });
+    deecy_module.addOptions("config", deecy_options);
 
     const exe = b.addExecutable(.{
         .name = "Deecy",
