@@ -145,6 +145,7 @@ const ConfigurationJSON = struct {
     display_debug_ui: ?bool = false,
 
     window_size: ?struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
+    present_mode: ?zgpu.wgpu.PresentMode = .fifo,
     fullscreen: ?bool = false,
 
     internal_resolution_factor: ?u32 = 1,
@@ -161,6 +162,7 @@ const Configuration = struct {
     display_debug_ui: bool = false,
 
     window_size: struct { width: u32 = 2 * @ceil((16.0 / 9.0 * @as(f32, @floatFromInt(Renderer.NativeResolution.height)))), height: u32 = 2 * Renderer.NativeResolution.height } = .{},
+    present_mode: zgpu.wgpu.PresentMode = .fifo,
     fullscreen: bool = false,
 
     internal_resolution_factor: u32 = 2,
@@ -246,7 +248,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 conf.window_size.width = window_size.width;
                 conf.window_size.height = window_size.height;
             }
+            conf.present_mode = json.value.present_mode orelse .fifo;
             conf.fullscreen = json.value.fullscreen orelse false;
+
             conf.internal_resolution_factor = json.value.internal_resolution_factor orelse 2;
             conf.display_mode = json.value.display_mode orelse .Center;
 
@@ -313,7 +317,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
-                .present_mode = .mailbox,
+                .present_mode = config.present_mode,
                 .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
                 .required_limits = &.{ .limits = .{ .max_texture_array_layers = 512 } },
             });

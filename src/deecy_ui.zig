@@ -483,7 +483,7 @@ pub fn draw(self: *@This()) !void {
                     self.deecy.toggle_fullscreen();
                 }
                 zgui.text("Curent Resolution: {d}x{d}", .{ d.renderer.resolution.width, d.renderer.resolution.height });
-                var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
+                var resolution: enum(u8) { Native = 1, x2 = 2, x3 = 3, x4 = 4, x5 = 5 } = @enumFromInt(d.renderer.resolution.width / Deecy.Renderer.NativeResolution.width);
                 if (zgui.comboFromEnum("Resolution", &resolution)) {
                     d.config.internal_resolution_factor = @intFromEnum(resolution);
                     // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
@@ -494,6 +494,8 @@ pub fn draw(self: *@This()) !void {
                     d.config.display_mode = d.renderer.display_mode;
                     d.renderer.update_blit_to_screen_vertex_buffer();
                 }
+                zgui.separator();
+                _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
                 zgui.endTabItem();
             }
 

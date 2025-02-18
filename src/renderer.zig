@@ -1760,7 +1760,7 @@ pub const Renderer = struct {
             .RGB0888_32bit => 4,
         };
 
-        const interlaced = SPG_CONTROL.interlace == 1;
+        const interlaced = SPG_CONTROL.interlace;
         const x_size: u32 = @min(NativeResolution.width, line_size / bytes_per_pixels);
         const y_size: u32 = @min(NativeResolution.height, if (interlaced) field_size * 2 else field_size);
         // FB_R_SIZE.modulus: "Set this value to 0x001 in order to link the last pixel data on a line with the first pixel data on a line."

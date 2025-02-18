@@ -156,7 +156,7 @@ pub const SPG_CONTROL = packed struct(u32) {
     mvsync_pol: u1 = 0,
     mcsync_pol: u1 = 0,
     spg_lock: u1 = 0,
-    interlace: u1 = 0,
+    interlace: bool = false,
     force_field2: u1 = 0,
     NTSC: u1 = 1,
     PAL: u1 = 0,
@@ -1568,11 +1568,11 @@ pub const Holly = struct {
 
     pub fn on_vblank_in(self: *@This()) void {
         self._dc.raise_normal_interrupt(.{ .VBlankIn = 1 });
-        // self._get_register(SPG_STATUS, .SPG_STATUS).*.vsync = true;
         self.schedule_vblank_in();
     }
     pub fn on_vblank_out(self: *@This()) void {
-        self._get_register(SPG_STATUS, .SPG_STATUS).fieldnum +%= 1;
+        if (self.read_register(SPG_CONTROL, .SPG_CONTROL).interlace)
+            self._get_register(SPG_STATUS, .SPG_STATUS).fieldnum +%= 1;
         // If SB_MDTSEL is set, initiate Maple DMA one line before VBlankOut
         // FIXME: This probably shouldn't be here.
         if (self._dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and self._dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1) {
@@ -2184,12 +2184,11 @@ pub const Holly = struct {
         const fb_r_size = self.read_register(FB_R_SIZE, .FB_R_SIZE);
         const line_size: u32 = 4 * (@as(u32, fb_r_size.x_size) + @as(u32, fb_r_size.modulus)); // From 32-bit units to bytes.
         const line_count: u32 = @as(u32, fb_r_size.y_size) + 1; // Number of lines
-        const interlaced = spg_control.interlace == 1;
         const fb1_end_addr = fb1_start_addr + line_count * line_size;
         const fb2_end_addr = fb2_start_addr + line_count * line_size;
 
         if ((local_addr >= fb1_start_addr and local_addr < fb1_end_addr) or
-            (interlaced and (local_addr >= fb2_start_addr and local_addr < fb2_end_addr)))
+            (spg_control.interlace and (local_addr >= fb2_start_addr and local_addr < fb2_end_addr)))
         {
             self.dirty_framebuffer = true;
         }
