@@ -316,6 +316,7 @@ pub const Instruction = union(enum) {
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
+    JmpRax: void, // FIXME: Temp Test
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
@@ -646,6 +647,8 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
+
+                .JmpRax => try self.emit_slice(u8, &[_]u8{ 0xFF, 0xE0 }),
                 // else => return error.UnsupportedInstruction,
             }
         }

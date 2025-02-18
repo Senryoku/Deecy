@@ -525,10 +525,9 @@ pub const SH4JIT = struct {
             b.clearRetainingCapacity();
             try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
             try b.call(compile_and_run);
+            try b.append(.JmpRax);
             const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
-            try b._emitter.emit(u8, 0xFF); // jmp rax
-            try b._emitter.emit(u8, 0xE0);
-            self.block_cache.cursor += block_size + 2;
+            self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
@@ -697,9 +696,7 @@ pub const SH4JIT = struct {
         if (!branch) {
             try b.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
         } else if (ctx.outdated_pc) {
-            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
-            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
-            try b.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
+            try b.add(sh4_mem("pc"), .{ .imm32 = 2 });
         }
 
         try ctx.gpr_cache.commit_and_invalidate_all(b);
@@ -707,8 +704,7 @@ pub const SH4JIT = struct {
 
         try self.idle_speedup(&ctx);
 
-        if (false and Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
-            ctx.may_have_pending_cycles = true;
+        if (ctx.cycles <= MaxCyclesPerBlock and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
             const const_key = BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -723,10 +719,6 @@ pub const SH4JIT = struct {
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             try b.mov(Key, sh4_mem("pc"));
-            var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
-                try b.append(.{ .Cmp = .{ .lhs = Key, .rhs = .{ .imm32 = ctx.start_pc } } }); // Forbid recursive calls.
-                break :s try b.jmp(.Equal);
-            } else {};
 
             // Compute block key
             try b.mov(.{ .reg = ReturnRegister }, Key);
@@ -744,23 +736,21 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = Architecture.ArgRegisters[0] });
             try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-            try b.call(null);
+            try b.append(.JmpRax);
             // ReturnRegister holds the cycle count
 
-            if (!Optimizations.link_small_blocks.allow_recursion)
-                skip_recursion.patch();
-
             skip.patch();
+        } else {
+            try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         }
 
-        try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
-
         try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset });
+        try b.append(.JmpRax);
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-        _ = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
+        const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
         var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
         if (BasicBlock.EnableInstrumentation) {
             block.cycles = ctx.cycles;
@@ -768,10 +758,6 @@ pub const SH4JIT = struct {
             block.len = ctx.index;
         }
 
-        try b._emitter.emit(u8, 0xFF); // jmp rax
-        try b._emitter.emit(u8, 0xE0);
-
-        const block_size = b._emitter.block_size;
         self.block_cache.cursor += block_size;
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
         self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
