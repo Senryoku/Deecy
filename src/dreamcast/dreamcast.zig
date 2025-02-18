@@ -318,7 +318,8 @@ pub const Dreamcast = struct {
         std.debug.assert(flash_bytes_read == 0x20000);
 
         // Adjust region.
-        self.flash.data[0x1A002] = @intFromEnum(self.region);
+        self.flash.data[0x1A002] = @as(u8, '0') + @intFromEnum(self.region);
+        self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(self.region);
 
         // Get current system config, update it with user preference and fix block crc.
         const system_bitmap = @as(*u512, @alignCast(@ptrCast(self.flash.data[0x1FFC0..0x20000].ptr)));
