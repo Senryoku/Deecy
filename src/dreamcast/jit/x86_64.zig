@@ -613,24 +613,8 @@ pub const Emitter = struct {
                 .Mov => |m| try self.mov(m.dst, m.src, m.preserve_flags),
                 .Cmov => |m| try self.cmov(m.condition, m.dst, m.src),
                 .Movsx => |m| try self.movsx(m.dst, m.src),
-                .Push => |reg_or_imm| {
-                    switch (reg_or_imm) {
-                        .reg8, .reg16, .reg, .reg64 => |reg| {
-                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
-                            try self.emit(u8, encode_opcode(0x50, reg));
-                        },
-                        else => return error.UnimplementedPushImmediate,
-                    }
-                },
-                .Pop => |reg_or_imm| {
-                    switch (reg_or_imm) {
-                        .reg8, .reg16, .reg, .reg64 => |reg| {
-                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
-                            try self.emit(u8, encode_opcode(0x58, reg));
-                        },
-                        else => return error.UnimplementedPushImmediate,
-                    }
-                },
+                .Push => |reg_or_imm| try self.push(reg_or_imm),
+                .Pop => |reg| try self.pop(reg),
                 .Add => |a| try self.add(a.dst, a.src),
                 .Adc => |a| try self.adc(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
@@ -759,6 +743,26 @@ pub const Emitter = struct {
     fn emit_rex_if_needed(self: *@This(), rex: REX) !void {
         if (@as(u8, @bitCast(rex)) != @as(u8, @bitCast(REX{})))
             try self.emit(u8, @bitCast(rex));
+    }
+
+    pub fn push(self: *@This(), reg_or_imm: Operand) !void {
+        switch (reg_or_imm) {
+            .reg8, .reg16, .reg, .reg64 => |reg| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
+                try self.emit(u8, encode_opcode(0x50, reg));
+            },
+            else => return error.UnimplementedPushImmediate,
+        }
+    }
+
+    pub fn pop(self: *@This(), reg: Operand) !void {
+        switch (reg) {
+            .reg8, .reg16, .reg, .reg64 => |r| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(r) });
+                try self.emit(u8, encode_opcode(0x58, r));
+            },
+            else => return error.InvalidPopOperand,
+        }
     }
 
     pub fn mov_reg_reg(self: *@This(), dst: Register, src: Register) !void {

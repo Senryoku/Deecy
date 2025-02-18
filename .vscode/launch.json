@@ -34,7 +34,8 @@
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
-			"preLaunchTask": "build"
+			"preLaunchTask": "build",
+			"ignoreSignals": ["SIGSEGV"]
 		},
 		{
 			"name": "Debug (Release)",
