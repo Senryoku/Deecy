@@ -1715,14 +1715,12 @@ pub const Holly = struct {
                 self.schedule_vblank_out();
                 return;
             },
-            .SPG_STATUS, .SPG_CONTROL, .SPG_LOAD, .FB_R_CTRL => |reg| {
+            .SPG_STATUS, .SPG_CONTROL, .SPG_LOAD, .FB_R_CTRL => {
                 self.clear_scheduled_interrupts();
                 self._get_register_from_addr(u32, addr).* = v;
                 self.schedule_interrupts();
-                if (reg == .FB_R_CTRL) self.dirty_framebuffer = true;
                 return;
             },
-            .FB_R_SIZE, .FB_R_SOF1, .FB_R_SOF2 => self.dirty_framebuffer = true,
             else => |reg| {
                 holly_log.debug("Write to Register: @{X:0>8} {s} = {X:0>8}", .{ addr, std.enums.tagName(HollyRegister, reg) orelse "Unknown", v });
             },
