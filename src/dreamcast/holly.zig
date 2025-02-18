@@ -1509,8 +1509,31 @@ pub const Holly = struct {
     }
 
     pub fn schedule_hblank_in(self: *@This()) void {
+        const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
+        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
         const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
-        self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(spg_hblank_int.hblank_in_interrupt));
+        const max_scanline: u32 = spg_load.vcount + 1;
+        const target_scanline: u32 = (switch (spg_hblank_int.hblank_int_mode) {
+            // Output when the display line is the value indicated by line_comp_val.
+            0 => @as(u32, spg_hblank_int.line_comp_val),
+            // Output every line_comp_val lines.
+            1 => @as(u32, spg_status.scanline) + spg_hblank_int.line_comp_val, // FIXME: Really?
+            // Output every line.
+            2 => @as(u32, spg_status.scanline) + 1,
+            else => std.debug.panic("Invalid hblank_int_mode: {d}", .{spg_hblank_int.hblank_int_mode}),
+        }) % max_scanline;
+
+        const line_diff: i64 = if (spg_status.scanline < target_scanline)
+            target_scanline - spg_status.scanline
+        else
+            (max_scanline - spg_status.scanline) + target_scanline;
+
+        const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
+        const hcount: i64 = spg_load.hcount + 1;
+
+        const pixels: u64 = @intCast(hcount * line_diff + pixel_diff);
+
+        self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(pixels));
     }
     pub fn schedule_vblank_in(self: *@This()) void {
         const spg_load = self.read_register(SPG_LOAD, .SPG_LOAD);
@@ -1540,19 +1563,7 @@ pub const Holly = struct {
     }
 
     pub fn on_hblank_in(self: *@This()) void {
-        const spg_status = self.read_register(SPG_STATUS, .SPG_STATUS);
-        const spg_hblank_int = self.read_register(SPG_HBLANK_INT, .SPG_HBLANK_INT);
-        switch (spg_hblank_int.hblank_int_mode) {
-            // Output when the display line is the value indicated by line_comp_val.
-            0 => if (spg_status.scanline == spg_hblank_int.line_comp_val)
-                self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
-            // Output every line_comp_val lines.
-            1 => if (spg_status.scanline % spg_hblank_int.line_comp_val == 0) // FIXME: Really?
-                self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
-            // Output every line.
-            2 => self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 }),
-            else => {},
-        }
+        self._dc.raise_normal_interrupt(.{ .HBlankIn = 1 });
         self.schedule_hblank_in();
     }
 
