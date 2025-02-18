@@ -489,6 +489,9 @@ pub const SH4JIT = struct {
     /// Used to delay reset AFTER the current block is done excecuting.
     _reset_requested: if (Optimizations.allow_immediate_reset) void else bool = if (Optimizations.allow_immediate_reset) {} else false,
 
+    enter_block_offset: usize = 0,
+    return_offset: usize = 0,
+
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
 
@@ -517,12 +520,65 @@ pub const SH4JIT = struct {
 
     fn init_compile_and_run_handler(self: *@This()) !void {
         std.debug.assert(self.block_cache.cursor == 0);
-        var b = &self._working_block;
-        b.clearRetainingCapacity();
-        try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
-        try b.call(compile_and_run);
-        const block_size = try b.emit(self.block_cache.buffer[0..]);
-        self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
+        {
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+            try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
+            try b.call(compile_and_run);
+            const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
+            try b._emitter.emit(u8, 0xFF); // jmp rax
+            try b._emitter.emit(u8, 0xE0);
+            self.block_cache.cursor += block_size + 2;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        {
+            self._working_block.clearRetainingCapacity();
+
+            const e = &self._working_block._emitter;
+            e.set_buffer(self.block_cache.buffer[self.block_cache.cursor..]);
+
+            self.enter_block_offset = self.block_cache.cursor;
+
+            try e.push(.{ .reg = .rsp });
+            if (Architecture.JITABI == .Win64)
+                try e.save_fp_registers(10);
+            for (0..SavedRegisters.len) |idx|
+                try e.push(.{ .reg = SavedRegisters[idx] });
+            try e.push(.{ .reg = .rbp });
+            if (SavedRegisters.len % 2 != 1) try e.push(.{ .reg = .rbp });
+
+            if (FastMem) {
+                const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
+                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }, false); // Provide a pointer to the base of the virtual address space
+            } else {
+                @compileError("TODO");
+                // const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr); // FIXME
+                // try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+            }
+            try e.mov(.{ .reg64 = SavedRegisters[0] }, .{ .reg64 = ArgRegisters[0] }, false); // Save the pointer to the SH4
+
+            try e.mov(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[2] }, false); // Move address of the first block
+            try e.emit(u8, 0xFF); // jmp rax
+            try e.emit(u8, 0xE0);
+
+            self.return_offset = self.block_cache.cursor + e.block_size;
+
+            try e.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"), false);
+            try e.mov(sh4_mem("_pending_cycles"), .{ .imm32 = 0 }, false);
+
+            if (SavedRegisters.len % 2 != 1) try e.pop(.{ .reg = .rbp });
+            try e.pop(.{ .reg = .rbp });
+            for (0..SavedRegisters.len) |idx|
+                try e.pop(.{ .reg = SavedRegisters[idx] });
+            if (Architecture.JITABI == .Win64)
+                try e.restore_fp_registers(10);
+            try e.pop(.{ .reg = .rsp });
+
+            try e.ret();
+
+            self.block_cache.cursor += e.block_size;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
     }
 
     pub fn request_reset(self: *@This()) void {
@@ -560,7 +616,11 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            const cycles = block.execute(self.block_cache.buffer, cpu);
+            const cycles = @as(*const fn (*sh4.SH4, *@This(), *anyopaque) u32, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
+                cpu,
+                self,
+                self.block_cache.buffer[block.offset..].ptr,
+            );
 
             if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
@@ -575,7 +635,7 @@ pub const SH4JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) u32 {
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) [*]u8 {
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
         const block = (self.compile(JITContext.init(cpu)) catch |err| retry: {
@@ -591,7 +651,7 @@ pub const SH4JIT = struct {
             sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
             std.process.exit(1);
         };
-        return block.execute(self.block_cache.buffer, cpu);
+        return self.block_cache.buffer[block.offset..].ptr;
     }
 
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
@@ -600,36 +660,6 @@ pub const SH4JIT = struct {
         var b = &self._working_block;
 
         b.clearRetainingCapacity();
-
-        // We'll be using these callee saved registers, push 'em to the stack.
-        try b.push(.{ .reg = SavedRegisters[0] });
-        try b.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes. Used in load_mem().
-
-        const optional_saved_register_offset = b.instructions.items.len;
-        // We'll turn those into NOP if they're not used.
-        try b.push(.{ .reg = SavedRegisters[2] });
-        try b.push(.{ .reg = SavedRegisters[3] });
-        if (SavedRegisters.len == 5) {
-            // Preserve alignment
-            try b.push(.{ .reg = SavedRegisters[4] });
-            try b.push(.{ .reg = SavedRegisters[4] });
-        } else if (SavedRegisters.len >= 6) {
-            try b.push(.{ .reg = SavedRegisters[4] });
-            try b.push(.{ .reg = SavedRegisters[5] });
-        }
-
-        // Save some space for potential callee-saved FP registers
-        const optional_saved_fp_register_offset = b.instructions.items.len;
-        try b.append(.Nop);
-
-        if (FastMem) {
-            const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
-            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
-        } else {
-            const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
-            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
-        }
-        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
         ctx.start_index = @intCast(b.instructions.items.len);
 
@@ -677,7 +707,7 @@ pub const SH4JIT = struct {
 
         try self.idle_speedup(&ctx);
 
-        if (Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
+        if (false and Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
             ctx.may_have_pending_cycles = true;
             const const_key = BlockCache.Key{
                 .addr = 0,
@@ -721,67 +751,27 @@ pub const SH4JIT = struct {
                 skip_recursion.patch();
 
             skip.patch();
-        } else {
-            try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
         }
 
-        if (ctx.may_have_pending_cycles) {
-            try b.add(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-            try b.append(.{ .Mov = .{ .dst = sh4_mem("_pending_cycles"), .src = .{ .imm32 = 0 }, .preserve_flags = false } });
-        }
+        try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
 
-        if (Architecture.JITABI == .Win64) {
-            // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
-            if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
-                b.instructions.items[optional_saved_fp_register_offset] = .{ .SaveFPRegisters = .{
-                    .count = @intCast(highest_saved_register_used + 1),
-                } };
-                try b.append(.{ .RestoreFPRegisters = .{
-                    .count = @intCast(highest_saved_register_used + 1),
-                } });
-            }
-        }
-
-        // Restore callee saved registers.
-        const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (SavedRegisters.len == 5) {
-            if (highest_saved_gpr_used >= 3) {
-                try b.pop(.{ .reg = SavedRegisters[4] });
-                try b.pop(.{ .reg = SavedRegisters[4] });
-            } else {
-                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
-            }
-        } else if (SavedRegisters.len >= 6) {
-            if (highest_saved_gpr_used >= 3) {
-                try b.pop(.{ .reg = SavedRegisters[5] });
-                try b.pop(.{ .reg = SavedRegisters[4] });
-            } else {
-                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
-            }
-        }
-        if (highest_saved_gpr_used >= 1) {
-            try b.pop(.{ .reg = SavedRegisters[3] });
-            try b.pop(.{ .reg = SavedRegisters[2] });
-        } else {
-            b.instructions.items[optional_saved_register_offset + 0] = .Nop;
-            b.instructions.items[optional_saved_register_offset + 1] = .Nop;
-        }
-
-        try b.pop(.{ .reg = SavedRegisters[1] });
-        try b.pop(.{ .reg = SavedRegisters[0] });
+        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset });
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-        const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        _ = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
         var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
         if (BasicBlock.EnableInstrumentation) {
             block.cycles = ctx.cycles;
             block.start_addr = ctx.entry_point_address;
             block.len = ctx.index;
         }
+
+        try b._emitter.emit(u8, 0xFF); // jmp rax
+        try b._emitter.emit(u8, 0xE0);
+
+        const block_size = b._emitter.block_size;
         self.block_cache.cursor += block_size;
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
         self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
