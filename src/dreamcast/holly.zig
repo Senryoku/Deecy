@@ -1529,9 +1529,8 @@ pub const Holly = struct {
             (max_scanline - spg_status.scanline) + target_scanline;
 
         const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
-        const hcount: i64 = spg_load.hcount + 1;
-
-        const pixels: u64 = @intCast(hcount * line_diff + pixel_diff);
+        const hcount: i64 = spg_load.hcount;
+        const pixels: u64 = @intCast((hcount + 1) * line_diff + pixel_diff);
 
         self._dc.schedule_event(.HBlankIn, self.pixels_to_sh4_cycles(pixels));
     }
@@ -1621,9 +1620,10 @@ pub const Holly = struct {
 
             spg_status.hblank = self._pixel >= spg_hblank.hbstart or self._pixel <= spg_hblank.hbend;
 
-            if (self._pixel >= spg_load.hcount) {
-                const line_count = self._pixel / spg_load.hcount;
-                self._pixel %= spg_load.hcount;
+            const hcount = spg_load.hcount + 1;
+            if (self._pixel >= hcount) {
+                const line_count = self._pixel / hcount;
+                self._pixel %= hcount;
 
                 const max_scanline = spg_load.vcount + 1;
                 spg_status.scanline +%= @intCast(line_count % max_scanline);

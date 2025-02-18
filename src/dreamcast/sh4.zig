@@ -760,7 +760,7 @@ pub const SH4 = struct {
             const cycles = scale * (tcnt + 1);
             if (self._dc) |dc|
                 dc.schedule_event(.{ .TimerUnderflow = .{ .channel = channel } }, cycles);
-            sh4_log.debug("Scheduled timer {d} underflow in {d} cycles\n", .{ channel, cycles });
+            sh4_log.debug("Scheduled timer {d} underflow in {d} cycles", .{ channel, cycles });
         }
     }
 
