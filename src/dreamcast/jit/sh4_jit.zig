@@ -2718,6 +2718,30 @@ pub fn rte(block: *IRBlock, ctx: *JITContext, _: sh4.Instr) !bool {
     return true;
 }
 
+pub fn sett(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
+    // Warning: Invalid t here if we ever cache it. (set_t/load_t)
+    var sr = sh4_mem("sr");
+    sr.mem.size = 8;
+    try block.append(.{ .Or = .{ .dst = sr, .src = .{ .imm8 = @as(u8, 1) << @bitOffsetOf(sh4.SR, "t") } } });
+    return false;
+}
+pub fn clrt(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
+    // Warning: Invalid t here if we ever cache it. (set_t/load_t)
+    var sr = sh4_mem("sr");
+    sr.mem.size = 8;
+    try block.append(.{ .And = .{ .dst = sr, .src = .{ .imm8 = ~(@as(u8, 1) << @bitOffsetOf(sh4.SR, "t")) } } });
+    return false;
+}
+
+pub fn sets(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
+    try block.append(.{ .Or = .{ .dst = sh4_mem("sr"), .src = .{ .imm32 = @as(u32, 1) << @bitOffsetOf(sh4.SR, "s") } } });
+    return false;
+}
+pub fn clrs(block: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
+    try block.append(.{ .And = .{ .dst = sh4_mem("sr"), .src = .{ .imm32 = ~(@as(u32, 1) << @bitOffsetOf(sh4.SR, "s")) } } });
+    return false;
+}
+
 pub fn ldc_Rn_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
     std.debug.assert(!std.mem.eql(u8, reg, "sr"));
     const T = struct {

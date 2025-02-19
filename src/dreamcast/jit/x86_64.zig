@@ -1144,8 +1144,6 @@ pub const Emitter = struct {
 
     // FIXME: I don't have a better name.
     pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm_opcode: RegOpcode, dst: Operand, src: Operand) !void {
-        _ = mr_opcode_8;
-
         switch (dst) {
             .reg8 => |dst_reg| {
                 switch (src) {
@@ -1221,6 +1219,16 @@ pub const Emitter = struct {
             },
             .mem => |dst_m| {
                 switch (src) {
+                    .reg8 => |src_reg| {
+                        if (dst_m.size != 8) return error.OperandSizeMismatch;
+                        if (src_reg.require_rex_8bit()) {
+                            try self.emit(REX, .{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                        } else {
+                            try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                        }
+                        try self.emit(u8, mr_opcode_8);
+                        try self.emit_mem_addressing(encode(src_reg), dst_m);
+                    },
                     .reg => |src_reg| {
                         switch (dst_m.size) {
                             32, 64 => {
@@ -1231,9 +1239,13 @@ pub const Emitter = struct {
                             else => return error.OperandSizeMismatch,
                         }
                     },
-                    .imm32 => |imm| {
-                        try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm);
+                    .imm8 => |imm| {
+                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+                        try self.emit(u8, 0x80);
+                        try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
+                        try self.emit(u8, imm);
                     },
+                    .imm32 => |imm| try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm),
                     else => return error.InvalidSource,
                 }
             },

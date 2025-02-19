@@ -201,8 +201,8 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0000000000001011, .mask = 0b0000000000000000, .fn_ = interpreter.rts, .name = "rts", .is_branch = true, .issue_cycles = 2, .latency_cycles = 3, .jit_emit_fn = sh4_jit.rts },
 
     .{ .code = 0b0000000000101000, .mask = 0b0000000000000000, .fn_ = interpreter.clrmac, .name = "clrmac", .latency_cycles = 3, .jit_emit_fn = sh4_jit.clrmac, .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrt, .name = "clrt", .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000001001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrs, .name = "clrs", .jit_emit_fn = sh4_jit.clrs, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000000001000, .mask = 0b0000000000000000, .fn_ = interpreter.clrt, .name = "clrt", .jit_emit_fn = sh4_jit.clrt, .access = .{ .r = .{}, .w = .{} } },
 
     // NOTE: These two might switch register banks.
     .{ .code = 0b0100000000001110, .mask = 0b0000111100000000, .fn_ = interpreter.ldc_Rn_SR, .name = "ldc Rn,SR", .privileged = true, .issue_cycles = 4, .latency_cycles = 4, .jit_emit_fn = sh4_jit.ldc_Rn_SR, .access = .{ .r = .{ .rn = true }, .w = .{} } },
@@ -236,8 +236,8 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0000000010110011, .mask = 0b0000111100000000, .fn_ = interpreter.ocbwb_atRn, .name = "ocbwb @Rn", .access = .{ .r = .{ .rn = true } } },
     .{ .code = 0b0000000010000011, .mask = 0b0000111100000000, .fn_ = interpreter.pref_atRn, .name = "pref @Rn", .access = .{ .r = .{ .rn = true } } },
     .{ .code = 0b0000000000101011, .mask = 0b0000000000000000, .fn_ = interpreter.rte, .name = "rte", .is_branch = true, .privileged = true, .issue_cycles = 5, .latency_cycles = 5, .jit_emit_fn = sh4_jit.rte },
-    .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = interpreter.sets, .name = "sets", .access = .{ .r = .{}, .w = .{} } },
-    .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = interpreter.sett, .name = "sett", .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000001011000, .mask = 0b0000000000000000, .fn_ = interpreter.sets, .name = "sets", .jit_emit_fn = sh4_jit.sets, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b0000000000011000, .mask = 0b0000000000000000, .fn_ = interpreter.sett, .name = "sett", .jit_emit_fn = sh4_jit.sett, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b0000000000011011, .mask = 0b0000000000000000, .fn_ = interpreter.sleep, .name = "sleep", .privileged = true, .issue_cycles = 4, .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
 
     .{ .code = 0b0000000000000010, .mask = 0b0000111100000000, .fn_ = interpreter.stc_SR_Rn, .name = "stc SR,Rn", .privileged = true, .issue_cycles = 2, .latency_cycles = 2, .jit_emit_fn = sh4_jit.stc_Reg_Rn("sr"), .access = .{ .r = .{}, .w = .{ .rn = true } } },
