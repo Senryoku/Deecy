@@ -667,9 +667,7 @@ pub const SH4JIT = struct {
         if (!branch) {
             try b.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
         } else if (ctx.outdated_pc) {
-            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
-            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = 2 });
-            try b.mov(sh4_mem("pc"), .{ .reg = ReturnRegister });
+            try b.add(sh4_mem("pc"), .{ .imm32 = 2 });
         }
 
         try ctx.gpr_cache.commit_and_invalidate_all(b);
@@ -685,7 +683,7 @@ pub const SH4JIT = struct {
                 .pr = if (ctx.fpscr_pr == .Single) 0 else 1,
                 .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
             };
-            const Key: JIT.Operand = .{ .reg = Architecture.ArgRegisters[0] };
+            const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
             try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
             try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
@@ -710,10 +708,10 @@ pub const SH4JIT = struct {
             if (@sizeOf(BasicBlock) != 4)
                 @compileError("TODO: Implement with instrumentation enabled (or disable the optimisation)");
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.blocks.ptr) });
-            try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, .{ .mem = .{ .base = ReturnRegister, .index = Key.reg, .scale = ._4, .size = 32 } });
+            try b.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = ReturnRegister, .index = Key.reg, .scale = ._4, .size = 32 } });
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
-            try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = Architecture.ArgRegisters[0] });
-            try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
+            try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
+            try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
             try b.call(null);
             // ReturnRegister holds the cycle count
 
