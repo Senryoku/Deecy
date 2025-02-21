@@ -526,7 +526,7 @@ pub const AICA = struct {
     pub const RAMSize = 0x200000;
 
     pub const ARM7CycleRatio = 66;
-    pub const SH4CyclesPerSample = @divTrunc(200_000_000, SampleRate) + 1;
+    pub const SH4CyclesPerSample = @divTrunc(Dreamcast.SH4Clock, SampleRate) + 1;
 
     arm7: arm7.ARM7 = undefined,
     enable_arm_jit: bool = true,

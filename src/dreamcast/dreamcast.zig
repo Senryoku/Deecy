@@ -110,6 +110,7 @@ pub const Dreamcast = struct {
     pub const RAMSize = 0x100_0000;
     pub const VRAMSize = Holly.VRAMSize;
     pub const ARAMSize = AICA.RAMSize;
+    pub const SH4Clock = 200_000_000;
 
     cpu: SH4,
     gpu: Holly = undefined,
