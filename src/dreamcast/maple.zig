@@ -427,7 +427,7 @@ pub const VMU = struct {
         _ = partition_number;
 
         switch (function) {
-            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 const value: GetMediaInformationResponse = .{
                     .total_size = BlockCount - 1,
                     .partition_number = 0x0000,
@@ -551,6 +551,7 @@ const MaplePort = struct {
     /// Returns the number of 32bytes words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
+        std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = data[2];
         maple_log.debug("  Dest: {X:0>8}, Command: {any}, FunctionType: {X:0>8}", .{ return_addr, command, function_type });
@@ -604,7 +605,7 @@ const MaplePort = struct {
                             if (payload_size > 0) {
                                 dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 1 }));
                                 dc.cpu.write_physical(u32, return_addr + 4, function_type);
-                                return payload_size + 2;
+                                return 1 + payload_size + 1;
                             } else {
                                 dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                                 return 1;
