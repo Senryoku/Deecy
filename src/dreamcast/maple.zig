@@ -602,7 +602,7 @@ const MaplePort = struct {
                             const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size + 1 }));
                                 dc.cpu.write_physical(u32, return_addr + 4, function_type);
                                 return 3 + payload_size + 2;
                             } else {
@@ -628,7 +628,7 @@ const MaplePort = struct {
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size + 2 }));
                         dc.cpu.write_physical(u32, return_addr + 4, function_type);
                         dc.cpu.write_physical(u32, return_addr + 8, data[3]); // Header repeating the location.
                         return 3 + payload_size + 3;
