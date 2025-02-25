@@ -656,6 +656,7 @@ pub fn draw_game_library(self: *@This()) !void {
 
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
+        zgui.alignTextToFramePadding();
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
