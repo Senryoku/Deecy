@@ -556,15 +556,18 @@ const MaplePort = struct {
         const function_type = data[2];
         maple_log.debug("  Dest: {X:0>8}, Command: {any}, FunctionType: {X:0>8}", .{ return_addr, command, function_type });
 
-        // Note: The sender address should also include the sub-peripheral bit when appropriate.
+        // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
+        // "When a main peripheral identifies itself in the response to a command, it sets the sub-peripheral bit for each sub-peripheral that is connected in addition to bit 5."
         var sender_address = command.recipent_address;
-        for (0..5) |i| {
-            if (self.subperipherals[i] != null)
-                sender_address |= @as(u8, 1) << @intCast(i);
+        if (sender_address & 0b100000 != 0) {
+            for (0..5) |i| {
+                if (self.subperipherals[i] != null)
+                    sender_address |= @as(u8, 1) << @intCast(i);
+            }
         }
 
         const maybe_target = switch (command.recipent_address & 0b11111) {
-            0 => &self.main,
+            0 => &self.main, // Equivalent to setting bit 5.
             else => &self.subperipherals[@ctz(command.recipent_address)],
         };
         if (maybe_target.*) |*target| {
