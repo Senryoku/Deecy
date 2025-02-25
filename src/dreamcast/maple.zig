@@ -3,7 +3,8 @@ const termcolor = @import("termcolor");
 
 const maple_log = std.log.scoped(.maple);
 
-const Dreamcast = @import("dreamcast.zig").Dreamcast;
+const DreamcastModule = @import("dreamcast.zig");
+const Dreamcast = DreamcastModule.Dreamcast;
 
 const PatternSelection = enum(u3) {
     Normal = 0b000,
@@ -426,7 +427,7 @@ pub const VMU = struct {
         _ = partition_number;
 
         switch (function) {
-            @as(u32, @bitCast(FunctionCodesMask{ .storage = 1 })) => {
+            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 const value: GetMediaInformationResponse = .{
                     .total_size = BlockCount - 1,
                     .partition_number = 0x0000,
@@ -447,14 +448,15 @@ pub const VMU = struct {
         return 0;
     }
 
+    /// Returns payload size in 32-bit words
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
         std.debug.assert(partition == 0);
         switch (function) {
             (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 if (block_num >= BlockCount)
                     maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
-                const start: u32 = (BlockSize / ReadAccessPerBlock) * phase;
                 const len = BlockSize / ReadAccessPerBlock;
+                const start: u32 = len * phase;
                 @memcpy(dest[0..len], self.blocks[block_num % BlockCount][start .. start + len]);
                 return len / 4;
             },
@@ -463,7 +465,8 @@ pub const VMU = struct {
         return 0;
     }
 
-    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
+    /// Returns payload size in 32-bit words
+    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         switch (function) {
             (FunctionCodesMask{ .screen = 1 }).as_u32() => {
                 //  - Partition is the screen number, should always be zero.
@@ -474,6 +477,7 @@ pub const VMU = struct {
                 if (self.on_screen_update) |callback| {
                     callback.function(callback.userdata, @ptrCast(data.ptr));
                 }
+                return 48 * 32 / 8 / 4;
             },
             (FunctionCodesMask{ .storage = 1 }).as_u32() => {
                 maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data length: {d} bytes)"), .{ partition, block_num, phase, data.len * 4 });
@@ -483,9 +487,11 @@ pub const VMU = struct {
                 @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
                 self.last_unsaved_change = std.time.timestamp();
+                return @intCast(size / 4);
             },
             else => maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function}),
         }
+        return 0;
     }
 
     pub fn serialize(_: @This(), _: anytype) !usize {
@@ -517,11 +523,12 @@ const Peripheral = union(enum) {
         };
     }
 
-    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) void {
+    pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         switch (self.*) {
-            .VMU => |*v| v.block_write(function, partition, phase, block_num, data),
+            .VMU => |*v| return v.block_write(function, partition, phase, block_num, data),
             else => maple_log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {any}"), .{self.tag()}),
         }
+        return 0;
     }
 
     pub fn serialize(self: @This(), writer: anytype) !usize {
@@ -541,21 +548,26 @@ const MaplePort = struct {
     main: ?Peripheral = null,
     subperipherals: [5]?Peripheral = .{null} ** 5,
 
+    /// Returns the number of 32bytes words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
         const return_addr = data[0];
+        std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = data[2];
-        maple_log.debug("    Command: {any}", .{command});
+        maple_log.debug("  Dest: {X:0>8}, Command: {any}, FunctionType: {X:0>8}", .{ return_addr, command, function_type });
 
-        // Note: The sender address should also include the sub-peripheral bit when appropriate.
+        // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
+        // "When a main peripheral identifies itself in the response to a command, it sets the sub-peripheral bit for each sub-peripheral that is connected in addition to bit 5."
         var sender_address = command.recipent_address;
-        for (0..5) |i| {
-            if (self.subperipherals[i] != null)
-                sender_address |= @as(u8, 1) << @intCast(i);
+        if (sender_address & 0b100000 != 0) {
+            for (0..5) |i| {
+                if (self.subperipherals[i] != null)
+                    sender_address |= @as(u8, 1) << @intCast(i);
+            }
         }
 
         const maybe_target = switch (command.recipent_address & 0b11111) {
-            0 => &self.main,
+            0 => &self.main, // Equivalent to setting bit 5.
             else => &self.subperipherals[@ctz(command.recipent_address)],
         };
         if (maybe_target.*) |*target| {
@@ -565,6 +577,7 @@ const MaplePort = struct {
                     dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
                     const ptr = dc.cpu._get_memory(return_addr + 4);
                     @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
+                    return 1 + @sizeOf(DeviceInfoPayload) / 4;
                 },
                 .GetCondition => {
                     switch (target.*) {
@@ -575,6 +588,7 @@ const MaplePort = struct {
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
                             const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
+                            return 1 + condition.len;
                         },
                         else => {
                             maple_log.err(termcolor.red("TODO: GetCondition for {any}"), .{target.tag()});
@@ -592,15 +606,18 @@ const MaplePort = struct {
                             const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 1 }));
                                 dc.cpu.write_physical(u32, return_addr + 4, function_type);
+                                return 1 + payload_size + 1;
                             } else {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                return 1;
                             }
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            return 1;
                         },
                     }
                 },
@@ -615,11 +632,13 @@ const MaplePort = struct {
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = payload_size }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 2 }));
                         dc.cpu.write_physical(u32, return_addr + 4, function_type);
                         dc.cpu.write_physical(u32, return_addr + 8, data[3]); // Header repeating the location.
+                        return 1 + payload_size + 2;
                     } else {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        return 1;
                     }
                 },
                 .BlockWrite => {
@@ -627,22 +646,24 @@ const MaplePort = struct {
                     const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
-                    target.block_write(function_type, partition, phase, block_num, write_data);
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    const words_written = target.block_write(function_type, partition, phase, block_num, write_data);
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    return 1 + words_written;
                 },
                 .GetLastError => {
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    return 1;
                 },
                 else => {
                     maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command) });
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = command.recipent_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    return 1;
                 },
             }
         } else {
             dc.cpu.write_physical(u32, return_addr, 0xFFFFFFFF); // "No connection"
+            return 1;
         }
-
-        return 2 + command.payload_length;
     }
 
     pub fn serialize(self: @This(), writer: anytype) !usize {
@@ -717,7 +738,13 @@ pub const MapleHost = struct {
     pub fn transfer(self: *MapleHost, dc: *Dreamcast, data: [*]u32) void {
         var idx: u32 = 0;
 
-        defer dc.schedule_interrupt(.{ .EoD_Maple = 1 }, 200); // FIXME: Random delay
+        var transferred_words: usize = 0;
+        defer {
+            transferred_words += idx; // Add the words constituting the command list to the total transferred.
+            const cycles: u32 = @intCast(4 * transferred_words * Dreamcast.SH4Clock / (2 * 1024 * 1024 / 8)); // 2Mb/s?
+            dc.schedule_interrupt(.{ .EoD_Maple = 1 }, cycles);
+            maple_log.debug("    Transferred {d} words, scheduled interrupt in {d} cycles", .{ transferred_words, cycles });
+        }
 
         // A transfer can have a maximum of 1024 words.
         while (idx < 1024) {
@@ -728,17 +755,15 @@ pub const MapleHost = struct {
 
             switch (instr.pattern) {
                 .Normal => {
-                    idx += self.ports[instr.port_select].handle_command(dc, data[idx..]);
+                    transferred_words += self.ports[instr.port_select].handle_command(dc, data[idx..]);
+                    idx += instr.transfer_length + 2;
                 },
                 .NOP, .RESET => {},
-                else => {
-                    maple_log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern});
-                },
+                else => maple_log.warn(termcolor.yellow("[Maple] Unimplemented pattern: {}. Ignoring it, hopefully the payload is empty :D"), .{instr.pattern}),
             }
 
-            if (instr.end_flag == 1) {
+            if (instr.end_flag == 1)
                 return;
-            }
         }
     }
 
