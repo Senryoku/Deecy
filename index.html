@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/png" href="logo-256.png" sizes="256x256" />
+		<link rel="icon" type="image/svg+xml" href="logo.svg" />
+
+		<title>Deecy - Dreamcast Emulator</title>
+		<style>
+			:root {
+				--accent-gold: #f7a41d;
+				--accent-blue: #3b75c2;
+				--accent-blue-high: #558fdb;
+			}
+
+			* {
+				box-sizing: border-box;
+				margin: 0;
+				padding: 0;
+			}
+
+			body {
+				font-family: Arial, sans-serif;
+				background: linear-gradient(135deg, #1e1e1e, #2a2a2a);
+				color: #eee;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				padding-left: 20px;
+				padding-right: 20px;
+				min-height: 100vh;
+			}
+
+			/* Firefox specific */
+			@-moz-document url-prefix() {
+				body {
+					background: #1e1e1e;
+				}
+			}
+
+			.container {
+				background: #242424;
+				padding: 30px;
+				box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+				max-width: 800px;
+				width: 100%;
+				margin-left: 20px;
+				margin-right: 20px;
+			}
+
+			@media (orientation: portrait) {
+				body {
+					padding: 0;
+				}
+
+				.container {
+					margin: 0;
+				}
+			}
+
+			a {
+				color: var(--accent-blue-high);
+				text-decoration: none;
+			}
+
+			a:hover {
+				color: var(--accent-blue);
+				text-decoration: underline;
+			}
+
+			header {
+				text-align: center;
+				margin-bottom: 20px;
+			}
+
+			header img {
+				display: block;
+				margin: 0 auto;
+			}
+
+			header h1 {
+				margin-top: 10px;
+				font-size: 2em;
+				color: #fff;
+			}
+
+			p.description {
+				text-align: center;
+				margin-bottom: 20px;
+				font-size: 1.1em;
+				color: #ccc;
+			}
+
+			.screenshot-container {
+				overflow: hidden;
+				border-radius: 4px;
+				margin: 10px auto;
+				max-width: 100%;
+				aspect-ratio: 4/3;
+			}
+
+			.screenshot {
+				display: block;
+				width: 100%;
+				transform: scale(1.05);
+			}
+
+			section {
+				margin-bottom: 20px;
+			}
+
+			section p {
+				color: #ccc;
+				padding: 0.4em;
+				padding-left: 1.5em;
+				padding-right: 1.5em;
+			}
+
+			footer p {
+				text-align: center;
+				color: #ccc;
+			}
+
+			section h2 {
+				font-variant: small-caps;
+				margin-bottom: 10px;
+				border-bottom: 2px solid var(--accent-gold);
+				display: inline-block;
+				padding-bottom: 5px;
+				color: #fff;
+			}
+
+			#download-buttons {
+				text-align: center;
+				min-height: 111px;
+			}
+
+			.download-item {
+				display: inline-block;
+				margin: 10px;
+			}
+
+			.download-button {
+				display: inline-block;
+				margin: 8px;
+				padding: 10px 20px;
+				background-color: var(--accent-blue);
+				color: #fff;
+				text-decoration: none;
+				border-radius: 4px;
+				transition: background 0.2s ease;
+				font-size: 1em;
+			}
+
+			.download-button:hover {
+				color: #fff;
+				background-color: #345ea0;
+				text-decoration: none;
+			}
+
+			.download-button.preferred {
+				font-size: 1.2em;
+			}
+
+			.download-count {
+				font-size: 0.75em;
+				color: #aaa;
+			}
+
+			ul {
+				list-style: disc;
+				padding-left: 1.5em;
+				margin: 0 auto;
+				color: #ccc;
+			}
+
+			li {
+				margin: 0.3em;
+			}
+
+			code {
+				background-color: #444;
+				padding: 1px 4px;
+				border-radius: 3px;
+				font-family: Consolas, monospace;
+				color: #eee;
+			}
+
+			.loading,
+			.error {
+				text-align: center;
+				color: #aaa;
+				font-style: italic;
+			}
+
+			footer {
+				text-align: center;
+				font-size: 0.9em;
+				color: #bbb;
+				border-top: 1px solid #444;
+				padding-top: 10px;
+				margin-top: 5em;
+			}
+
+			summary {
+				font-size: 1em;
+				cursor: pointer;
+				color: var(--accent-blue);
+				margin-bottom: 10px;
+			}
+
+			.previous-releases table {
+				width: 100%;
+				border-collapse: collapse;
+				margin-top: 10px;
+			}
+
+			.previous-releases th,
+			.previous-releases td {
+				padding: 8px;
+				text-align: center;
+				border-bottom: 1px solid #444;
+				font-size: 0.9em;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<header>
+				<img src="logo.svg" width="128" height="128" alt="Deecy Logo" />
+				<h1>Deecy</h1>
+			</header>
+
+			<p class="description">
+				Open source Dreamcast emulator for Windows and Linux
+			</p>
+
+			<div class="screenshot-container">
+				<img
+					src="screenshot.webp"
+					alt="Soul Calibur running in Deecy"
+					class="screenshot"
+				/>
+			</div>
+
+			<section class="download">
+				<h2>Download</h2>
+				<div id="download-buttons">
+					<p class="loading">Loading latest release...</p>
+				</div>
+				<!--
+				<details class="previous-releases">
+					<summary>Previous Releases</summary>
+					<table id="previous-releases-table">
+						<thead>
+							<tr>
+								<th>Version</th>
+								<th>Release Date</th>
+								<th>Downloads</th>
+							</tr>
+						</thead>
+						<tbody></tbody>
+					</table>
+				</details>
+        		-->
+				<a
+					class="all-releases-link"
+					href="https://github.com/Senryoku/Deecy/releases"
+					target="_blank"
+				>
+					Release notes and older versions
+				</a>
+			</section>
+
+			<section class="installation">
+				<h2>Installation</h2>
+				<ul>
+					<li>
+						Download the latest version for your platform above and
+						decompress the zip archive.
+					</li>
+					<li>
+						Copy your bios and flash dumps as
+						<code>dc_boot.bin</code> and
+						<code>dc_flash.bin</code> to the
+						<code>data</code> folder.
+					</li>
+					<li>
+						Launch the Deecy executable. Click
+						<code>Change Directory</code> to select the folder where
+						you store your disc images.
+					</li>
+				</ul>
+			</section>
+
+			<section class="compatibility">
+				<h2>Compatibility</h2>
+				<p>
+					Being very new, Deecy doesn't have a comprehensive list of
+					supported games or shortcomings yet. I am currently tracking
+					the state of some games here:
+					<a
+						href="https://github.com/Senryoku/Deecy/issues/33"
+						target="_blank"
+					>
+						Issue #33
+					</a>
+				</p>
+				<p>
+					Report bugs on
+					<a
+						href="https://github.com/Senryoku/Deecy/issues"
+						target="_blank"
+					>
+						GitHub issue tracker</a
+					>.
+				</p>
+			</section>
+
+			<section class="sponsor">
+				<h2>Sponsor Me</h2>
+				<div style="display: flex; margin-left: 20px">
+					<a
+						href="https://github.com/sponsors/Senryoku"
+						target="_blank"
+					>
+						<img
+							src="https://avatars.githubusercontent.com/u/1338143?v=4"
+							alt="Senryoku Avatar"
+							width="96"
+							height="96"
+							style="border-radius: 50%"
+					/></a>
+					<div>
+						<p>
+							If you like the project and want to support its
+							development, please consider a one-time donation
+							<a
+								href="https://github.com/sponsors/Senryoku"
+								target="_blank"
+								>on GitHub Sponsor</a
+							>. Your support encourages me to keep improving
+							Deecy! :)
+						</p>
+						<p>Thank you! — Sen</p>
+					</div>
+				</div>
+			</section>
+
+			<footer>
+				<p>
+					View source on
+					<a href="https://github.com/Senryoku/Deecy" target="_blank"
+						>GitHub</a
+					>.
+				</p>
+			</footer>
+		</div>
+
+		<script>
+			function extractPlatform(filename) {
+				const match = filename.match(
+					/deecy(?:-x86_64)?[-_]?([a-z]+)\.zip/i
+				);
+				return match
+					? match[1].charAt(0).toUpperCase() + match[1].slice(1)
+					: filename.replace(".zip", "");
+			}
+
+			function detectUserOS() {
+				const ua = navigator.userAgent;
+				return ua.includes("Windows")
+					? "Windows"
+					: ua.includes("Linux")
+					? "Linux"
+					: "Other";
+			}
+
+			function populatePreviousVersions(releases) {
+				const tableBody = document.querySelector(
+					"#previous-releases-table tbody"
+				);
+				releases.slice(1, 4).forEach((release) => {
+					const row = document.createElement("tr");
+					row.innerHTML = `
+              <td>${release.tag_name}</td>
+              <td>${new Date(release.published_at).toLocaleDateString()}</td>
+              <td>
+                ${release.assets
+					.filter((asset) =>
+						asset.name.toLowerCase().endsWith(".zip")
+					)
+					.map(
+						(asset) =>
+							`<a href="${
+								asset.browser_download_url
+							}" target="_blank">${extractPlatform(
+								asset.name
+							)}</a>`
+					)
+					.join(" | ")}
+              </td>
+            `;
+					tableBody.appendChild(row);
+				});
+			}
+
+			const userOS = detectUserOS();
+
+			fetch("https://api.github.com/repos/Senryoku/Deecy/releases")
+				.then((res) => res.json())
+				.then((releases) => {
+					const latest = releases[0];
+					const container =
+						document.getElementById("download-buttons");
+					container.innerHTML = "";
+
+					const info = document.createElement("div");
+					info.className = "release-info";
+					info.textContent = `Latest release: ${
+						latest.tag_name
+					} — ${new Date(latest.published_at).toLocaleDateString()}`;
+					container.appendChild(info);
+
+					latest.assets
+						.filter((asset) =>
+							asset.name.toLowerCase().endsWith(".zip")
+						)
+						.sort((a, b) =>
+							extractPlatform(a.name) === userOS
+								? -1
+								: extractPlatform(b.name) === userOS
+								? 1
+								: 0
+						)
+						.forEach((asset) => {
+							const platform = extractPlatform(asset.name);
+							const item = document.createElement("div");
+							item.className = "download-item";
+
+							const button = document.createElement("a");
+							button.href = asset.browser_download_url;
+							button.target = "_blank";
+							button.className = "download-button";
+							if (platform === userOS)
+								button.classList.add("preferred");
+							button.textContent = platform;
+							item.appendChild(button);
+
+							const downloads = document.createElement("div");
+							downloads.className = "download-count";
+							downloads.textContent = `Downloads: ${asset.download_count}`;
+							item.appendChild(downloads);
+
+							container.appendChild(item);
+						});
+
+					// populatePreviousVersions(releases);
+				})
+				.catch(() => {
+					document.getElementById("download-buttons").innerHTML =
+						'<p class="error">Failed to load releases.</p>';
+				});
+		</script>
+	</body>
+</html>
