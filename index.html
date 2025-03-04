@@ -49,6 +49,11 @@
 				margin-right: 20px;
 			}
 
+			.responsive-flex {
+				display: flex;
+				margin-left: 20px;
+			}
+
 			@media (orientation: portrait) {
 				body {
 					padding: 0;
@@ -56,6 +61,12 @@
 
 				.container {
 					margin: 0;
+				}
+
+				.responsive-flex {
+					flex-direction: column;
+					align-items: center;
+					margin-left: 0;
 				}
 			}
 
@@ -318,9 +329,9 @@
 				</p>
 			</section>
 
-			<section class="sponsor">
+			<section>
 				<h2>Sponsor Me</h2>
-				<div style="display: flex; margin-left: 20px">
+				<div class="responsive-flex">
 					<a
 						href="https://github.com/sponsors/Senryoku"
 						target="_blank"
