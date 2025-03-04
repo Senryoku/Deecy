@@ -57,7 +57,7 @@ pub const Disc = union(enum) {
         return lba + 0x96;
     }
 
-    pub fn load_file(self: *const @This(), filename: []const u8, dest: []u8) !u32 {
+    pub fn load_file(self: *@This(), filename: []const u8, dest: []u8) !u32 {
         const pvd = try self.get_primary_volume_descriptor();
         std.debug.assert(pvd.root_directory_entry.length <= 2048);
         const root_directory_fad = lba_to_fad(pvd.root_directory_entry.location);
@@ -76,7 +76,7 @@ pub const Disc = union(enum) {
     }
 
     /// Bad wrapper around load_sectors. Don't use that in performance sensitive code :)
-    pub fn load_bytes(self: *const @This(), fad: u32, length: u32, dest: []u8) !u32 {
+    pub fn load_bytes(self: *@This(), fad: u32, length: u32, dest: []u8) !u32 {
         var remaining = length;
         var curr_sector = fad;
         while (remaining > 0) {
@@ -87,33 +87,33 @@ pub const Disc = union(enum) {
     }
 
     /// Returns a view into a single sector
-    pub fn read_sector(self: *const @This(), fad: u32) ![]const u8 {
+    pub fn read_sector(self: *@This(), fad: u32) ![]const u8 {
         switch (self.*) {
-            inline else => |d| return d.read_sector(fad),
+            inline else => |*d| return d.read_sector(fad),
         }
     }
 
-    pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+    pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
         switch (self.*) {
-            inline else => |d| return d.load_sectors(fad, count, dest),
+            inline else => |*d| return d.load_sectors(fad, count, dest),
         }
     }
 
-    pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
+    pub fn load_sectors_raw(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
         switch (self.*) {
-            inline else => |d| return d.load_sectors_raw(fad, count, dest),
+            inline else => |*d| return d.load_sectors_raw(fad, count, dest),
         }
     }
 
     pub fn get_session_count(self: *const @This()) u32 {
         switch (self.*) {
-            inline else => |d| return d.get_session_count(),
+            inline else => |*d| return d.get_session_count(),
         }
     }
 
     pub fn get_session(self: *const @This(), session_number: u32) Session {
         switch (self.*) {
-            inline else => |d| return d.get_session(session_number),
+            inline else => |*d| return d.get_session(session_number),
         }
     }
 
@@ -127,7 +127,7 @@ pub const Disc = union(enum) {
         }
     }
 
-    pub fn get_primary_volume_descriptor(self: *const @This()) !*const CD.PVD {
+    pub fn get_primary_volume_descriptor(self: *@This()) !*const CD.PVD {
         if (self.get_first_data_track()) |t| {
             const sector = try self.read_sector(t.fad + 0x10);
             const pvd: *const CD.PVD = @ptrCast(@alignCast(sector.ptr));
@@ -138,7 +138,7 @@ pub const Disc = union(enum) {
         return error.MissingDataTrack;
     }
 
-    pub fn get_product_id(self: *const @This()) ?[]const u8 {
+    pub fn get_product_id(self: *@This()) ?[]const u8 {
         if (self.get_first_data_track()) |t| {
             const sector = self.read_sector(t.fad) catch return null;
             return sector[0x40..0x50];
@@ -146,7 +146,7 @@ pub const Disc = union(enum) {
         return null;
     }
 
-    pub fn get_region(self: *const @This()) Region {
+    pub fn get_region(self: *@This()) Region {
         if (self.get_first_data_track()) |t| {
             const sector = self.read_sector(t.fad) catch return .Unknown;
             if (sector[0x30] == 'J')
@@ -159,7 +159,7 @@ pub const Disc = union(enum) {
         return .Unknown;
     }
 
-    pub fn get_product_name(self: *const @This()) ?[]const u8 {
+    pub fn get_product_name(self: *@This()) ?[]const u8 {
         if (self.get_first_data_track()) |t| {
             const sector = self.read_sector(t.fad) catch return null;
             const name = sector[0x80..0x90];

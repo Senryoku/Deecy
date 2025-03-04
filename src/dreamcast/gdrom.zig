@@ -906,7 +906,7 @@ fn cd_read_pio_fetch(self: *@This()) !void {
 }
 
 fn cd_read_fetch(self: *@This(), data_queue: *std.fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
-    if (self.disc) |disc| {
+    if (self.disc) |*disc| {
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)
             const bytes_written = disc.load_sectors_raw(start_addr, transfer_length, try data_queue.writableWithSize(2352 * transfer_length));

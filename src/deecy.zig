@@ -747,17 +747,17 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
     }
 }
 
-pub fn get_product_name(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disc) |disc| disc.get_product_name() else null;
+pub fn get_product_name(self: *@This()) ?[]const u8 {
+    return if (self.dc.gdrom.disc) |*disc| disc.get_product_name() else null;
 }
 
-pub fn get_product_id(self: *const @This()) ?[]const u8 {
-    return if (self.dc.gdrom.disc) |disc| disc.get_product_id() else null;
+pub fn get_product_id(self: *@This()) ?[]const u8 {
+    return if (self.dc.gdrom.disc) |*disc| disc.get_product_id() else null;
 }
 
 /// Game specific sub directory name (for VMUs, save states...)
 /// Caller owns the returned string.
-fn userdata_game_directory(self: *const @This()) ![]const u8 {
+fn userdata_game_directory(self: *@This()) ![]const u8 {
     const product_id = self.get_product_id() orelse "default";
     const product_name = self.get_product_name() orelse "default";
     const path = try std.fmt.allocPrint(self._allocator, "./userdata/{s}[{s}]", .{ product_name, product_id });
@@ -802,7 +802,7 @@ pub fn on_game_load(self: *@This()) !void {
 }
 
 // Caller owns the returned ArrayList
-fn save_state_path(self: *const @This(), index: usize) !std.ArrayList(u8) {
+fn save_state_path(self: *@This(), index: usize) !std.ArrayList(u8) {
     const game_dir = try self.userdata_game_directory();
     defer self._allocator.free(game_dir);
     var save_slot_path = std.ArrayList(u8).init(self._allocator);

@@ -59,11 +59,11 @@ pub fn deinit(self: *@This()) void {
     self.views.deinit();
 }
 
-pub fn create_full_view(self: *@This()) ![]const u8 {
+pub fn create_full_view(self: *@This()) ![]u8 {
     return try self.create_view(0, if (builtin.os.tag != .windows) (try self.file.stat()).size else 0);
 }
 
-pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
+pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
     if (builtin.os.tag != .windows) {
         const alignment = std.mem.page_size;
         const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
@@ -104,7 +104,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]const u8 {
                     break :sz size;
                 }
             };
-            return @as([*]const u8, @ptrCast(ptr))[adjustment .. adjustment + final_size];
+            return @as([*]u8, @ptrCast(ptr))[adjustment .. adjustment + final_size];
         } else {
             log.err("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
             return error.MapViewOfFileError;

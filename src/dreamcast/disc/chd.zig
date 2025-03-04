@@ -21,6 +21,7 @@ unit_bytes: u32 = undefined,
 map: []MapEntry = undefined,
 
 track_offsets: std.ArrayList(u32),
+track_data: std.ArrayList([]u8),
 
 _file: MemoryMappedFile,
 _file_view: []const u8 = undefined,
@@ -107,6 +108,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         .tracks = std.ArrayList(Track).init(allocator),
         .sessions = std.ArrayList(Session).init(allocator),
         .track_offsets = std.ArrayList(u32).init(allocator),
+        .track_data = std.ArrayList([]u8).init(allocator),
         ._file = try MemoryMappedFile.init(filepath, allocator),
         ._allocator = allocator,
     };
@@ -216,6 +218,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CDMaxSectorBytes else return error.UnsupportedFormat;
                         const data = try host_memory.virtual_alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
+                        try self.track_data.append(data);
                         try self.tracks.append(.{
                             .num = track_num,
                             .fad = current_fad,
@@ -249,8 +252,9 @@ pub fn deinit(self: *@This()) void {
 
     self.sessions.deinit();
     self.track_offsets.deinit();
-    for (self.tracks.items) |track|
-        host_memory.virtual_dealloc(@constCast(track.data));
+    for (self.track_data.items) |track_data|
+        host_memory.virtual_dealloc(track_data);
+    self.track_data.deinit();
     self.tracks.deinit();
     self._file.deinit();
 }
@@ -263,14 +267,14 @@ pub fn get_first_data_track(self: *const @This()) ?Track {
     return null;
 }
 
-pub fn read_sector(self: *const @This(), fad: u32) ![]const u8 {
-    try @constCast(self).decompress_sectors(fad, 1);
+pub fn read_sector(self: *@This(), fad: u32) ![]const u8 {
+    try self.decompress_sectors(fad, 1);
     const track = Track.get_corresponding_track(&self.tracks, fad);
     return track.read_sector(fad);
 }
 
-pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-    @constCast(self).decompress_sectors(fad, count) catch {
+pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
+    self.decompress_sectors(fad, count) catch {
         log.err("Failed to decompress sectors [{d}, {d}]", .{ fad, fad + count - 1 });
         return 0;
     };
@@ -278,8 +282,8 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
     return track.load_sectors(fad, count, dest);
 }
 
-pub fn load_sectors_raw(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 {
-    @constCast(self).decompress_sectors(fad, count) catch {
+pub fn load_sectors_raw(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
+    self.decompress_sectors(fad, count) catch {
         log.err("Failed to decompress sectors [{d}, {d}]", .{ fad, fad + count - 1 });
         return 0;
     };
@@ -534,8 +538,7 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
 
     var sector_offset = std.mem.alignBackward(usize, fad - self.tracks.items[track_idx].fad, sectors_per_hunk);
 
-    // FIXME: Rewrite tracks so this constCast isn't necessary anymore?
-    var dest = @constCast(self.tracks.items[track_idx].data);
+    var dest = self.track_data.items[track_idx];
 
     if (hunk_offset != 0) {
         const usable_sectors_in_first_hunk = sectors_per_hunk - hunk_offset;

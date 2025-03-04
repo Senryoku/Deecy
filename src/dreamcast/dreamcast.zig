@@ -413,7 +413,7 @@ pub const Dreamcast = struct {
 
         // Load IP.bin from disc (16 first sectors of the last track)
         // FIXME: Here we assume the last track is the 3rd.
-        if (self.gdrom.disc) |disc|
+        if (self.gdrom.disc) |*disc|
             _ = try disc.load_bytes(45150, 16 * 2048, self.ram[0x00008000..]);
 
         // IP.bin patches

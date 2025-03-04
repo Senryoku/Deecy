@@ -397,7 +397,7 @@ pub fn draw(self: *@This()) !void {
             zgui.endMenu();
         }
         if (zgui.beginMenu("Drive", true)) {
-            if (d.dc.gdrom.disc) |disc| {
+            if (d.dc.gdrom.disc) |*disc| {
                 if (disc.get_product_name()) |name| {
                     zgui.textColored(.{ 1.0, 1.0, 1.0, 0.75 }, "Disc: {s}", .{name});
                 } else {
