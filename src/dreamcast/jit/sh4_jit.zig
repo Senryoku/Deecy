@@ -687,7 +687,7 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
             try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             try b.mov(Key, sh4_mem("pc"));

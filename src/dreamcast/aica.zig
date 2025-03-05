@@ -1009,94 +1009,88 @@ pub const AICA = struct {
         }
     }
 
-    pub fn generate_samples(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
-        @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2 * sample_count, self.sample_buffer.len)], 0);
-        if (self.sample_write_offset + 2 * sample_count > self.sample_buffer.len)
-            @memset(self.sample_buffer[0 .. (self.sample_write_offset + 2 * sample_count) % self.sample_buffer.len], 0);
+    pub fn generate_sample(self: *AICA, dc: *Dreamcast) void {
+        @memset(self.sample_buffer[self.sample_write_offset..@min(self.sample_write_offset + 2, self.sample_buffer.len)], 0);
+        if (self.sample_write_offset + 2 > self.sample_buffer.len)
+            @memset(self.sample_buffer[0 .. (self.sample_write_offset + 2) % self.sample_buffer.len], 0);
 
-        std.debug.assert(sample_count <= 1); // FIXME: Relic of previous usage, I don't think I want to update multiple samples at once anymore.
+        self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
 
-        for (0..sample_count) |_| {
-            self.get_reg(InterruptBits, .SCIPD).one_sample_interval = 1;
+        // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
+        // FIXME: Really not sure I'm handling this correctly!
+        //   Register Value | Volume
+        // -----------------|----------
+        //        0         | -MAXdB
+        //        1         |  -42dB
+        //        2         |  -39dB
+        //        ...       |
+        //        0xD       |   -6dB
+        //        0xE       |   -3dB
+        //        0xF       |    0dB
 
-            // Master Volume attenuation: -3dB (halfs the volume) for each attenuation level
-            // FIXME: Really not sure I'm handling this correctly!
-            //   Register Value | Volume
-            // -----------------|----------
-            //        0         | -MAXdB
-            //        1         |  -42dB
-            //        2         |  -39dB
-            //        ...       |
-            //        0xD       |   -6dB
-            //        0xE       |   -3dB
-            //        0xF       |    0dB
-
-            for (0..64) |i| {
-                self.update_channel(@intCast(i));
-            }
-
-            const cdda_samples = dc.gdrom.get_cdda_samples();
-
-            const offset = self.sample_write_offset;
-            std.debug.assert(offset % 2 == 0);
-            std.debug.assert(offset + 1 < self.sample_buffer.len);
-
-            if (self.dsp_emulation != .Bypass) {
-                self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
-                self.dsp.set_exts(1, @bitCast(cdda_samples[1]));
-                switch (self.dsp_emulation) {
-                    .Interpreter => self.dsp.generate_sample(),
-                    .JIT => self.dsp.generate_sample_jit() catch |err| {
-                        aica_log.err("Error in DSP JIT: {}", .{err});
-                    },
-                    else => unreachable,
-                }
-                for (0..16) |channel| {
-                    const mix = self.get_dsp_mix_register(@intCast(channel)).*;
-                    const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
-                    // FIXME: I have no idea why the DSP is so low, but it seems to works otherwise and I'm tired of searching for now.
-                    //        This factor is totally arbitrary, I have no basis for it except that according to all to sources I found,
-                    //        the DSP outputs SHIFTED >> 8 to the EFREGs, and in practice I found that >> 5 works and >> 4 overflows.
-                    //        So I should probably go with *8, but... Empirically I think *16 feels nicer. Hopefully that won't cost me an ear :D
-                    const fuckthat_factor = 16;
-                    self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
-                    self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
-                }
-            }
-
-            // Stream from GD-ROM
-            const cdda_mix = .{
-                self.get_reg(DSPOutputMixer, .CDDAOutputLeft).*,
-                self.get_reg(DSPOutputMixer, .CDDAOutputRight).*,
-            };
-            // I guess each channel can be independently redirected. That's a little weird, but mmh, ok.
-            inline for (0..2) |channel| {
-                const sample = apply_pan_attenuation(cdda_samples[channel], cdda_mix[channel].efsdl, cdda_mix[channel].efpan);
-                self.sample_buffer[offset + 0] +|= sample.left;
-                self.sample_buffer[offset + 1] +|= sample.right;
-            }
-
-            const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
-            if (attenuation == 0xF) {
-                self.sample_buffer[offset + 0] = 0;
-                self.sample_buffer[offset + 1] = 0;
-            } else {
-                self.sample_buffer[offset + 0] = self.sample_buffer[offset + 0] >> attenuation;
-                self.sample_buffer[offset + 1] = self.sample_buffer[offset + 1] >> attenuation;
-            }
-
-            self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
-            self._samples_counter +%= 1;
+        for (0..64) |i| {
+            self.update_channel(@intCast(i));
         }
+
+        const cdda_samples = dc.gdrom.get_cdda_samples();
+
+        const offset = self.sample_write_offset;
+        std.debug.assert(offset % 2 == 0);
+        std.debug.assert(offset + 1 < self.sample_buffer.len);
+
+        if (self.dsp_emulation != .Bypass) {
+            self.dsp.set_exts(0, @bitCast(cdda_samples[0]));
+            self.dsp.set_exts(1, @bitCast(cdda_samples[1]));
+            switch (self.dsp_emulation) {
+                .Interpreter => self.dsp.generate_sample(),
+                .JIT => self.dsp.generate_sample_jit() catch |err| {
+                    aica_log.err("Error in DSP JIT: {}", .{err});
+                },
+                else => unreachable,
+            }
+            for (0..16) |channel| {
+                const mix = self.get_dsp_mix_register(@intCast(channel)).*;
+                const sample = apply_pan_attenuation(self.dsp.read_efreg(channel), mix.efsdl, mix.efpan);
+                // FIXME: I have no idea why the DSP is so low, but it seems to works otherwise and I'm tired of searching for now.
+                //        This factor is totally arbitrary, I have no basis for it except that according to all to sources I found,
+                //        the DSP outputs SHIFTED >> 8 to the EFREGs, and in practice I found that >> 5 works and >> 4 overflows.
+                //        So I should probably go with *8, but... Empirically I think *16 feels nicer. Hopefully that won't cost me an ear :D
+                const fuckthat_factor = 16;
+                self.sample_buffer[offset + 0] +|= fuckthat_factor * sample.left;
+                self.sample_buffer[offset + 1] +|= fuckthat_factor * sample.right;
+            }
+        }
+
+        // Stream from GD-ROM
+        const cdda_mix = .{
+            self.get_reg(DSPOutputMixer, .CDDAOutputLeft).*,
+            self.get_reg(DSPOutputMixer, .CDDAOutputRight).*,
+        };
+        // I guess each channel can be independently redirected. That's a little weird, but mmh, ok.
+        inline for (0..2) |channel| {
+            const sample = apply_pan_attenuation(cdda_samples[channel], cdda_mix[channel].efsdl, cdda_mix[channel].efpan);
+            self.sample_buffer[offset + 0] +|= sample.left;
+            self.sample_buffer[offset + 1] +|= sample.right;
+        }
+
+        const attenuation: u4 = 0xF - self.get_reg(u4, .MasterVolume).*;
+        if (attenuation == 0xF) {
+            self.sample_buffer[offset + 0] = 0;
+            self.sample_buffer[offset + 1] = 0;
+        } else {
+            self.sample_buffer[offset + 0] = self.sample_buffer[offset + 0] >> attenuation;
+            self.sample_buffer[offset + 1] = self.sample_buffer[offset + 1] >> attenuation;
+        }
+
+        self.sample_write_offset = (self.sample_write_offset + 2) % self.sample_buffer.len;
+        self._samples_counter +%= 1;
     }
 
-    pub fn update_timers(self: *AICA, dc: *Dreamcast, sample_count: u32) void {
-        if (sample_count == 0) return;
-
+    pub fn advance_timers(self: *AICA, dc: *Dreamcast) void {
         const timer_registers = [_]AICARegister{ .TACTL_TIMA, .TBCTL_TIMB, .TCCTL_TIMC };
         for (0..3) |i| {
             var timer = self.get_reg(TimerControl, timer_registers[i]);
-            self._timer_counters[i] += sample_count;
+            self._timer_counters[i] += 1;
             const scaled = @as(u32, 1) << timer.prescale;
             while (self._timer_counters[i] >= scaled) {
                 self._timer_counters[i] -= scaled;
@@ -1116,11 +1110,13 @@ pub const AICA = struct {
     }
 
     pub fn update(self: *AICA, dc: *Dreamcast, sh4_cycles: u32) !void {
+        std.debug.assert(sh4_cycles < 2 * SH4CyclesPerSample);
         self._timer_cycles_counter += @intCast(sh4_cycles);
-        const sample_count = @divTrunc(self._timer_cycles_counter, SH4CyclesPerSample);
-        self._timer_cycles_counter = self._timer_cycles_counter % SH4CyclesPerSample;
-        self.generate_samples(dc, sample_count);
-        self.update_timers(dc, sample_count);
+        if (self._timer_cycles_counter >= SH4CyclesPerSample) {
+            self.generate_sample(dc);
+            self.advance_timers(dc);
+            self._timer_cycles_counter -= SH4CyclesPerSample;
+        }
 
         try self.run_arm(sh4_cycles);
     }
