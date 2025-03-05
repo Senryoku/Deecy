@@ -523,6 +523,7 @@ pub const SH4JIT = struct {
         {
             var b = &self._working_block;
             b.clearRetainingCapacity();
+
             try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
             try b.call(compile_and_run);
             try b.append(.JmpRax);
@@ -594,7 +595,7 @@ pub const SH4JIT = struct {
         try self.init_compile_and_run_handler();
     }
 
-    pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
+    pub noinline fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
         if (!Optimizations.allow_immediate_reset and self._reset_requested) {
             @branchHint(.cold);
             self._reset_requested = false;
@@ -714,7 +715,7 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
             try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             try b.mov(Key, sh4_mem("pc"));
@@ -736,7 +737,6 @@ pub const SH4JIT = struct {
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = Architecture.ArgRegisters[0] });
             try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
             try b.append(.JmpRax);
-            // ReturnRegister holds the cycle count
 
             skip.patch();
         } else {
