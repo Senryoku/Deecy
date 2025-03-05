@@ -538,13 +538,14 @@ pub const SH4JIT = struct {
 
             self.enter_block_offset = self.block_cache.cursor;
 
-            try e.push(.{ .reg = .rsp });
+            try e.emit_block_prologue();
+
             if (Architecture.JITABI == .Win64)
                 try e.save_fp_registers(10);
             for (0..SavedRegisters.len) |idx|
                 try e.push(.{ .reg = SavedRegisters[idx] });
-            try e.push(.{ .reg = .rbp });
-            if (SavedRegisters.len % 2 != 1) try e.push(.{ .reg = .rbp });
+
+            if (SavedRegisters.len % 2 != 0) try e.push(.{ .reg = .rbp });
 
             if (FastMem) {
                 const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
@@ -562,18 +563,14 @@ pub const SH4JIT = struct {
 
             self.return_offset = self.block_cache.cursor + e.block_size;
 
-            try e.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"), false);
-            try e.mov(sh4_mem("_pending_cycles"), .{ .imm32 = 0 }, false);
+            if (SavedRegisters.len % 2 != 0) try e.pop(.{ .reg = .rbp });
 
-            if (SavedRegisters.len % 2 != 1) try e.pop(.{ .reg = .rbp });
-            try e.pop(.{ .reg = .rbp });
             for (0..SavedRegisters.len) |idx|
-                try e.pop(.{ .reg = SavedRegisters[idx] });
+                try e.pop(.{ .reg = SavedRegisters[SavedRegisters.len - idx - 1] });
             if (Architecture.JITABI == .Win64)
                 try e.restore_fp_registers(10);
-            try e.pop(.{ .reg = .rsp });
 
-            try e.ret();
+            try e.emit_block_epilogue();
 
             self.block_cache.cursor += e.block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
@@ -615,11 +612,13 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            const cycles = @as(*const fn (*sh4.SH4, *@This(), *anyopaque) u32, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
+            @as(*const fn (*sh4.SH4, *@This(), *anyopaque) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
                 cpu,
                 self,
                 self.block_cache.buffer[block.offset..].ptr,
             );
+            const cycles = cpu._pending_cycles;
+            cpu._pending_cycles = 0;
 
             if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
@@ -744,7 +743,7 @@ pub const SH4JIT = struct {
             try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         }
 
-        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) + self.return_offset });
+        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(&self.block_cache.buffer[self.return_offset]) });
         try b.append(.JmpRax);
 
         for (b.instructions.items, 0..) |instr, idx|
