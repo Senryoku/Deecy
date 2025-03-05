@@ -144,14 +144,14 @@ pub fn init(d: *Deecy) !@This() {
     }
 
     for (0..self.audio_channels.len) |i| {
-        self.audio_channels[i].amplitude_envelope.xv = std.ArrayList(u32).init(self._allocator);
-        self.audio_channels[i].amplitude_envelope.yv = std.ArrayList(u32).init(self._allocator);
+        self.audio_channels[i].amplitude_envelope.xv = .init(self._allocator);
+        self.audio_channels[i].amplitude_envelope.yv = .init(self._allocator);
     }
     for (0..16) |i| {
-        self.dsp_inputs[i].xv = std.ArrayList(i32).init(self._allocator);
-        self.dsp_inputs[i].yv = std.ArrayList(i32).init(self._allocator);
-        self.dsp_outputs[i].xv = std.ArrayList(i32).init(self._allocator);
-        self.dsp_outputs[i].yv = std.ArrayList(i32).init(self._allocator);
+        self.dsp_inputs[i].xv = .init(self._allocator);
+        self.dsp_inputs[i].yv = .init(self._allocator);
+        self.dsp_outputs[i].xv = .init(self._allocator);
+        self.dsp_outputs[i].yv = .init(self._allocator);
     }
 
     return self;
@@ -362,8 +362,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.beginDisabled(.{ .disabled = d.running });
             if (zgui.button("Refresh", .{})) {
                 if (!static.initialized) {
-                    static.top =
-                        std.PriorityQueue(BasicBlock, void, compare_blocks).init(dc._allocator, {});
+                    static.top = .init(dc._allocator, {});
                     static.initialized = true;
                 } else {
                     while (static.top.count() > 0) _ = static.top.remove();

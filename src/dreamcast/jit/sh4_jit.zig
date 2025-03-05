@@ -494,12 +494,12 @@ pub const SH4JIT = struct {
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         var r: @This() = .{
-            .block_cache = try BlockCache.init(allocator),
-            ._working_block = try IRBlock.init(allocator),
+            .block_cache = try .init(allocator),
+            ._working_block = try .init(allocator),
             ._allocator = allocator,
         };
         if (FastMem)
-            r.virtual_address_space = try VirtualAddressSpace.init(allocator);
+            r.virtual_address_space = try .init(allocator);
         try r.init_compile_and_run_handler();
         return r;
     }
@@ -578,16 +578,16 @@ pub const SH4JIT = struct {
     pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) u32 {
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
-        const block = (self.compile(JITContext.init(cpu)) catch |err| retry: {
+        const block = self.compile(.init(cpu)) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
                     sh4_jit_log.err("Failed to reset JIT: {s}", .{@errorName(reset_err)});
                     std.process.exit(1);
                 };
-                break :retry self.compile(JITContext.init(cpu));
+                break :retry self.compile(.init(cpu));
             } else break :retry err;
-        }) catch |err| {
+        } catch |err| {
             sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
             std.process.exit(1);
         };

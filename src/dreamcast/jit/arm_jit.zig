@@ -136,8 +136,8 @@ pub const ARM7JIT = struct {
 
     pub fn init(allocator: std.mem.Allocator, addr_mask: u32) !@This() {
         var r = @This(){
-            .block_cache = try BlockCache.init(allocator, addr_mask),
-            ._working_block = try IRBlock.init(allocator),
+            .block_cache = try .init(allocator, addr_mask),
+            ._working_block = try .init(allocator),
             ._allocator = allocator,
         };
         try r.init_compile_and_run_handler();
@@ -823,14 +823,14 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
     if (inst.s == 0 and
         (inst.i == 1 or sro.register_specified == 0) and
         (inst.opcode == .AND or
-        inst.opcode == .EOR or
-        inst.opcode == .SUB or
-        inst.opcode == .RSB or
-        inst.opcode == .ADD or
-        inst.opcode == .ORR or
-        inst.opcode == .MOV or
-        inst.opcode == .BIC or
-        inst.opcode == .MVN))
+            inst.opcode == .EOR or
+            inst.opcode == .SUB or
+            inst.opcode == .RSB or
+            inst.opcode == .ADD or
+            inst.opcode == .ORR or
+            inst.opcode == .MOV or
+            inst.opcode == .BIC or
+            inst.opcode == .MVN))
     {
         // op2
         var op2: JIT.Operand = undefined;

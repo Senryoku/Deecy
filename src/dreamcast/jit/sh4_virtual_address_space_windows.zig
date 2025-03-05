@@ -24,8 +24,8 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     }
 
     var vas: @This() = .{
-        .no_access = std.ArrayList(*anyopaque).init(allocator),
-        .mirrors = std.ArrayList(std.os.windows.LPVOID).init(allocator),
+        .no_access = .init(allocator),
+        .mirrors = .init(allocator),
     };
     errdefer vas.deinit();
 

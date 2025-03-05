@@ -15,7 +15,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
         .file = undefined,
         .mapping_handle = undefined,
-        .views = try std.ArrayList(View).initCapacity(allocator, 1),
+        .views = try .initCapacity(allocator, 1),
     };
     if (builtin.os.tag != .windows) {
         self.file = std.fs.cwd().openFile(filepath, .{}) catch {

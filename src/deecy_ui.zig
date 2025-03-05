@@ -62,8 +62,8 @@ allocator: std.mem.Allocator,
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
-        .disc_files = std.ArrayList(GameFile).init(allocator),
-        .notifications = Notifications.init(allocator),
+        .disc_files = .init(allocator),
+        .notifications = .init(allocator),
         .deecy = d,
         .allocator = allocator,
     };

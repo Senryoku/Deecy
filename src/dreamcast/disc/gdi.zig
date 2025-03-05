@@ -25,8 +25,8 @@ _files: std.ArrayList(MemoryMappedFile),
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = std.ArrayList(Track).init(allocator),
-        ._files = std.ArrayList(MemoryMappedFile).init(allocator),
+        .tracks = .init(allocator),
+        ._files = .init(allocator),
     };
 
     const file = std.fs.cwd().openFile(filepath, .{}) catch {

@@ -19,9 +19,9 @@ _file: MemoryMappedFile,
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = std.ArrayList(Track).init(allocator),
-        .sessions = std.ArrayList(Session).init(allocator),
-        ._file = try MemoryMappedFile.init(filepath, allocator),
+        .tracks = .init(allocator),
+        .sessions = .init(allocator),
+        ._file = try .init(filepath, allocator),
     };
     errdefer self.deinit();
 

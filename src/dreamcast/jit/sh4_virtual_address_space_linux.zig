@@ -21,7 +21,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 
     var vas: @This() = .{
         .base = try std.posix.mmap(null, 0x1_0000_0000, std.posix.PROT.NONE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .NORESERVE = true }, -1, 0),
-        .mirrors = std.ArrayList([]align(std.mem.page_size) u8).init(allocator),
+        .mirrors = .init(allocator),
         .boot = try allocate_backing_memory("boot", Dreamcast.BootSize),
         .ram = try allocate_backing_memory("ram", Dreamcast.RAMSize),
         .vram = try allocate_backing_memory("vram", Dreamcast.VRAMSize),

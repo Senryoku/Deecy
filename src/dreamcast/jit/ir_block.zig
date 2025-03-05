@@ -28,8 +28,8 @@ pub const IRBlock = struct {
 
     pub fn init(allocator: std.mem.Allocator) !IRBlock {
         return .{
-            .instructions = std.ArrayList(Instruction).init(allocator),
-            ._emitter = try Architecture.Emitter.init(allocator),
+            .instructions = .init(allocator),
+            ._emitter = try .init(allocator),
         };
     }
 

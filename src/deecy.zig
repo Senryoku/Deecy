@@ -270,8 +270,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .window = undefined,
         .config = config,
         .last_frame_timestamp = std.time.microTimestamp(),
-        .last_n_frametimes = std.fifo.LinearFifo(i64, .Dynamic).init(allocator),
-        .breakpoints = std.ArrayList(u32).init(allocator),
+        .last_n_frametimes = .init(allocator),
+        .breakpoints = .init(allocator),
         ._allocator = allocator,
     };
 
@@ -376,14 +376,14 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         };
     }
 
-    self.renderer = try Renderer.create(self._allocator, self.gctx, config.internal_resolution_factor, config.display_mode);
+    self.renderer = try .create(self._allocator, self.gctx, config.internal_resolution_factor, config.display_mode);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
     };
 
-    self.ui = try UI.create(self._allocator, self);
-    self.debug_ui = try DebugUI.init(self);
+    self.ui = try .create(self._allocator, self);
+    self.debug_ui = try .init(self);
 
     try self.check_save_state_slots();
 
@@ -741,9 +741,9 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
         var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
         defer tmp_dir.close();
         try std.zip.extract(tmp_dir, stream, .{});
-        self.dc.gdrom.disc = try Disc.init(tmp_gdi_path, self._allocator);
+        self.dc.gdrom.disc = try .init(tmp_gdi_path, self._allocator);
     } else {
-        self.dc.gdrom.disc = try Disc.init(path, self._allocator);
+        self.dc.gdrom.disc = try .init(path, self._allocator);
     }
 }
 
@@ -780,7 +780,7 @@ pub fn on_game_load(self: *@This()) !void {
                 else => {},
             }
         }
-        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try DreamcastModule.Maple.VMU.init(self._allocator, vmu_path.items) };
+        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path.items) };
         self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
     }
     try self.check_save_state_slots();

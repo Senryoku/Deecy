@@ -562,9 +562,9 @@ pub const AICA = struct {
             .wave_memory = memory,
             ._allocator = allocator,
         };
-        r.arm7 = arm7.ARM7.init(r.wave_memory, 0x1FFFFF, 0x800000);
-        r.arm_jit = try ARM7JIT.init(allocator, r.arm7.memory_address_mask);
-        r.dsp = DSP.init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory, allocator);
+        r.arm7 = .init(r.wave_memory, 0x1FFFFF, 0x800000);
+        r.arm_jit = try .init(allocator, r.arm7.memory_address_mask);
+        r.dsp = .init(@ptrCast(&r.regs[0x2804 / 4]), r.regs[0x3000 / 4 ..], r.wave_memory, allocator);
         try r.reset();
 
         return r;

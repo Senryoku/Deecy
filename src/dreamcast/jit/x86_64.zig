@@ -557,7 +557,7 @@ pub const Emitter = struct {
 
     pub fn init(allocator: std.mem.Allocator) !@This() {
         return .{
-            .forward_jumps_to_patch = std.AutoHashMap(u32, PatchableJumpList).init(allocator),
+            .forward_jumps_to_patch = .init(allocator),
             ._instruction_offsets = try allocator.alloc(u32, 64),
             ._allocator = allocator,
         };
@@ -827,10 +827,10 @@ pub const Emitter = struct {
     // Emits ModRM, SIB and displacement bytes, as needed.
     fn emit_mem_addressing(self: *@This(), reg_opcode: u3, mem: MemOperand) !void {
         const r_m: u3 = if (mem.index != null) 0b100 // A SIB is following
-        else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
+            else encode(mem.base); // If base is ESP/R12, a SIB will also be emitted.
 
         const mod: Mod = if (mem.base == .rbp and mem.displacement == 0) .disp8 // Special case: If the base is rbp, the displacement is mandatory. See Intel Manual Vol. 2A 2-11.
-        else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
+            else (if (mem.displacement == 0) .indirect else if (mem.displacement < 0x80) .disp8 else .disp32);
 
         try self.emit(MODRM, .{
             .mod = mod,

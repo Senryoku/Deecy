@@ -80,7 +80,7 @@ pub fn main() !void {
 
         const save_state_path = args.next().?;
 
-        dc.gdrom.disc = try DreamcastModule.GDROM.Disc.init(game, allocator);
+        dc.gdrom.disc = try .init(game, allocator);
         try load_state(dc, save_state_path);
         const start = try std.time.Instant.now();
         var cycles: u32 = 0;

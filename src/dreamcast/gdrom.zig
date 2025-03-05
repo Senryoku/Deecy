@@ -231,8 +231,8 @@ _allocator: std.mem.Allocator,
 
 pub fn init(allocator: std.mem.Allocator, dc: *Dreamcast) !@This() {
     return .{
-        .pio_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
-        .dma_data_queue = std.fifo.LinearFifo(u8, .Dynamic).init(allocator),
+        .pio_data_queue = .init(allocator),
+        .dma_data_queue = .init(allocator),
         .audio_state = .{ .buffer = try allocator.alloc(i16, 2352 / 2) },
         ._dc = dc,
         ._allocator = allocator,

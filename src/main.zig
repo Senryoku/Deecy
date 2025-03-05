@@ -204,7 +204,7 @@ pub fn main() !void {
         }
     }
 
-    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try MapleModule.VMU.init(allocator, vmu_path.items) };
+    dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(allocator, vmu_path.items) };
 
     if (binary_path) |path| {
         try dc.set_region(.USA);

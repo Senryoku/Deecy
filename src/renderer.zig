@@ -305,7 +305,7 @@ const DrawCall = struct {
         return .{
             .sampler = sampler,
             .user_clip = user_clip,
-            .indices = std.ArrayList(u32).init(allocator),
+            .indices = .init(allocator),
         };
     }
 
@@ -388,9 +388,7 @@ const PipelineMetadata = struct {
     draw_calls: std.AutoArrayHashMap(DrawCallKey, DrawCall),
 
     pub fn init(allocator: std.mem.Allocator) PipelineMetadata {
-        return .{
-            .draw_calls = std.AutoArrayHashMap(DrawCallKey, DrawCall).init(allocator),
-        };
+        return .{ .draw_calls = .init(allocator) };
     }
 
     fn deinit(self: *@This()) void {
@@ -405,7 +403,7 @@ const PassMetadata = struct {
     pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
         return .{
             .pass_type = pass_type,
-            .pipelines = std.AutoArrayHashMap(PipelineKey, PipelineMetadata).init(allocator),
+            .pipelines = .init(allocator),
         };
     }
 
@@ -1137,7 +1135,7 @@ pub const Renderer = struct {
             .render_to_texture_target = .{ .texture = render_to_texture_target, .view = gctx.createTextureView(render_to_texture_target, .{}) },
             .framebuffer_copy_buffer = framebuffer_copy_buffer,
 
-            .opaque_pipelines = std.AutoHashMap(PipelineKey, zgpu.RenderPipelineHandle).init(allocator),
+            .opaque_pipelines = .init(allocator),
 
             .translucent_bind_group_layout = translucent_bind_group_layout,
             .translucent_modvol_bind_group_layout = translucent_modvol_bind_group_layout,
@@ -1162,17 +1160,17 @@ pub const Renderer = struct {
             .samplers = samplers,
             .sampler_bind_groups = sampler_bind_groups,
 
-            .vertices = try std.ArrayList(Vertex).initCapacity(allocator, 4096),
-            .strips_metadata = try std.ArrayList(StripMetadata).initCapacity(allocator, 4096),
-            .modifier_volume_vertices = try std.ArrayList([4]f32).initCapacity(allocator, 4096),
+            .vertices = try .initCapacity(allocator, 4096),
+            .strips_metadata = try .initCapacity(allocator, 4096),
+            .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .opaque_pass = PassMetadata.init(allocator, .Opaque),
-            .punchthrough_pass = PassMetadata.init(allocator, .PunchThrough),
-            .translucent_pass = PassMetadata.init(allocator, .Translucent),
-            .pre_sorted_translucent_pass = std.ArrayList(SortedDrawCall).init(allocator),
+            .opaque_pass = .init(allocator, .Opaque),
+            .punchthrough_pass = .init(allocator, .PunchThrough),
+            .translucent_pass = .init(allocator, .Translucent),
+            .pre_sorted_translucent_pass = .init(allocator),
 
-            .ta_lists = HollyModule.TALists.init(allocator),
-            .ta_lists_to_render = HollyModule.TALists.init(allocator),
+            .ta_lists = .init(allocator),
+            .ta_lists_to_render = .init(allocator),
 
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
@@ -2510,7 +2508,7 @@ pub const Renderer = struct {
                             };
 
                             var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
-                                try pass.pipelines.put(pipeline_key, PipelineMetadata.init(self._allocator));
+                                try pass.pipelines.put(pipeline_key, .init(self._allocator));
                                 break :put pass.pipelines.getPtr(pipeline_key).?;
                             };
 
@@ -2518,7 +2516,7 @@ pub const Renderer = struct {
 
                             var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                             if (draw_call == null) {
-                                try pipeline.draw_calls.put(draw_call_key, DrawCall.init(
+                                try pipeline.draw_calls.put(draw_call_key, .init(
                                     self._allocator,
                                     sampler,
                                     display_list.vertex_strips.items[idx].user_clip,

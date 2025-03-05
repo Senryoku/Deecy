@@ -143,12 +143,12 @@ pub const Dreamcast = struct {
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
         dc.* = Dreamcast{
-            .cpu = try SH4.init(allocator, dc),
-            .maple = try MapleHost.init(allocator),
-            .sh4_jit = try SH4JIT.init(allocator),
-            .flash = try Flash.init(allocator),
+            .cpu = try .init(allocator, dc),
+            .maple = try .init(allocator),
+            .sh4_jit = try .init(allocator),
+            .flash = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
-            .scheduled_events = std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare).init(allocator, {}),
+            .scheduled_events = .init(allocator, {}),
             ._allocator = allocator,
         };
 
@@ -164,9 +164,9 @@ pub const Dreamcast = struct {
             dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
         }
 
-        dc.gpu = try Holly.init(allocator, dc);
-        dc.aica = try AICA.init(allocator, dc.aram);
-        dc.gdrom = try GDROM.init(allocator, dc);
+        dc.gpu = try .init(allocator, dc);
+        dc.aica = try .init(allocator, dc.aram);
+        dc.gdrom = try .init(allocator, dc);
         dc.aica.setup_arm();
 
         errdefer dc.deinit();

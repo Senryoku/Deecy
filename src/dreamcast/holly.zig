@@ -1318,12 +1318,12 @@ pub const TALists = struct {
 
     pub fn init(allocator: std.mem.Allocator) TALists {
         return .{
-            .opaque_list = DisplayList.init(allocator),
-            .punchthrough_list = DisplayList.init(allocator),
-            .translucent_list = DisplayList.init(allocator),
-            .opaque_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
-            .translucent_modifier_volumes = std.ArrayList(ModifierVolume).init(allocator),
-            .volume_triangles = std.ArrayList(ModifierVolumeParameter).init(allocator),
+            .opaque_list = .init(allocator),
+            .punchthrough_list = .init(allocator),
+            .translucent_list = .init(allocator),
+            .opaque_modifier_volumes = .init(allocator),
+            .translucent_modifier_volumes = .init(allocator),
+            .volume_triangles = .init(allocator),
         };
     }
 
@@ -1417,9 +1417,8 @@ pub const Holly = struct {
             ._allocator = allocator,
             ._dc = dc,
         };
-        for (&r._ta_lists) |*ta_list| {
-            ta_list.* = TALists.init(allocator);
-        }
+        for (&r._ta_lists) |*ta_list|
+            ta_list.* = .init(allocator);
         return r;
     }
 

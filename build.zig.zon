@@ -1,6 +1,6 @@
 .{
     .name = "Deecy",
-    .version = "0.3.0",
+    .version = "0.4.1",
     .minimum_zig_version = "0.14.0-dev.2577+271452d22",
     .paths = .{""},
     .dependencies = .{
