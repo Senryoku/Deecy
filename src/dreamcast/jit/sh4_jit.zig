@@ -653,7 +653,7 @@ pub const SH4JIT = struct {
         return self.block_cache.buffer[block.offset..].ptr;
     }
 
-    pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
+    pub fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
         var ctx = start_ctx;
 
         var b = &self._working_block;
