@@ -481,6 +481,7 @@ fn decode_map_v5(self: *@This()) !void {
         self.map[i].length = length;
         self.map[i].offset = offset;
         self.map[i].crc = crc;
+        self.map[i].loaded = false;
 
         raw_map[12 * i] = @intFromEnum(self.map[i].compression);
         std.mem.bytesAsValue(u24, raw_map[12 * i + 1 ..]).* = @byteSwap(length);
