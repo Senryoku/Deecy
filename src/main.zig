@@ -259,6 +259,7 @@ pub fn main() !void {
         for (AvailableHacks) |hack| {
             if (std.mem.count(u8, path, hack.name) > 0) {
                 EnabledHacks = hack.hacks;
+                std.log.info("  Enabled hacks for '{s}'", .{hack.name});
                 break;
             }
         }
@@ -293,7 +294,7 @@ pub fn main() !void {
             for (hacks) |hack| {
                 var addr = hack.addr;
                 for (hack.instr) |instr| {
-                    dc.cpu.write(u16, addr, instr);
+                    dc.cpu.write_physical(u16, addr, instr);
                     addr += 2;
                 }
             }

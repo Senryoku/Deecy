@@ -1525,7 +1525,7 @@ pub const Holly = struct {
         const line_diff: i64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
-            (max_scanline - spg_status.scanline) + target_scanline;
+            (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
 
         const pixel_diff: i64 = @as(i64, @intCast(spg_hblank_int.hblank_in_interrupt)) - @as(i64, @intCast(self._pixel));
         const hcount: i64 = spg_load.hcount;
@@ -1541,7 +1541,7 @@ pub const Holly = struct {
         const line_diff: u64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
-            (max_scanline - spg_status.scanline) + target_scanline;
+            (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
         const hcount: u64 = spg_load.hcount;
         const sh4_cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
         self._dc.schedule_event(.VBlankIn, sh4_cycles);
@@ -1554,7 +1554,7 @@ pub const Holly = struct {
         const line_diff: u64 = if (spg_status.scanline < target_scanline)
             target_scanline - spg_status.scanline
         else
-            (max_scanline - spg_status.scanline) + target_scanline;
+            (if (max_scanline >= spg_status.scanline) max_scanline - spg_status.scanline else 0) + target_scanline;
         const hcount: u64 = spg_load.hcount;
         const cycles = self.pixels_to_sh4_cycles((hcount + 1) * line_diff);
         self._dc.schedule_event(.VBlankOut, cycles);
