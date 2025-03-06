@@ -827,7 +827,7 @@ pub const SH4 = struct {
 
         sh4_log.warn("  Returned from exception handler PC={X:0>8}", .{self.pc});
 
-        return self.translate_address(virtual_addr) catch |err| {
+        return self.translate_address(.Read, virtual_addr) catch |err| {
             // Still didn't work: Give up.
             std.log.err("[PC:{X:0>8}] MMU missed twice: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });
             for (self.utlb, 0..) |utlb, idx| {
@@ -846,7 +846,7 @@ pub const SH4 = struct {
             // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
             //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
             //       this won't matter... Unless the software accesses ITLB entries directly.
-            var physical_addr = self.translate_address(virtual_addr) catch a: {
+            var physical_addr = self.translate_address(.Read, virtual_addr) catch a: {
                 break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
             };
             physical_addr &= 0x1FFFFFFF;
@@ -1508,7 +1508,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) !u32 {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) !mmu.UTLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1525,17 +1525,18 @@ pub const SH4 = struct {
         for (self.utlb) |entry| {
             // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
             if (entry.match(check_asid, asid, vpn)) {
+                if (entry.d) return error.InitialPageWriteException;
                 const physical_address = entry.translate(virtual_addr);
                 sh4_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
                 sh4_log.debug("  Entry: {any}", .{entry});
-                return physical_address;
+                return entry;
             }
         }
         sh4_log.warn("UTLB Miss: {x:0>8}", .{virtual_addr});
         return error.TLBMiss;
     }
 
-    pub inline fn translate_address(self: *@This(), virtual_addr: u32) !u32 {
+    pub inline fn translate_address(self: *@This(), comptime access_type: enum { Read, Write }, virtual_addr: u32) !u32 {
         if (ExperimentalFullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
@@ -1547,15 +1548,27 @@ pub const SH4 = struct {
                 // P4
                 0xE000_0000...0xFFFF_FFFF,
                 => return virtual_addr,
-                else => self.utlb_lookup(virtual_addr),
+                else => {
+                    const entry = try self.utlb_lookup(virtual_addr);
+                    switch (access_type) {
+                        .Read => return entry.translate(virtual_addr),
+                        .Write => if (!entry.d) return error.InitialPageWriteException else return entry.translate(virtual_addr),
+                    }
+                },
             };
         }
         return virtual_addr;
     }
 
     pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) T {
-        const physical_address = self.translate_address(virtual_addr) catch a: {
-            break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr);
+        const physical_address = self.translate_address(.Read, virtual_addr) catch |err| a: {
+            switch (err) {
+                error.TLBMiss => {
+                    sh4_log.warn("Data TLB miss: {X:0>8}", .{virtual_addr});
+                    break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr);
+                },
+                else => std.debug.panic("Unexpected TLB error: {s}", .{@errorName(err)}),
+            }
         };
         return self.read_physical(T, physical_address);
     }
@@ -1665,8 +1678,11 @@ pub const SH4 = struct {
     }
 
     pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
-        const physical_address = self.translate_address(virtual_addr) catch a: {
-            break :a self.handle_tlb_miss(.DataTLBMissWrite, virtual_addr);
+        const physical_address = self.translate_address(.Write, virtual_addr) catch |err| a: {
+            switch (err) {
+                error.TLBMiss => break :a self.handle_tlb_miss(.DataTLBMissWrite, virtual_addr),
+                error.InitialPageWriteException => break :a self.handle_tlb_miss(.InitialPageWrite, virtual_addr),
+            }
         };
         return self.write_physical(T, physical_address, value);
     }

@@ -1084,7 +1084,11 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) u32 {
-            const physical = cpu.translate_address(virtual_addr) catch a: {
+            const physical = cpu.translate_address(switch (exception) {
+                .InstructionTLBMiss, .DataTLBMissRead => .Read,
+                .DataTLBMissWrite => .Write,
+                else => @compileError("Unexpected exception type: " ++ @tagName(exception)),
+            }, virtual_addr) catch a: {
                 // Not found: Trigger and handle an exception.
 
                 sh4_jit_log.warn("MMU miss. UTLBs:", .{});
@@ -2605,7 +2609,7 @@ pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         ctx.current_pc = dest - 2;
         ctx.start_pc = dest - 2;
         if (ctx.mmu_enabled) {
-            ctx.current_physical_pc = (try ctx.cpu.translate_address(dest - 2)) & 0x1FFFFFFF;
+            ctx.current_physical_pc = (try ctx.cpu.translate_address(.Read, dest - 2)) & 0x1FFFFFFF;
         } else {
             ctx.current_physical_pc = (dest - 2) & 0x1FFFFFFF;
         }

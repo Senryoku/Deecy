@@ -1380,9 +1380,12 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
             if (sh4.ExperimentalFullMMUSupport) {
-                ext_addr = cpu.utlb_lookup(addr) catch a: {
+                ext_addr = cpu.translate_address(.Write, addr) catch |err| a: {
                     sh4_log.warn("TLB miss in pref instruction: {X:0>8}", .{addr});
-                    break :a cpu.handle_tlb_miss(.DataTLBMissWrite, addr);
+                    switch (err) {
+                        error.InitialPageWriteException => break :a cpu.handle_tlb_miss(.InitialPageWrite, addr),
+                        error.TLBMiss => break :a cpu.handle_tlb_miss(.DataTLBMissWrite, addr),
+                    }
                 };
                 ext_addr &= 0xFFFFFFE0;
             } else {
