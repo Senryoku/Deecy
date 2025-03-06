@@ -1380,13 +1380,13 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) void {
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
             if (sh4.ExperimentalFullMMUSupport) {
-                ext_addr = cpu.translate_address(.Write, addr) catch |err| a: {
+                const entry = cpu.utlb_lookup(addr) catch a: {
                     sh4_log.warn("TLB miss in pref instruction: {X:0>8}", .{addr});
-                    switch (err) {
-                        error.InitialPageWriteException => break :a cpu.handle_tlb_miss(.InitialPageWrite, addr),
-                        error.TLBMiss => break :a cpu.handle_tlb_miss(.DataTLBMissWrite, addr),
-                    }
+                    _ = cpu.handle_tlb_miss(.DataTLBMissWrite, addr);
+                    break :a cpu.utlb_lookup(addr) catch std.debug.panic("TLB miss twice in pref instruction: {X:0>8}", .{addr});
                 };
+                if (!entry.d) _ = cpu.handle_tlb_miss(.InitialPageWrite, addr);
+                ext_addr = entry.translate(addr);
                 ext_addr &= 0xFFFFFFE0;
             } else {
                 //  This is the simplified version for Ikaruga and other similar games, not a general solution.
