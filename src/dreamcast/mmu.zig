@@ -119,7 +119,7 @@ pub const UTLBEntry = packed struct {
     }
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("UTLB(.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {}, .c = {}, .sh = {}, .sz = {})", .{
+        try writer.print("UTLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
             @as(u32, self.ppn) << 10,
             self.asid,
@@ -128,7 +128,7 @@ pub const UTLBEntry = packed struct {
             self.sa,
             self.wt,
             self.d,
-            self.pr,
+            @tagName(self.pr),
             self.c,
             self.sh,
             self.sz,

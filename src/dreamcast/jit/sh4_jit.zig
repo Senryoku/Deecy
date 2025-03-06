@@ -1088,10 +1088,10 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                 .InstructionTLBMiss, .DataTLBMissRead => .Read,
                 .DataTLBMissWrite => .Write,
                 else => @compileError("Unexpected exception type: " ++ @tagName(exception)),
-            }, virtual_addr) catch a: {
+            }, virtual_addr) catch |err| a: {
                 // Not found: Trigger and handle an exception.
 
-                sh4_jit_log.warn("MMU miss. UTLBs:", .{});
+                sh4_jit_log.warn("MMU miss {s} for {X:0>8}. UTLBs:", .{ @errorName(err), virtual_addr });
                 for (cpu.utlb, 0..) |utlb, idx| {
                     if (utlb.valid()) {
                         sh4_jit_log.warn("  [{d}] {any}", .{ idx, utlb });
@@ -1099,7 +1099,13 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                 }
 
                 // FIXME/TODO: Don't fallback to the interpreter anymore.
-                break :a cpu.handle_tlb_miss(exception, virtual_addr);
+                if (err == error.InitialPageWriteException) {
+                    break :a cpu.handle_tlb_miss(.InitialPageWrite, virtual_addr);
+                } else if (err == error.TLBMiss) {
+                    break :a cpu.handle_tlb_miss(exception, virtual_addr);
+                } else {
+                    std.debug.panic("Unexpected MMU exception: {s}", .{@errorName(err)});
+                }
             };
             return physical;
         }

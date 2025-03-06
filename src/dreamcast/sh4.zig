@@ -7,6 +7,7 @@ const builtin = @import("builtin");
 const termcolor = @import("termcolor");
 
 pub const sh4_log = std.log.scoped(.sh4);
+pub const mmu_log = std.log.scoped(.mmu);
 
 const DreamcastModule = @import("dreamcast.zig");
 const Dreamcast = DreamcastModule.Dreamcast;
@@ -814,7 +815,7 @@ pub const SH4 = struct {
     }
 
     pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: u32) u32 {
-        sh4_log.warn("handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
+        mmu_log.info("handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
         const initial_pc = self.pc;
 
         self.report_address_exception(virtual_addr);
@@ -825,7 +826,7 @@ pub const SH4 = struct {
             self.pc +%= 2;
         }
 
-        sh4_log.warn("  Returned from exception handler PC={X:0>8}", .{self.pc});
+        mmu_log.info("  Returned from exception handler PC={X:0>8}", .{self.pc});
 
         return self.translate_address(.Read, virtual_addr) catch |err| {
             // Still didn't work: Give up.
@@ -1126,9 +1127,11 @@ pub const SH4 = struct {
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
+                sh4_log.debug(termcolor.yellow("Read({any}) from Instruction cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
+                sh4_log.debug(termcolor.yellow("Read({any}) from Instruction cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
@@ -1140,9 +1143,11 @@ pub const SH4 = struct {
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
+                sh4_log.debug(termcolor.yellow("Read({any}) from Operand cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
+                sh4_log.debug(termcolor.yellow("Read({any}) from Operand cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array
@@ -1286,9 +1291,11 @@ pub const SH4 = struct {
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
+                sh4_log.debug(termcolor.yellow("Write({any}) to Instruction cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
+                sh4_log.debug(termcolor.yellow("Write({any}) to Instruction cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
@@ -1302,9 +1309,11 @@ pub const SH4 = struct {
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
+                sh4_log.debug(termcolor.yellow("Write({any}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
+                sh4_log.debug(termcolor.yellow("Write({any}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array (UTLB)
@@ -1525,14 +1534,13 @@ pub const SH4 = struct {
         for (self.utlb) |entry| {
             // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
             if (entry.match(check_asid, asid, vpn)) {
-                if (entry.d) return error.InitialPageWriteException;
                 const physical_address = entry.translate(virtual_addr);
-                sh4_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                sh4_log.debug("  Entry: {any}", .{entry});
+                mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                mmu_log.debug("  Entry: {any}", .{entry});
                 return entry;
             }
         }
-        sh4_log.warn("UTLB Miss: {x:0>8}", .{virtual_addr});
+        mmu_log.debug("UTLB Miss: {x:0>8}", .{virtual_addr});
         return error.TLBMiss;
     }
 
@@ -1563,11 +1571,8 @@ pub const SH4 = struct {
     pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) T {
         const physical_address = self.translate_address(.Read, virtual_addr) catch |err| a: {
             switch (err) {
-                error.TLBMiss => {
-                    sh4_log.warn("Data TLB miss: {X:0>8}", .{virtual_addr});
-                    break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr);
-                },
-                else => std.debug.panic("Unexpected TLB error: {s}", .{@errorName(err)}),
+                error.TLBMiss => break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr),
+                // else => std.debug.panic("Unexpected TLB error: {s}", .{@errorName(err)}),
             }
         };
         return self.read_physical(T, physical_address);
