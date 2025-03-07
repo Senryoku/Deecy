@@ -1107,6 +1107,11 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                     std.debug.panic("Unexpected MMU exception: {s}", .{@errorName(err)});
                 }
             };
+            if (exception == .InstructionTLBMiss and physical & 1 != 0) {
+                cpu.report_address_exception(virtual_addr);
+                cpu.jump_to_exception(.InstructionAddressError);
+                return cpu.pc;
+            }
             return physical;
         }
     };

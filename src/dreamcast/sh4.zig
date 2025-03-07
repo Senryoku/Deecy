@@ -815,18 +815,18 @@ pub const SH4 = struct {
     }
 
     pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: u32) u32 {
-        mmu_log.info("handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
+        mmu_log.info(termcolor.blue(" |!| ") ++ "handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
         const initial_pc = self.pc;
 
         self.report_address_exception(virtual_addr);
 
         self.jump_to_exception(exception);
-        while (self.pc != initial_pc) {
+        while (self.pc != initial_pc and self.pc != initial_pc -% 2) { // FIXME: This is a hack and is absolutely not guaranteed to work
             self._execute(self.pc);
             self.pc +%= 2;
         }
 
-        mmu_log.info("  Returned from exception handler PC={X:0>8}", .{self.pc});
+        mmu_log.info(termcolor.green(" =>  ") ++ "Returned from exception handler PC={X:0>8}", .{self.pc});
 
         return self.translate_address(.Read, virtual_addr) catch |err| {
             // Still didn't work: Give up.
@@ -850,6 +850,11 @@ pub const SH4 = struct {
             var physical_addr = self.translate_address(.Read, virtual_addr) catch a: {
                 break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
             };
+            if (physical_addr & 1 != 0) {
+                self.report_address_exception(virtual_addr);
+                self.jump_to_exception(.InstructionAddressError);
+                physical_addr = self.pc;
+            }
             physical_addr &= 0x1FFFFFFF;
             if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000))) {
                 std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
