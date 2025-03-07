@@ -9,10 +9,8 @@
 			"args": [],
 			"cwd": "${workspaceFolder}",
 			"preLaunchTask": "build",
-			"setupCommands": [
-				{
-					"text": "process handle SIGSEGV --notify false --pass true --stop false"
-				}
+			"initCommands": [
+				"process handle SIGSEGV --notify false --pass true --stop false"
 			]
 		},
 		{
