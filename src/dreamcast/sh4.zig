@@ -569,10 +569,7 @@ pub const SH4 = struct {
         return &self.fp_banks[1].dr[r >> 1];
     }
 
-    fn jump_to_interrupt(self: *@This()) void {
-        sh4_log.debug(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
-
-        self.execution_state = .Running;
+    fn prepare_interrupt_or_exception(self: *@This()) void {
         self.spc = self.pc;
         self.ssr = @bitCast(self.sr);
         self.sgr = self.R(15).*;
@@ -582,6 +579,13 @@ pub const SH4 = struct {
         new_sr.md = 1;
         new_sr.rb = 1;
         self.set_sr(new_sr);
+    }
+
+    fn jump_to_interrupt(self: *@This()) void {
+        sh4_log.debug(" => Jump to Interrupt: VBR: {X:0>8}, Code: {X:0>4}", .{ self.vbr, self.read_p4_register(u32, .INTEVT) });
+
+        self.execution_state = .Running;
+        self.prepare_interrupt_or_exception();
 
         self.pc = self.vbr + 0x600;
     }
@@ -592,24 +596,18 @@ pub const SH4 = struct {
     }
 
     pub fn jump_to_exception(self: *@This(), exception: Exception) void {
-        sh4_log.warn("Jump to Exception: {}\n  VBR: {X:0>8}, Offset: {X:0>4}", .{ exception, self.vbr, exception.offset() });
+        sh4_log.warn("Jump to Exception: {s} ({X:0>8} to {X:0>8} + {X:0>4})", .{ @tagName(exception), self.pc, self.vbr, exception.offset() });
 
-        self.spc = self.pc;
-        self.ssr = @bitCast(self.sr);
-        self.sgr = self.R(15).*;
-
-        var new_sr = self.sr;
-        new_sr.bl = true;
-        new_sr.md = 1;
-        new_sr.rb = 1;
-        self.set_sr(new_sr);
+        self.prepare_interrupt_or_exception();
 
         self.p4_register(u16, .EXPEVT).* = exception.code();
 
-        const UserBreak = false; // TODO
-        if (self.read_p4_register(P4.BRCR, .BRCR).ubde == 1 and UserBreak) {
+        if (exception == .ManualReset or exception == .PowerOnReset or exception == .HitachiUDIReset or exception == .InstructionTLBMultipleHit or exception == .DataTLBMultipleHit) {
+            self.pc = 0xA000_0000;
+        } else if ((exception == .UserBreakAfterInstructionExecution or exception == .UserBreakBeforeInstructionExecution) and self.read_p4_register(P4.BRCR, .BRCR).ubde == 1) {
             self.pc = self.dbr;
         } else {
+            @branchHint(.likely);
             self.pc = self.vbr + exception.offset();
         }
     }
@@ -815,13 +813,13 @@ pub const SH4 = struct {
     }
 
     pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: u32) u32 {
-        mmu_log.info(termcolor.blue(" |!| ") ++ "handle_tlb_miss({any}, {X:0>8})", .{ exception, virtual_addr });
+        mmu_log.info(termcolor.blue(" |!| ") ++ "handle_tlb_miss({s}, {X:0>8}) @ {X:0>8}", .{ @tagName(exception), virtual_addr, self.pc });
         const initial_pc = self.pc;
 
         self.report_address_exception(virtual_addr);
 
         self.jump_to_exception(exception);
-        while (self.pc != initial_pc and self.pc != initial_pc -% 2) { // FIXME: This is a hack and is absolutely not guaranteed to work
+        while (self.pc != initial_pc and self.pc != self.spc) { // FIXME: This is a hack and is absolutely not guaranteed to work
             self._execute(self.pc);
             self.pc +%= 2;
         }
@@ -841,8 +839,6 @@ pub const SH4 = struct {
     }
 
     pub fn _execute(self: *@This(), virtual_addr: u32) void {
-        // Guiding the compiler a bit. Yes, that helps a lot :)
-        // Instruction should be in Boot ROM, or RAM.
         const opcode = if (comptime !builtin.is_test) oc: {
             // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
             //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
@@ -859,6 +855,8 @@ pub const SH4 = struct {
             if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000))) {
                 std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
             }
+            // Guiding the compiler a bit. Yes, that helps a lot :)
+            // Instruction should be in Boot ROM, or RAM.
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
             break :oc @call(.always_inline, @This().read_physical, .{ self, u16, physical_addr });
         } else self.read(u16, virtual_addr);
