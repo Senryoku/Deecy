@@ -55,7 +55,7 @@ const CacheAccess = struct {
 pub const OpcodeDescription = struct {
     code: u16,
     mask: u16,
-    fn_: *const fn (*sh4.SH4, sh4.Instr) void,
+    fn_: *const fn (*sh4.SH4, sh4.Instr) anyerror!void,
     name: []const u8,
     is_branch: bool = false,
     privileged: bool = false,

@@ -27,8 +27,8 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				//"-g",
-				//"game/path.gdi"
+				"-g",
+				"D:\\DC Games\\[GDI] Sega Rally 2 (US)\\Sega Rally 2 v1.003 (1999)(Sega)(NTSC)(US)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],

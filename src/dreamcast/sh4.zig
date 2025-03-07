@@ -598,6 +598,20 @@ pub const SH4 = struct {
     pub fn jump_to_exception(self: *@This(), exception: Exception) void {
         sh4_log.warn("Jump to Exception: {s} ({X:0>8} to {X:0>8} + {X:0>4})", .{ @tagName(exception), self.pc, self.vbr, exception.offset() });
 
+        // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
+        // internal registers are set to their post-reset state, the registers of the other modules retain their
+        // contents prior to the exception, and the CPU branches to the same address as in a reset (H'A000
+        // 0000). For the operation in the event of a user break, see section 20, User Break Controller. If an
+        // ordinary interrupt occurs, the interrupt request is held pending and is accepted after the BL bit
+        // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
+        // pending or accepted according to the setting made by software.
+        if (self.sr.bl) {
+            sh4_log.err(termcolor.red("{s} exception raised while SR.BL is set."), .{@tagName(exception)});
+        }
+        // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
+        // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
+        // status register (SR).
+
         self.prepare_interrupt_or_exception();
 
         self.p4_register(u16, .EXPEVT).* = exception.code();
@@ -626,23 +640,7 @@ pub const SH4 = struct {
                     self.p4_register(u32, .INTEVT).* = Interrupts.InterruptINTEVTCodes[@intFromEnum(interrupt)];
                     self.jump_to_interrupt();
                 }
-            } else if (false) {
-                // TODO: Check for exceptions
-
-                // self.io_register(u32, MemoryRegister.EXPEVT).* = code;
             }
-        } else {
-            // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
-            // internal registers are set to their post-reset state, the registers of the other modules retain their
-            // contents prior to the exception, and the CPU branches to the same address as in a reset (H'A000
-            // 0000). For the operation in the event of a user break, see section 20, User Break Controller. If an
-            // ordinary interrupt occurs, the interrupt request is held pending and is accepted after the BL bit
-            // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
-            // pending or accepted according to the setting made by software.
-
-            // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
-            // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
-            // status register (SR).
         }
     }
 
@@ -652,7 +650,7 @@ pub const SH4 = struct {
         if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
             for (0..max_instructions) |_| {
                 self._execute(self.pc);
-                self.pc += 2;
+                self.pc +%= 2;
             }
 
             const cycles = self._pending_cycles;
@@ -812,30 +810,20 @@ pub const SH4 = struct {
         self._pending_cycles += cycles;
     }
 
-    pub fn handle_tlb_miss(self: *@This(), exception: Exception, virtual_addr: u32) u32 {
-        mmu_log.info(termcolor.blue(" |!| ") ++ "handle_tlb_miss({s}, {X:0>8}) @ {X:0>8}", .{ @tagName(exception), virtual_addr, self.pc });
-        const initial_pc = self.pc;
-
-        self.report_address_exception(virtual_addr);
-
-        self.jump_to_exception(exception);
-        while (self.pc != initial_pc and self.pc != self.spc) { // FIXME: This is a hack and is absolutely not guaranteed to work
-            self._execute(self.pc);
-            self.pc +%= 2;
-        }
-
-        mmu_log.info(termcolor.green(" =>  ") ++ "Returned from exception handler PC={X:0>8}", .{self.pc});
-
-        return self.translate_address(.Read, virtual_addr) catch |err| {
-            // Still didn't work: Give up.
-            std.log.err("[PC:{X:0>8}] MMU missed twice: {any} @{X:0>8}.", .{ initial_pc, err, virtual_addr });
-            for (self.utlb, 0..) |utlb, idx| {
-                if (utlb.valid()) {
-                    sh4_log.err("  [{d}] {any}", .{ idx, utlb });
-                }
-            }
-            std.process.abort();
+    /// Might cause an exception and jump to its handler.
+    pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
+        var physical_addr = self.translate_address(.Read, virtual_addr) catch a: {
+            self.report_address_exception(virtual_addr);
+            self.jump_to_exception(.InstructionTLBMiss);
+            break :a self.pc;
         };
+        if (physical_addr & 1 != 0) {
+            self.report_address_exception(physical_addr);
+            self.jump_to_exception(.InstructionAddressError);
+            physical_addr = self.pc;
+        }
+        physical_addr &= 0x1FFF_FFFF;
+        return physical_addr;
     }
 
     pub fn _execute(self: *@This(), virtual_addr: u32) void {
@@ -843,23 +831,14 @@ pub const SH4 = struct {
             // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
             //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
             //       this won't matter... Unless the software accesses ITLB entries directly.
-            var physical_addr = self.translate_address(.Read, virtual_addr) catch a: {
-                break :a self.handle_tlb_miss(.InstructionTLBMiss, virtual_addr);
-            };
-            if (physical_addr & 1 != 0) {
-                self.report_address_exception(virtual_addr);
-                self.jump_to_exception(.InstructionAddressError);
-                physical_addr = self.pc;
-            }
-            physical_addr &= 0x1FFFFFFF;
-            if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000))) {
+            const physical_addr = self.translate_intruction_address(virtual_addr);
+            if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
                 std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
-            }
             // Guiding the compiler a bit. Yes, that helps a lot :)
             // Instruction should be in Boot ROM, or RAM.
             std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
             break :oc @call(.always_inline, @This().read_physical, .{ self, u16, physical_addr });
-        } else self.read(u16, virtual_addr);
+        } else self.read_physical(u16, virtual_addr);
 
         if (interpreter_handlers.Enable) {
             interpreter_handlers.InstructionHandlers[opcode](self);
@@ -869,11 +848,17 @@ pub const SH4 = struct {
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
                 std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, sh4_disassembly.disassemble(instr, self._allocator) catch {
-                    std.debug.print("Failed to disassemble instruction {b:0>16}\n", .{opcode});
-                    unreachable;
+                    std.debug.panic("Failed to disassemble instruction {b:0>16}\n", .{opcode});
                 }, instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
-            desc.fn_(self, instr);
+            desc.fn_(self, instr) catch |err| {
+                switch (err) {
+                    error.DataTLBMissRead => self.jump_to_exception(.DataAddressErrorRead),
+                    error.DataTLBMissWrite => self.jump_to_exception(.DataAddressErrorWrite),
+                    else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
+                }
+                self.pc -= 2;
+            };
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
                 std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
@@ -954,7 +939,7 @@ pub const SH4 = struct {
                         var curr_dst: i32 = @intCast(dst_addr);
                         var curr_src: i32 = @intCast(src_addr);
                         for (0..byte_len / 4) |_| {
-                            self._dc.?.gpu.write_ta(@intCast(curr_dst), &[1]u32{self.read(u32, @intCast(curr_src))}, if (access_32bit) .b32 else .b64);
+                            self._dc.?.gpu.write_ta(@intCast(curr_dst), &[1]u32{self.read_physical(u32, @intCast(curr_src))}, if (access_32bit) .b32 else .b64);
                             curr_dst += 4 * dst_stride;
                             curr_src += 4 * src_stride;
                         }
@@ -974,7 +959,7 @@ pub const SH4 = struct {
             var curr_dst: i32 = @intCast(dst_addr);
             var curr_src: i32 = @intCast(src_addr);
             for (0..byte_len / 4) |_| {
-                self.write(u32, @intCast(curr_dst), self.read(u32, @intCast(curr_src)));
+                self.write_physical(u32, @intCast(curr_dst), self.read_physical(u32, @intCast(curr_src)));
                 curr_dst += 4 * dst_stride;
                 curr_src += 4 * src_stride;
             }
@@ -1520,7 +1505,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) !mmu.UTLBEntry {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{TLBMiss}!mmu.UTLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1547,7 +1532,7 @@ pub const SH4 = struct {
         return error.TLBMiss;
     }
 
-    pub inline fn translate_address(self: *@This(), comptime access_type: enum { Read, Write }, virtual_addr: u32) !u32 {
+    pub inline fn translate_address(self: *@This(), comptime access_type: enum { Read, Write }, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, InitialPageWrite }!u32 {
         if (ExperimentalFullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
@@ -1560,10 +1545,13 @@ pub const SH4 = struct {
                 0xE000_0000...0xFFFF_FFFF,
                 => return virtual_addr,
                 else => {
-                    const entry = try self.utlb_lookup(virtual_addr);
+                    const entry = self.utlb_lookup(virtual_addr) catch return switch (access_type) {
+                        .Read => error.DataTLBMissRead,
+                        .Write => error.DataTLBMissWrite,
+                    };
                     switch (access_type) {
                         .Read => return entry.translate(virtual_addr),
-                        .Write => if (!entry.d) return error.InitialPageWriteException else return entry.translate(virtual_addr),
+                        .Write => if (!entry.d) return error.InitialPageWrite else return entry.translate(virtual_addr),
                     }
                 },
             };
@@ -1571,11 +1559,12 @@ pub const SH4 = struct {
         return virtual_addr;
     }
 
-    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) T {
-        const physical_address = self.translate_address(.Read, virtual_addr) catch |err| a: {
+    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{DataTLBMissRead}!T {
+        const physical_address = self.translate_address(.Read, virtual_addr) catch |err| {
+            self.report_address_exception(virtual_addr);
             switch (err) {
-                error.TLBMiss => break :a self.handle_tlb_miss(.DataTLBMissRead, virtual_addr),
-                // else => std.debug.panic("Unexpected TLB error: {s}", .{@errorName(err)}),
+                error.DataTLBMissRead => return error.DataTLBMissRead,
+                else => unreachable,
             }
         };
         return self.read_physical(T, physical_address);
@@ -1685,11 +1674,12 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {
-        const physical_address = self.translate_address(.Write, virtual_addr) catch |err| a: {
+    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataTLBMissWrite, InitialPageWrite }!void {
+        const physical_address = self.translate_address(.Write, virtual_addr) catch |err| {
+            self.report_address_exception(virtual_addr);
             switch (err) {
-                error.TLBMiss => break :a self.handle_tlb_miss(.DataTLBMissWrite, virtual_addr),
-                error.InitialPageWriteException => break :a self.handle_tlb_miss(.InitialPageWrite, virtual_addr),
+                error.DataTLBMissWrite, error.InitialPageWrite => |e| return e,
+                else => unreachable,
             }
         };
         return self.write_physical(T, physical_address, value);

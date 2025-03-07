@@ -281,6 +281,7 @@ pub const JITContext = struct {
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
     may_have_pending_cycles: bool = false,
+    jumps_to_end: [32]?JIT.PatchableJump = .{null} ** 32,
 
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.
@@ -337,20 +338,20 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const pc = cpu.pc;
         const physical_pc = if (sh4.ExperimentalFullMMUSupport)
-            runtime_mmu_translation(.InstructionTLBMiss).handler(cpu, cpu.pc) & 0x1FFF_FFFF
+            cpu.translate_intruction_address(cpu.pc)
         else
             cpu.pc & 0x1FFF_FFFF;
+
         std.debug.assert((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000));
 
         return .{
             .cpu = cpu,
-            .entry_point_address = pc,
+            .entry_point_address = cpu.pc,
             .mmu_enabled = sh4.ExperimentalFullMMUSupport and cpu._mmu_enabled,
-            .start_pc = pc,
+            .start_pc = cpu.pc,
             .start_physical_pc = physical_pc,
-            .current_pc = pc,
+            .current_pc = cpu.pc,
             .current_physical_pc = physical_pc,
             .instructions = @alignCast(@ptrCast(cpu._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
@@ -479,6 +480,14 @@ pub const JITContext = struct {
     pub fn guest_freg_cache(self: *@This(), block: *IRBlock, comptime size: u8, guest_reg: u4, comptime load: bool, comptime modified: bool) !JIT.FPRegister {
         return try self.guest_register_cache(JIT.FPRegister, size, block, guest_reg, load, modified);
     }
+
+    pub fn add_jump_to_end(self: *@This(), jmp: JIT.PatchableJump) !void {
+        var idx: usize = 0;
+        while (idx < self.jumps_to_end.len and self.jumps_to_end[idx] != null) : (idx += 1) {}
+        if (idx >= self.jumps_to_end.len)
+            return error.TooManyJumpsToEndOfBlock;
+        self.jumps_to_end[idx] = jmp;
+    }
 };
 
 pub const SH4JIT = struct {
@@ -555,7 +564,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
-            const physical_pc = runtime_mmu_translation(.InstructionTLBMiss).handler(cpu, cpu.pc) & 0x1FFF_FFFF;
+            const physical_pc = cpu.translate_intruction_address(cpu.pc);
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
@@ -674,6 +683,9 @@ pub const SH4JIT = struct {
         try ctx.fpr_cache.commit_and_invalidate_all(b);
 
         try self.idle_speedup(&ctx);
+
+        for (ctx.jumps_to_end) |jmp|
+            if (jmp) |j| j.patch();
 
         if (Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
             ctx.may_have_pending_cycles = true;
@@ -877,7 +889,7 @@ pub const SH4JIT = struct {
     }
 };
 
-pub fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
+fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
     if (Architecture.JITABI == .SystemV) {
         if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
             try block.append(.{ .SaveFPRegisters = .{
@@ -897,6 +909,16 @@ pub fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
     }
 }
 
+fn InterpreterFallback(comptime instr_index: u8) type {
+    return struct {
+        pub fn handler(cpu: *sh4.SH4, intr: sh4.Instr) void {
+            sh4_instructions.Opcodes[instr_index].fn_(cpu, intr) catch |err| {
+                std.debug.panic("Interpreter fallback generated an exception: {s}", .{@errorName(err)});
+            };
+        }
+    };
+}
+
 inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     if (sh4_interpreter_handlers.Enable) {
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -904,7 +926,12 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
     } else {
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-        try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+        const instr_index = sh4_instructions.JumpTable[instr.value];
+        switch (instr_index) {
+            sh4_instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
+            inline else => |idx| try call(block, ctx, InterpreterFallback(idx).handler),
+        }
+        // try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
     }
 }
 
@@ -1083,14 +1110,12 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 
 fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
     return struct {
-        fn handler(cpu: *sh4.SH4, virtual_addr: u32) u32 {
+        fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
             const physical = cpu.translate_address(switch (exception) {
-                .InstructionTLBMiss, .DataTLBMissRead => .Read,
+                .DataTLBMissRead => .Read,
                 .DataTLBMissWrite => .Write,
                 else => @compileError("Unexpected exception type: " ++ @tagName(exception)),
-            }, virtual_addr) catch |err| a: {
-                // Not found: Trigger and handle an exception.
-
+            }, virtual_addr) catch |err| {
                 sh4_jit_log.warn("MMU miss {s} for {X:0>8}. UTLBs:", .{ @errorName(err), virtual_addr });
                 for (cpu.utlb, 0..) |utlb, idx| {
                     if (utlb.valid()) {
@@ -1098,26 +1123,24 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                     }
                 }
 
-                // FIXME/TODO: Don't fallback to the interpreter anymore.
-                if (err == error.InitialPageWriteException) {
-                    break :a cpu.handle_tlb_miss(.InitialPageWrite, virtual_addr);
-                } else if (err == error.TLBMiss) {
-                    break :a cpu.handle_tlb_miss(exception, virtual_addr);
-                } else {
-                    std.debug.panic("Unexpected MMU exception: {s}", .{@errorName(err)});
+                cpu.report_address_exception(virtual_addr);
+                switch (err) {
+                    error.DataTLBMissRead, error.DataTLBMissWrite => {
+                        cpu.jump_to_exception(exception);
+                        return .{ .address = 0, .exception = 1 };
+                    },
+                    error.InitialPageWrite => {
+                        cpu.jump_to_exception(.InitialPageWrite);
+                        return .{ .address = 0, .exception = 2 };
+                    },
                 }
             };
-            if (exception == .InstructionTLBMiss and physical & 1 != 0) {
-                cpu.report_address_exception(virtual_addr);
-                cpu.jump_to_exception(.InstructionAddressError);
-                return cpu.pc;
-            }
-            return physical;
+            return .{ .address = physical, .exception = 0 };
         }
     };
 }
 
-/// Will do the address translation, handle exception if necessary, and return the translated address to addr.
+/// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
 fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JITContext, addr: JIT.Register) !void {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
@@ -1133,6 +1156,11 @@ fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JIT
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
     try block.call(runtime_mmu_translation(exception).handler);
+
+    try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xFFFFFFFF });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg64 = ReturnRegister }, .rhs = .{ .reg64 = ArgRegisters[0] } } });
+    try ctx.add_jump_to_end(try block.jmp(.Above));
+
     if (addr != ReturnRegister)
         try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 }
