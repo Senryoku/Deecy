@@ -5,6 +5,14 @@ pub const ProtectionKey = enum(u2) {
     PrivilegedReadWrite = 1,
     ReadOnly = 2,
     ReadWrite = 3,
+
+    pub fn privileged(self: @This()) bool {
+        return self == .PrivilegedReadOnly or self == .PrivilegedReadWrite;
+    }
+
+    pub fn read_only(self: @This()) bool {
+        return self == .ReadOnly or self == .PrivilegedReadOnly;
+    }
 };
 
 pub const PTEH = packed struct {

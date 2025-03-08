@@ -1502,7 +1502,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{TLBMiss}!mmu.TLBEntry {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1516,9 +1516,13 @@ pub const SH4 = struct {
 
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
+
         for (self.utlb) |entry| {
             // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
             if (entry.match(check_asid, asid, vpn)) {
+                if (self.sr.md == 0 and entry.pr.privileged())
+                    return error.TLBProtectionViolation;
+
                 const physical_address = entry.translate(virtual_addr);
                 mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
                 mmu_log.debug("  Entry: {any}", .{entry});
@@ -1529,7 +1533,9 @@ pub const SH4 = struct {
         return error.TLBMiss;
     }
 
-    pub inline fn translate_address(self: *@This(), comptime access_type: enum { Read, Write }, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, InitialPageWrite }!u32 {
+    pub const AccessType = enum { Read, Write };
+
+    pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, InitialPageWrite }!u32 {
         if (ExperimentalFullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
@@ -1542,13 +1548,23 @@ pub const SH4 = struct {
                 0xE000_0000...0xFFFF_FFFF,
                 => return virtual_addr,
                 else => {
-                    const entry = self.utlb_lookup(virtual_addr) catch return switch (access_type) {
-                        .Read => error.DataTLBMissRead,
-                        .Write => error.DataTLBMissWrite,
+                    const entry = self.utlb_lookup(virtual_addr) catch |err| return switch (err) {
+                        error.TLBMiss => switch (access_type) {
+                            .Read => error.DataTLBMissRead,
+                            .Write => error.DataTLBMissWrite,
+                        },
+                        error.TLBProtectionViolation => error.DataTLBProtectionViolation,
                     };
                     switch (access_type) {
                         .Read => return entry.translate(virtual_addr),
-                        .Write => if (!entry.d) return error.InitialPageWrite else return entry.translate(virtual_addr),
+                        .Write => {
+                            if (!entry.d)
+                                return error.InitialPageWrite
+                            else if (entry.pr.read_only())
+                                return error.DataTLBProtectionViolation
+                            else
+                                return entry.translate(virtual_addr);
+                        },
                     }
                 },
             };
@@ -1589,6 +1605,12 @@ pub const SH4 = struct {
                 for (self.itlb, 0..) |entry, idx| {
                     // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
                     if (entry.match(check_asid, asid, vpn)) {
+                        if (self.sr.md == 0 and entry.pr.privileged()) {
+                            self.report_address_exception(virtual_addr);
+                            self.jump_to_exception(.InstructionTLBProtectionViolation);
+                            return self.pc & 0x1FFF_FFFF;
+                        }
+
                         // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
                         mmucr.lrui &= LRUIMasks[idx];
                         mmucr.lrui |= LRUIValues[idx];
@@ -1603,9 +1625,12 @@ pub const SH4 = struct {
         }
 
         // Fallback to UTLB
-        const entry = self.utlb_lookup(virtual_addr) catch {
+        const entry = self.utlb_lookup(virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
-            self.jump_to_exception(.InstructionTLBMiss);
+            self.jump_to_exception(switch (err) {
+                error.TLBMiss => .InstructionTLBMiss,
+                error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
+            });
             return self.pc & 0x1FFF_FFFF;
         };
 

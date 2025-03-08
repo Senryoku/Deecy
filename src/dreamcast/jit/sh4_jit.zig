@@ -1112,14 +1112,11 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
 }
 
-fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
+/// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
+fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
-            const physical = cpu.translate_address(switch (exception) {
-                .DataTLBMissRead => .Read,
-                .DataTLBMissWrite => .Write,
-                else => @compileError("Unexpected exception type: " ++ @tagName(exception)),
-            }, virtual_addr) catch |err| {
+            const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
                 sh4_jit_log.warn("MMU miss {s} for {X:0>8}. UTLBs:", .{ @errorName(err), virtual_addr });
                 for (cpu.utlb, 0..) |utlb, idx| {
                     if (utlb.valid()) {
@@ -1130,12 +1127,23 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
                 cpu.report_address_exception(virtual_addr);
                 switch (err) {
                     error.DataTLBMissRead, error.DataTLBMissWrite => {
-                        cpu.jump_to_exception(exception);
+                        cpu.jump_to_exception(switch (access_type) {
+                            .Read => .DataTLBMissRead,
+                            .Write => .DataTLBMissWrite,
+                        });
                         return .{ .address = 0, .exception = 1 };
                     },
                     error.InitialPageWrite => {
+                        std.debug.assert(access_type == .Write);
                         cpu.jump_to_exception(.InitialPageWrite);
                         return .{ .address = 0, .exception = 2 };
+                    },
+                    error.DataTLBProtectionViolation => {
+                        cpu.jump_to_exception(switch (access_type) {
+                            .Read => .DataTLBProtectionViolationRead,
+                            .Write => .DataTLBProtectionViolationWrite,
+                        });
+                        return .{ .address = 0, .exception = 3 };
                     },
                 }
             };
@@ -1145,7 +1153,7 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
 }
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
-fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
+fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
 
@@ -1170,10 +1178,11 @@ fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JIT
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try call(block, ctx, &runtime_mmu_translation(exception).handler);
+    try call(block, ctx, &runtime_mmu_translation(access_type).handler);
     if (addr != ReturnRegister)
         try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 
+    // Check if an exception was raised.
     try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xFFFFFFFF });
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg64 = ReturnRegister }, .rhs = .{ .reg64 = ArgRegisters[0] } } });
 
@@ -1183,7 +1192,7 @@ fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JIT
         try block.pop(.{ .reg = ArgRegisters[0] });
     }
     try block.pop(.{ .reg = ArgRegisters[0] });
-
+    // Terminate the block immediately if an exception was raised.
     try ctx.add_jump_to_end(try block.jmp(.Above));
 
     try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
@@ -1204,7 +1213,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4
     }
 
     if (ctx.mmu_enabled)
-        try mmu_translation(.DataTLBMissRead, block, ctx, addr, null);
+        try mmu_translation(.Read, block, ctx, addr, null);
 
     if (FastMem) {
         try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
@@ -1275,7 +1284,7 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, dest_guest_reg: u4, comptime add
             else => null,
         };
 
-        try mmu_translation(.DataTLBMissWrite, block, ctx, addr, register_to_save);
+        try mmu_translation(.Write, block, ctx, addr, register_to_save);
     }
 
     if (FastMem) {
