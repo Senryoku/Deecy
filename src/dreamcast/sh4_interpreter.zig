@@ -354,10 +354,13 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 
+// Adds together the contents of general registers Rn and Rm and stores the result in Rn. If overflow occurs, the T bit is set.
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
-    _ = opcode;
-    _ = cpu;
-    std.debug.panic(termcolor.red("Unimplemented addv Rm, Rn\n"), .{});
+    const rn = cpu.R(opcode.nmd.n).*;
+    const rm = cpu.R(opcode.nmd.m).*;
+    const r = @addWithOverflow(rn, rm);
+    cpu.R(opcode.nmd.n).* = r[0];
+    cpu.sr.t = @bitCast(r[1]);
 }
 
 // Compares general register R0 and the sign-extended 8-bit immediate data and sets the T bit if the values are equal.
