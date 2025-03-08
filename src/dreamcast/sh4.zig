@@ -1502,7 +1502,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation }!mmu.TLBEntry {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1517,25 +1517,32 @@ pub const SH4 = struct {
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        for (self.utlb) |entry| {
-            // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
-            if (entry.match(check_asid, asid, vpn)) {
-                if (self.sr.md == 0 and entry.pr.privileged())
-                    return error.TLBProtectionViolation;
+        var found_entry: ?mmu.TLBEntry = null;
 
-                const physical_address = entry.translate(virtual_addr);
-                mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                mmu_log.debug("  Entry: {any}", .{entry});
-                return entry;
+        for (self.utlb) |entry| {
+            if (entry.match(check_asid, asid, vpn)) {
+                if (found_entry) |_| return error.TLBMultipleHit;
+                found_entry = entry;
             }
         }
+
+        if (found_entry) |entry| {
+            if (self.sr.md == 0 and entry.pr.privileged())
+                return error.TLBProtectionViolation;
+
+            const physical_address = entry.translate(virtual_addr);
+            mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+            mmu_log.debug("  Entry: {any}", .{entry});
+            return entry;
+        }
+
         mmu_log.debug("UTLB Miss: {x:0>8}", .{virtual_addr});
         return error.TLBMiss;
     }
 
     pub const AccessType = enum { Read, Write };
 
-    pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, InitialPageWrite }!u32 {
+    pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, DataTLBMultipleHit, InitialPageWrite }!u32 {
         if (ExperimentalFullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
@@ -1554,6 +1561,7 @@ pub const SH4 = struct {
                             .Write => error.DataTLBMissWrite,
                         },
                         error.TLBProtectionViolation => error.DataTLBProtectionViolation,
+                        error.TLBMultipleHit => error.DataTLBMultipleHit,
                     };
                     switch (access_type) {
                         .Read => return entry.translate(virtual_addr),
@@ -1630,6 +1638,7 @@ pub const SH4 = struct {
             self.jump_to_exception(switch (err) {
                 error.TLBMiss => .InstructionTLBMiss,
                 error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
+                error.TLBMultipleHit => .InstructionTLBMultipleHit,
             });
             return self.pc & 0x1FFF_FFFF;
         };

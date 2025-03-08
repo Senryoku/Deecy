@@ -1145,6 +1145,10 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
                         });
                         return .{ .address = 0, .exception = 3 };
                     },
+                    error.DataTLBMultipleHit => {
+                        cpu.jump_to_exception(.DataTLBMultipleHit);
+                        return .{ .address = 0, .exception = 4 };
+                    },
                 }
             };
             return .{ .address = physical, .exception = 0 };
