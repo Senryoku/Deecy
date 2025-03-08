@@ -77,7 +77,7 @@ pub const std_options: std.Options = .{
     .logFn = customLog,
     .log_scope_levels = &[_]std.log.ScopeLevel{
         .{ .scope = .dc, .level = .info },
-        .{ .scope = .sh4, .level = .info },
+        .{ .scope = .sh4, .level = .warn },
         .{ .scope = .mmu, .level = .info },
         .{ .scope = .sh4_jit, .level = .warn },
         .{ .scope = .arm_jit, .level = .info },

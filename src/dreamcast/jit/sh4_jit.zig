@@ -245,7 +245,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
 
         pub fn commit_all(self: *@This(), block: *IRBlock) !void {
             for (&self.entries) |*reg| {
-                reg.commit(block);
+                try reg.commit(block);
             }
         }
 
@@ -910,6 +910,8 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
     }
 }
 
+/// Helper function to ignore possible exceptions thrown by the interpreter fallback.
+//  (It's complicated to call zig functions with error handling from the JIT, wrapping it in a function that can't return an error makes it way easier).
 fn InterpreterFallback(comptime instr_index: u8) type {
     const entry = sh4_instructions.Opcodes[instr_index];
     return struct {
@@ -1249,19 +1251,22 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4
     }
 }
 
-fn store_mem(block: *IRBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
-    const dest_guest_reg_location = try load_register(block, ctx, dest_guest_reg);
-
+fn store_mem(block: *IRBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0, GBR }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
     const addr = ArgRegisters[1];
 
-    try block.mov(.{ .reg = addr }, .{ .reg = dest_guest_reg_location });
-
+    switch (addressing) {
+        .Reg, .Reg_R0 => {
+            const dest_guest_reg_location = try load_register(block, ctx, dest_guest_reg);
+            try block.mov(.{ .reg = addr }, .{ .reg = dest_guest_reg_location });
+            if (addressing == .Reg_R0) {
+                const r0 = try load_register(block, ctx, 0);
+                try block.add(.{ .reg = addr }, .{ .reg = r0 });
+            }
+        },
+        .GBR => try block.mov(.{ .reg = addr }, sh4_mem("gbr")),
+    }
     if (displacement != 0)
         try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
-    if (addressing == .Reg_R0) {
-        const r0 = try load_register(block, ctx, 0);
-        try block.add(.{ .reg = addr }, .{ .reg = r0 });
-    }
 
     if (ctx.mmu_enabled) {
         // Make sure value isn't overwritten
@@ -1510,6 +1515,30 @@ pub fn movl_Rm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, instr.nmd.n, .Reg_R0, 0, .{ .reg = rm }, 32);
     return false;
+}
+
+pub fn mov_R0_atDispGBR(comptime T: type, block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const r0 = try load_register(block, ctx, 0);
+    const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * @sizeOf(T);
+    try store_mem(block, ctx, 0, .GBR, displacement, switch (T) {
+        u8 => .{ .reg8 = r0 },
+        u16 => .{ .reg16 = r0 },
+        u32 => .{ .reg = r0 },
+        else => @compileError("Invalid type"),
+    }, @bitSizeOf(T));
+    return false;
+}
+
+pub fn movb_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return mov_R0_atDispGBR(u8, block, ctx, instr);
+}
+
+pub fn movw_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return mov_R0_atDispGBR(u16, block, ctx, instr);
+}
+
+pub fn movl_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    return mov_R0_atDispGBR(u32, block, ctx, instr);
 }
 
 pub fn movt_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
