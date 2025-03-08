@@ -1512,7 +1512,7 @@ pub const SH4 = struct {
         mmucr.urc +%= 1;
         if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
 
-        const check_asid = mmucr.sv or self.sr.md == 0;
+        const check_asid = !mmucr.sv or self.sr.md == 0;
 
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
@@ -1607,7 +1607,7 @@ pub const SH4 = struct {
             => return virtual_addr & 0x1FFF_FFFF,
             else => {
                 // Search ITLB
-                const check_asid = mmucr.sv or self.sr.md == 0;
+                const check_asid = !mmucr.sv or self.sr.md == 0;
                 const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
                 const vpn: u22 = @truncate(virtual_addr >> 10);
                 for (self.itlb, 0..) |entry, idx| {
