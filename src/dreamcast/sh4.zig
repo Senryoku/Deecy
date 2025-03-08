@@ -1568,6 +1568,9 @@ pub const SH4 = struct {
 
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
 
+        const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
+        const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
+
         switch (virtual_addr) {
             // Operand Cache RAM Mode
             0x7C00_0000...0x7FFF_FFFF,
@@ -1587,8 +1590,6 @@ pub const SH4 = struct {
                     // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
                     if (entry.match(check_asid, asid, vpn)) {
                         // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
-                        const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
-                        const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
                         mmucr.lrui &= LRUIMasks[idx];
                         mmucr.lrui |= LRUIValues[idx];
 
@@ -1610,15 +1611,20 @@ pub const SH4 = struct {
 
         // Update ITLB entry pointed by MMUCR.LRUI
         // TODO: There's probably a more elegant way to do this.
-        if (mmucr.lrui & 0b111000 == 0b111000) {
-            self.itlb[0] = entry;
-        } else if (mmucr.lrui & 0b100110 == 0b000110) {
-            self.itlb[1] = entry;
-        } else if (mmucr.lrui & 0b010101 == 0b000001) {
-            self.itlb[2] = entry;
-        } else if (mmucr.lrui & 0b001011 == 0b000000) {
-            self.itlb[3] = entry;
-        } else std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
+        const idx: u2 = if (mmucr.lrui & 0b111000 == 0b111000)
+            0
+        else if (mmucr.lrui & 0b100110 == 0b000110)
+            1
+        else if (mmucr.lrui & 0b010101 == 0b000001)
+            2
+        else if (mmucr.lrui & 0b001011 == 0b000000)
+            3
+        else
+            std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
+
+        self.itlb[idx] = entry;
+        mmucr.lrui &= LRUIMasks[idx];
+        mmucr.lrui |= LRUIValues[idx];
 
         return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
