@@ -911,10 +911,11 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
 }
 
 fn InterpreterFallback(comptime instr_index: u8) type {
+    const entry = sh4_instructions.Opcodes[instr_index];
     return struct {
-        pub fn handler(cpu: *sh4.SH4, intr: sh4.Instr) void {
-            sh4_instructions.Opcodes[instr_index].fn_(cpu, intr) catch |err| {
-                std.debug.panic("Interpreter fallback generated an exception: {s}", .{@errorName(err)});
+        pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) void {
+            entry.fn_(cpu, instr) catch |err| {
+                std.debug.panic("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
             };
         }
     };
