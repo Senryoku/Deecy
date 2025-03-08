@@ -2654,7 +2654,7 @@ pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         try ctx.compile_delay_slot(block);
         ctx.skip_instructions((dest - ctx.current_pc) / 2 - 1);
         return false;
-    } else if (Optimizations.inline_backwards_bra and dest < ctx.start_pc) {
+    } else if (Optimizations.inline_backwards_bra and dest < ctx.start_pc and !ctx.mmu_enabled) {
         try ctx.compile_delay_slot(block);
         // FIXME: Very hackish. We don't normally have access to previous instructions. May lead to infinite loops?
         sh4_jit_log.info("(Unstable) Inlining backwards bra instruction: {X:0>8} -> {X:0>8}", .{ ctx.current_pc, dest });
@@ -2663,11 +2663,8 @@ pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
         ctx.index = 0;
         ctx.current_pc = dest - 2;
         ctx.start_pc = dest - 2;
-        if (ctx.mmu_enabled) {
-            ctx.current_physical_pc = (try ctx.cpu.translate_address(.Read, dest - 2)) & 0x1FFFFFFF;
-        } else {
-            ctx.current_physical_pc = (dest - 2) & 0x1FFFFFFF;
-        }
+        std.debug.assert(!ctx.mmu_enabled);
+        ctx.current_physical_pc = (dest - 2) & 0x1FFFFFFF;
         return false;
     } else {
         try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
