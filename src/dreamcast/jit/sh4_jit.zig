@@ -1180,9 +1180,10 @@ fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JIT
         try block.pop(.{ .reg = ArgRegisters[0] });
     }
     try block.pop(.{ .reg = ArgRegisters[0] });
-    try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
 
     try ctx.add_jump_to_end(try block.jmp(.Above));
+
+    try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
