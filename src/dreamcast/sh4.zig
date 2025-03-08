@@ -851,14 +851,14 @@ pub const SH4 = struct {
                     // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
                     if (entry.match(check_asid, asid, vpn)) {
                         // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
-                        const LRUIMasks = [4]u6{ 0b111000, 0b100110, 0b010101, 0b001011 };
+                        const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
                         const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
                         mmucr.lrui &= LRUIMasks[idx];
                         mmucr.lrui |= LRUIValues[idx];
 
                         const physical_address = entry.translate(virtual_addr);
-                        mmu_log.info("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                        mmu_log.info("  Entry {d}: {any}", .{ idx, entry });
+                        mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                        mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
                         return physical_address & 0x1FFF_FFFF;
                     }
                 }
