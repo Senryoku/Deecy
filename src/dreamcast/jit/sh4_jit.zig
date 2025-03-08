@@ -378,7 +378,7 @@ pub const JITContext = struct {
                 if (op.use_fallback()) "!" else " ",
                 try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
             });
-        self.current_physical_pc += 2; // Same thing as in the interpreter, this in probably useless as instructions refering to PC should be illegal here, but just in case...
+        self.current_physical_pc += 2; // Same thing as in the interpreter, this is probably useless as instructions referring to PC should be illegal here, but just in case...
         self.current_pc += 2;
         const branch = try op.jit_emit_fn(b, self, @bitCast(instr));
         std.debug.assert(!branch);
@@ -1141,28 +1141,47 @@ fn runtime_mmu_translation(comptime exception: sh4.Exception) type {
 }
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
-fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JITContext, addr: JIT.Register) !void {
+fn mmu_translation(comptime exception: sh4.Exception, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
     try ctx.gpr_cache.commit_and_invalidate_all(block);
     try ctx.fpr_cache.commit_and_invalidate_all(block);
-    if (ctx.outdated_pc) {
-        if (ctx.in_delay_slot) {
-            try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
-        } else {
-            try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
-        }
+
+    std.debug.assert(register_to_save != ArgRegisters[0]);
+
+    // Backup current PC (mostly in case we're in a branch delay slot)
+    try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
+    try block.push(.{ .reg = ArgRegisters[0] });
+
+    if (ctx.in_delay_slot) {
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
+    } else {
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+    }
+
+    if (register_to_save) |r| {
+        try block.push(.{ .reg = r });
+    } else {
+        try block.push(.{ .reg = ArgRegisters[0] }); // Stack alignemnt
     }
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try block.call(runtime_mmu_translation(exception).handler);
+    try call(block, ctx, &runtime_mmu_translation(exception).handler);
+    if (addr != ReturnRegister)
+        try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 
     try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xFFFFFFFF });
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg64 = ReturnRegister }, .rhs = .{ .reg64 = ArgRegisters[0] } } });
-    try ctx.add_jump_to_end(try block.jmp(.Above));
 
-    if (addr != ReturnRegister)
-        try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
+    if (register_to_save) |r| {
+        try block.pop(.{ .reg = r });
+    } else {
+        try block.pop(.{ .reg = ArgRegisters[0] });
+    }
+    try block.pop(.{ .reg = ArgRegisters[0] });
+    try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
+
+    try ctx.add_jump_to_end(try block.jmp(.Above));
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
@@ -1180,7 +1199,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4
     }
 
     if (ctx.mmu_enabled)
-        try mmu_translation(.DataTLBMissRead, block, ctx, addr);
+        try mmu_translation(.DataTLBMissRead, block, ctx, addr, null);
 
     if (FastMem) {
         try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
@@ -1243,17 +1262,12 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, dest_guest_reg: u4, comptime add
 
     if (ctx.mmu_enabled) {
         // Make sure value isn't overwritten
-        if (value == .reg8 or value == .reg16 or value == .reg or value == .reg64) {
-            try block.push(value);
-            try block.push(value);
-        }
+        const register_to_save = switch (value) {
+            .reg8, .reg16, .reg, .reg64 => |r| r,
+            else => null,
+        };
 
-        try mmu_translation(.DataTLBMissWrite, block, ctx, addr);
-
-        if (value == .reg8 or value == .reg16 or value == .reg or value == .reg64) {
-            try block.pop(value);
-            try block.pop(value);
-        }
+        try mmu_translation(.DataTLBMissWrite, block, ctx, addr, register_to_save);
     }
 
     if (FastMem) {
