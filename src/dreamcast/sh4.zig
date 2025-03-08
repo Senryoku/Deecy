@@ -187,7 +187,8 @@ pub const SH4 = struct {
     store_queues: [2][8]u32 align(32) = undefined,
     _operand_cache: []u8 align(4),
     p4_registers: []u8 align(4),
-    utlb: []mmu.UTLBEntry,
+    itlb: []mmu.TLBEntry, // FIXME: Not serialized yet.
+    utlb: []mmu.TLBEntry,
 
     interrupt_requests: u64 = 0,
     // NOTE: These are not serialized as they can easily be computed from P4 registers IPRA/B/C. See compute_interrupt_priorities.
@@ -220,7 +221,8 @@ pub const SH4 = struct {
             ._dc = dc,
             ._operand_cache = try allocator.alloc(u8, 0x2000), // NOTE: Actual Operand cache is 16k, but we're only emulating the RAM accessible part, which is 8k.
             .p4_registers = try allocator.alloc(u8, 0x1000),
-            .utlb = try allocator.alloc(mmu.UTLBEntry, 64),
+            .itlb = try allocator.alloc(mmu.TLBEntry, 4),
+            .utlb = try allocator.alloc(mmu.TLBEntry, 64),
             ._allocator = allocator,
             ._operand_cache_state = try allocator.create(OperandCacheState),
         };
@@ -248,6 +250,7 @@ pub const SH4 = struct {
 
     pub fn deinit(self: *@This()) void {
         self._allocator.free(self.utlb);
+        self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
         self._allocator.free(self._operand_cache);
         self._allocator.destroy(self._operand_cache_state);
@@ -333,9 +336,11 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCSPTR2).* = 0x0000;
         self.p4_register(u16, .SCLSR2).* = 0x0000;
 
-        for (0..self.utlb.len) |i| {
+        for (0..self.itlb.len) |i|
+            self.itlb[i].v = false;
+        for (0..self.utlb.len) |i|
             self.utlb[i].v = false;
-        }
+
         self._mmu_enabled = false;
     }
 
@@ -377,6 +382,11 @@ pub const SH4 = struct {
 
         // BCR1 Held
         // BCR2 Held
+
+        for (0..self.itlb.len) |i|
+            self.itlb[i].v = false;
+        for (0..self.utlb.len) |i|
+            self.utlb[i].v = false;
 
         self._mmu_enabled = false;
     }
@@ -812,18 +822,69 @@ pub const SH4 = struct {
 
     /// Might cause an exception and jump to its handler.
     pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
-        var physical_addr = self.translate_address(.Read, virtual_addr) catch a: {
+        if (!ExperimentalFullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
+
+        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
+            self.report_address_exception(virtual_addr);
+            self.jump_to_exception(.InstructionAddressError);
+            return self.pc & 0x1FFF_FFFF;
+        }
+
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+
+        switch (virtual_addr) {
+            // Operand Cache RAM Mode
+            0x7C00_0000...0x7FFF_FFFF,
+            // P1
+            0x8000_0000...0x9FFF_FFFF,
+            // P2
+            0xA000_0000...0xBFFF_FFFF,
+            // P4
+            0xE000_0000...0xFFFF_FFFF,
+            => return virtual_addr & 0x1FFF_FFFF,
+            else => {
+                // Search ITLB
+                const check_asid = mmucr.sv or self.sr.md == 0;
+                const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+                const vpn: u22 = @truncate(virtual_addr >> 10);
+                for (self.itlb, 0..) |entry, idx| {
+                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
+                    if (entry.match(check_asid, asid, vpn)) {
+                        // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
+                        const LRUIMasks = [4]u6{ 0b111000, 0b100110, 0b010101, 0b001011 };
+                        const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
+                        mmucr.lrui &= LRUIMasks[idx];
+                        mmucr.lrui |= LRUIValues[idx];
+
+                        const physical_address = entry.translate(virtual_addr);
+                        mmu_log.info("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                        mmu_log.info("  Entry {d}: {any}", .{ idx, entry });
+                        return physical_address & 0x1FFF_FFFF;
+                    }
+                }
+            },
+        }
+
+        // Fallback to UTLB
+        const entry = self.utlb_lookup(virtual_addr) catch {
             self.report_address_exception(virtual_addr);
             self.jump_to_exception(.InstructionTLBMiss);
-            break :a self.pc;
+            return self.pc & 0x1FFF_FFFF;
         };
-        if (physical_addr & 1 != 0) {
-            self.report_address_exception(physical_addr);
-            self.jump_to_exception(.InstructionAddressError);
-            physical_addr = self.pc;
-        }
-        physical_addr &= 0x1FFF_FFFF;
-        return physical_addr;
+
+        // Update ITLB entry pointed by MMUCR.LRUI
+        // TODO: There's probably a more elegant way to do this.
+        if (mmucr.lrui & 0b111000 == 0b111000) {
+            self.itlb[0] = entry;
+        } else if (mmucr.lrui & 0b100110 == 0b000110) {
+            self.itlb[1] = entry;
+        } else if (mmucr.lrui & 0b010101 == 0b000001) {
+            self.itlb[2] = entry;
+        } else if (mmucr.lrui & 0b001011 == 0b000000) {
+            self.itlb[3] = entry;
+        } else std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
+
+        return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
 
     pub fn _execute(self: *@This(), virtual_addr: u32) void {
@@ -1115,11 +1176,11 @@ pub const SH4 = struct {
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
-                sh4_log.debug(termcolor.yellow("Read({any}) from Instruction cache address array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({any}) from Instruction cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
-                sh4_log.debug(termcolor.yellow("Read({any}) from Instruction cache data array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({any}) from Instruction cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
@@ -1131,11 +1192,11 @@ pub const SH4 = struct {
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
-                sh4_log.debug(termcolor.yellow("Read({any}) from Operand cache address array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({any}) from Operand cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
-                sh4_log.debug(termcolor.yellow("Read({any}) from Operand cache data array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({any}) from Operand cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array
@@ -1279,11 +1340,11 @@ pub const SH4 = struct {
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
-                sh4_log.debug(termcolor.yellow("Write({any}) to Instruction cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Instruction cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
-                sh4_log.debug(termcolor.yellow("Write({any}) to Instruction cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Instruction cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
@@ -1297,11 +1358,11 @@ pub const SH4 = struct {
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
-                sh4_log.debug(termcolor.yellow("Write({any}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
-                sh4_log.debug(termcolor.yellow("Write({any}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({any}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array (UTLB)
@@ -1385,7 +1446,10 @@ pub const SH4 = struct {
                                 var val: mmu.MMUCR = @bitCast(value);
                                 sh4_log.debug("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
                                 if (val.ti) {
+                                    mmu_log.info("TLB Invalidation", .{});
                                     // Invalidate all TLB entries
+                                    for (self.itlb) |*entry|
+                                        entry.v = false;
                                     for (self.utlb) |*entry|
                                         entry.v = false;
                                     val.ti = false; // Always return 0 when read.
@@ -1505,7 +1569,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{TLBMiss}!mmu.UTLBEntry {
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{TLBMiss}!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 

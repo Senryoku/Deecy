@@ -83,7 +83,7 @@ pub const MMU = packed struct {
     mmucr: u32 = 0x00000000, // MMU control register
 };
 
-pub const UTLBEntry = packed struct {
+pub const TLBEntry = packed struct {
     asid: u8 = undefined, // Address space identifier
     vpn: u22 = undefined, // Virtual page number
     v: bool = false, // Validity bit
@@ -119,7 +119,7 @@ pub const UTLBEntry = packed struct {
     }
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("UTLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
+        try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
             @as(u32, self.ppn) << 10,
             self.asid,

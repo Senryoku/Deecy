@@ -343,7 +343,8 @@ pub const JITContext = struct {
         else
             cpu.pc & 0x1FFF_FFFF;
 
-        std.debug.assert((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000));
+        if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
+            std.debug.panic("Invalid physical PC: {X}", .{physical_pc});
 
         return .{
             .cpu = cpu,
