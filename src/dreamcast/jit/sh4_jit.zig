@@ -1679,14 +1679,15 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     const r_bank: JIT.Operand = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "r_bank") + 4 * @as(u32, @intCast(instr.nmd.m & 0b0111)), .size = 32 } };
     try block.mov(.{ .reg = ReturnRegister }, r_bank);
     if (ctx.mmu_enabled) {
-        try block.mov(.{ .reg = ArgRegisters[1] }, rn);
-        try block.sub(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 4 });
-        try store_mem(block, ctx, .{ .HostReg = ArgRegisters[1] }, 0, .{ .reg = ReturnRegister }, 32);
+        const tmp = ArgRegisters[1];
+        try block.mov(.{ .reg = tmp }, rn);
+        try block.sub(.{ .reg = tmp }, .{ .imm32 = 4 });
+        try store_mem(block, ctx, .{ .HostReg = tmp }, 0, .{ .reg = ReturnRegister }, 32);
         ctx.gpr_cache.mark_dirty(instr.nmd.n);
         try block.sub(rn, .{ .imm32 = 4 });
     } else {
         try block.sub(rn, .{ .imm32 = 4 });
-        try store_mem(block, ctx, .{ .HostReg = ArgRegisters[1] }, 0, .{ .reg = ReturnRegister }, 32);
+        try store_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, .{ .reg = ReturnRegister }, 32);
     }
     return false;
 }
