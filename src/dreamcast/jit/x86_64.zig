@@ -279,6 +279,16 @@ pub const Operand = union(enum) {
             .mem => |mem| mem.size,
         };
     }
+
+    pub fn Reg(reg: Register, comptime bitsize: u8) Operand {
+        return switch (bitsize) {
+            8 => return .{ .reg8 = reg },
+            16 => return .{ .reg16 = reg },
+            32 => return .{ .reg = reg },
+            64 => return .{ .reg64 = reg },
+            else => @compileError("Invalid register size"),
+        };
+    }
 };
 
 pub const Instruction = union(enum) {

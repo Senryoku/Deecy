@@ -1265,6 +1265,8 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4
 }
 
 fn store_mem(block: *IRBlock, ctx: *JITContext, dest_guest_reg: u4, comptime addressing: enum { Reg, Reg_R0, GBR }, displacement: u32, value: JIT.Operand, comptime size: u32) !void {
+    std.debug.assert(value.size() == size);
+
     const addr = ArgRegisters[1];
 
     switch (addressing) {
@@ -1347,109 +1349,62 @@ pub fn mov_imm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
-pub fn movb_atRm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rn = [Rm]
-    // Load [Rm] into temporary
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 8);
-    // Sign extend
-    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg8 = ReturnRegister });
-    return false;
+pub fn mov_atRm_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    return (struct {
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, size);
+            if (size < 32) { // Sign extend
+                try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .Reg(ReturnRegister, size));
+            } else {
+                try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+            }
+            return false;
+        }
+    }).handler;
 }
 
-pub fn movw_atRm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // Rn = [Rm]
-    // Load [Rm] into temporary
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
-    // Sign extend
-    try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg16 = ReturnRegister });
-    return false;
+pub fn mov_Rm_atRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    return (struct {
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            const rm = try load_register(block, ctx, instr.nmd.m);
+            try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .Reg(rm, size), size);
+            return false;
+        }
+    }).handler;
 }
 
-pub fn movl_atRm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
-    try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
-    return false;
-}
-
-pub fn movb_Rm_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
-    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg8 = rm }, 8);
-    return false;
-}
-
-pub fn movw_Rm_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
-    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg16 = rm }, 16);
-    return false;
-}
-
-pub fn movl_Rm_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const rm = try load_register(block, ctx, instr.nmd.m);
-    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = rm }, 32);
-    return false;
-}
-
-pub fn movb_atRmInc_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try movb_atRm_Rn(block, ctx, instr);
-    // if(n != m) Rm += 1
-    if (instr.nmd.n != instr.nmd.m) {
-        const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
-        try block.add(.{ .reg = rm }, .{ .imm32 = 1 });
-    }
-    return false;
-}
-
-pub fn movw_atRmInc_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try movw_atRm_Rn(block, ctx, instr);
-    // if(n != m) Rm += 2
-    if (instr.nmd.n != instr.nmd.m) {
-        const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
-        try block.add(.{ .reg = rm }, .{ .imm32 = 2 });
-    }
-    return false;
-}
-
-pub fn movl_atRmInc_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    _ = try movl_atRm_Rn(block, ctx, instr);
-    // if(n != m) Rm += 4
-    if (instr.nmd.n != instr.nmd.m) {
-        const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
-        try block.add(.{ .reg = rm }, .{ .imm32 = 4 });
-    }
-    return false;
+pub fn mov_atRmInc_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    return (struct {
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            _ = try mov_atRm_Rn(size)(block, ctx, instr);
+            if (instr.nmd.n != instr.nmd.m) {
+                const rm = try load_register_for_writing(block, ctx, instr.nmd.m);
+                try block.add(.{ .reg = rm }, .{ .imm32 = size / 8 });
+            }
+            return false;
+        }
+    }).handler;
 }
 
 // mov.x Rm,@-Rn when Rn == Rm
 fn mov_Rn_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, comptime size: u8) !bool {
+    std.debug.assert(instr.nmd.n == instr.nmd.m);
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn }); // The value stored is the value of Rn before decrement.
     try block.sub(.{ .reg = rn }, .{ .imm32 = size / 8 });
-    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = ReturnRegister }, size);
+    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .Reg(ReturnRegister, size), size);
     return false;
 }
 
-pub fn movb_Rm_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 8);
-    // Rn -= 1
-    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.sub(.{ .reg = rn }, .{ .imm32 = 1 });
-    return movb_Rm_atRn(block, ctx, instr);
-}
-
-pub fn movw_Rm_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 16);
-    // Rn -= 2
-    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.sub(.{ .reg = rn }, .{ .imm32 = 2 });
-    return movw_Rm_atRn(block, ctx, instr);
-}
-
-pub fn movl_Rm_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, 32);
-    // Rn -= 4
-    const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
-    try block.sub(.{ .reg = rn }, .{ .imm32 = 4 });
-    return movl_Rm_atRn(block, ctx, instr);
+pub fn mov_Rm_atDecRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
+    return (struct {
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, size);
+            const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
+            try block.sub(.{ .reg = rn }, .{ .imm32 = size / 8 });
+            return mov_Rm_atRn(size)(block, ctx, instr);
+        }
+    }).handler;
 }
 
 pub fn movb_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
@@ -1533,12 +1488,7 @@ pub fn movl_Rm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 pub fn mov_R0_atDispGBR(comptime T: type, block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
     const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * @sizeOf(T);
-    try store_mem(block, ctx, 0, .GBR, displacement, switch (T) {
-        u8 => .{ .reg8 = r0 },
-        u16 => .{ .reg16 = r0 },
-        u32 => .{ .reg = r0 },
-        else => @compileError("Invalid type"),
-    }, @bitSizeOf(T));
+    try store_mem(block, ctx, 0, .GBR, displacement, .Reg(r0, @bitSizeOf(T)), @bitSizeOf(T));
     return false;
 }
 
