@@ -1506,7 +1506,7 @@ pub fn stcl_Reg_atDecRn(comptime reg: []const u8) *const fn (cpu: *SH4, opcode: 
             // Use a temporary in case the write raises an exception.
             const tmp = cpu.R(opcode.nmd.n).* - 4;
             try cpu.write(u32, tmp, @bitCast(@field(cpu, reg)));
-            cpu.R(opcode.nmd.n).* = 4;
+            cpu.R(opcode.nmd.n).* = tmp;
         }
     }).handler;
 }
@@ -1515,7 +1515,7 @@ pub fn stcl_Rm_BANK_atDecRn(cpu: *SH4, opcode: Instr) !void {
     // Use a temporary in case the write raises an exception.
     const tmp = cpu.R(opcode.nmd.n).* - 4;
     try cpu.write(u32, tmp, cpu.r_bank[opcode.nmd.m & 0b0111]);
-    cpu.R(opcode.nmd.n).* = 4;
+    cpu.R(opcode.nmd.n).* = tmp;
 }
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
