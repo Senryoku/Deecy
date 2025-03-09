@@ -1669,6 +1669,23 @@ pub fn stcl_Reg_atDecRn(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
     return T.stcl;
 }
 
+pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    const rn: JIT.Operand = .{ .reg = try load_register_for_writing(block, ctx, instr.nmd.n) };
+    const r_bank: JIT.Operand = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "r_bank") + 4 * @as(u32, @intCast(instr.nmd.m & 0b0111)), .size = 32 } };
+    try block.mov(.{ .reg = ReturnRegister }, r_bank);
+    if (ctx.mmu_enabled) {
+        try block.mov(.{ .reg = ArgRegisters[1] }, rn);
+        try block.sub(.{ .reg = ArgRegisters[1] }, .{ .imm32 = 4 });
+        try store_mem(block, ctx, .{ .HostReg = ArgRegisters[1] }, 0, .{ .reg = ReturnRegister }, 32);
+        ctx.gpr_cache.mark_dirty(instr.nmd.n);
+        try block.sub(rn, .{ .imm32 = 4 });
+    } else {
+        try block.sub(rn, .{ .imm32 = 4 });
+        try store_mem(block, ctx, .{ .HostReg = ArgRegisters[1] }, 0, .{ .reg = ReturnRegister }, 32);
+    }
+    return false;
+}
+
 pub fn fmov_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     switch (ctx.fpscr_sz) {
         .Single => try store_fp_register(block, ctx, instr.nmd.n, try load_fp_register(block, ctx, instr.nmd.m)),
