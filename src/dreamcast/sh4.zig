@@ -1709,8 +1709,14 @@ pub const SH4 = struct {
                         }
                     },
                     0x005F8000...0x005F9FFF => {
-                        check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8} (Holly Registers)\n", .{ T, addr });
-                        return self._dc.?.gpu.read_register(T, @enumFromInt(addr));
+                        if (T == u32) {
+                            return self._dc.?.gpu.read_register(T, @enumFromInt(addr));
+                        } else {
+                            // NOTE: Some some reason I thought this was forbidden, but Windows CE does it?
+                            const val = self._dc.?.gpu._get_register_from_addr(T, addr).*;
+                            sh4_log.warn(termcolor.yellow("Read({any}) to Holly register @{X:0>8} = {X}"), .{ T, addr, val });
+                            return val;
+                        }
                     },
                     // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
                     0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
