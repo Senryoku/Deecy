@@ -1158,8 +1158,8 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
 fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
-    try ctx.gpr_cache.commit_and_invalidate_all(block);
-    try ctx.fpr_cache.commit_and_invalidate_all(block);
+    try ctx.gpr_cache.commit_all(block);
+    try ctx.fpr_cache.commit_all(block);
 
     std.debug.assert(register_to_save != ArgRegisters[0]);
 
@@ -2730,19 +2730,22 @@ pub fn braf_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn bsr_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // pr = pc + 4
-    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     const dest = sh4_interpreter.d12_disp(ctx.current_pc, instr);
     try block.mov(sh4_mem("pc"), .{ .imm32 = dest });
 
     ctx.outdated_pc = false;
     try ctx.compile_delay_slot(block);
+
+    // NOTE: If the accepted exception (the highest-priority exception) is a delay slot instruction re-
+    //       execution type exception, the branch instruction PR register write operation (PC → PR
+    //       operation performed in BSR, BSRF, JSR) is inhibited.
+
+    // pr = pc + 4
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     return true;
 }
 
 pub fn bsrf_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // pr = pc + 4
-    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     // pc += Rn + 4;
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn });
@@ -2751,6 +2754,9 @@ pub fn bsrf_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
     ctx.outdated_pc = false;
     try ctx.compile_delay_slot(block);
+
+    // pr = pc + 4
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     return true;
 }
 
@@ -2765,14 +2771,15 @@ pub fn jmp_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn jsr_rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // cpu.pr = cpu.pc + 4;
-    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     // cpu.pc = Rn
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(sh4_mem("pc"), .{ .reg = rn });
 
     ctx.outdated_pc = false;
     try ctx.compile_delay_slot(block);
+
+    // cpu.pr = cpu.pc + 4;
+    try block.mov(sh4_mem("pr"), .{ .imm32 = ctx.current_pc + 4 });
     return true;
 }
 
