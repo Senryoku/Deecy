@@ -1023,15 +1023,13 @@ inline fn d12_label(cpu: *SH4, opcode: Instr) void {
 inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
     // TODO: If the instruction at addr is a branch instruction, raise a Slot illegal instruction exception
 
-    // FIXME: If the delayed instruction references PC in any way (e.g. @(disp,PC)), it will be wrong because
-    //        we always substract 2 to compensate the automatic increment. Hence this weird workaround.
-    //        The instructions referencing PC are probably all sources of Slot Illegal instruction exceptions,
-    //        but just to be sure...
-    cpu.pc += 2;
-
+    // Set PC to the instruction that triggered the delay slot in case an exception is raised inside the delay slot.
+    const current_pc = cpu.pc;
+    cpu.pc = addr - 2;
     cpu._execute(addr);
-
-    cpu.pc -= 2;
+    // Restore PC, unless an exception occured and PC was overwritten.
+    if (cpu.pc == addr - 2)
+        cpu.pc = current_pc;
 }
 
 pub fn bf_label(cpu: *SH4, opcode: Instr) !void {
@@ -1462,7 +1460,7 @@ pub fn rte(cpu: *SH4, _: Instr) !void {
     cpu.set_sr(@bitCast(cpu.ssr)); // Actually bank change.
 
     cpu.pc = spc;
-    cpu.pc -= 2; // Execute will add 2
+    cpu.pc -%= 2; // Execute will add 2
 }
 
 pub fn sets(cpu: *SH4, _: Instr) !void {

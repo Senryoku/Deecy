@@ -615,9 +615,8 @@ pub const SH4 = struct {
         // ordinary interrupt occurs, the interrupt request is held pending and is accepted after the BL bit
         // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
         // pending or accepted according to the setting made by software.
-        if (self.sr.bl) {
-            sh4_log.err(termcolor.red("{s} exception raised while SR.BL is set."), .{@tagName(exception)});
-        }
+        if (self.sr.bl)
+            std.debug.panic(termcolor.red("{s} exception raised while SR.BL is set."), .{@tagName(exception)});
         // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
         // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
         // status register (SR).
@@ -822,9 +821,6 @@ pub const SH4 = struct {
 
     pub fn _execute(self: *@This(), virtual_addr: u32) void {
         const opcode = if (comptime !builtin.is_test) oc: {
-            // NOTE: This should first search the ITLB, and only the UTLB in case of a miss, then copy the result to ITLB.
-            //       However, as I understand it, this is only an additional layer of cache to speed up instruction fetching,
-            //       this won't matter... Unless the software accesses ITLB entries directly.
             const physical_addr = self.translate_intruction_address(virtual_addr);
             if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
                 std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
@@ -851,7 +847,7 @@ pub const SH4 = struct {
                     error.DataTLBMissWrite => self.jump_to_exception(.DataAddressErrorWrite),
                     else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
                 }
-                self.pc -= 2;
+                self.pc -%= 2; // Compensate for the automatic increment that will follow in execute.
             };
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
