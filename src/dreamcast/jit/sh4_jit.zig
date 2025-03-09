@@ -1206,17 +1206,20 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ct
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, guest_reg: u4, comptime addressing: enum { Reg, Reg_R0 }, displacement: u32, comptime size: u32) !void {
-    const src_guest_reg_location = try load_register(block, ctx, guest_reg);
-
+fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: union(enum) { Reg: u4, Reg_R0: u4 }, displacement: u32, comptime size: u32) !void {
     const addr = ArgRegisters[1];
 
-    try block.mov(.{ .reg = addr }, .{ .reg = src_guest_reg_location });
-    if (displacement != 0)
-        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
-    if (addressing == .Reg_R0) {
-        const r0 = try load_register(block, ctx, 0);
-        try block.add(.{ .reg = addr }, .{ .reg = r0 });
+    switch (addressing) {
+        .Reg, .Reg_R0 => |src_guest_reg| {
+            const src_guest_reg_location = try load_register(block, ctx, src_guest_reg);
+            try block.mov(.{ .reg = addr }, .{ .reg = src_guest_reg_location });
+            if (displacement != 0)
+                try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
+            if (addressing == .Reg_R0) {
+                const r0 = try load_register(block, ctx, 0);
+                try block.add(.{ .reg = addr }, .{ .reg = r0 });
+            }
+        },
     }
 
     if (ctx.mmu_enabled)
@@ -1359,7 +1362,7 @@ pub fn mov_imm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn mov_atRm_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
     return (struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, size);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, size);
             if (size < 32) { // Sign extend
                 try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .Reg(ReturnRegister, size));
             } else {
@@ -1435,21 +1438,21 @@ pub fn mov_Rm_atDecRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITCo
 
 pub fn movb_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d);
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, d, 8);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 8);
     try block.movsx(try get_register_for_writing(block, ctx, 0), .{ .reg8 = ReturnRegister });
     return false;
 }
 
 pub fn movw_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 1;
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, d, 16);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 16);
     try block.movsx(try get_register_for_writing(block, ctx, 0), .{ .reg16 = ReturnRegister });
     return false;
 }
 
 pub fn movl_atDispRm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nmd.d) << 2;
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, d, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, d, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
     return false;
 }
@@ -1476,19 +1479,19 @@ pub fn movl_Rm_atDispRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movb_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 8);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 8);
     try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg8 = ReturnRegister });
     return false;
 }
 
 pub fn movw_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 16);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 16);
     try block.movsx(try get_register_for_writing(block, ctx, instr.nmd.n), .{ .reg16 = ReturnRegister });
     return false;
 }
 
 pub fn movl_atR0Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
     try store_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
     return false;
 }
@@ -1679,11 +1682,11 @@ pub fn fmovs_atRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm]
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Double => {
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 64);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
@@ -1754,11 +1757,11 @@ pub fn fmovs_atR0Rm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm+R0]
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 32);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 32);
             try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Double => {
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg_R0, 0, 64);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg_R0 = instr.nmd.m }, 0, 64);
             try store_dfp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
         },
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
@@ -2068,7 +2071,7 @@ pub fn lds_rn_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
-    try load_mem(block, ctx, ArgRegisters[1], instr.nmd.n, .Reg, 0, 32);
+    try load_mem(block, ctx, ArgRegisters[1], .{ .Reg = instr.nmd.n }, 0, 32);
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try call(block, ctx, sh4.SH4.set_fpscr);
 
@@ -2104,7 +2107,7 @@ pub fn sts_FPUL_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn ldsl_atRnInc_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.mov(sh4_mem("fpul"), .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -2235,12 +2238,12 @@ pub fn extuw_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 pub fn macl_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // NOTE: SR.S == 1 mode not implemented.
 
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
     try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 32);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
     try block.pop(.{ .reg = ReturnRegister });
@@ -2263,12 +2266,12 @@ pub fn macw_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 
     sh4_jit_log.warn("Emitting mac.w @Rm+,@Rn+: This is untested!", .{});
 
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 16);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 16);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
     try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
     try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.m, .Reg, 0, 16);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 16);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
 
     try block.pop(.{ .reg = ReturnRegister });
@@ -2895,7 +2898,7 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
     std.debug.assert(!std.mem.eql(u8, reg, "sr"));
     const T = struct {
         fn ldcl(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-            try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+            try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
             try block.mov(sh4_mem(reg), .{ .reg = ReturnRegister });
 
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
@@ -2907,7 +2910,7 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
 }
 
 pub fn ldcl_atRnInc_SR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try load_mem(block, ctx, ReturnRegister, instr.nmd.n, .Reg, 0, 32);
+    try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
     try set_sr(block, ctx, .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
@@ -2918,6 +2921,6 @@ pub fn movcal_R0_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     // Stores the contents of general register R0 in the memory location indicated by effective address Rn. This instruction differs from other store instructions as follows.
     // If write-back is selected for the accessed memory, and a cache miss occurs, the cache block will be allocated but an R0 data write will be performed to that cache block without performing a block read. Other cache block contents are undefined.
     const r0 = try load_register(block, ctx, 0);
-    try store_mem(block, ctx, instr.nmd.n, .Reg, 0, .{ .reg = r0 }, 32);
+    try store_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, .{ .reg = r0 }, 32);
     return false;
 }
