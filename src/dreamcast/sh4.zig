@@ -1611,7 +1611,7 @@ pub const SH4 = struct {
                 const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
                 const vpn: u22 = @truncate(virtual_addr >> 10);
                 for (self.itlb, 0..) |entry, idx| {
-                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated.
+                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
                     if (entry.match(check_asid, asid, vpn)) {
                         if (self.sr.md == 0 and entry.pr.privileged()) {
                             self.report_address_exception(virtual_addr);
@@ -1663,12 +1663,12 @@ pub const SH4 = struct {
         return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
 
-    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{DataTLBMissRead}!T {
+    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
         const physical_address = self.translate_address(.Read, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {
-                error.DataTLBMissRead => return error.DataTLBMissRead,
-                else => unreachable,
+                error.DataTLBMissRead, error.DataTLBProtectionViolation, error.DataTLBMultipleHit => |e| return e,
+                error.DataTLBMissWrite, error.InitialPageWrite => unreachable,
             }
         };
         return self.read_physical(T, physical_address);
@@ -1778,12 +1778,12 @@ pub const SH4 = struct {
         ))).*;
     }
 
-    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataTLBMissWrite, InitialPageWrite }!void {
+    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
         const physical_address = self.translate_address(.Write, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {
-                error.DataTLBMissWrite, error.InitialPageWrite => |e| return e,
-                else => unreachable,
+                error.DataTLBMissWrite, error.InitialPageWrite, error.DataTLBProtectionViolation, error.DataTLBMultipleHit => |e| return e,
+                error.DataTLBMissRead => unreachable,
             }
         };
         return self.write_physical(T, physical_address, value);
