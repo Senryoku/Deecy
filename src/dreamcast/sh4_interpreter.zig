@@ -1274,9 +1274,10 @@ pub fn ldsl_atRnInc_FPSCR(cpu: *SH4, opcode: Instr) !void {
     cpu.set_fpscr(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
-pub fn stsl_FPSCR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+pub fn stsl_FPSCR_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    const tmp = cpu.R(opcode.nmd.n).* - 4; // Use a temporary in case of exception.
+    try cpu.write(u32, tmp, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
+    cpu.R(opcode.nmd.n).* = tmp;
 }
 pub fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) !void {
     cpu.fpul = cpu.R(opcode.nmd.n).*;
@@ -1288,9 +1289,10 @@ pub fn ldsl_atRnInc_FPUL(cpu: *SH4, opcode: Instr) !void {
     cpu.fpul = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
-pub fn stsl_FPUL_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.fpul);
+pub fn stsl_FPUL_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    const tmp = cpu.R(opcode.nmd.n).* - 4; // Use a temporary in case of exception.
+    try cpu.write(u32, tmp, cpu.fpul);
+    cpu.R(opcode.nmd.n).* = tmp;
 }
 
 // Inverts the FR bit in floating-point register FPSCR.
@@ -1486,85 +1488,34 @@ pub fn sleep(cpu: *SH4, _: Instr) !void {
     // std.debug.print("\u{001B}[33mSleep State: .{s}\u{001B}[0m\n", .{@tagName(cpu.execution_state)});
 }
 
-pub fn stc_SR_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = @bitCast(cpu.sr);
+pub fn stc_Reg_Rn(comptime reg: []const u8) *const fn (cpu: *SH4, opcode: Instr) anyerror!void {
+    return (struct {
+        pub fn handler(cpu: *SH4, opcode: Instr) !void {
+            cpu.R(opcode.nmd.n).* = @bitCast(@field(cpu, reg));
+        }
+    }).handler;
 }
-pub fn stcl_SR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.sr));
-}
-pub fn stc_TBR_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.tbr;
-}
-pub fn stc_GBR_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.gbr;
-}
-pub fn stcl_GBR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.gbr);
-}
-pub fn stc_VBR_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.vbr;
-}
-pub fn stcl_VBR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.vbr);
-}
-pub fn stc_SGR_rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.sgr;
-}
-pub fn stcl_SGR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.sgr);
-}
-pub fn stc_SSR_rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.ssr;
-}
-pub fn stcl_SSR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.ssr);
-}
-pub fn stc_SPC_rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.spc;
-}
-pub fn stcl_SPC_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.spc);
-}
-pub fn stc_DBR_rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.dbr;
-}
-pub fn stcl_DBR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.dbr);
-}
+
 pub fn stc_Rm_BANK_Rn(cpu: *SH4, opcode: Instr) !void {
     cpu.R(opcode.nmd.n).* = cpu.r_bank[opcode.nmd.m & 0b0111];
 }
-pub fn stcl_Rm_BANK_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.r_bank[opcode.nmd.m & 0b0111]);
+
+pub fn stcl_Reg_atDecRn(comptime reg: []const u8) *const fn (cpu: *SH4, opcode: Instr) anyerror!void {
+    return (struct {
+        pub fn handler(cpu: *SH4, opcode: Instr) !void {
+            // Use a temporary in case the write raises an exception.
+            const tmp = cpu.R(opcode.nmd.n).* - 4;
+            try cpu.write(u32, tmp, @bitCast(@field(cpu, reg)));
+            cpu.R(opcode.nmd.n).* = 4;
+        }
+    }).handler;
 }
-pub fn sts_MACH_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.mach;
-}
-pub fn stsl_MACH_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.mach);
-}
-pub fn sts_MACL_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.macl;
-}
-pub fn stsl_MACL_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.macl);
-}
-pub fn sts_PR_Rn(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* = cpu.pr;
-}
-pub fn stsl_PR_atRnDec(cpu: *SH4, opcode: Instr) !void {
-    cpu.R(opcode.nmd.n).* -= 4;
-    try cpu.write(u32, cpu.R(opcode.nmd.n).*, cpu.pr);
+
+pub fn stcl_Rm_BANK_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    // Use a temporary in case the write raises an exception.
+    const tmp = cpu.R(opcode.nmd.n).* - 4;
+    try cpu.write(u32, tmp, cpu.r_bank[opcode.nmd.m & 0b0111]);
+    cpu.R(opcode.nmd.n).* = 4;
 }
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
@@ -1638,17 +1589,19 @@ pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) !void {
 pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) !void {
     // Single-precision
     if (cpu.fpscr.sz == 0) {
-        cpu.R(opcode.nmd.n).* -= 4;
-        try cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
+        const tmp = cpu.R(opcode.nmd.n).* - 4;
+        try cpu.write(u32, tmp, @bitCast(cpu.FR(opcode.nmd.m).*));
+        cpu.R(opcode.nmd.n).* = tmp;
     } else { // Double-precision
-        cpu.R(opcode.nmd.n).* -= 8;
+        const tmp = cpu.R(opcode.nmd.n).* - 8;
         if (opcode.nmd.m & 0x1 == 0) {
             // fmov.d DRm,@-Rn
-            try cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
+            try cpu.write(u64, tmp, @bitCast(cpu.getDRPtr(opcode.nmd.m).*));
         } else {
             // fmov.d XDm,@-Rn
-            try cpu.write(u64, cpu.R(opcode.nmd.n).*, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
+            try cpu.write(u64, tmp, @bitCast(cpu.getXDPtr(opcode.nmd.m).*));
         }
+        cpu.R(opcode.nmd.n).* = tmp;
     }
 }
 pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) !void {
