@@ -1206,21 +1206,19 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ct
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
-fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: union(enum) { Reg: u4, Reg_R0: u4 }, displacement: u32, comptime size: u32) !void {
+fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: union(enum) { Reg: u4, Reg_R0: u4, GBR }, displacement: u32, comptime size: u32) !void {
     const addr = ArgRegisters[1];
 
     switch (addressing) {
         .Reg, .Reg_R0 => |src_guest_reg| {
-            const src_guest_reg_location = try load_register(block, ctx, src_guest_reg);
-            try block.mov(.{ .reg = addr }, .{ .reg = src_guest_reg_location });
-            if (displacement != 0)
-                try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
-            if (addressing == .Reg_R0) {
-                const r0 = try load_register(block, ctx, 0);
-                try block.add(.{ .reg = addr }, .{ .reg = r0 });
-            }
+            try block.mov(.{ .reg = addr }, .{ .reg = try load_register(block, ctx, src_guest_reg) });
+            if (addressing == .Reg_R0)
+                try block.add(.{ .reg = addr }, .{ .reg = try load_register(block, ctx, 0) });
         },
+        .GBR => try block.mov(.{ .reg = addr }, sh4_mem("gbr")),
     }
+    if (displacement != 0)
+        try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
 
     if (ctx.mmu_enabled)
         try mmu_translation(.Read, block, ctx, addr, null);
@@ -1512,6 +1510,22 @@ pub fn movl_Rm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
     const rm = try load_register(block, ctx, instr.nmd.m);
     try store_mem(block, ctx, .{ .Reg_R0 = instr.nmd.n }, 0, .{ .reg = rm }, 32);
     return false;
+}
+
+pub fn mov_atDispGBR_R0(comptime size: u8) fn (*IRBlock, *JITContext, sh4.Instr) anyerror!bool {
+    return struct {
+        // cpu.R(0).* = @bitCast(sign_extension_u16(try cpu.read(u16, cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * (size / 8);
+            try load_mem(block, ctx, ReturnRegister, .GBR, displacement, size);
+            if (size < 32) {
+                try block.movsx(try get_register_for_writing(block, ctx, 0), .Reg(ReturnRegister, size));
+            } else {
+                try store_register(block, ctx, 0, .{ .reg = ReturnRegister });
+            }
+            return false;
+        }
+    }.handler;
 }
 
 pub fn mov_R0_atDispGBR(comptime T: type, block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
