@@ -1358,7 +1358,7 @@ pub fn mov_imm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn mov_atRm_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    return (struct {
+    return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, size);
             if (size < 32) { // Sign extend
@@ -1368,21 +1368,21 @@ pub fn mov_atRm_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITConte
             }
             return false;
         }
-    }).handler;
+    }.handler;
 }
 
 pub fn mov_Rm_atRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    return (struct {
+    return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const rm = try load_register(block, ctx, instr.nmd.m);
             try store_mem(block, ctx, .{ .Reg = instr.nmd.n }, 0, .Reg(rm, size), size);
             return false;
         }
-    }).handler;
+    }.handler;
 }
 
 pub fn mov_atRmInc_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    return (struct {
+    return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             _ = try mov_atRm_Rn(size)(block, ctx, instr);
             if (instr.nmd.n != instr.nmd.m) {
@@ -1391,7 +1391,7 @@ pub fn mov_atRmInc_Rn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITCo
             }
             return false;
         }
-    }).handler;
+    }.handler;
 }
 
 // mov.x Rm,@-Rn when Rn == Rm
@@ -1413,7 +1413,7 @@ fn mov_Rn_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, comptime 
 }
 
 pub fn mov_Rm_atDecRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    return (struct {
+    return struct {
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             if (instr.nmd.n == instr.nmd.m) return mov_Rn_atDecRn(block, ctx, instr, size);
             const rn: JIT.Operand = .{ .reg = try load_register_for_writing(block, ctx, instr.nmd.n) };
@@ -1431,7 +1431,7 @@ pub fn mov_Rm_atDecRn(comptime size: u8) *const fn (block: *IRBlock, ctx: *JITCo
                 return mov_Rm_atRn(size)(block, ctx, instr);
             }
         }
-    }).handler;
+    }.handler;
 }
 
 pub fn movb_atDispRm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
@@ -1514,7 +1514,6 @@ pub fn movl_Rm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 
 pub fn mov_atDispGBR_R0(comptime size: u8) fn (*IRBlock, *JITContext, sh4.Instr) anyerror!bool {
     return struct {
-        // cpu.R(0).* = @bitCast(sign_extension_u16(try cpu.read(u16, cpu.gbr + (zero_extend(opcode.nd8.d) << 1))));
         pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * (size / 8);
             try load_mem(block, ctx, ReturnRegister, .GBR, displacement, size);
@@ -1528,23 +1527,15 @@ pub fn mov_atDispGBR_R0(comptime size: u8) fn (*IRBlock, *JITContext, sh4.Instr)
     }.handler;
 }
 
-pub fn mov_R0_atDispGBR(comptime T: type, block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const r0 = try load_register(block, ctx, 0);
-    const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * @sizeOf(T);
-    try store_mem(block, ctx, .GBR, displacement, .Reg(r0, @bitSizeOf(T)), @bitSizeOf(T));
-    return false;
-}
-
-pub fn movb_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    return mov_R0_atDispGBR(u8, block, ctx, instr);
-}
-
-pub fn movw_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    return mov_R0_atDispGBR(u16, block, ctx, instr);
-}
-
-pub fn movl_R0_atDispGBR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    return mov_R0_atDispGBR(u32, block, ctx, instr);
+pub fn mov_R0_atDispGBR(comptime size: u8) fn (*IRBlock, *JITContext, sh4.Instr) anyerror!bool {
+    return struct {
+        pub fn handler(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+            const r0 = try load_register(block, ctx, 0);
+            const displacement: u32 = bit_manip.zero_extend(instr.nd8.d) * (size / 8);
+            try store_mem(block, ctx, .GBR, displacement, .Reg(r0, size), size);
+            return false;
+        }
+    }.handler;
 }
 
 pub fn movt_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
