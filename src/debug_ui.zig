@@ -237,13 +237,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.text("PC: {X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
         zgui.text("PR: {X:0>8}", .{dc.cpu.pr});
-        zgui.text("SR: ", .{});
+        zgui.text("SR: {s}", .{if (dc.cpu.sr.md == 1) "Priv" else "User"});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.t, "[T] ", .{});
+        text_highlighted(dc.cpu.sr.t, " [T]", .{});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.s, "[S] ", .{});
+        text_highlighted(dc.cpu.sr.s, " [S]", .{});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.bl, "[BL] ", .{});
+        text_highlighted(dc.cpu.sr.bl, " [BL]", .{});
         zgui.text("IMASK: {d: >2} ", .{dc.cpu.sr.imask});
         zgui.text("GBR: {X:0>8}", .{dc.cpu.gbr});
         zgui.text("VBR: {X:0>8}", .{dc.cpu.vbr});
