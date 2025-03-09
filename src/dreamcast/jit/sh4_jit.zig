@@ -214,6 +214,26 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
                 }
             }
 
+            /// Commit without clearing the dirty bit.
+            pub fn conditional_commit(self: *@This(), block: *IRBlock) !void {
+                if (self.guest) |guest_reg| {
+                    if (self.modified) {
+                        try block.mov(
+                            JITContext.guest_reg_memory(reg_type, self.size, guest_reg),
+                            switch (reg_type) {
+                                JIT.Register => .{ .reg = self.host },
+                                JIT.FPRegister => switch (self.size) {
+                                    32 => .{ .freg32 = self.host },
+                                    64 => .{ .freg64 = self.host },
+                                    else => @panic("Invalid floating point register size."),
+                                },
+                                else => @compileError("Invalid register type."),
+                            },
+                        );
+                    }
+                }
+            }
+
             pub fn commit_and_invalidate(self: *@This(), block: *IRBlock) !void {
                 try self.commit(block);
                 self.guest = null;
@@ -244,9 +264,13 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
         }
 
         pub fn commit_all(self: *@This(), block: *IRBlock) !void {
-            for (&self.entries) |*reg| {
+            for (&self.entries) |*reg|
                 try reg.commit(block);
-            }
+        }
+
+        pub fn commit_all_conditional(self: *@This(), block: *IRBlock) !void {
+            for (&self.entries) |*reg|
+                try reg.conditional_commit(block);
         }
 
         // NOTE: The following functions are only used by the GPR cache, we assume a size of 32bit!
@@ -913,15 +937,22 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
     }
 }
 
-/// Helper function to ignore possible exceptions thrown by the interpreter fallback.
+/// Helper function to ignore possible exceptions thrown by the interpreter fallback. Returns true if an exception was raised.
 //  (It's complicated to call zig functions with error handling from the JIT, wrapping it in a function that can't return an error makes it way easier).
 fn InterpreterFallback(comptime instr_index: u8) type {
     const entry = sh4_instructions.Opcodes[instr_index];
     return struct {
-        pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) void {
+        pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
             entry.fn_(cpu, instr) catch |err| {
-                std.debug.panic("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
+                sh4_jit_log.warn("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
+                switch (err) {
+                    error.DataTLBMissRead => cpu.jump_to_exception(.DataAddressErrorRead),
+                    error.DataTLBMissWrite => cpu.jump_to_exception(.DataAddressErrorWrite),
+                    else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
+                }
+                return 1;
             };
+            return 0;
         }
     };
 }
@@ -931,6 +962,13 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try call(block, ctx, sh4_interpreter_handlers.InstructionHandlers[instr.value]);
     } else {
+        if (ctx.mmu_enabled) {
+            // We could do a lot better if the handler wasn't jumping directly to the exception.
+            // TODO: Detect the exception, conditionally commit, and only then jump to the exception.
+            try ctx.gpr_cache.commit_and_invalidate_all(block);
+            try ctx.fpr_cache.commit_and_invalidate_all(block);
+        }
+
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
         const instr_index = sh4_instructions.JumpTable[instr.value];
@@ -938,7 +976,13 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
             sh4_instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
             inline else => |idx| try call(block, ctx, InterpreterFallback(idx).handler),
         }
-        // try call(block, ctx, sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr.value]].fn_);
+
+        if (ctx.mmu_enabled) {
+            // Check if an exception was raised.
+            try block.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
+            // Terminate the block immediately if an exception was raised.
+            try ctx.add_jump_to_end(try block.jmp(.NotEqual));
+        }
     }
 }
 
@@ -991,7 +1035,7 @@ pub fn interpreter_fallback_cached(block: *IRBlock, ctx: *JITContext, instr: sh4
         }
     }
 
-    if (cache_access.r.pc) {
+    if (cache_access.r.pc or ctx.mmu_enabled) {
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
     }
 
@@ -1023,16 +1067,16 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
 //       used correctly (i.e. never write to a register returned by load_register), but I think this would
 //       require updating JITBlock and might hinder its genericity? (It's already pretty specific...)
 
-// Returns a host register contained the requested guest register.
+/// Returns a host register contained the requested guest register.
 fn load_register(block: *IRBlock, ctx: *JITContext, guest_reg: u4) !JIT.Register {
     return try ctx.guest_reg_cache(block, guest_reg, true, false);
 }
-// Returns a host register contained the requested guest register and mark it as modified (we plan on writing to it).
+/// Returns a host register contained the requested guest register and mark it as modified (we plan on writing to it).
 fn load_register_for_writing(block: *IRBlock, ctx: *JITContext, guest_reg: u4) !JIT.Register {
     return try ctx.guest_reg_cache(block, guest_reg, true, true);
 }
-// Return a host register representing the requested guest register, but don't load its actual value.
-// Use this as a destination to another instruction that doesn't need the previous value of the destination.
+/// Return a host register representing the requested guest register, but don't load its actual value.
+/// Use this as a destination to another instruction that doesn't need the previous value of the destination.
 fn get_register_for_writing(block: *IRBlock, ctx: *JITContext, guest_reg: u4) !JIT.Operand {
     return .{ .reg = try ctx.guest_reg_cache(block, guest_reg, false, true) };
 }

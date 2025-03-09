@@ -1383,10 +1383,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
             if (sh4.ExperimentalFullMMUSupport) {
-                const entry = cpu.utlb_lookup(addr) catch |err| {
-                    sh4_log.warn("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
-                    std.debug.panic("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
-                };
+                const entry = try cpu.utlb_lookup(addr);
                 ext_addr = entry.translate(addr);
                 ext_addr &= 0xFFFFFFE0;
             } else {
