@@ -265,8 +265,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
         const end_addr = addr + range;
         while (addr < end_addr) {
-            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
-            zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
+            if (addr < DreamcastModule.Dreamcast.BootSize or (addr >= 0x0C000000 and addr < 0x0D000000)) {
+                const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
+                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
+            } else {
+                zgui.text("[{X:0>8}] {s} Out of range (TODO: Handle MMU)", .{ addr, if (addr == pc) ">" else " " });
+            }
             addr += 2;
         }
 
