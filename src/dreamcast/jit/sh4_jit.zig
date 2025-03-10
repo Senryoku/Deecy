@@ -215,7 +215,7 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
             }
 
             /// Commit without clearing the dirty bit.
-            pub fn conditional_commit(self: *@This(), block: *IRBlock) !void {
+            pub fn commit_speculatively(self: *@This(), block: *IRBlock) !void {
                 if (self.guest) |guest_reg| {
                     if (self.modified) {
                         try block.mov(
@@ -268,9 +268,9 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
                 try reg.commit(block);
         }
 
-        pub fn commit_all_conditional(self: *@This(), block: *IRBlock) !void {
+        pub fn commit_all_speculatively(self: *@This(), block: *IRBlock) !void {
             for (&self.entries) |*reg|
-                try reg.conditional_commit(block);
+                try reg.commit_speculatively(block);
         }
 
         // NOTE: The following functions are only used by the GPR cache, we assume a size of 32bit!
@@ -945,9 +945,11 @@ fn InterpreterFallback(comptime instr_index: u8) type {
         pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
             entry.fn_(cpu, instr) catch |err| {
                 sh4_jit_log.warn("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
+                //std.debug.panic("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
                 switch (err) {
-                    error.DataTLBMissRead => cpu.jump_to_exception(.DataAddressErrorRead),
-                    error.DataTLBMissWrite => cpu.jump_to_exception(.DataAddressErrorWrite),
+                    error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
+                    error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
+                    error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
                     else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
                 }
                 return 1;
@@ -965,8 +967,18 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         if (ctx.mmu_enabled) {
             // We could do a lot better if the handler wasn't jumping directly to the exception.
             // TODO: Detect the exception, conditionally commit, and only then jump to the exception.
-            try ctx.gpr_cache.commit_and_invalidate_all(block);
-            try ctx.fpr_cache.commit_and_invalidate_all(block);
+            try ctx.gpr_cache.commit_all(block);
+            try ctx.fpr_cache.commit_all(block);
+
+            // Same dance as in mmu_translation...
+            try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
+            try block.push(.{ .reg = ArgRegisters[0] });
+            try block.push(.{ .reg = ArgRegisters[0] });
+            if (ctx.in_delay_slot) {
+                try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
+            } else {
+                try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+            }
         }
 
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -978,10 +990,15 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         }
 
         if (ctx.mmu_enabled) {
+            try block.pop(.{ .reg = ArgRegisters[0] });
+            try block.pop(.{ .reg = ArgRegisters[0] });
+
             // Check if an exception was raised.
             try block.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
             // Terminate the block immediately if an exception was raised.
             try ctx.add_jump_to_end(try block.jmp(.NotEqual));
+
+            try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
         }
     }
 }
@@ -1035,9 +1052,8 @@ pub fn interpreter_fallback_cached(block: *IRBlock, ctx: *JITContext, instr: sh4
         }
     }
 
-    if (cache_access.r.pc or ctx.mmu_enabled) {
+    if (cache_access.r.pc)
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
-    }
 
     try ctx.fpr_cache.commit_and_invalidate_all(block); // FIXME: Hopefully we'll be able to remove this soon!
 
@@ -1164,11 +1180,10 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
             const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
-                sh4_jit_log.warn("MMU miss {s} for {X:0>8}. UTLBs:", .{ @errorName(err), virtual_addr });
+                sh4_jit_log.warn("MMU miss {s} for {X:0>8}", .{ @errorName(err), virtual_addr });
                 for (cpu.utlb, 0..) |utlb, idx| {
-                    if (utlb.valid()) {
-                        sh4_jit_log.warn("  [{d}] {any}", .{ idx, utlb });
-                    }
+                    if (utlb.valid())
+                        sh4_jit_log.debug("  [{d}] {any}", .{ idx, utlb });
                 }
 
                 cpu.report_address_exception(virtual_addr);

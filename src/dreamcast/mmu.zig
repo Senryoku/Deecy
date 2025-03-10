@@ -61,13 +61,13 @@ pub const MMUCR = packed struct {
     at: bool = false,
 
     _r0: u1 = undefined,
-    /// TLB invalidate
+    /// TLB invalidate. Writing 1 to this bit invalidates (clears to 0) all valid UTLB/ITLB bits. This bit always returns 0 when read.
     ti: bool = false,
 
     _r1: u5 = undefined,
-    /// Single virtual mode bit.
+    /// Single virtual mode bit. 0: Multiple virtual memory mode. 1: Single virtual memory mode.
     sv: bool = false,
-    /// Store queue mode bit.
+    /// Store queue mode bit. 0: User/privileged access possible. 1: Privileged access possible (address error exception in case of user acces).
     sqmd: u1 = 0,
     /// UTLB replace counter
     urc: u6 = 0,

@@ -1383,7 +1383,21 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
             if (sh4.ExperimentalFullMMUSupport) {
-                const entry = try cpu.utlb_lookup(addr);
+                if (addr & 3 != 0 or (cpu.sr.md == 0 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 1)) {
+                    sh4_log.warn("DataAddressErrorRead exception in pref instruction: {X:0>8}", .{addr});
+                    return error.DataAddressErrorRead;
+                }
+
+                const entry = cpu.utlb_lookup(addr) catch |err| {
+                    sh4_log.warn("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
+                    cpu.report_address_exception(addr);
+                    return switch (err) {
+                        error.TLBMiss => return error.DataTLBMissRead, // This is a bit weird, but the manual explicitly states that this is treated as a read access (20.3.1).
+                        else => std.debug.panic("Unhandled {s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr }),
+                    };
+                };
+                if (!entry.d)
+                    return error.InitialPageWrite;
                 ext_addr = entry.translate(addr);
                 ext_addr &= 0xFFFFFFE0;
             } else {
