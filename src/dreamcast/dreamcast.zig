@@ -799,6 +799,10 @@ pub const Dreamcast = struct {
     }
 
     fn sort_dma_list(self: *@This(), addr: u32) struct { bytes_transfered: u32, next: union(enum) { Continue: u32, EndOfList, EndOfDMA } } {
+        const parameter_control_word: HollyModule.ParameterControlWord = @bitCast(self.cpu.read_physical(u32, addr));
+        // TODO: We should search for the first GlobalParameter to get the data_size and next_address, not assume this is the first one.
+        std.debug.assert(parameter_control_word.parameter_type == .PolygonOrModifierVolume or parameter_control_word.parameter_type == .SpriteList);
+
         const current_data_size = self.cpu.read_physical(u32, addr + 0x18);
         const next_link_address = self.cpu.read_physical(u32, addr + 0x1C);
 

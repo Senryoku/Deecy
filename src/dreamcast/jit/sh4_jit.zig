@@ -1180,7 +1180,7 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
             const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
-                sh4_jit_log.warn("MMU miss {s} for {X:0>8}", .{ @errorName(err), virtual_addr });
+                sh4_jit_log.info("MMU miss {s} for {X:0>8}", .{ @errorName(err), virtual_addr });
                 for (cpu.utlb, 0..) |utlb, idx| {
                     if (utlb.valid())
                         sh4_jit_log.debug("  [{d}] {any}", .{ idx, utlb });

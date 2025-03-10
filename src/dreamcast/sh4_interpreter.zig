@@ -1236,8 +1236,8 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
         .sa = ptea.sa,
         .tc = ptea.tc,
     };
-    sh4_log.warn(termcolor.yellow("ldtlb : utlb[{d}] = {any}"), .{ urc, cpu.utlb[urc] });
-    if (cpu._dc) |dc| dc.sh4_jit.request_reset();
+
+    sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) !void {

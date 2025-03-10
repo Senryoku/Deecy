@@ -111,6 +111,19 @@ const FunctionCodesMask = packed struct(u32) {
     pub fn as_u32(self: @This()) u32 {
         return @bitCast(self);
     }
+
+    const Screen = @This(){ .screen = 1 };
+    const Storage = @This(){ .storage = 1 };
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (@popCount(self.as_u32()) == 1) {
+            inline for (@typeInfo(FunctionCodesMask).@"struct".fields) |field| {
+                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            }
+        } else {
+            try writer.print("FunctionCodesMask{X}", .{self.as_u32()});
+        }
+    }
 };
 
 const LocationWord = packed struct(u32) {
@@ -427,7 +440,7 @@ pub const VMU = struct {
         _ = partition_number;
 
         switch (function) {
-            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
+            FunctionCodesMask.Storage.as_u32() => {
                 const value: GetMediaInformationResponse = .{
                     .total_size = BlockCount - 1,
                     .partition_number = 0x0000,
@@ -443,7 +456,17 @@ pub const VMU = struct {
                 @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], std.mem.asBytes(&value));
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
-            else => maple_log.err("Unimplemented VMU::GetMediaInformation for function: {any}", .{function}),
+            FunctionCodesMask.Screen.as_u32() => {
+                const value: packed struct { x_dots: u8, y_dots: u8, gradation: u4, contrast: u4, reserved: u8 = 0 } = .{
+                    .x_dots = 48 - 1,
+                    .y_dots = 32 - 1,
+                    .gradation = 1,
+                    .contrast = 0,
+                };
+                @memcpy(dest[0..4], std.mem.asBytes(&value));
+                return 1;
+            },
+            else => maple_log.err(termcolor.red("Unimplemented VMU::GetMediaInformation for function: {any}"), .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }

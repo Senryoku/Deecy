@@ -27,6 +27,8 @@ pub const sh4_disassembly = @import("sh4_disassembly.zig");
 pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
+// NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
+const EmulateUTLBMultipleHit = false;
 
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
@@ -606,7 +608,7 @@ pub const SH4 = struct {
     }
 
     pub fn jump_to_exception(self: *@This(), exception: Exception) void {
-        sh4_log.warn("Jump to Exception: {s} ({X:0>8} to {X:0>8} + {X:0>4})", .{ @tagName(exception), self.pc, self.vbr, exception.offset() });
+        sh4_log.info("Jump to Exception: {s} ({X:0>8} to {X:0>8} + {X:0>4})", .{ @tagName(exception), self.pc, self.vbr, exception.offset() });
 
         // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
         // internal registers are set to their post-reset state, the registers of the other modules retain their
@@ -1510,9 +1512,6 @@ pub const SH4 = struct {
 
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
-
-        // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
-        const EmulateUTLBMultipleHit = false;
 
         var found_entry: ?mmu.TLBEntry = null;
 

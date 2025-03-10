@@ -1688,8 +1688,8 @@ pub const Holly = struct {
                 return;
             },
             .TA_LIST_CONT => {
-                holly_log.warn("TODO TA_LIST_CONT: {X:0>8}", .{v});
-                // TODO: Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers?
+                holly_log.warn("Write to TA_LIST_CONT: {X:0>8}", .{v});
+                // Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers? (Not really tested yet)
                 if (v == 0x80000000) {
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
