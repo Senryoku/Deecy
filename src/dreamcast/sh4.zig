@@ -1833,20 +1833,18 @@ pub const SH4 = struct {
                                 if (value == 0x00007611)
                                     self.software_reset();
                             },
-                            .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_SDST, .SB_PDST => {
+                            .SB_SDST => if (value == 1) self._dc.?.start_sort_dma(),
+                            .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_PDST => {
                                 if (value == 1)
                                     sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
                             },
                             .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
-                                if ((value & 1) == 1) {
+                                if ((value & 1) == 1)
                                     sh4_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
-                                }
-                                return;
                             },
                             .SB_ADST => {
-                                if (value == 1) {
-                                    self._dc.?.aica.start_dma(self._dc.?);
-                                }
+                                if (value == 1) self._dc.?.aica.start_dma(self._dc.?);
+                                return;
                             },
                             .SB_GDEN => {
                                 sh4_log.info("Write to SB_GDEN: {X}", .{value});
@@ -1863,7 +1861,6 @@ pub const SH4 = struct {
                             },
                             .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
                                 sh4_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
-                                return;
                             },
                             .SB_MDAPRO => {
                                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
@@ -1873,8 +1870,7 @@ pub const SH4 = struct {
                                 self._dc.?.hw_register_addr(T, addr).* = value;
                             },
                             .SB_MDST => {
-                                if (value == 1)
-                                    self._dc.?.start_maple_dma();
+                                if (value == 1) self._dc.?.start_maple_dma();
                             },
                             .SB_ISTNRM => {
                                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });

@@ -67,6 +67,7 @@ const ScheduledEvent = struct {
     const Event = union(enum) {
         None,
         EndGDDMA,
+        EndSortDMA,
         EndAICADMA,
         TimerUnderflow: struct { channel: u2 },
         HBlankIn,
@@ -239,6 +240,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
+        self.hw_register(u32, .SB_SDST).* = 0;
         self.hw_register(u32, .SB_ISTNRM).* = 0;
 
         // Holly Version. TODO: Make it configurable?
@@ -573,6 +575,7 @@ pub const Dreamcast = struct {
                 switch (event.event) {
                     .None => {},
                     .EndGDDMA => self.end_gd_dma(),
+                    .EndSortDMA => self.end_sort_dma(),
                     .EndAICADMA => self.aica.end_dma(self),
                     .TimerUnderflow => |e| self.cpu.on_timer_underflow(e.channel),
                     .HBlankIn => self.gpu.on_hblank_in(),
@@ -722,13 +725,97 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DLEN).* = 0;
         self.hw_register(u32, .SB_C2DST).* = 0;
 
-        self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200);
+        self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200); // FIXME: Arbitrary timing.
     }
 
     pub fn end_ch2_dma(self: *@This()) void {
         self.hw_register(u32, .SB_C2DST).* = 0;
+    }
 
-        // TODO: Actually cancel the DMA, right now they're instantaneous.
+    pub fn start_sort_dma(self: *@This()) void {
+        dc_log.info("Start Sort-DMA", .{});
+        // NOTE: Uses ch0:DDT
+        self.hw_register(u32, .SB_SDST).* = 1;
+
+        const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
+        const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
+        const bit_width = self.hw_register(u32, .SB_SDWLT).*;
+        const link_address = self.hw_register(u32, .SB_SDLAS).*;
+        dc_log.info("  Start Link Address Table: {X}", .{start_link_address_table});
+        dc_log.info("  Start Link Base Address: {X}", .{start_link_base_address});
+        dc_log.info("  Bit Width: {X}", .{bit_width});
+        dc_log.info("  Link Address: {X}", .{link_address});
+
+        const r = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
+
+        self.schedule_int_event(
+            .{ .EoD_PVRSort = 1 },
+            .EndSortDMA,
+            // TODO: TA Bus? 1 GB/s?
+            r.bytes_transfered / (1024 * 1024 * 1024 / SH4Clock),
+        );
+    }
+
+    fn sort_dma_link(self: *@This(), comptime T: type) struct { bytes_transfered: u32, next: enum { EndOfList, EndOfDMA } } {
+        const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
+        const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
+        const offset_factor: u32 = if (self.hw_register(u32, .SB_SDLAS).* == 1) 32 else 1;
+
+        var offset: u32 = 0;
+        var bytes_transfered: u32 = 0;
+
+        // At the end of transfer:
+        //   The SB_SDSTAW register value is incremented.
+        defer self.hw_register(u32, .SB_SDSTAW).* += offset;
+        //   The SB_SDDIV register the number of times that the Sort-DMA operation read the Start Link Address.
+        var sb_sddiv: u32 = 0;
+        defer self.hw_register(u32, .SB_SDDIV).* = sb_sddiv;
+
+        while (true) {
+            const offset_address = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
+            sb_sddiv += 1;
+
+            dc_log.info("  [{d}] {X}", .{ offset, offset_address });
+
+            if (offset_address == 1) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfList };
+            if (offset_address == 2) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA };
+
+            var current_addr = start_link_base_address + offset_factor * offset_address;
+            while (true) {
+                const r = sort_dma_list(self, current_addr);
+                bytes_transfered += r.bytes_transfered;
+                switch (r.next) {
+                    .EndOfList => break,
+                    .EndOfDMA => return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA },
+                    .Continue => |next_link_address| {
+                        current_addr = start_link_base_address + offset_factor * next_link_address;
+                        continue;
+                    },
+                }
+            }
+
+            offset += @sizeOf(T);
+        }
+    }
+
+    fn sort_dma_list(self: *@This(), addr: u32) struct { bytes_transfered: u32, next: union(enum) { Continue: u32, EndOfList, EndOfDMA } } {
+        const current_data_size = self.cpu.read_physical(u32, addr + 0x18);
+        const next_link_address = self.cpu.read_physical(u32, addr + 0x1C);
+
+        dc_log.info("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
+
+        const block_count = if (current_data_size == 0) 0x100 else current_data_size;
+        const bytes = block_count * 8 * 4;
+        var src: [*]u32 = @alignCast(@ptrCast(self.cpu._get_memory(addr)));
+        self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
+
+        if (next_link_address == 1) return .{ .bytes_transfered = bytes, .next = .EndOfList };
+        if (next_link_address == 2) return .{ .bytes_transfered = bytes, .next = .EndOfDMA };
+        return .{ .bytes_transfered = bytes, .next = .{ .Continue = next_link_address } };
+    }
+
+    pub fn end_sort_dma(self: *@This()) void {
+        self.hw_register(u32, .SB_SDST).* = 0;
     }
 
     pub fn serialize(self: *@This(), writer: anytype) !usize {
