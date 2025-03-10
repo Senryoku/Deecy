@@ -266,7 +266,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const end_addr = addr + range;
         while (addr < end_addr) {
             if (addr < DreamcastModule.Dreamcast.BootSize or (addr >= 0x0C000000 and addr < 0x0D000000)) {
-                const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
+                const disassembly = sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
                 zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
             } else {
                 zgui.text("[{X:0>8}] {s} Out of range (TODO: Handle MMU)", .{ addr, if (addr == pc) ">" else " " });
@@ -408,7 +408,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
                     const instr = dc.cpu.read_physical(u16, addr);
                     const op = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[instr]];
-                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
+                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
             }
         } else {

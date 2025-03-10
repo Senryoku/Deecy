@@ -6,13 +6,19 @@ const bit_manip = @import("bit_manip.zig");
 
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
 
-pub fn disassemble(opcode: Instr, _: std.mem.Allocator) ![]const u8 {
+pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) []const u8 {
     if (DisassemblyCache[opcode.value]) |r|
         return r;
 
     const idx = sh4_instructions.JumpTable[opcode.value];
     if (idx >= sh4_instructions.Opcodes.len) return "Invalid instruction";
 
+    return generate_disassembly(opcode, allocator) catch {
+        return "[Disassembly failed]";
+    };
+}
+
+fn generate_disassembly(opcode: Instr, _: std.mem.Allocator) ![]const u8 {
     const allocator = std.heap.page_allocator; // FIXME: Using the supplied allocator sometimes crashes.
 
     var arena = std.heap.ArenaAllocator.init(allocator);

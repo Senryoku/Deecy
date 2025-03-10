@@ -404,7 +404,7 @@ pub const JITContext = struct {
             sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
                 self.current_pc,
                 if (op.use_fallback()) "!" else " ",
-                try sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
+                sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
             });
         self.current_physical_pc += 2; // Same thing as in the interpreter, this is probably useless as instructions referring to PC should be illegal here, but just in case...
         self.current_pc += 2;
@@ -680,7 +680,7 @@ pub const SH4JIT = struct {
                 sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
                     ctx.current_pc,
                     if (op.use_fallback()) "!" else " ",
-                    try sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
+                    sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
                 });
             branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
@@ -2765,7 +2765,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
                     sh4_jit_log.debug("[{X:0>8}] {s} > {s}", .{
                         ctx.current_pc,
                         if (op.use_fallback()) "!" else " ",
-                        try sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
+                        sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
                     });
                 const branch = try op.jit_emit_fn(block, ctx, @bitCast(i));
                 std.debug.assert(!branch);
