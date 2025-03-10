@@ -1513,12 +1513,16 @@ pub const SH4 = struct {
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
+        // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
+        const EmulateUTLBMultipleHit = false;
+
         var found_entry: ?mmu.TLBEntry = null;
 
         for (self.utlb) |entry| {
             if (entry.match(check_asid, asid, vpn)) {
-                if (found_entry) |_| return error.TLBMultipleHit;
+                if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
                 found_entry = entry;
+                if (!EmulateUTLBMultipleHit) break;
             }
         }
 
