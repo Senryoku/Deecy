@@ -2715,7 +2715,8 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
         return true;
     }
 
-    if (Optimizations.inline_small_forward_jumps) {
+    // NOTE: Disabled for now when MMU is enabled. The delay slot might raise a exception and we'll end up with a misaligned stack with the current implementation.
+    if (Optimizations.inline_small_forward_jumps and (!ctx.mmu_enabled or !delay_slot)) {
         // Optimize small forward jumps if possible
         const max_instructions = 6;
         const first_instr = if (delay_slot) 2 else 1;
