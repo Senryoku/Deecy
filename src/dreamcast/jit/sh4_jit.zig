@@ -2990,9 +2990,9 @@ pub fn ldcl_atRnInc_Reg(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
 
 pub fn ldcl_atRnInc_SR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
-    try set_sr(block, ctx, .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     try block.add(.{ .reg = rn }, .{ .imm32 = 4 });
+    try set_sr(block, ctx, .{ .reg = ReturnRegister });
     return false;
 }
 
