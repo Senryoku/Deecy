@@ -158,7 +158,7 @@ const Test = struct {
         self.initial.log();
 
         for (self.opcodes) |opcode| {
-            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator) catch |err| std.debug.panic("Failed to disassemble instruction {X:0>16}: {}\n", .{ opcode, err })});
+            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator)});
         }
 
         for (self.cycles) |cycle| {
@@ -342,10 +342,9 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
         const instr = SH4Module.Instr{ .value = opcode };
         const desc = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[opcode]];
 
-        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator) catch |err|
-            std.debug.panic("Failed to disassemble instruction {X:0>16}: {}\n", .{ opcode, err }), instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
+        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator), instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
 
-        desc.fn_(cpu, instr);
+        try desc.fn_(cpu, instr);
 
         if (log) std.debug.print("    [{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, "", instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
 
@@ -409,7 +408,6 @@ test {
                 "0000000000011011_sz0_pr0.json", // sleep
                 "0011nnnnmmmm0100_sz0_pr0.json", // div1 Rm, Rn - This one has a *potential* bug in the test data when n == m. Skipping for now.
                 "0011nnnnmmmm1011_sz0_pr0.json", // subv Rm, Rn - Unimplemented
-                "0011nnnnmmmm1111_sz0_pr0.json", // addv Rm, Rn - Unimplemented
                 "0100mmmm01100110_sz0_pr0.json", // lds.l @Rn+,FPSCR - I'm zeroing the unused upper bits of FPSCR, which apparently reicast doesn't do? They should always be read as 0s anyway.
                 "0100mmmm01101010_sz0_pr0.json", // lds Rn,FPSCR - Same thing
                 "1111mmm000111101_sz0_pr1.json", // ftrc DRn,FPUL - These tests cause some FPU exceptions that I'm not emulating.

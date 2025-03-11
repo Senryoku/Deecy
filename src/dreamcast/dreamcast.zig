@@ -241,6 +241,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
         self.hw_register(u32, .SB_SDST).* = 0;
+        self.hw_register(u32, .SB_GDST).* = 0;
         self.hw_register(u32, .SB_ISTNRM).* = 0;
 
         // Holly Version. TODO: Make it configurable?

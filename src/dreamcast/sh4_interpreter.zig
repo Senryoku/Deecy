@@ -356,10 +356,10 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
 
 // Adds together the contents of general registers Rn and Rm and stores the result in Rn. If overflow occurs, the T bit is set.
 pub fn addv_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
-    const rn = cpu.R(opcode.nmd.n).*;
-    const rm = cpu.R(opcode.nmd.m).*;
+    const rn: i32 = @bitCast(cpu.R(opcode.nmd.n).*);
+    const rm: i32 = @bitCast(cpu.R(opcode.nmd.m).*);
     const r = @addWithOverflow(rn, rm);
-    cpu.R(opcode.nmd.n).* = r[0];
+    cpu.R(opcode.nmd.n).* = @bitCast(r[0]);
     cpu.sr.t = @bitCast(r[1]);
 }
 
