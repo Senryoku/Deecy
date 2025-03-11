@@ -155,7 +155,7 @@ pub const UTLBArrayData1 = PTEL;
 
 pub const UTLBArrayData2 = PTEA;
 
-pub fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
+pub inline fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
     switch (sz) {
         0b00 => return lhs == rhs, // For 1-kbyte page: upper 22 bits of virtual address
         0b01 => return (lhs & 0b1111_1111_1111_1111_1111_00) == (rhs & 0b1111_1111_1111_1111_1111_00), // For 4-kbyte page: upper 20 bits of virtual address

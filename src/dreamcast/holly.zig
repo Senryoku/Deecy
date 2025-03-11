@@ -1789,13 +1789,86 @@ pub const Holly = struct {
         @memcpy(self.vram[addr & VRAMMask .. (addr & VRAMMask) + value.len], value);
     }
 
+    fn yuv_converter_process_macro_block(u_size: u32, v_size: u32, x: u32, y: u32, dest: [*]YUV422, data: []const u8) void {
+        _ = v_size;
+
+        const line_size = u_size * 16 / 2; // in YUV422
+        const block_start = (16 * y * line_size) + (16 / 2 * x);
+        const pixels = dest[block_start..];
+
+        const u = data[0..64];
+        const v = data[64..128];
+        const y0 = data[128..192]; // (0,0) to (7,7)
+        const y1 = data[192..256]; // (8,0) to (15,7)
+        const y2 = data[256..320]; // (0,8) to (7,15)
+        const y3 = data[320..384]; // (8,8) to (15,15)
+
+        for (0..8) |j| {
+            for (0..8) |i| {
+                pixels[(2 * j + 0) * line_size + i].u = u[8 * j + i];
+                pixels[(2 * j + 0) * line_size + i].v = v[8 * j + i];
+                pixels[(2 * j + 1) * line_size + i].u = u[8 * j + i];
+                pixels[(2 * j + 1) * line_size + i].v = v[8 * j + i];
+            }
+        }
+
+        for (0..8) |j| {
+            for (0..4) |i| {
+                pixels[(j + 0) * line_size + i + 0].y0 = y0[8 * j + 2 * i];
+                pixels[(j + 0) * line_size + i + 0].y1 = y0[8 * j + 2 * i + 1];
+
+                pixels[(j + 0) * line_size + i + 4].y0 = y1[8 * j + 2 * i];
+                pixels[(j + 0) * line_size + i + 4].y1 = y1[8 * j + 2 * i + 1];
+
+                pixels[(j + 8) * line_size + i + 0].y0 = y2[8 * j + 2 * i];
+                pixels[(j + 8) * line_size + i + 0].y1 = y2[8 * j + 2 * i + 1];
+
+                pixels[(j + 8) * line_size + i + 4].y0 = y3[8 * j + 2 * i];
+                pixels[(j + 8) * line_size + i + 4].y1 = y3[8 * j + 2 * i + 1];
+            }
+        }
+    }
+
+    /// Expects length of data to be a divisor of 384 (size of a macro block).
+    pub fn write_ta_fifo_yuv_converter_path_partial(self: *@This(), data: []u8) void {
+        const static = struct {
+            var buffer: [6 * 64]u8 = undefined;
+            var index: usize = 0;
+        };
+        @memcpy(static.buffer[static.index..][0..data.len], data);
+        static.index += data.len;
+
+        if (static.index == static.buffer.len) {
+            const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
+            std.debug.assert(ctrl.format == 0 and ctrl.tex == 0); // Other variations aren't implemented.
+            const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
+            const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
+
+            const block_counter = self._get_register(u32, .TA_YUV_TEX_CNT);
+            const x = block_counter.* % u_size;
+            const y = block_counter.* / u_size;
+
+            const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
+            const tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
+
+            yuv_converter_process_macro_block(u_size, v_size, x, y, tex, &static.buffer);
+
+            block_counter.* += 1;
+            if (block_counter.* == u_size * v_size) {
+                self._dc.schedule_interrupt(.{ .EoT_YUV = 1 }, 0);
+                block_counter.* = 0; // FIXME: Resident Evil 2 doesn't seem to reset the counter by writing to TA_YUV_TEX_BASE... I don't know if this a proper fix.
+            }
+            static.index = 0;
+        }
+    }
+
+    /// Expects data to be large enough to decode the whole texture (e.g. from DMA).
     pub fn write_ta_fifo_yuv_converter_path(self: *@This(), data: []u8) void {
         const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
         const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
         const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
         const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
-        var tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
-        const line_size = u_size * 16 / 2; // in YUV422
+        const tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
         if (ctrl.format == 0) {
             // YUV 420
             if (ctrl.tex == 0) {
@@ -1807,46 +1880,8 @@ pub const Holly = struct {
                 var offset: u32 = 0;
                 for (0..v_size) |y| {
                     for (0..u_size) |x| {
-                        const block_start = (16 * y * line_size) + (16 / 2 * x);
-                        const pixels = tex[block_start..];
-
-                        const u = data[offset .. offset + 64];
-                        offset += 64;
-                        const v = data[offset .. offset + 64];
-                        offset += 64;
-                        const y0 = data[offset .. offset + 64]; // (0,0) to (7,7)
-                        offset += 64;
-                        const y1 = data[offset .. offset + 64]; // (8,0) to (15,7)
-                        offset += 64;
-                        const y2 = data[offset .. offset + 64]; // (0,8) to (7,15)
-                        offset += 64;
-                        const y3 = data[offset .. offset + 64]; // (8,8) to (15,15)
-                        offset += 64;
-
-                        for (0..8) |j| {
-                            for (0..8) |i| {
-                                pixels[(2 * j + 0) * line_size + i].u = u[8 * j + i];
-                                pixels[(2 * j + 0) * line_size + i].v = v[8 * j + i];
-                                pixels[(2 * j + 1) * line_size + i].u = u[8 * j + i];
-                                pixels[(2 * j + 1) * line_size + i].v = v[8 * j + i];
-                            }
-                        }
-
-                        for (0..8) |j| {
-                            for (0..4) |i| {
-                                pixels[(j + 0) * line_size + i + 0].y0 = y0[8 * j + 2 * i];
-                                pixels[(j + 0) * line_size + i + 0].y1 = y0[8 * j + 2 * i + 1];
-
-                                pixels[(j + 0) * line_size + i + 4].y0 = y1[8 * j + 2 * i];
-                                pixels[(j + 0) * line_size + i + 4].y1 = y1[8 * j + 2 * i + 1];
-
-                                pixels[(j + 8) * line_size + i + 0].y0 = y2[8 * j + 2 * i];
-                                pixels[(j + 8) * line_size + i + 0].y1 = y2[8 * j + 2 * i + 1];
-
-                                pixels[(j + 8) * line_size + i + 4].y0 = y3[8 * j + 2 * i];
-                                pixels[(j + 8) * line_size + i + 4].y1 = y3[8 * j + 2 * i + 1];
-                            }
-                        }
+                        yuv_converter_process_macro_block(u_size, v_size, @intCast(x), @intCast(y), tex, data[offset..]);
+                        offset += 6 * 64;
                     }
                 }
                 self._get_register(u32, .TA_YUV_TEX_CNT).* += u_size * v_size; // NOTE: If this was async, we could update it as we go.

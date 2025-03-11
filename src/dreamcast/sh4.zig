@@ -1382,8 +1382,8 @@ pub const SH4 = struct {
                                     for (self.utlb) |*entry|
                                         entry.v = false;
                                     val.ti = false; // Always return 0 when read.
-                                    if (self._dc) |dc| dc.sh4_jit.request_reset();
                                 }
+                                if (val.at != self._mmu_enabled) if (self._dc) |dc| dc.sh4_jit.request_reset();
                                 self._mmu_enabled = val.at;
                                 self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
                                 return;

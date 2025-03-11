@@ -1396,8 +1396,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                         else => std.debug.panic("Unhandled {s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr }),
                     };
                 };
-                if (!entry.d)
-                    return error.InitialPageWrite;
+                if (!entry.d) return error.InitialPageWrite;
                 ext_addr = entry.translate(addr);
                 ext_addr &= 0xFFFFFFE0;
             } else {
@@ -1416,6 +1415,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
         // pref is often used to send commands to the GPU, we can optimize this use case.
         switch (ext_addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_polygon_path_command(cpu.store_queues[sq_addr.sq]),
+            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => if (cpu._dc) |dc| dc.gpu.write_ta_fifo_yuv_converter_path_partial(std.mem.sliceAsBytes(&cpu.store_queues[sq_addr.sq])),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 if (cpu._dc) |dc| {
                     const LMMode = dc.read_hw_register(u32, if (ext_addr >= 0x11000000 and ext_addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
