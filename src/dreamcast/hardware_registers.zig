@@ -7,11 +7,18 @@ pub const HardwareRegister = enum(u32) {
     SB_C2DSTAT = 0x005F6800,
     SB_C2DLEN = 0x005F6804,
     SB_C2DST = 0x005F6808,
+    /// Sort-DMA start link table address
     SB_SDSTAW = 0x005F6810,
+    /// Sort-DMA link base address
     SB_SDBAAW = 0x005F6814,
+    /// Sort-DMA link address bit width
     SB_SDWLT = 0x005F6818,
+    /// Sort-DMA link address shift control. 1: Link address offset should be multiplied by 32.
     SB_SDLAS = 0x005F681C,
+    /// Sort-DMA start
     SB_SDST = 0x005F6820,
+    /// Indicates the number of times a Start Link Address was retrieved.
+    SB_SDDIV = 0x005F6860,
     SB_DBREQM = 0x005F6840,
     SB_BAVLWC = 0x005F6844,
     SB_C2DPRYC = 0x005F6848,
@@ -219,7 +226,7 @@ pub const SB_ISTNRM = packed struct(u32) {
     EoD_DEV: u1 = 0,
 
     EoD_CH2: u1 = 0,
-    EoD_PVRSort: u1 = 0,
+    EoD_PVRSort: u1 = 0, // Sort-DMA (Transferring for alpha sorting)
     EoD_PunchThroughList: u1 = 0,
 
     _: u8 = 0,

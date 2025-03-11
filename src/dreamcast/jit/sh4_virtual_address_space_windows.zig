@@ -153,7 +153,9 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(st
             const fault_address = info.ExceptionRecord.ExceptionInformation[1];
 
             VAS.patch_access(fault_address, @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE), 0x1_0000_0000, &info.ContextRecord.Rip) catch |err| {
-                std.log.scoped(.sh4_jit).err("Failed to patch FastMem access: {s}", .{@errorName(err)});
+                log.err("Failed to patch FastMem access @{X}: {s}", .{ fault_address, @errorName(err) });
+                if (std.os.windows.kernel32.RemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
+                    log.err(termcolor.red("Call to RemoveVectoredExceptionHandler failed.\n"), .{});
                 return std.os.windows.EXCEPTION_CONTINUE_SEARCH;
             };
 

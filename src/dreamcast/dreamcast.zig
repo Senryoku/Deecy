@@ -67,6 +67,7 @@ const ScheduledEvent = struct {
     const Event = union(enum) {
         None,
         EndGDDMA,
+        EndSortDMA,
         EndAICADMA,
         TimerUnderflow: struct { channel: u2 },
         HBlankIn,
@@ -239,6 +240,8 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
+        self.hw_register(u32, .SB_SDST).* = 0;
+        self.hw_register(u32, .SB_GDST).* = 0;
         self.hw_register(u32, .SB_ISTNRM).* = 0;
 
         // Holly Version. TODO: Make it configurable?
@@ -348,10 +351,10 @@ pub const Dreamcast = struct {
 
         // Copy subroutine to RAM. Some of it will be overwritten, I'm trying to work out what's important and what's not.
         inline for (0..16) |i| {
-            self.cpu.write(u16, 0x8C0000E0 + 2 * i, self.cpu.read(u16, 0x800000FE - 2 * i));
+            try self.cpu.write(u16, 0x8C0000E0 + 2 * i, try self.cpu.read(u16, 0x800000FE - 2 * i));
         }
         // Copy a portion of the boot ROM to RAM.
-        self.cpu.write(u32, 0xA05F74E4, 0x001FFFFF);
+        try self.cpu.write(u32, 0xA05F74E4, 0x001FFFFF);
 
         @memcpy(self.ram[0x00000100..0x00004000], self.boot[0x00000100..0x00004000]);
         @memcpy(self.ram[0x00008000..0x00200000], self.boot[0x00008000..0x00200000]);
@@ -360,15 +363,15 @@ pub const Dreamcast = struct {
         if (IP_bin_HLE) {
             // Copy a portion of the flash ROM to RAM.
             inline for (0..8) |i| {
-                self.cpu.write(u8, 0x8C000068 + i, self.cpu.read(u8, 0x0021A056 + i));
+                try self.cpu.write(u8, 0x8C000068 + i, try self.cpu.read(u8, 0x0021A056 + i));
             }
             inline for (0..5) |i| {
-                self.cpu.write(u8, 0x8C000068 + 8 + i, self.cpu.read(u8, 0x0021A000 + i));
+                try self.cpu.write(u8, 0x8C000068 + 8 + i, try self.cpu.read(u8, 0x0021A000 + i));
             }
             // FIXME: Load system settings from flashrom (User partition (2), logical block 5), instead of these hardcoded values.
             //inline for (.{ 0xBC, 0xEA, 0x90, 0x5E, 0xFF, 0x04, 0x00, 0x01 }, 0..) |val, i| {
             inline for (.{ 0x00, 0x00, 0x89, 0xFC, 0x5B, 0xFF, 0x01, 0x00, 0x00, 0x7D, 0x0A, 0x62, 0x61 }, 0..) |val, i| {
-                self.cpu.write(u8, 0x8C000068 + 13 + i, val);
+                try self.cpu.write(u8, 0x8C000068 + 13 + i, val);
             }
         }
 
@@ -381,22 +384,22 @@ pub const Dreamcast = struct {
             .{ 0x8C0000C0, 0x8C0010F0 },
             .{ 0x8C0000E0, 0x8C000800 },
         }) |p| {
-            self.cpu.write(u32, p[0], p[1]);
+            try self.cpu.write(u32, p[0], p[1]);
         }
         // Replace them by HLE counterparts (see syscall.zig) by inserting fake opcodes.
         if (hle_syscalls) {
             // System
-            self.cpu.write(u16, 0x8C003C00, 0b0000000000010000);
+            try self.cpu.write(u16, 0x8C003C00, 0b0000000000010000);
             // Font
-            self.cpu.write(u16, 0x8C003D80, 0b0000000000100000);
+            try self.cpu.write(u16, 0x8C003D80, 0b0000000000100000);
             // Flashrom
-            self.cpu.write(u16, 0x8C003D00, 0b0000000000110000);
+            try self.cpu.write(u16, 0x8C003D00, 0b0000000000110000);
             // GD
-            self.cpu.write(u16, 0x8C001000, 0b0000000001000000);
+            try self.cpu.write(u16, 0x8C001000, 0b0000000001000000);
             // GD2
-            self.cpu.write(u16, 0x8C0010F0, 0b0000000001010000);
+            try self.cpu.write(u16, 0x8C0010F0, 0b0000000001010000);
             // Misc
-            self.cpu.write(u16, 0x8C000800, 0b0000000001100000);
+            try self.cpu.write(u16, 0x8C000800, 0b0000000001100000);
         }
 
         // Other set values, IDK
@@ -408,7 +411,7 @@ pub const Dreamcast = struct {
             .{ 0x8C00002C, 0x00000000 },
             .{ 0x8CFFFFF8, 0x8C000128 },
         }) |p| {
-            self.cpu.write(u32, p[0], p[1]);
+            try self.cpu.write(u32, p[0], p[1]);
         }
 
         // Load IP.bin from disc (16 first sectors of the last track)
@@ -422,7 +425,7 @@ pub const Dreamcast = struct {
             .{ 0xAC00940A, 0x000B },
             .{ 0xAC00940C, 0x0009 },
         }) |p| {
-            self.cpu.write(u16, p[0], p[1]);
+            try self.cpu.write(u16, p[0], p[1]);
         }
 
         // Patch some functions apparently used by interrupts
@@ -430,24 +433,24 @@ pub const Dreamcast = struct {
         //  and I'm afraid some games might use. I'm not taking any more chances)
 
         // Sleep on error?
-        self.cpu.write(u32, 0x8C000000, 0x00090009);
-        self.cpu.write(u32, 0x8C000004, 0x001B0009);
-        self.cpu.write(u32, 0x8C000008, 0x0009AFFD);
+        try self.cpu.write(u32, 0x8C000000, 0x00090009);
+        try self.cpu.write(u32, 0x8C000004, 0x001B0009);
+        try self.cpu.write(u32, 0x8C000008, 0x0009AFFD);
         // ??
-        self.cpu.write(u16, 0x8C00000C, 0);
-        self.cpu.write(u16, 0x8C00000E, 0);
+        try self.cpu.write(u16, 0x8C00000C, 0);
+        try self.cpu.write(u16, 0x8C00000E, 0);
         // RTE - Some interrupts jump there instead of having their own RTE, I have NO idea why.
-        self.cpu.write(u32, 0x8C000010, 0x00090009); // nop nop
-        self.cpu.write(u32, 0x8C000014, 0x0009002B); // rte nop
+        try self.cpu.write(u32, 0x8C000010, 0x00090009); // nop nop
+        try self.cpu.write(u32, 0x8C000014, 0x0009002B); // rte nop
         // RTS
-        self.cpu.write(u32, 0x8C000018, 0x00090009);
-        self.cpu.write(u32, 0x8C00001C, 0x0009000B);
+        try self.cpu.write(u32, 0x8C000018, 0x00090009);
+        try self.cpu.write(u32, 0x8C00001C, 0x0009000B);
 
         // ??
-        self.cpu.write(u8, 0x8C00002C, 0x16);
-        self.cpu.write(u32, 0x8C000064, 0x8c008100);
-        self.cpu.write(u16, 0x8C000090, 0);
-        self.cpu.write(u16, 0x8C000092, @bitCast(@as(i16, -128)));
+        try self.cpu.write(u8, 0x8C00002C, 0x16);
+        try self.cpu.write(u32, 0x8C000064, 0x8c008100);
+        try self.cpu.write(u16, 0x8C000090, 0);
+        try self.cpu.write(u16, 0x8C000092, @bitCast(@as(i16, -128)));
 
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
@@ -573,6 +576,7 @@ pub const Dreamcast = struct {
                 switch (event.event) {
                     .None => {},
                     .EndGDDMA => self.end_gd_dma(),
+                    .EndSortDMA => self.end_sort_dma(),
                     .EndAICADMA => self.aica.end_dma(self),
                     .TimerUnderflow => |e| self.cpu.on_timer_underflow(e.channel),
                     .HBlankIn => self.gpu.on_hblank_in(),
@@ -722,13 +726,101 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DLEN).* = 0;
         self.hw_register(u32, .SB_C2DST).* = 0;
 
-        self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200);
+        self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200); // FIXME: Arbitrary timing.
     }
 
     pub fn end_ch2_dma(self: *@This()) void {
         self.hw_register(u32, .SB_C2DST).* = 0;
+    }
 
-        // TODO: Actually cancel the DMA, right now they're instantaneous.
+    pub fn start_sort_dma(self: *@This()) void {
+        dc_log.info("Start Sort-DMA", .{});
+        // NOTE: Uses ch0:DDT
+        self.hw_register(u32, .SB_SDST).* = 1;
+
+        const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
+        const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
+        const bit_width = self.hw_register(u32, .SB_SDWLT).*;
+        const link_address = self.hw_register(u32, .SB_SDLAS).*;
+        dc_log.info("  Start Link Address Table: {X}", .{start_link_address_table});
+        dc_log.info("  Start Link Base Address: {X}", .{start_link_base_address});
+        dc_log.info("  Bit Width: {X}", .{bit_width});
+        dc_log.info("  Link Address: {X}", .{link_address});
+
+        const r = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
+
+        self.schedule_int_event(
+            .{ .EoD_PVRSort = 1 },
+            .EndSortDMA,
+            // TODO: TA Bus? 1 GB/s?
+            r.bytes_transfered / (1024 * 1024 * 1024 / SH4Clock),
+        );
+    }
+
+    fn sort_dma_link(self: *@This(), comptime T: type) struct { bytes_transfered: u32, next: enum { EndOfList, EndOfDMA } } {
+        const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
+        const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
+        const offset_factor: u32 = if (self.hw_register(u32, .SB_SDLAS).* == 1) 32 else 1;
+
+        var offset: u32 = 0;
+        var bytes_transfered: u32 = 0;
+
+        // At the end of transfer:
+        //   The SB_SDSTAW register value is incremented.
+        defer self.hw_register(u32, .SB_SDSTAW).* += offset;
+        //   The SB_SDDIV register the number of times that the Sort-DMA operation read the Start Link Address.
+        var sb_sddiv: u32 = 0;
+        defer self.hw_register(u32, .SB_SDDIV).* = sb_sddiv;
+
+        while (true) {
+            const offset_address = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
+            sb_sddiv += 1;
+
+            dc_log.info("  [{d}] {X}", .{ offset, offset_address });
+
+            if (offset_address == 1) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfList };
+            if (offset_address == 2) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA };
+
+            var current_addr = start_link_base_address + offset_factor * offset_address;
+            while (true) {
+                const r = sort_dma_list(self, current_addr);
+                bytes_transfered += r.bytes_transfered;
+                switch (r.next) {
+                    .EndOfList => break,
+                    .EndOfDMA => return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA },
+                    .Continue => |next_link_address| {
+                        current_addr = start_link_base_address + offset_factor * next_link_address;
+                        continue;
+                    },
+                }
+            }
+
+            offset += @sizeOf(T);
+        }
+    }
+
+    fn sort_dma_list(self: *@This(), addr: u32) struct { bytes_transfered: u32, next: union(enum) { Continue: u32, EndOfList, EndOfDMA } } {
+        const parameter_control_word: HollyModule.ParameterControlWord = @bitCast(self.cpu.read_physical(u32, addr));
+        // TODO: We should search for the first GlobalParameter to get the data_size and next_address, not assume this is the first one.
+        std.debug.assert(parameter_control_word.parameter_type == .PolygonOrModifierVolume or parameter_control_word.parameter_type == .SpriteList);
+
+        const current_data_size = self.cpu.read_physical(u32, addr + 0x18);
+        const next_link_address = self.cpu.read_physical(u32, addr + 0x1C);
+
+        dc_log.info("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
+
+        const block_count = if (current_data_size == 0) 0x100 else current_data_size;
+        const bytes = block_count * 8 * 4;
+        var src: [*]u32 = @alignCast(@ptrCast(self.cpu._get_memory(addr)));
+        self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
+
+        if (next_link_address == 1) return .{ .bytes_transfered = bytes, .next = .EndOfList };
+        if (next_link_address == 2) return .{ .bytes_transfered = bytes, .next = .EndOfDMA };
+        return .{ .bytes_transfered = bytes, .next = .{ .Continue = next_link_address } };
+    }
+
+    pub fn end_sort_dma(self: *@This()) void {
+        self.hw_register(u32, .SB_SDST).* = 0;
     }
 
     pub fn serialize(self: *@This(), writer: anytype) !usize {
@@ -806,7 +898,7 @@ test "boot" {
     try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
     // Reads EXPEVT (0xFF000024), 0x00000000 on power up, 0x00000020 on reset.
     _ = try dc.tick(1); // mov.l @(9, R3),R0
-    try std.testing.expect(dc.cpu.read(u32, dc.cpu.R(3).* + (9 << 2)) == dc.cpu.R(0).*);
+    try std.testing.expect(try dc.cpu.read(u32, dc.cpu.R(3).* + (9 << 2)) == dc.cpu.R(0).*);
     _ = try dc.tick(1); // xor R4,R0
     try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
     try std.testing.expect(dc.cpu.R(4).* == 0x00000FFF);
@@ -823,7 +915,7 @@ test "boot" {
     _ = try dc.tick(1); // bf 0x8C010108
     try std.testing.expect(dc.cpu.pc == 0xA0000018);
     _ = try dc.tick(1); // mov.l R0,@(4,R3) - Write 0x0 to MMUCR @ 0xFF000010
-    try std.testing.expect(dc.cpu.R(0).* == dc.cpu.read(u32, 0xFF000000 + (4 << 2)));
+    try std.testing.expect(dc.cpu.R(0).* == try dc.cpu.read(u32, 0xFF000000 + (4 << 2)));
     _ = try dc.tick(1); // mov 0x9,R1
     try std.testing.expect(dc.cpu.R(1).* == 0x9);
     _ = try dc.tick(1); // shll8 R1
@@ -831,14 +923,14 @@ test "boot" {
     _ = try dc.tick(1); // add 0x29,R1
     try std.testing.expect(dc.cpu.R(1).* == (0x9 << 8) + 0x29);
     _ = try dc.tick(1); // mov.l R1, @(7, R3) - Write 0x929 to CCR @ 0xFF00001C
-    try std.testing.expect(dc.cpu.R(1).* == dc.cpu.read(u32, 0xFF000000 + (0x7 << 2)));
+    try std.testing.expect(dc.cpu.R(1).* == try dc.cpu.read(u32, 0xFF000000 + (0x7 << 2)));
     _ = try dc.tick(1); // shar R3
     try std.testing.expect(dc.cpu.R(3).* == 0xFF800000);
     try std.testing.expect(!dc.cpu.sr.t);
     _ = try dc.tick(1); // mov 0x01, R0
     try std.testing.expect(dc.cpu.R(0).* == 0x01);
     _ = try dc.tick(1); // mov.w R0, @(2, R3) - Write 0x01 to BCR2 @ 0xFF800004
-    try std.testing.expect(dc.cpu.R(0).* == dc.cpu.read(u16, 0xFF800000 + (0x2 << 1)));
+    try std.testing.expect(dc.cpu.R(0).* == try dc.cpu.read(u16, 0xFF800000 + (0x2 << 1)));
     _ = try dc.tick(1); // mov 0xFFFFFFC3, R0
     try std.testing.expect(dc.cpu.R(0).* == 0xFFFFFFC3);
     _ = try dc.tick(1); // shll16 R0
@@ -853,7 +945,7 @@ test "boot" {
     try std.testing.expect(dc.cpu.R(0).* == 0xC300CDB0 >> 1);
     try std.testing.expect(!dc.cpu.sr.t);
     _ = try dc.tick(1); // mov.l R0, @(3, R3) - Write 0x01 to WCR2 @ 0xFF80000C
-    try std.testing.expect(dc.cpu.R(0).* == dc.cpu.read(u32, 0xFF800000 + (0x3 << 2)));
+    try std.testing.expect(dc.cpu.R(0).* == try dc.cpu.read(u32, 0xFF800000 + (0x3 << 2)));
     _ = try dc.tick(1); // mov 0x01, R5
     try std.testing.expect(dc.cpu.R(5).* == 0x01);
     _ = try dc.tick(1); // rotr R5
@@ -874,14 +966,14 @@ test "boot" {
 
     _ = try dc.tick(1); // mov.l @(0x2,R5),R0 - Read 0x80000068 (0xA3020008) to R0
     try std.testing.expect(0xA3020008 == dc.cpu.R(0).*);
-    try std.testing.expect(dc.cpu.read(u32, dc.cpu.R(5).* + (0x2 << 2)) == dc.cpu.R(0).*);
+    try std.testing.expect(try dc.cpu.read(u32, dc.cpu.R(5).* + (0x2 << 2)) == dc.cpu.R(0).*);
 
     _ = try dc.tick(1); // mov.l R0, @(0, R3) - Write 0xA3020008 to BRC1 @ 0xFF800000
-    try std.testing.expect(dc.cpu.read(u32, 0xFF800000) == 0xA3020008);
+    try std.testing.expect(try dc.cpu.read(u32, 0xFF800000) == 0xA3020008);
     _ = try dc.tick(1); // mov.l @(4,R5),R0
-    try std.testing.expect(dc.cpu.read(u32, dc.cpu.R(5).* + (0x4 << 2)) == dc.cpu.R(0).*);
+    try std.testing.expect(try dc.cpu.read(u32, dc.cpu.R(5).* + (0x4 << 2)) == dc.cpu.R(0).*);
     _ = try dc.tick(1); // mov.l R0, @(2, R3) - Write 0x01110111 to WCR1 @ 0xFF800008
-    try std.testing.expect(dc.cpu.read(u32, 0xFF800008) == 0x01110111);
+    try std.testing.expect(try dc.cpu.read(u32, 0xFF800008) == 0x01110111);
     _ = try dc.tick(1); // add 0x10, R3
     try std.testing.expect(dc.cpu.R(3).* == 0xFF800010);
     _ = try dc.tick(1); // mov.l @(5, R5), R0 - Read 0x80000078 (0x800A0E24) to R0
@@ -935,7 +1027,7 @@ test "boot" {
     _ = try dc.tick(1); // swap.b R0, R0
     try std.testing.expect(dc.cpu.R(0).* == 0x0400);
     _ = try dc.tick(1); // mov.w R0, @R1
-    try std.testing.expect(dc.cpu.read(u16, 0xA05F7480) == 0x400); // SB_G1RRC
+    try std.testing.expect(try dc.cpu.read(u16, 0xA05F7480) == 0x400); // SB_G1RRC
 
     _ = try dc.tick(1); // mov.l @(3, R5), R3
     _ = try dc.tick(1); // mova 0x8C0100E0, R0

@@ -11,7 +11,7 @@ const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
 const SH4Module = DreamcastModule.SH4Module;
 const P4Register = SH4Module.P4Register;
-const sh4_disassembly = SH4Module.sh4_disassembly;
+const sh4_disassembly = SH4Module.disassembly;
 const BasicBlock = DreamcastModule.SH4JITModule.BasicBlock;
 const Holly = DreamcastModule.HollyModule;
 const AICAModule = DreamcastModule.AICAModule;
@@ -237,13 +237,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         zgui.text("PC: {X:0>8} - SPC: 0x{X:0>8}", .{ dc.cpu.pc, dc.cpu.spc });
         zgui.text("PR: {X:0>8}", .{dc.cpu.pr});
-        zgui.text("SR: ", .{});
+        zgui.text("SR: {s}", .{if (dc.cpu.sr.md == 1) "Priv" else "User"});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.t, "[T] ", .{});
+        text_highlighted(dc.cpu.sr.t, " [T]", .{});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.s, "[S] ", .{});
+        text_highlighted(dc.cpu.sr.s, " [S]", .{});
         zgui.sameLine(.{});
-        text_highlighted(dc.cpu.sr.bl, "[BL] ", .{});
+        text_highlighted(dc.cpu.sr.bl, " [BL]", .{});
         zgui.text("IMASK: {d: >2} ", .{dc.cpu.sr.imask});
         zgui.text("GBR: {X:0>8}", .{dc.cpu.gbr});
         zgui.text("VBR: {X:0>8}", .{dc.cpu.vbr});
@@ -265,8 +265,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         var addr = (if (pc >= 0x0C000000) std.math.clamp(pc, 0x0C000000 + range / 2, 0x0D000000 - range) else std.math.clamp(pc, 0x00000000 + range / 2, 0x02000000 - range)) - range / 2;
         const end_addr = addr + range;
         while (addr < end_addr) {
-            const disassembly = try sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
-            zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
+            if (addr < DreamcastModule.Dreamcast.BootSize or (addr >= 0x0C000000 and addr < 0x0D000000)) {
+                const disassembly = sh4_disassembly.disassemble(.{ .value = dc.cpu.read_physical(u16, @intCast(addr)) }, self._allocator);
+                zgui.text("[{X:0>8}] {s} {s}", .{ addr, if (addr == pc) ">" else " ", disassembly });
+            } else {
+                zgui.text("[{X:0>8}] {s} Out of range (TODO: Handle MMU)", .{ addr, if (addr == pc) ">" else " " });
+            }
             addr += 2;
         }
 
@@ -403,8 +407,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
                     const instr = dc.cpu.read_physical(u16, addr);
-                    const op = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[instr]];
-                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, try sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
+                    const op = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[instr]];
+                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
             }
         } else {

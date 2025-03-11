@@ -9,6 +9,13 @@
 			"problemMatcher": ["$gcc"]
 		},
 		{
+			"label": "build-mmu",
+			"type": "shell",
+			"command": "zig build -Dmmu=true",
+			"group": "build",
+			"problemMatcher": ["$gcc"]
+		},
+		{
 			"label": "build-release-safe",
 			"type": "shell",
 			"command": "zig build -Doptimize=ReleaseSafe",

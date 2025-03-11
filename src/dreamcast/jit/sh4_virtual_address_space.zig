@@ -5,7 +5,7 @@ const Architecture = @import("x86_64.zig");
 pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *u64) !void {
     if (fault_address >= space_base and fault_address < space_base + space_size) {
         const dc_addr: u32 = @truncate(fault_address - space_base);
-        std.log.scoped(.sh4_jit).debug("  Patching Access: @ {X} - {X:0>8}  \n", .{ fault_address, dc_addr });
+        std.log.scoped(.sh4_jit).debug("  Patching Access: @ {X} - {X:0>8}", .{ fault_address, dc_addr });
 
         const start_patch = rip.*;
         var end_patch = start_patch;

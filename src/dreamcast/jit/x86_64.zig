@@ -279,6 +279,16 @@ pub const Operand = union(enum) {
             .mem => |mem| mem.size,
         };
     }
+
+    pub fn Reg(reg: Register, comptime bitsize: u8) Operand {
+        return switch (bitsize) {
+            8 => return .{ .reg8 = reg },
+            16 => return .{ .reg16 = reg },
+            32 => return .{ .reg = reg },
+            64 => return .{ .reg64 = reg },
+            else => @compileError("Invalid register size"),
+        };
+    }
 };
 
 pub const Instruction = union(enum) {
@@ -316,6 +326,7 @@ pub const Instruction = union(enum) {
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
+    BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
     Div64_32: struct { dividend_high: Register, dividend_low: Register, divisor: Register, result: Register },
@@ -354,6 +365,7 @@ pub const Instruction = union(enum) {
             .SetByteCondition => |set| writer.print("set{any} {any}", .{ set.condition, set.dst }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+            .BlockEpilogue => writer.print("block_epilogue", .{}),
             .Rol => |rol| writer.print("rol {any}, {any}", .{ rol.dst, rol.amount }),
             .Ror => |ror| writer.print("ror {any}, {any}", .{ ror.dst, ror.amount }),
             .Rcl => |rcl| writer.print("rcl {any}, {any}", .{ rcl.dst, rcl.amount }),
@@ -531,7 +543,7 @@ const PatchableJump = struct {
 };
 
 const PatchableJumpList = struct {
-    items: [4]PatchableJump = .{PatchableJump{ .size = .r32 }} ** 4,
+    items: [32]PatchableJump = .{PatchableJump{ .size = .r32 }} ** 32,
 
     pub fn add(self: *@This(), patchable_jump: PatchableJump) !void {
         std.debug.assert(!patchable_jump.invalid());
@@ -647,6 +659,7 @@ pub const Emitter = struct {
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .SetByteCondition => |a| try self.set_byte_condition(a.condition, a.dst),
                 .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst.rel),
+                .BlockEpilogue => try self.emit_block_epilogue(),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
                 .Ror => |r| try self.shift_instruction(.Ror, r.dst, r.amount),

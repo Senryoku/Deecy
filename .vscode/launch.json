@@ -9,10 +9,8 @@
 			"args": [],
 			"cwd": "${workspaceFolder}",
 			"preLaunchTask": "build",
-			"setupCommands": [
-				{
-					"text": "process handle SIGSEGV --notify false --pass true --stop false"
-				}
+			"initCommands": [
+				"process handle SIGSEGV --notify false --pass true --stop false"
 			]
 		},
 		{
@@ -29,12 +27,27 @@
 			"request": "launch",
 			"program": "${workspaceFolder}/zig-out/bin/Deecy",
 			"args": [
-				//"-g",
-				//"game/path.gdi"
+				"-g",
+				"D:\\DC Games\\[GDI] Sega Rally 2 (US)\\Sega Rally 2 v1.003 (1999)(Sega)(NTSC)(US)[!].gdi"
 			],
 			"cwd": "${workspaceFolder}",
 			"environment": [],
 			"preLaunchTask": "build"
+		},
+		{
+			"name": "Debug (MMU)",
+			"type": "cppvsdbg",
+			"request": "launch",
+			"program": "${workspaceFolder}/zig-out/bin/Deecy",
+			"args": [
+				"-g",
+				"D:\\DC Games\\[GDI] Sega Rally 2 (US)\\Sega Rally 2 v1.003 (1999)(Sega)(NTSC)(US)[!].gdi",
+				"2>",
+				"logs/vscode_debug_mmu.log"
+			],
+			"cwd": "${workspaceFolder}",
+			"environment": [],
+			"preLaunchTask": "build-mmu"
 		},
 		{
 			"name": "Debug (Release)",

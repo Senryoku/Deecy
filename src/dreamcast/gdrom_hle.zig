@@ -90,17 +90,17 @@ pub fn mainloop(dc: *Dreamcast) void {
             const dest = dc.gdrom_hle.params[0];
             const version = "GDC Version 1.10 1999-03-31";
             for (0..version.len) |i|
-                dc.cpu.write(u8, @intCast(dest + i), version[i]);
-            dc.cpu.write(u8, @intCast(dest + version.len), 0x2);
+                dc.cpu.write_physical(u8, @intCast(dest + i), version[i]);
+            dc.cpu.write_physical(u8, @intCast(dest + version.len), 0x2);
             dc.gdrom.state = .Standby;
         },
         .ReqMode => {
             const dest = dc.gdrom_hle.params[0];
             gdrom_hle_log.info("    GDROM ReqMode  dest=0x{X:0>8}", .{dest});
-            dc.cpu.write(u32, dest + 0, 0); // Speed
-            dc.cpu.write(u32, dest + 4, 0x00B4); // Standby
-            dc.cpu.write(u32, dest + 8, 0x19); // Read Flags
-            dc.cpu.write(u32, dest + 12, 0x08); // Read retry
+            dc.cpu.write_physical(u32, dest + 0, 0); // Speed
+            dc.cpu.write_physical(u32, dest + 4, 0x00B4); // Standby
+            dc.cpu.write_physical(u32, dest + 8, 0x19); // Read Flags
+            dc.cpu.write_physical(u32, dest + 12, 0x08); // Read retry
             dc.gdrom_hle.result = .{ 0, 0, 0xA, 0 };
             dc.gdrom.state = .Standby;
         },
@@ -130,7 +130,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             const dest = dc.gdrom_hle.params[2];
             const len = dc.gdrom_hle.params[1];
             for (0..len) |i|
-                dc.cpu.write(u32, @intCast(dest + 4 * i), 0);
+                dc.cpu.write_physical(u32, @intCast(dest + 4 * i), 0);
 
             dc.gdrom.state = .Standby;
         },

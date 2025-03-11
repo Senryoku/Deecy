@@ -1,14 +1,25 @@
 const std = @import("std");
 const sh4 = @import("sh4.zig");
-const sh4_instructions = sh4.sh4_instructions;
+const sh4_instructions = sh4.instructions;
 const Instr = sh4.Instr;
 const bit_manip = @import("bit_manip.zig");
 
 var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
 
-pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
+pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) []const u8 {
     if (DisassemblyCache[opcode.value]) |r|
         return r;
+
+    const idx = sh4_instructions.JumpTable[opcode.value];
+    if (idx >= sh4_instructions.Opcodes.len) return "Invalid instruction";
+
+    return generate_disassembly(opcode, allocator) catch {
+        return "[Disassembly failed]";
+    };
+}
+
+fn generate_disassembly(opcode: Instr, _: std.mem.Allocator) ![]const u8 {
+    const allocator = std.heap.page_allocator; // FIXME: Using the supplied allocator sometimes crashes.
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -36,11 +47,12 @@ pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) ![]const u8 {
     const final_buff = try std.mem.replaceOwned(u8, allocator, n6, "#imm", imm);
 
     DisassemblyCache[opcode.value] = final_buff;
-
-    return final_buff;
+    return DisassemblyCache[opcode.value].?;
 }
 
-pub fn free_disassembly_cache(allocator: std.mem.Allocator) void {
+pub fn free_disassembly_cache(_: std.mem.Allocator) void {
+    const allocator = std.heap.page_allocator; // FIXME: Using the supplied allocator sometimes crashes.
+
     for (&DisassemblyCache) |*dc| {
         if (dc.*) |d|
             allocator.free(d);

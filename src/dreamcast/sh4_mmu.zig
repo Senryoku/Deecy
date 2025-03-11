@@ -5,6 +5,14 @@ pub const ProtectionKey = enum(u2) {
     PrivilegedReadWrite = 1,
     ReadOnly = 2,
     ReadWrite = 3,
+
+    pub fn privileged(self: @This()) bool {
+        return self == .PrivilegedReadOnly or self == .PrivilegedReadWrite;
+    }
+
+    pub fn read_only(self: @This()) bool {
+        return self == .ReadOnly or self == .PrivilegedReadOnly;
+    }
 };
 
 pub const PTEH = packed struct {
@@ -53,13 +61,13 @@ pub const MMUCR = packed struct {
     at: bool = false,
 
     _r0: u1 = undefined,
-    /// TLB invalidate
+    /// TLB invalidate. Writing 1 to this bit invalidates (clears to 0) all valid UTLB/ITLB bits. This bit always returns 0 when read.
     ti: bool = false,
 
     _r1: u5 = undefined,
-    /// Single virtual mode bit.
+    /// Single virtual mode bit. 0: Multiple virtual memory mode. 1: Single virtual memory mode.
     sv: bool = false,
-    /// Store queue mode bit.
+    /// Store queue mode bit. 0: User/privileged access possible. 1: Privileged access possible (address error exception in case of user acces).
     sqmd: u1 = 0,
     /// UTLB replace counter
     urc: u6 = 0,
@@ -83,7 +91,7 @@ pub const MMU = packed struct {
     mmucr: u32 = 0x00000000, // MMU control register
 };
 
-pub const UTLBEntry = packed struct {
+pub const TLBEntry = packed struct {
     asid: u8 = undefined, // Address space identifier
     vpn: u22 = undefined, // Virtual page number
     v: bool = false, // Validity bit
@@ -109,17 +117,25 @@ pub const UTLBEntry = packed struct {
 
     pub inline fn translate(self: @This(), virtual_address: u32) u32 {
         const physical_page = @as(u32, @intCast(self.ppn)) << 10;
-        const mask = (@as(u32, 1) << switch (self.sz) {
+        const mask = self.size() - 1;
+        return (physical_page & ~mask) | (virtual_address & mask);
+    }
+
+    pub inline fn first_address(self: @This()) u32 {
+        return self.translate(@as(u32, self.vpn) << 10);
+    }
+
+    pub inline fn size(self: @This()) u32 {
+        return @as(u32, 1) << switch (self.sz) {
             0b00 => 10, // 1-Kbyte page
             0b01 => 12, // 4-Kbyte page
             0b10 => 16, // 64-Kbyte page
             0b11 => 20, // 1-Mbyte page
-        }) - 1;
-        return (physical_page & ~mask) | (virtual_address & mask);
+        };
     }
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("UTLB(.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {}, .c = {}, .sh = {}, .sz = {})", .{
+        try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
             @as(u32, self.ppn) << 10,
             self.asid,
@@ -128,7 +144,7 @@ pub const UTLBEntry = packed struct {
             self.sa,
             self.wt,
             self.d,
-            self.pr,
+            @tagName(self.pr),
             self.c,
             self.sh,
             self.sz,
@@ -147,7 +163,7 @@ pub const UTLBArrayData1 = PTEL;
 
 pub const UTLBArrayData2 = PTEA;
 
-pub fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
+pub inline fn vpn_match(lhs: u22, rhs: u22, sz: u2) bool {
     switch (sz) {
         0b00 => return lhs == rhs, // For 1-kbyte page: upper 22 bits of virtual address
         0b01 => return (lhs & 0b1111_1111_1111_1111_1111_00) == (rhs & 0b1111_1111_1111_1111_1111_00), // For 4-kbyte page: upper 20 bits of virtual address
