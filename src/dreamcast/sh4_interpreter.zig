@@ -153,8 +153,9 @@ pub fn movl_atRmInc_Rn(cpu: *SH4, opcode: Instr) !void {
 
 inline fn mov_Rm_atDecRn(comptime T: type, cpu: *SH4, opcode: Instr) !void {
     const val: T = @truncate(cpu.R(opcode.nmd.m).*);
-    cpu.R(opcode.nmd.n).* -%= @sizeOf(T);
-    try cpu.write(T, cpu.R(opcode.nmd.n).*, val);
+    const tmp = cpu.R(opcode.nmd.n).* -% @sizeOf(T);
+    try cpu.write(T, tmp, val);
+    cpu.R(opcode.nmd.n).* = tmp;
 }
 
 pub fn movb_Rm_atDecRn(cpu: *SH4, opcode: Instr) !void {
@@ -782,8 +783,8 @@ pub fn tasb_atRn(cpu: *SH4, opcode: Instr) !void {
     // Reads byte data from the address specified by general register Rn, and sets the T bit to 1 if the data is 0, or clears the T bit to 0 if the data is not 0.
     // Then, data bit 7 is set to 1, and the data is written to the address specified by Rn.
     const tmp = try cpu.read(u8, cpu.R(opcode.nmd.n).*);
-    cpu.sr.t = (tmp == 0);
     try cpu.write(u8, cpu.R(opcode.nmd.n).*, tmp | 0x80);
+    cpu.sr.t = (tmp == 0);
 }
 pub fn tst_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
     cpu.sr.t = (cpu.R(opcode.nmd.n).* & cpu.R(opcode.nmd.m).*) == 0;
