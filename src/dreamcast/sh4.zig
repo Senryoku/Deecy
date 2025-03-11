@@ -655,23 +655,6 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn execute(self: *@This(), max_instructions: u8) u32 {
-        self.handle_interrupts();
-
-        if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
-            for (0..max_instructions) |_| {
-                self._execute(self.pc);
-                self.pc +%= 2;
-            }
-
-            const cycles = self._pending_cycles;
-            self._pending_cycles = 0;
-            return cycles;
-        } else {
-            return 8;
-        }
-    }
-
     pub fn request_interrupt(self: *@This(), int: Interrupt) void {
         sh4_log.debug(" (Interrupt request! {s})", .{std.enums.tagName(Interrupt, int) orelse "Unknown"});
         self.interrupt_requests |= @as(u64, 1) << @intCast(self._interrupts_indices[@intFromEnum(int)]);
@@ -819,6 +802,23 @@ pub const SH4 = struct {
 
     pub inline fn add_cycles(self: *@This(), cycles: u32) void {
         self._pending_cycles += cycles;
+    }
+
+    pub fn execute(self: *@This(), max_instructions: u8) u32 {
+        self.handle_interrupts();
+
+        if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
+            for (0..max_instructions) |_| {
+                self._execute(self.pc);
+                self.pc +%= 2;
+            }
+
+            const cycles = self._pending_cycles;
+            self._pending_cycles = 0;
+            return cycles;
+        } else {
+            return 8;
+        }
     }
 
     pub fn _execute(self: *@This(), virtual_addr: u32) void {
@@ -974,10 +974,164 @@ pub const SH4 = struct {
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
-    fn panic_debug(self: *const @This(), comptime fmt: []const u8, args: anytype) noreturn {
-        std.debug.print("panic_debug: PC: {X:0>8}\n", .{self.pc});
-        std.debug.print(fmt ++ "\n", args);
-        @panic(fmt);
+    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+        std.debug.assert(mmucr.at);
+
+        // URC: Random counter for indicating the UTLB entry for which replacement is to be
+        // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
+        // When URB > 0, URC is reset to 0 when the condition URC = URB occurs
+        mmucr.urc +%= 1;
+        if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
+
+        const check_asid = !mmucr.sv or self.sr.md == 0;
+
+        const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+        const vpn: u22 = @truncate(virtual_addr >> 10);
+
+        var found_entry: ?mmu.TLBEntry = null;
+
+        for (self.utlb) |entry| {
+            if (entry.match(check_asid, asid, vpn)) {
+                if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
+                found_entry = entry;
+                if (!EmulateUTLBMultipleHit) break;
+            }
+        }
+
+        if (found_entry) |entry| {
+            if (self.sr.md == 0 and entry.pr.privileged())
+                return error.TLBProtectionViolation;
+            mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, entry.translate(virtual_addr) });
+            mmu_log.debug("  Entry: {any}", .{entry});
+            return entry;
+        }
+
+        mmu_log.debug("UTLB Miss: {x:0>8}", .{virtual_addr});
+        return error.TLBMiss;
+    }
+
+    pub const AccessType = enum { Read, Write };
+
+    pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, DataTLBMultipleHit, InitialPageWrite }!u32 {
+        if (ExperimentalFullMMUSupport and self._mmu_enabled) {
+            return switch (virtual_addr) {
+                // Operand Cache RAM Mode
+                0x7C00_0000...0x7FFF_FFFF,
+                // P1
+                0x8000_0000...0x9FFF_FFFF,
+                // P2
+                0xA000_0000...0xBFFF_FFFF,
+                // P4
+                0xE000_0000...0xFFFF_FFFF,
+                => return virtual_addr,
+                else => {
+                    const entry = self.utlb_lookup(virtual_addr) catch |err| return switch (err) {
+                        error.TLBMiss => switch (access_type) {
+                            .Read => error.DataTLBMissRead,
+                            .Write => error.DataTLBMissWrite,
+                        },
+                        error.TLBProtectionViolation => error.DataTLBProtectionViolation,
+                        error.TLBMultipleHit => error.DataTLBMultipleHit,
+                    };
+                    switch (access_type) {
+                        .Read => return entry.translate(virtual_addr),
+                        .Write => {
+                            if (!entry.d)
+                                return error.InitialPageWrite
+                            else if (entry.pr.read_only())
+                                return error.DataTLBProtectionViolation
+                            else
+                                return entry.translate(virtual_addr);
+                        },
+                    }
+                },
+            };
+        }
+        return virtual_addr;
+    }
+
+    /// Might cause an exception and jump to its handler.
+    pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
+        if (!ExperimentalFullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
+
+        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
+            self.report_address_exception(virtual_addr);
+            self.jump_to_exception(.InstructionAddressError);
+            return self.pc & 0x1FFF_FFFF;
+        }
+
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+
+        const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
+        const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
+
+        switch (virtual_addr) {
+            // Operand Cache RAM Mode
+            0x7C00_0000...0x7FFF_FFFF,
+            // P1
+            0x8000_0000...0x9FFF_FFFF,
+            // P2
+            0xA000_0000...0xBFFF_FFFF,
+            // P4
+            0xE000_0000...0xFFFF_FFFF,
+            => return virtual_addr & 0x1FFF_FFFF,
+            else => {
+                // Search ITLB
+                const check_asid = !mmucr.sv or self.sr.md == 0;
+                const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+                const vpn: u22 = @truncate(virtual_addr >> 10);
+                for (self.itlb, 0..) |entry, idx| {
+                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
+                    if (entry.match(check_asid, asid, vpn)) {
+                        if (self.sr.md == 0 and entry.pr.privileged()) {
+                            self.report_address_exception(virtual_addr);
+                            self.jump_to_exception(.InstructionTLBProtectionViolation);
+                            return self.pc & 0x1FFF_FFFF;
+                        }
+
+                        // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
+                        mmucr.lrui &= LRUIMasks[idx];
+                        mmucr.lrui |= LRUIValues[idx];
+
+                        const physical_address = entry.translate(virtual_addr);
+                        mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                        mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
+                        return physical_address & 0x1FFF_FFFF;
+                    }
+                }
+            },
+        }
+
+        // Fallback to UTLB
+        const entry = self.utlb_lookup(virtual_addr) catch |err| {
+            self.report_address_exception(virtual_addr);
+            self.jump_to_exception(switch (err) {
+                error.TLBMiss => .InstructionTLBMiss,
+                error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
+                error.TLBMultipleHit => .InstructionTLBMultipleHit,
+            });
+            return self.pc & 0x1FFF_FFFF;
+        };
+
+        // Update ITLB entry pointed by MMUCR.LRUI
+        // TODO: There's probably a more elegant way to do this.
+        const idx: u2 = if (mmucr.lrui & 0b111000 == 0b111000)
+            0
+        else if (mmucr.lrui & 0b100110 == 0b000110)
+            1
+        else if (mmucr.lrui & 0b010101 == 0b000001)
+            2
+        else if (mmucr.lrui & 0b001011 == 0b000000)
+            3
+        else
+            std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
+
+        self.itlb[idx] = entry;
+        mmucr.lrui &= LRUIMasks[idx];
+        mmucr.lrui |= LRUIValues[idx];
+
+        return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
 
     // Memory access/mapping functions
@@ -988,6 +1142,11 @@ pub const SH4 = struct {
     //       I tried having some small functions just for the P4 registers that will delegate to
     //       the proper functions, but it was also worse performance wise (although a little less
     //       that calling directly to DC).
+
+    fn panic_debug(self: *const @This(), comptime fmt: []const u8, args: anytype) noreturn {
+        std.debug.print("panic_debug: PC: {X:0>8}\n", .{self.pc});
+        std.debug.panic(fmt ++ "\n", args);
+    }
 
     pub inline fn _get_memory(self: *@This(), addr: u32) *u8 {
         std.debug.assert(addr <= 0x1FFFFFFF);
@@ -1537,168 +1696,6 @@ pub const SH4 = struct {
             },
             else => std.debug.panic("Unhandled P4 write: {X:0>8} = {X:0>8}", .{ virtual_addr, value }),
         }
-    }
-
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
-        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
-        std.debug.assert(mmucr.at);
-
-        // URC: Random counter for indicating the UTLB entry for which replacement is to be
-        // performed with an LDTLB instruction. URC is incremented each time the UTLB is accessed.
-        // When URB > 0, URC is reset to 0 when the condition URC = URB occurs
-        mmucr.urc +%= 1;
-        if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
-
-        const check_asid = !mmucr.sv or self.sr.md == 0;
-
-        const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
-        const vpn: u22 = @truncate(virtual_addr >> 10);
-
-        var found_entry: ?mmu.TLBEntry = null;
-
-        for (self.utlb) |entry| {
-            if (entry.match(check_asid, asid, vpn)) {
-                if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
-                found_entry = entry;
-                if (!EmulateUTLBMultipleHit) break;
-            }
-        }
-
-        if (found_entry) |entry| {
-            if (self.sr.md == 0 and entry.pr.privileged())
-                return error.TLBProtectionViolation;
-
-            const physical_address = entry.translate(virtual_addr);
-            mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-            mmu_log.debug("  Entry: {any}", .{entry});
-            return entry;
-        }
-
-        mmu_log.debug("UTLB Miss: {x:0>8}", .{virtual_addr});
-        return error.TLBMiss;
-    }
-
-    pub const AccessType = enum { Read, Write };
-
-    pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, DataTLBMultipleHit, InitialPageWrite }!u32 {
-        if (ExperimentalFullMMUSupport and self._mmu_enabled) {
-            return switch (virtual_addr) {
-                // Operand Cache RAM Mode
-                0x7C00_0000...0x7FFF_FFFF,
-                // P1
-                0x8000_0000...0x9FFF_FFFF,
-                // P2
-                0xA000_0000...0xBFFF_FFFF,
-                // P4
-                0xE000_0000...0xFFFF_FFFF,
-                => return virtual_addr,
-                else => {
-                    const entry = self.utlb_lookup(virtual_addr) catch |err| return switch (err) {
-                        error.TLBMiss => switch (access_type) {
-                            .Read => error.DataTLBMissRead,
-                            .Write => error.DataTLBMissWrite,
-                        },
-                        error.TLBProtectionViolation => error.DataTLBProtectionViolation,
-                        error.TLBMultipleHit => error.DataTLBMultipleHit,
-                    };
-                    switch (access_type) {
-                        .Read => return entry.translate(virtual_addr),
-                        .Write => {
-                            if (!entry.d)
-                                return error.InitialPageWrite
-                            else if (entry.pr.read_only())
-                                return error.DataTLBProtectionViolation
-                            else
-                                return entry.translate(virtual_addr);
-                        },
-                    }
-                },
-            };
-        }
-        return virtual_addr;
-    }
-
-    /// Might cause an exception and jump to its handler.
-    pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
-        if (!ExperimentalFullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
-
-        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(.InstructionAddressError);
-            return self.pc & 0x1FFF_FFFF;
-        }
-
-        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
-
-        const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
-        const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
-
-        switch (virtual_addr) {
-            // Operand Cache RAM Mode
-            0x7C00_0000...0x7FFF_FFFF,
-            // P1
-            0x8000_0000...0x9FFF_FFFF,
-            // P2
-            0xA000_0000...0xBFFF_FFFF,
-            // P4
-            0xE000_0000...0xFFFF_FFFF,
-            => return virtual_addr & 0x1FFF_FFFF,
-            else => {
-                // Search ITLB
-                const check_asid = !mmucr.sv or self.sr.md == 0;
-                const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
-                const vpn: u22 = @truncate(virtual_addr >> 10);
-                for (self.itlb, 0..) |entry, idx| {
-                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
-                    if (entry.match(check_asid, asid, vpn)) {
-                        if (self.sr.md == 0 and entry.pr.privileged()) {
-                            self.report_address_exception(virtual_addr);
-                            self.jump_to_exception(.InstructionTLBProtectionViolation);
-                            return self.pc & 0x1FFF_FFFF;
-                        }
-
-                        // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
-                        mmucr.lrui &= LRUIMasks[idx];
-                        mmucr.lrui |= LRUIValues[idx];
-
-                        const physical_address = entry.translate(virtual_addr);
-                        mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                        mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
-                        return physical_address & 0x1FFF_FFFF;
-                    }
-                }
-            },
-        }
-
-        // Fallback to UTLB
-        const entry = self.utlb_lookup(virtual_addr) catch |err| {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(switch (err) {
-                error.TLBMiss => .InstructionTLBMiss,
-                error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
-                error.TLBMultipleHit => .InstructionTLBMultipleHit,
-            });
-            return self.pc & 0x1FFF_FFFF;
-        };
-
-        // Update ITLB entry pointed by MMUCR.LRUI
-        // TODO: There's probably a more elegant way to do this.
-        const idx: u2 = if (mmucr.lrui & 0b111000 == 0b111000)
-            0
-        else if (mmucr.lrui & 0b100110 == 0b000110)
-            1
-        else if (mmucr.lrui & 0b010101 == 0b000001)
-            2
-        else if (mmucr.lrui & 0b001011 == 0b000000)
-            3
-        else
-            std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
-
-        self.itlb[idx] = entry;
-        mmucr.lrui &= LRUIMasks[idx];
-        mmucr.lrui |= LRUIValues[idx];
-
-        return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
 
     pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
