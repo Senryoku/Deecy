@@ -295,25 +295,6 @@ fn fetch_next_cdda_sector(self: *@This()) bool {
     return true;
 }
 
-fn schedule_event(self: *@This(), event: ScheduledEvent) void {
-    // NOTE: I wasn't actually delaying any of these events, so I removed the scheduling mechanism internal to GDROM.
-    //       If this ends up being necessary, use the global scheduler in the Dreamcast structure instead.
-    std.debug.assert(event.cycles == 0);
-
-    gdrom_log.debug(" Event: {any}", .{event});
-    if (event.state) |state|
-        self.state = state;
-    if (event.status) |status|
-        self.status_register = status;
-    if (event.interrupt_reason) |reason| {
-        self.interrupt_reason_register = reason;
-        if (self.control_register.nien == 0)
-            self._dc.raise_external_interrupt(.{ .GDRom = 1 });
-    }
-    if (event.clear_interrupt)
-        self._dc.clear_external_interrupt(.{ .GDRom = 1 });
-}
-
 pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
     switch (@as(HardwareRegister, @enumFromInt(addr))) {
@@ -343,10 +324,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
             gdrom_log.debug("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
             // Clear the pending interrupt signal.
-            self.schedule_event(.{
-                .cycles = 0,
-                .clear_interrupt = true,
-            });
+            self._dc.clear_external_interrupt(.{ .GDRom = 1 });
             return val;
         },
         .GD_Data => {
@@ -415,61 +393,56 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
     }
 }
 
-fn non_data_command(self: *@This()) void {
-    // The device sets the BSY bit to "1" and executes the command.
-    self.status_register.bsy = 1;
+fn interrupt_request(self: *@This(), cod: CommandOrData, io: TransferDirection) void {
+    self.interrupt_reason_register = .{ .cod = cod, .io = io };
+    self._dc.raise_external_interrupt(.{ .GDRom = 1 });
+}
+
+fn complete_non_data_command(self: *@This()) void {
     // If an error has occurred during execution of the command, the device sets an appropriate status
     // and error bit that corresponds to the error condition
     // Always report no errors.
     self.error_register = .{};
     // When the command execution is completed, the device asserts INTRQ after the device has cleared the BSY bit.
-    self.schedule_event(.{
-        .cycles = 0, // FIXME: Random value
-        .status = .{ .bsy = 0 },
-        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-    });
+    self.status_register.bsy = 0;
+    self.interrupt_request(.Command, .DeviceToHost);
 }
 
-fn spi_non_data_command(self: *@This()) void {
-    // The device sets the BSY bit and executes the command.
-    self.status_register.bsy = 1;
+fn complete_spi_non_data_command(self: *@This()) void {
     // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
     // DRQ cleared) to the "Status" register before making INTRQ valid
-    self.schedule_event(.{
-        .cycles = 0, // FIXME: Random value
-        .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
-        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-    });
+    self.status_register.drdy = 1;
+    self.status_register.bsy = 0;
+    self.status_register.drq = 0;
+    self.interrupt_request(.Command, .DeviceToHost);
 }
 
 pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
     switch (@as(HardwareRegister, @enumFromInt(addr))) {
         .GD_Status_Command => {
+            self.status_register.drdy = 0;
+            self.status_register.bsy = 1;
             self.status_register.check = 0;
             self.error_register = .{};
             switch (@as(Command, @enumFromInt(value))) {
                 .SoftReset => {
                     gdrom_log.info("  Command: SoftReset", .{});
                     self.reset();
-                    self.non_data_command();
+                    self.complete_non_data_command();
                 },
                 .ExecuteDeviceDiagnostic => {
                     gdrom_log.info("  Command: ExecuteDeviceDiagnostic", .{});
                     self.status_register.drq = 0;
-                    self.non_data_command();
+                    self.complete_non_data_command();
                 },
                 .PacketCommand => {
                     gdrom_log.debug("  Command: PacketCommand", .{});
-                    self.status_register.bsy = 1;
-
                     self.packet_command_idx = 0;
 
-                    self.schedule_event(.{
-                        .cycles = 0, // FIXME: Random value
-                        .status = .{ .bsy = 0, .drq = 1 },
-                        .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
-                    });
+                    self.status_register.bsy = 0;
+                    self.status_register.drq = 1;
+                    self.interrupt_request(.Command, .HostToDevice);
                 },
                 .IdentifyDevice => {
                     gdrom_log.warn(termcolor.yellow("  Command: IdentifyDevice - TODO!"), .{});
@@ -502,7 +475,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                 },
                 .SetFeatures => {
                     gdrom_log.warn(termcolor.yellow("  Command: SetFeatures"), .{});
-                    self.non_data_command();
+                    self.complete_non_data_command();
                 },
                 .NOP => {
                     self.nop();
@@ -571,7 +544,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     .ReqSes => self.req_ses(),
                     .CDOpen => {
                         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command});
-                        self.spi_non_data_command();
+                        self.complete_spi_non_data_command();
                     },
                     .CDPlay => self.cd_play(),
                     .CDSeek => self.cd_seek(),
@@ -579,7 +552,7 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                         gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
                         self.state = .Scanning;
                         self.state = .Paused; // FIXME: Do not resolve immediatly?
-                        self.spi_non_data_command();
+                        self.complete_spi_non_data_command();
                     },
                     .CDRead => self.cd_read(),
                     .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
@@ -599,34 +572,27 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
 }
 
 fn pio_prep_complete(self: *@This()) void {
+    if (self.pio_data_queue.count > std.math.maxInt(u16))
+        gdrom_log.warn(termcolor.yellow("PIO transfer is too large: {} bytes."), .{self.pio_data_queue.count});
     // When preparations are complete, the following steps are carried out at the device.
     // (1) Number of bytes to be read is set in "Byte Count" register.
+    self.byte_count = @truncate(self.pio_data_queue.count); // Not really used (reading the register returns self.pio_data_queue.count directly).
     // (2) IO bit is set and CoD bit is cleared.
     // (3) DRQ bit is set, BSY bit is cleared.
+    self.status_register.drq = 1;
+    self.status_register.bsy = 0;
     // (4) INTRQ is set, and a host interrupt is issued.
-
-    if (self.pio_data_queue.count > std.math.maxInt(u16)) {
-        gdrom_log.warn(termcolor.yellow("PIO transfer is too large: {} bytes."), .{self.pio_data_queue.count});
-    }
-    self.byte_count = @truncate(self.pio_data_queue.count); // Not really used (reading the register returns self.pio_data_queue.count directly).
-    self.schedule_event(.{
-        .cycles = 0, // FIXME
-        .status = .{ .drq = 1, .bsy = 0, .drdy = 1 },
-        .interrupt_reason = .{ .cod = .Data, .io = .DeviceToHost },
-    });
+    self.interrupt_request(.Data, .DeviceToHost);
 }
 
-pub fn on_dma_end(self: *@This(), dc: *Dreamcast) void {
+pub fn on_dma_end(self: *@This()) void {
     // When the device is ready to send the status, it writes the final status (IO, CoD, DRDY set, BSY,
     // DRQ cleared) to the "Status" register before making INTRQ valid.
     if (self.dma_data_queue.count == 0) {
+        self.status_register.drdy = 1;
         self.status_register.drq = 0;
         self.status_register.bsy = 0;
-        self.status_register.drdy = 1;
-        self.interrupt_reason_register = .{ .cod = .Command, .io = .DeviceToHost };
-
-        if (self.control_register.nien == 0)
-            dc.raise_external_interrupt(.{ .GDRom = 1 });
+        self.interrupt_request(.Command, .DeviceToHost);
     }
 }
 
@@ -639,15 +605,12 @@ fn nop(self: *@This()) void {
     //   Clearing BUSY in the status register
     self.status_register.bsy = 0;
     //   Asserting the INTRQ signal
-    self.schedule_event(.{
-        .cycles = 0,
-        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-    });
+    self.interrupt_request(.Command, .DeviceToHost);
 }
 
 fn test_unit(self: *@This()) void {
     gdrom_log.debug("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
-    self.spi_non_data_command();
+    self.complete_spi_non_data_command();
 }
 
 fn req_stat(self: *@This()) !void {
@@ -727,15 +690,9 @@ fn set_mode(self: *@This()) !void {
     gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
     // TODO: Set some stuff?
     // See "Transfer Packet Command Flow For PIO Data from Host"
-
-    self.interrupt_reason_register.io = .HostToDevice;
-    self.interrupt_reason_register.cod = .Command;
-
-    self.schedule_event(.{
-        .cycles = 0, // FIXME: Random value
-        .status = .{ .bsy = 0, .drq = 0 },
-        .interrupt_reason = .{ .cod = .Command, .io = .HostToDevice },
-    });
+    self.status_register.bsy = 0;
+    self.status_register.drq = 0;
+    self.interrupt_request(.Command, .HostToDevice);
 }
 
 fn req_error(self: *@This()) !void {
@@ -763,11 +720,9 @@ fn req_error(self: *@This()) !void {
 
 pub fn write_toc(self: *@This(), dest: []u8, area: Session.Area) u32 {
     if (self.disc) |disc| {
-        self.schedule_event(.{
-            .cycles = 0, // FIXME: Random value
-            .status = .{ .bsy = 0, .drq = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.status_register.bsy = 0;
+        self.status_register.drq = 1;
+        self.interrupt_request(.Command, .DeviceToHost);
 
         return disc.write_toc(dest, area);
     }
@@ -853,7 +808,7 @@ fn cd_play(self: *@This()) !void {
         },
     }
 
-    self.spi_non_data_command();
+    self.complete_spi_non_data_command();
 }
 
 fn cd_seek(self: *@This()) !void {
@@ -883,7 +838,7 @@ fn cd_seek(self: *@This()) !void {
     }
 
     self.status_register.dsc = 1;
-    self.spi_non_data_command();
+    self.complete_spi_non_data_command();
 }
 
 fn cd_read_pio_fetch(self: *@This()) !void {
@@ -897,11 +852,10 @@ fn cd_read_pio_fetch(self: *@This()) !void {
     } else {
         // 10. When the device is ready to send the status, it writes the final status to the "Status" register.
         //     CoD, IO, DRDY are set (before making INTRQ valid), and BSY and DRQ are cleared.
-        self.schedule_event(.{
-            .cycles = 0,
-            .status = .{ .drq = 0, .bsy = 0, .drdy = 1 },
-            .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-        });
+        self.status_register.drdy = 1;
+        self.status_register.drq = 0;
+        self.status_register.bsy = 0;
+        self.interrupt_request(.Command, .DeviceToHost);
     }
 }
 
@@ -1043,11 +997,10 @@ fn get_subcode(self: *@This()) !void {
 
 fn chk_secu(self: *@This()) !void {
     self.byte_count = 0;
-    self.schedule_event(.{
-        .cycles = 0, // FIXME: Random value
-        .status = .{ .bsy = 0, .drq = 0, .drdy = 1 },
-        .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
-    });
+    self.status_register.drdy = 1;
+    self.status_register.bsy = 0;
+    self.status_register.drq = 0;
+    self.interrupt_request(.Command, .DeviceToHost);
 }
 
 fn req_secu(self: *@This()) !void {

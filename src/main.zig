@@ -86,7 +86,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .aica, .level = .info },
         .{ .scope = .dsp, .level = .info },
         .{ .scope = .holly, .level = .info },
-        .{ .scope = .gdrom, .level = .info },
+        .{ .scope = .gdrom, .level = .debug },
         .{ .scope = .gdrom_hle, .level = .debug },
         .{ .scope = .cdi, .level = .info },
         .{ .scope = .chd, .level = .info },
