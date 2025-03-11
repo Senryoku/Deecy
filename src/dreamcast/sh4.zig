@@ -189,7 +189,7 @@ pub const SH4 = struct {
     store_queues: [2][8]u32 align(32) = undefined,
     _operand_cache: []u8 align(4),
     p4_registers: []u8 align(4),
-    itlb: []mmu.TLBEntry, // FIXME: Not serialized yet.
+    itlb: []mmu.TLBEntry,
     utlb: []mmu.TLBEntry,
 
     interrupt_requests: u64 = 0,
@@ -2050,6 +2050,7 @@ pub const SH4 = struct {
         bytes += try writer.write(std.mem.sliceAsBytes(self.store_queues[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self._operand_cache[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.p4_registers[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.itlb[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.utlb[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.interrupt_requests));
         bytes += try writer.write(std.mem.sliceAsBytes(self._last_timer_update[0..]));
@@ -2080,6 +2081,7 @@ pub const SH4 = struct {
         bytes += try reader.read(std.mem.sliceAsBytes(self.store_queues[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self._operand_cache[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.p4_registers[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.itlb[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.utlb[0..]));
         bytes += try reader.read(std.mem.asBytes(&self.interrupt_requests));
         bytes += try reader.read(std.mem.sliceAsBytes(self._last_timer_update[0..]));
