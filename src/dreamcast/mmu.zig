@@ -117,13 +117,21 @@ pub const TLBEntry = packed struct {
 
     pub inline fn translate(self: @This(), virtual_address: u32) u32 {
         const physical_page = @as(u32, @intCast(self.ppn)) << 10;
-        const mask = (@as(u32, 1) << switch (self.sz) {
+        const mask = self.size() - 1;
+        return (physical_page & ~mask) | (virtual_address & mask);
+    }
+
+    pub inline fn first_address(self: @This()) u32 {
+        return self.translate(@as(u32, self.vpn) << 10);
+    }
+
+    pub inline fn size(self: @This()) u32 {
+        return @as(u32, 1) << switch (self.sz) {
             0b00 => 10, // 1-Kbyte page
             0b01 => 12, // 4-Kbyte page
             0b10 => 16, // 64-Kbyte page
             0b11 => 20, // 1-Mbyte page
-        }) - 1;
-        return (physical_page & ~mask) | (virtual_address & mask);
+        };
     }
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
