@@ -158,7 +158,7 @@ const Test = struct {
         self.initial.log();
 
         for (self.opcodes) |opcode| {
-            std.debug.print("   > {s}\n", .{SH4Module.sh4_disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator)});
+            std.debug.print("   > {s}\n", .{SH4Module.disassembly.disassemble(SH4Module.Instr{ .value = opcode }, std.testing.allocator)});
         }
 
         for (self.cycles) |cycle| {
@@ -340,9 +340,9 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
         const opcode = t.opcodes[@intCast(if (offset >= 0 and offset < 4) offset else 4)];
 
         const instr = SH4Module.Instr{ .value = opcode };
-        const desc = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[opcode]];
+        const desc = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[opcode]];
 
-        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.sh4_disassembly.disassemble(instr, cpu._allocator), instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
+        if (log) std.debug.print("    [{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ addr, opcode, SH4Module.disassembly.disassemble(instr, cpu._allocator), instr.nmd.n, cpu.R(instr.nmd.n).*, instr.nmd.m, cpu.R(instr.nmd.m).*, if (cpu.sr.t) @as(u1, 1) else 0, if (cpu.sr.q) @as(u1, 1) else 0, if (cpu.sr.m) @as(u1, 1) else 0 });
 
         try desc.fn_(cpu, instr);
 
@@ -373,7 +373,7 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
 }
 
 test {
-    defer SH4Module.sh4_disassembly.free_disassembly_cache(std.testing.allocator);
+    defer SH4Module.disassembly.free_disassembly_cache(std.testing.allocator);
 
     SH4Module.DebugHooks.read8 = read8;
     SH4Module.DebugHooks.read16 = read16;
@@ -445,7 +445,7 @@ test {
             if (failed_test_cases > 0) {
                 std.debug.print(termcolor.red("  [{s}] {d}/{d} test cases failed.\n"), .{ entry.basename, failed_test_cases, test_data.value.len });
                 try failed_tests.append(.{
-                    .instruction = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[test_data.value[0].opcodes[1]]].name,
+                    .instruction = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[test_data.value[0].opcodes[1]]].name,
                     .failed_cases = failed_test_cases,
                 });
             }

@@ -3,13 +3,14 @@ const builtin = @import("builtin");
 const dc_config = @import("dc_config");
 
 const termcolor = @import("termcolor");
+const sh4_jit_log = std.log.scoped(.sh4_jit);
 
 const host_memory = @import("../host/host_memory.zig");
 
 const sh4 = @import("../sh4.zig");
 const sh4_interpreter = @import("../sh4_interpreter.zig");
-const sh4_disassembly = @import("../sh4_disassembly.zig");
-const MMU = @import("../mmu.zig");
+const sh4_interpreter_handlers = @import("../sh4_interpreter_handlers.zig");
+
 const bit_manip = @import("../bit_manip.zig");
 const JIT = @import("ir_block.zig");
 const IRBlock = JIT.IRBlock;
@@ -23,11 +24,6 @@ const FPSavedRegisters = Architecture.FPSavedRegisters;
 const FPScratchRegisters = Architecture.FPScratchRegisters;
 
 pub const BasicBlock = @import("sh4_basic_block.zig");
-
-const sh4_instructions = @import("../sh4_instructions.zig");
-const sh4_interpreter_handlers = @import("../sh4_interpreter_handlers.zig");
-
-const sh4_jit_log = std.log.scoped(.sh4_jit);
 
 const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 
@@ -157,8 +153,8 @@ const BlockCache = struct {
     }
 };
 
-inline fn instr_lookup(instr: u16) sh4_instructions.OpcodeDescription {
-    return sh4_instructions.Opcodes[sh4_instructions.JumpTable[instr]];
+inline fn instr_lookup(instr: u16) sh4.instructions.OpcodeDescription {
+    return sh4.instructions.Opcodes[sh4.instructions.JumpTable[instr]];
 }
 
 const FPPrecision = enum(u2) {
@@ -404,7 +400,7 @@ pub const JITContext = struct {
             sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
                 self.current_pc,
                 if (op.use_fallback()) "!" else " ",
-                sh4_disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
+                sh4.disassembly.disassemble(@bitCast(instr), self.cpu._allocator),
             });
         self.current_physical_pc += 2; // Same thing as in the interpreter, this is probably useless as instructions referring to PC should be illegal here, but just in case...
         self.current_pc += 2;
@@ -680,7 +676,7 @@ pub const SH4JIT = struct {
                 sh4_jit_log.debug("[{X:0>8}] {s} {s}", .{
                     ctx.current_pc,
                     if (op.use_fallback()) "!" else " ",
-                    sh4_disassembly.disassemble(@bitCast(instr), self._allocator),
+                    sh4.disassembly.disassemble(@bitCast(instr), self._allocator),
                 });
             branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
@@ -940,7 +936,7 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
 /// Helper function to ignore possible exceptions thrown by the interpreter fallback. Returns true if an exception was raised.
 //  (It's complicated to call zig functions with error handling from the JIT, wrapping it in a function that can't return an error makes it way easier).
 fn InterpreterFallback(comptime instr_index: u8) type {
-    const entry = sh4_instructions.Opcodes[instr_index];
+    const entry = sh4.instructions.Opcodes[instr_index];
     return struct {
         pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
             entry.fn_(cpu, instr) catch |err| {
@@ -983,9 +979,9 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-        const instr_index = sh4_instructions.JumpTable[instr.value];
+        const instr_index = sh4.instructions.JumpTable[instr.value];
         switch (instr_index) {
-            sh4_instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
+            sh4.instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
             inline else => |idx| try call(block, ctx, InterpreterFallback(idx).handler),
         }
 
@@ -1006,7 +1002,7 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 // We need pointers to all of these functions, can't really refactor that mess sadly.
 
 pub fn interpreter_fallback_cached(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    var cache_access = sh4_instructions.Opcodes[sh4_instructions.JumpTable[@as(u16, @bitCast(instr))]].access;
+    var cache_access = sh4.instructions.Opcodes[sh4.instructions.JumpTable[@as(u16, @bitCast(instr))]].access;
 
     // We don't want to invalidate or commit the same register twice.
 
@@ -2766,7 +2762,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
                     sh4_jit_log.debug("[{X:0>8}] {s} > {s}", .{
                         ctx.current_pc,
                         if (op.use_fallback()) "!" else " ",
-                        sh4_disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
+                        sh4.disassembly.disassemble(@bitCast(i), ctx.cpu._allocator),
                     });
                 const branch = try op.jit_emit_fn(block, ctx, @bitCast(i));
                 std.debug.assert(!branch);

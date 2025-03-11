@@ -14,7 +14,7 @@ const Dreamcast = DreamcastModule.Dreamcast;
 const HardwareRegisters = DreamcastModule.HardwareRegisters;
 const HardwareRegister = HardwareRegisters.HardwareRegister;
 
-pub const mmu = @import("./mmu.zig");
+pub const mmu = @import("./sh4_mmu.zig");
 pub const P4 = @import("./sh4_p4.zig");
 pub const P4Register = P4.P4Register;
 const Interrupts = @import("sh4_interrupts.zig");
@@ -22,8 +22,8 @@ const Interrupt = Interrupts.Interrupt;
 
 pub const Exception = @import("sh4_exceptions.zig").Exception;
 
-pub const sh4_instructions = @import("sh4_instructions.zig");
-pub const sh4_disassembly = @import("sh4_disassembly.zig");
+pub const instructions = @import("sh4_instructions.zig");
+pub const disassembly = @import("sh4_disassembly.zig");
 pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
@@ -217,7 +217,7 @@ pub const SH4 = struct {
 
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
-        sh4_instructions.init_table();
+        instructions.init_table();
 
         var sh4: SH4 = .{
             ._dc = dc,
@@ -836,10 +836,10 @@ pub const SH4 = struct {
             interpreter_handlers.InstructionHandlers[opcode](self);
         } else {
             const instr = Instr{ .value = opcode };
-            const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
+            const desc = instructions.Opcodes[instructions.JumpTable[opcode]];
 
             if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, sh4_disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
             desc.fn_(self, instr) catch |err| {
                 switch (err) {

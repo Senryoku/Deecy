@@ -11,7 +11,7 @@ const HardwareRegisters = DreamcastModule.HardwareRegisters;
 
 const SH4Module = DreamcastModule.SH4Module;
 const P4Register = SH4Module.P4Register;
-const sh4_disassembly = SH4Module.sh4_disassembly;
+const sh4_disassembly = SH4Module.disassembly;
 const BasicBlock = DreamcastModule.SH4JITModule.BasicBlock;
 const Holly = DreamcastModule.HollyModule;
 const AICAModule = DreamcastModule.AICAModule;
@@ -407,7 +407,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 for (0..block.len) |i| {
                     const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
                     const instr = dc.cpu.read_physical(u16, addr);
-                    const op = SH4Module.sh4_instructions.Opcodes[SH4Module.sh4_instructions.JumpTable[instr]];
+                    const op = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[instr]];
                     zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
                 }
             }
