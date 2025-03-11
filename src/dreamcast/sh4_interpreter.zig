@@ -1146,71 +1146,34 @@ test "ldc Rn,SR" {
 }
 
 pub fn ldcl_atRnInc_SR(cpu: *SH4, opcode: Instr) !void {
-    const addr = cpu.R(opcode.nmd.n).*;
+    const sr = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
-    cpu.set_sr(@bitCast(try cpu.read(u32, addr)));
+    cpu.set_sr(@bitCast(sr));
 }
-pub fn ldc_Rn_GBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.gbr = cpu.R(opcode.nmd.n).*;
+
+pub fn ld_Rn_Reg(comptime reg: []const u8) fn (cpu: *SH4, opcode: Instr) anyerror!void {
+    return struct {
+        fn handler(cpu: *SH4, opcode: Instr) !void {
+            @field(cpu, reg) = cpu.R(opcode.nmd.n).*;
+        }
+    }.handler;
 }
-pub fn ldcl_atRnInc_GBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.gbr = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn ldc_Rn_VBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.vbr = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldcl_atRnInc_VBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.vbr = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn ldc_Rn_SSR(cpu: *SH4, opcode: Instr) !void {
-    cpu.ssr = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldcl_atRnInc_SSR(cpu: *SH4, opcode: Instr) !void {
-    cpu.ssr = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn ldc_Rn_SPC(cpu: *SH4, opcode: Instr) !void {
-    cpu.spc = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldcl_atRnInc_SPC(cpu: *SH4, opcode: Instr) !void {
-    cpu.spc = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn ldc_Rn_DBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.dbr = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldcl_atRnInc_DBR(cpu: *SH4, opcode: Instr) !void {
-    cpu.dbr = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
-    cpu.R(opcode.nmd.n).* += 4;
-}
+
 pub fn ldc_Rn_Rm_BANK(cpu: *SH4, opcode: Instr) !void {
     cpu.r_bank[opcode.nmd.m & 0b0111] = cpu.R(opcode.nmd.n).*;
 }
+
+pub fn ldl_atRnInc_Reg(comptime reg: []const u8) fn (cpu: *SH4, opcode: Instr) anyerror!void {
+    return struct {
+        pub fn handler(cpu: *SH4, opcode: Instr) !void {
+            @field(cpu, reg) = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
+            cpu.R(opcode.nmd.n).* += 4;
+        }
+    }.handler;
+}
+
 pub fn ldcl_atRnInc_Rm_BANK(cpu: *SH4, opcode: Instr) !void {
     cpu.r_bank[opcode.nmd.m & 0b0111] = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn lds_Rn_MACH(cpu: *SH4, opcode: Instr) !void {
-    cpu.mach = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldsl_atRnInc_MACH(cpu: *SH4, opcode: Instr) !void {
-    cpu.mach = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn lds_Rn_MACL(cpu: *SH4, opcode: Instr) !void {
-    cpu.macl = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldsl_atRnInc_MACL(cpu: *SH4, opcode: Instr) !void {
-    cpu.macl = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
-    cpu.R(opcode.nmd.n).* += 4;
-}
-pub fn lds_Rn_PR(cpu: *SH4, opcode: Instr) !void {
-    cpu.pr = cpu.R(opcode.nmd.n).*;
-}
-pub fn ldsl_atRnInc_PR(cpu: *SH4, opcode: Instr) !void {
-    cpu.pr = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 
