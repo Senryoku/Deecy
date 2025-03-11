@@ -1278,12 +1278,55 @@ pub const SH4 = struct {
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
                 sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
-                if (self._dc) |dc| dc.sh4_jit.request_reset();
+                if (T == u32) {
+                    const entry: u4 = @truncate(virtual_addr >> 8);
+                    const val: mmu.UTLBAddressData = @bitCast(value);
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (VPN: {X:0>6})"), .{ entry, val, val.vpn });
+
+                    const before = self.itlb[entry];
+
+                    self.itlb[entry].asid = val.asid;
+                    self.itlb[entry].v = val.v;
+                    self.itlb[entry].d = val.d;
+                    self.itlb[entry].vpn = val.vpn;
+
+                    if (!std.meta.eql(before, self.itlb[entry]))
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                }
             },
-            0xF3000000...0xF3FFFFFF => {
-                // Instruction TLB data arrays 1 and 2 (ITLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB data array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
-                if (self._dc) |dc| dc.sh4_jit.request_reset();
+            0xF3000000...0xF37FFFFF => {
+                // Instruction TLB data arrays 1 (ITLB)
+                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB data array 1 (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                if (T == u32) {
+                    const entry: u2 = @truncate(virtual_addr >> 8);
+                    const val: mmu.UTLBArrayData1 = @bitCast(value);
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+
+                    const before = self.itlb[entry];
+
+                    self.itlb[entry].wt = val.wt;
+                    self.itlb[entry].sh = val.sh;
+                    self.itlb[entry].d = val.d;
+                    self.itlb[entry].c = val.c;
+                    self.itlb[entry].sz = val.sz();
+                    self.itlb[entry].pr = val.pr;
+                    self.itlb[entry].v = val.v;
+                    self.itlb[entry].ppn = val.ppn;
+
+                    if (!std.meta.eql(before, self.itlb[entry]))
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                }
+            },
+            0xF3800000...0xF3FFFFFF => {
+                // Instruction TLB data arrays 2 (ITLB)
+                sh4_log.info(termcolor.yellow("Write({any}) to Instruction TLB data array 2 (ITLB):   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                if (T == u32) {
+                    const entry: u2 = @truncate(virtual_addr >> 8);
+                    const val: mmu.UTLBArrayData2 = @bitCast(value);
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
+                    self.itlb[entry].sa = val.sa;
+                    self.itlb[entry].tc = val.tc;
+                }
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
@@ -1358,8 +1401,6 @@ pub const SH4 = struct {
                     sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
                     self.utlb[entry].sa = val.sa;
                     self.utlb[entry].tc = val.tc;
-
-                    if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
             },
             0xF8000000...0xFBFFFFFF => {
