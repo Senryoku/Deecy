@@ -28,7 +28,7 @@ pub const disassembly = @import("sh4_disassembly.zig");
 pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
-// NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
+// NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them. (Incompatible with EnableUTLBFastLookup)
 const EmulateUTLBMultipleHit = false;
 const EmulateITLB = false;
 const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
@@ -1633,6 +1633,7 @@ pub const SH4 = struct {
                             if (T == u32) {
                                 var val: mmu.MMUCR = @bitCast(value);
                                 sh4_log.debug("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
+                                const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
                                 if (val.ti) {
                                     mmu_log.info("TLB Invalidation", .{});
                                     // Invalidate all TLB entries
@@ -1640,12 +1641,12 @@ pub const SH4 = struct {
                                         entry.v = false;
                                     for (self.utlb) |*entry|
                                         entry.v = false;
-                                    val.ti = false; // Always return 0 when read.
                                 }
+                                if (val.ti or val.sv != mmucr.sv) self.reset_utlb_fast_lookup();
                                 if (val.at != self._mmu_enabled) if (self._dc) |dc| dc.sh4_jit.request_reset();
-                                if (val.sv != self.p4_register(mmu.MMUCR, .MMUCR).sv) self.reset_utlb_fast_lookup();
                                 self._mmu_enabled = val.at;
-                                self.p4_register(mmu.MMUCR, .MMUCR).* = val;
+                                val.ti = false; // Always return 0 when read.
+                                mmucr.* = val;
                                 return;
                             } else {
                                 sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
