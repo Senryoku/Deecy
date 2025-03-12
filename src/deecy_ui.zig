@@ -246,9 +246,7 @@ fn get_game_image(self: *@This(), path: []const u8) void {
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
         const start = std.time.milliTimestamp();
-
-        var threads = std.ArrayList(std.Thread).init(self.allocator);
-        defer threads.deinit();
+        defer ui_log.info("Checked {d} disc files in {d}ms", .{ self.disc_files.items.len, std.time.milliTimestamp() - start });
 
         {
             for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
@@ -278,7 +276,6 @@ pub fn refresh_games(self: *@This()) !void {
                             .view = null,
                         });
                     }
-                    try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, path }));
                 }
             }
         }
@@ -288,12 +285,11 @@ pub fn refresh_games(self: *@This()) !void {
             std.mem.sort(GameFile, self.disc_files.items, {}, GameFile.sort);
         }
 
-        for (threads.items) |t| {
-            t.join();
-        }
-
-        const end = std.time.milliTimestamp();
-        ui_log.info("Checked {d} disc files in {d}ms", .{ self.disc_files.items.len, end - start });
+        var threads = std.ArrayList(std.Thread).init(self.allocator);
+        defer threads.deinit();
+        for (self.disc_files.items) |file|
+            try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, file.path }));
+        for (threads.items) |t| t.join();
     }
 }
 
