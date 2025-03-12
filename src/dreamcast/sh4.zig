@@ -30,6 +30,8 @@ pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
 const EmulateUTLBMultipleHit = false;
+const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
+const FastLookupType = if (EnableUTLBFastLookup) []u8 else void;
 
 pub const SR = packed struct(u32) {
     t: bool = false, // True/False condition or carry/borrow bit. NOTE: Undefined at startup, set for repeatability.
@@ -200,6 +202,7 @@ pub const SH4 = struct {
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
     _mmu_enabled: bool = false, // Cached value of MMUCR.at
+    _fast_utlb_lookup: FastLookupType,
     _last_timer_update: [3]u64 = .{0} ** 3,
 
     execution_state: ExecutionState = .Running,
@@ -216,8 +219,6 @@ pub const SH4 = struct {
 
     _operand_cache_state: *OperandCacheState, // DCA3 Hacks
 
-    _fast_utlb_lookup: []u8,
-
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         instructions.init_table();
@@ -230,7 +231,7 @@ pub const SH4 = struct {
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
             ._allocator = allocator,
             ._operand_cache_state = try allocator.create(OperandCacheState),
-            ._fast_utlb_lookup = try host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)),
+            ._fast_utlb_lookup = if (EnableUTLBFastLookup) try host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) else {},
         };
 
         @memset(sh4._operand_cache, 0);
@@ -255,7 +256,8 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        host_memory.virtual_dealloc(self._fast_utlb_lookup);
+        if (EnableUTLBFastLookup)
+            host_memory.virtual_dealloc(self._fast_utlb_lookup);
         self._allocator.free(self.utlb);
         self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
@@ -982,6 +984,7 @@ pub const SH4 = struct {
     }
 
     fn reset_utlb_fast_lookup(self: *@This()) void {
+        if (!EnableUTLBFastLookup) return;
         host_memory.virtual_dealloc(self._fast_utlb_lookup);
         self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
             std.debug.panic("Error allocating _fast_utlb_lookup: {s}", .{@errorName(err)});
@@ -992,9 +995,11 @@ pub const SH4 = struct {
     }
 
     pub fn invalidate_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry) void {
+        if (!EnableUTLBFastLookup) return;
         self.update_utlb_fast_lookup(entry, 0);
     }
     pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
+        if (!EnableUTLBFastLookup) return;
         self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
     }
     fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {
@@ -1031,7 +1036,7 @@ pub const SH4 = struct {
         const asid = if (check_asid) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0x00;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
-        if (true) {
+        if (EnableUTLBFastLookup) {
             const key: u32 = @as(u32, asid) << 22 | vpn;
             const idx = self._fast_utlb_lookup[key];
             if (idx != 0) {
