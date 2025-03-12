@@ -1015,9 +1015,9 @@ pub const SH4 = struct {
             while (min_idx + 1 < max_idx) {
                 if (self.utlb[self.sorted_utlb_cache.items[idx]].vpn < vpn) {
                     min_idx = idx;
-                } else {
+                } else if (self.utlb[self.sorted_utlb_cache.items[idx]].vpn > vpn) {
                     max_idx = idx;
-                }
+                } else break;
                 idx = (max_idx + min_idx) / 2;
             }
 
