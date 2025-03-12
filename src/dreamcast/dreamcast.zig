@@ -646,9 +646,11 @@ pub const Dreamcast = struct {
             }
 
             self.hw_register(u32, .SB_GDST).* = 1;
-            // FIXME: Contrary to what I've said in 30cc565, it is clearly stated in the docs that SB_GDLEND does counts up...
+            // SB_GDLEND counts up with the transfer progress.
             self.hw_register(u32, .SB_GDLEND).* = 0;
-            self.hw_register(u32, .SB_GDLEND).* = len; // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...). This is clearly not a proper fix, I just don't know what the actual cause is, and how to properly fix it.
+            // FIXME: This should start at 0 and count up, but for some reason Jet Set Radio has issues when I try to do this properly (no music in menu; infinite loading screen...).
+            //        The following somehow fixes the issue, but it's not a proper solution and might cause issue elsewhere.
+            // self.hw_register(u32, .SB_GDLEND).* = len;
             self.hw_register(u32, .SB_GDSTARD).* = dst_addr;
 
             dc_log.debug("GD-ROM-DMA! {X:0>8} ({X:0>8} bytes / {X:0>8} in queue)", .{ dst_addr, len, self.gdrom.dma_data_queue.count });
