@@ -1007,6 +1007,9 @@ pub const SH4 = struct {
 
         var found_entry: ?mmu.TLBEntry = null;
 
+        // Binary search the UTLBs. Barely tested.
+        //  This has no guarantee to be correct, especially with process specific pages.
+        //  Skipping to the middle can miss previous matching pages, and I may be missing other cases.
         if (true) {
             var min_idx: u8 = 0;
             var max_idx: u8 = @intCast(self.sorted_utlb_cache.items.len - 1);
