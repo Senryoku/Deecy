@@ -5,6 +5,7 @@ const std = @import("std");
 const dc_config = @import("dc_config");
 const builtin = @import("builtin");
 const termcolor = @import("termcolor");
+const host_memory = @import("host/host_memory.zig");
 
 pub const sh4_log = std.log.scoped(.sh4);
 pub const mmu_log = std.log.scoped(.mmu);
@@ -174,11 +175,11 @@ pub const SH4 = struct {
 
     // System Registers
     pc: u32 = 0xA0000000, // Program counter
-    macl: u32 = undefined, // Multiply-and-accumulate register low
-    mach: u32 = undefined, // Multiply-and-accumulate register high
     pr: u32 = undefined, // Procedure register
     fpscr: FPSCR = .{}, // Floating-point status/control register
     fpul: u32 = undefined, // Floating-point communication register
+    macl: u32 = undefined, // Multiply-and-accumulate register low
+    mach: u32 = undefined, // Multiply-and-accumulate register high
 
     fp_banks: [2]extern union {
         fr: [16]f32,
@@ -215,6 +216,8 @@ pub const SH4 = struct {
 
     _operand_cache_state: *OperandCacheState, // DCA3 Hacks
 
+    _fast_utlb_lookup: []u8,
+
     // Allows passing a null DC for testing purposes (Mostly for instructions that do not need access to RAM).
     pub fn init(allocator: std.mem.Allocator, dc: ?*Dreamcast) !SH4 {
         instructions.init_table();
@@ -227,6 +230,7 @@ pub const SH4 = struct {
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
             ._allocator = allocator,
             ._operand_cache_state = try allocator.create(OperandCacheState),
+            ._fast_utlb_lookup = try host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)),
         };
 
         @memset(sh4._operand_cache, 0);
@@ -251,6 +255,7 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        host_memory.virtual_dealloc(self._fast_utlb_lookup);
         self._allocator.free(self.utlb);
         self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
@@ -342,6 +347,7 @@ pub const SH4 = struct {
             self.itlb[i].v = false;
         for (0..self.utlb.len) |i|
             self.utlb[i].v = false;
+        self.reset_utlb_fast_lookup();
 
         self._mmu_enabled = false;
     }
@@ -389,6 +395,7 @@ pub const SH4 = struct {
             self.itlb[i].v = false;
         for (0..self.utlb.len) |i|
             self.utlb[i].v = false;
+        self.reset_utlb_fast_lookup();
 
         self._mmu_enabled = false;
     }
@@ -974,6 +981,40 @@ pub const SH4 = struct {
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
+    fn reset_utlb_fast_lookup(self: *@This()) void {
+        host_memory.virtual_dealloc(self._fast_utlb_lookup);
+        self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
+            std.debug.panic("Error allocating _fast_utlb_lookup: {s}", .{@errorName(err)});
+        };
+        for (self.utlb, 0..) |entry, idx| {
+            if (entry.valid()) self.sync_utlb_fast_lookup(@intCast(idx));
+        }
+    }
+
+    fn set_utlb_fast_lookup(self: *@This(), asid: u8, idx: u8) void {
+        const entry = self.utlb[idx];
+        const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
+        @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], idx + 1);
+    }
+
+    pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
+        const entry = self.utlb[idx];
+
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+        // Single Virtual Memory Mode: ASID does not matter and all checks will use 0.
+        if (mmucr.sv) {
+            self.set_utlb_fast_lookup(0, idx);
+        } else {
+            // Shared: Update it for all ASID
+            if (entry.sh) {
+                for (0..256) |asid|
+                    self.set_utlb_fast_lookup(@intCast(asid), idx);
+            } else {
+                self.set_utlb_fast_lookup(entry.asid, idx);
+            }
+        }
+    }
+
     pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
@@ -985,9 +1026,26 @@ pub const SH4 = struct {
         if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
 
         const check_asid = !mmucr.sv or self.sr.md == 0;
+        const vpn: u22 = @truncate(virtual_addr >> 10);
+
+        if (true) {
+            const asid = if (check_asid) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0x00;
+            const key: u32 = @as(u32, asid) << 22 | virtual_addr >> 10;
+            const idx = self._fast_utlb_lookup[key];
+            if (idx != 0) {
+                const entry = self.utlb[idx - 1];
+                // Double check if the entry is still valid, and does match.
+                // TODO: This could be skipped if I was correctly invalidating the fast_lookup table on update.
+                if (entry.match(check_asid, asid, vpn)) {
+                    if (self.sr.md == 0 and entry.pr.privileged())
+                        return error.TLBProtectionViolation;
+                    return entry;
+                }
+            }
+            return error.TLBMiss;
+        }
 
         const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
-        const vpn: u22 = @truncate(virtual_addr >> 10);
 
         var found_entry: ?mmu.TLBEntry = null;
 
@@ -1524,8 +1582,10 @@ pub const SH4 = struct {
                     self.utlb[entry].d = val.d;
                     self.utlb[entry].vpn = val.vpn;
 
-                    if (!std.meta.eql(before, self.utlb[entry]))
+                    if (!std.meta.eql(before, self.utlb[entry])) {
                         if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.sync_utlb_fast_lookup(entry);
+                    }
                 }
             },
             0xF7000000...0xF77FFFFF => {
@@ -1547,8 +1607,10 @@ pub const SH4 = struct {
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].ppn = val.ppn;
 
-                    if (!std.meta.eql(before, self.utlb[entry]))
+                    if (!std.meta.eql(before, self.utlb[entry])) {
                         if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.sync_utlb_fast_lookup(entry);
+                    }
                 }
             },
             0xF7800000...0xF7FFFFFF => {
@@ -1584,8 +1646,9 @@ pub const SH4 = struct {
                                     val.ti = false; // Always return 0 when read.
                                 }
                                 if (val.at != self._mmu_enabled) if (self._dc) |dc| dc.sh4_jit.request_reset();
+                                if (val.sv != self.p4_register(mmu.MMUCR, .MMUCR).sv) self.reset_utlb_fast_lookup();
                                 self._mmu_enabled = val.at;
-                                self.p4_register_addr(mmu.MMUCR, virtual_addr).* = val;
+                                self.p4_register(mmu.MMUCR, .MMUCR).* = val;
                                 return;
                             } else {
                                 sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
@@ -2089,6 +2152,7 @@ pub const SH4 = struct {
         self.compute_interrupt_priorities();
         self.update_sse_settings();
         self._mmu_enabled = self.read_p4_register(mmu.MMUCR, .MMUCR).at;
+        self.reset_utlb_fast_lookup();
 
         return bytes;
     }
