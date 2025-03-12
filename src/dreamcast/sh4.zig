@@ -30,6 +30,7 @@ pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them.
 const EmulateUTLBMultipleHit = false;
+const EmulateITLB = false;
 const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
 const FastLookupType = if (EnableUTLBFastLookup) []u8 else void;
 
@@ -1120,10 +1121,9 @@ pub const SH4 = struct {
             return self.pc & 0x1FFF_FFFF;
         }
 
-        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
-
         const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
         const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
+        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
 
         switch (virtual_addr) {
             // Operand Cache RAM Mode
@@ -1136,27 +1136,29 @@ pub const SH4 = struct {
             0xE000_0000...0xFFFF_FFFF,
             => return virtual_addr & 0x1FFF_FFFF,
             else => {
-                // Search ITLB
-                const check_asid = !mmucr.sv or self.sr.md == 0;
-                const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
-                const vpn: u22 = @truncate(virtual_addr >> 10);
-                for (self.itlb, 0..) |entry, idx| {
-                    // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
-                    if (entry.match(check_asid, asid, vpn)) {
-                        if (self.sr.md == 0 and entry.pr.privileged()) {
-                            self.report_address_exception(virtual_addr);
-                            self.jump_to_exception(.InstructionTLBProtectionViolation);
-                            return self.pc & 0x1FFF_FFFF;
+                if (EmulateITLB) {
+                    // Search ITLB
+                    const check_asid = !mmucr.sv or self.sr.md == 0;
+                    const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+                    const vpn: u22 = @truncate(virtual_addr >> 10);
+                    for (self.itlb, 0..) |entry, idx| {
+                        // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
+                        if (entry.match(check_asid, asid, vpn)) {
+                            if (self.sr.md == 0 and entry.pr.privileged()) {
+                                self.report_address_exception(virtual_addr);
+                                self.jump_to_exception(.InstructionTLBProtectionViolation);
+                                return self.pc & 0x1FFF_FFFF;
+                            }
+
+                            // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
+                            mmucr.lrui &= LRUIMasks[idx];
+                            mmucr.lrui |= LRUIValues[idx];
+
+                            const physical_address = entry.translate(virtual_addr);
+                            mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
+                            mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
+                            return physical_address & 0x1FFF_FFFF;
                         }
-
-                        // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
-                        mmucr.lrui &= LRUIMasks[idx];
-                        mmucr.lrui |= LRUIValues[idx];
-
-                        const physical_address = entry.translate(virtual_addr);
-                        mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                        mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
-                        return physical_address & 0x1FFF_FFFF;
                     }
                 }
             },
@@ -1173,22 +1175,24 @@ pub const SH4 = struct {
             return self.pc & 0x1FFF_FFFF;
         };
 
-        // Update ITLB entry pointed by MMUCR.LRUI
-        // TODO: There's probably a more elegant way to do this.
-        const idx: u2 = if (mmucr.lrui & 0b111000 == 0b111000)
-            0
-        else if (mmucr.lrui & 0b100110 == 0b000110)
-            1
-        else if (mmucr.lrui & 0b010101 == 0b000001)
-            2
-        else if (mmucr.lrui & 0b001011 == 0b000000)
-            3
-        else
-            std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
+        if (EmulateITLB) {
+            // Update ITLB entry pointed by MMUCR.LRUI
+            // TODO: There's probably a more elegant way to do this.
+            const idx: u2 = if (mmucr.lrui & 0b111000 == 0b111000)
+                0
+            else if (mmucr.lrui & 0b100110 == 0b000110)
+                1
+            else if (mmucr.lrui & 0b010101 == 0b000001)
+                2
+            else if (mmucr.lrui & 0b001011 == 0b000000)
+                3
+            else
+                std.debug.panic("MMUCR LRUI setting prohibited: {b:0>6}", .{mmucr.lrui});
 
-        self.itlb[idx] = entry;
-        mmucr.lrui &= LRUIMasks[idx];
-        mmucr.lrui |= LRUIValues[idx];
+            self.itlb[idx] = entry;
+            mmucr.lrui &= LRUIMasks[idx];
+            mmucr.lrui |= LRUIValues[idx];
+        }
 
         return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
