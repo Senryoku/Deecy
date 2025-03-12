@@ -89,6 +89,8 @@ fn display(self: anytype) void {
     }
 }
 
+const White: [4]f32 = .{ 1.0, 1.0, 1.0, 1.0 };
+const Grey: [4]f32 = .{ 0.5, 0.5, 0.5, 1.0 };
 const Green: [4]f32 = .{ 0.51, 0.71, 0.212, 1.0 };
 const Red: [4]f32 = .{ 0.973, 0.443, 0.408, 1.0 };
 
@@ -106,7 +108,7 @@ fn colored(value: bool, comptime fmt: []const u8, args: anytype) void {
 }
 
 fn text_highlighted(b: bool, comptime fmt: []const u8, args: anytype) void {
-    zgui.textColored(if (b) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, fmt, args);
+    zgui.textColored(if (b) White else Grey, fmt, args);
 }
 
 pub fn init(d: *Deecy) !@This() {
@@ -206,6 +208,55 @@ fn compare_blocks(_: void, a: BasicBlock, b: BasicBlock) std.math.Order {
 }
 fn compare_blocks_desc(_: void, a: BasicBlock, b: BasicBlock) bool {
     return a.time_spent > b.time_spent;
+}
+
+fn display_tlb(comptime name: [:0]const u8, tlbs: []SH4Module.mmu.TLBEntry) void {
+    if (zgui.beginTable(name, .{
+        .column = 7,
+        .flags = .{
+            .sizing = .fixed_fit,
+            .row_bg = true,
+            .borders = .all,
+        },
+    })) {
+        zgui.tableSetupColumn("#", .{});
+        zgui.tableSetupColumn("ASID", .{});
+        zgui.tableSetupColumn("VPN", .{});
+        zgui.tableSetupColumn("PPN", .{});
+        zgui.tableSetupColumn("Size", .{});
+        zgui.tableSetupColumn("SH", .{});
+        zgui.tableSetupColumn("PR", .{});
+        zgui.tableHeadersRow();
+        for (tlbs, 0..) |tlb, i| {
+            const color: [4]f32 = if (tlb.valid()) White else Grey;
+            zgui.tableNextRow(.{});
+            _ = zgui.tableSetColumnIndex(0);
+            zgui.textColored(color, "{d: >2}", .{i});
+            _ = zgui.tableSetColumnIndex(1);
+            zgui.textColored(color, "{X: >2}", .{tlb.asid});
+            _ = zgui.tableSetColumnIndex(2);
+            zgui.textColored(color, "{X:0>8}", .{@as(u32, tlb.vpn << 10)});
+            _ = zgui.tableSetColumnIndex(3);
+            zgui.textColored(color, "{X:0>8}", .{@as(u32, tlb.ppn << 10)});
+            _ = zgui.tableSetColumnIndex(4);
+            zgui.textColored(color, "{s}", .{switch (tlb.sz) {
+                0 => "1KB",
+                1 => "4KB",
+                2 => "64KB",
+                3 => "1MB",
+            }});
+            _ = zgui.tableSetColumnIndex(5);
+            zgui.textColored(if (!tlb.valid()) color else if (tlb.sh) Green else Red, "{s}", .{if (tlb.sh) "O" else "X"});
+            _ = zgui.tableSetColumnIndex(6);
+            zgui.textColored(color, "{s}", .{switch (tlb.pr) {
+                .ReadOnly => "R",
+                .ReadWrite => "RW",
+                .PrivilegedReadOnly => "R*",
+                .PrivilegedReadWrite => "RW*",
+            }});
+        }
+        zgui.endTable();
+    }
 }
 
 pub fn draw(self: *@This(), d: *Deecy) !void {
@@ -351,6 +402,38 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
         display(dc.cpu.read_p4_register(SH4Module.P4.IPRC, .IPRC));
         zgui.endGroup();
+    }
+    zgui.end();
+
+    if (zgui.begin("SH4 MMU", .{})) {
+        const MMUCR = dc.cpu.read_p4_register(SH4Module.mmu.MMUCR, .MMUCR);
+        const PTEH = dc.cpu.read_p4_register(SH4Module.mmu.PTEH, .PTEH);
+        const PTEL = dc.cpu.read_p4_register(SH4Module.mmu.PTEL, .PTEL);
+        const PTEA = dc.cpu.read_p4_register(SH4Module.mmu.PTEA, .PTEA);
+        const TTB = dc.cpu.read_p4_register(u32, .TTB);
+        const TEA = dc.cpu.read_p4_register(u32, .TEA);
+        if (MMUCR.at) zgui.textColored(Green, "Enabled", .{}) else zgui.textColored(Red, "Disabled", .{});
+        if (MMUCR.sv) zgui.textColored(Green, "Single virtual memory mode", .{}) else zgui.textColored(Red, "Multiple virtual memory mode", .{});
+        if (MMUCR.sqmd == 0) zgui.textColored(Green, "Store queue User mode", .{}) else zgui.textColored(Red, "Store queue Privileged mode", .{});
+        zgui.text("URC: {X: >2}, URB: {X: >2}, LRUI: {b:0>6}", .{ MMUCR.urc, MMUCR.urb, MMUCR.lrui });
+        if (zgui.collapsingHeader("Registers", .{ .default_open = false })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            zgui.text("PTEH: {X:0>8}", .{@as(u32, @bitCast(PTEH))});
+            display(PTEH);
+            zgui.text("PTEL: {X:0>8}", .{@as(u32, @bitCast(PTEL))});
+            display(PTEL);
+            zgui.text("PTEA: {X:0>8}", .{@as(u32, @bitCast(PTEA))});
+            display(PTEA);
+            zgui.text("TTB: {X:0>8}", .{TTB});
+            zgui.text("TEA: {X:0>8}", .{TEA});
+        }
+        if (zgui.collapsingHeader("ITLB", .{ .default_open = true })) {
+            display_tlb("ITLB", dc.cpu.itlb);
+        }
+        if (zgui.collapsingHeader("UTLB", .{ .default_open = true })) {
+            display_tlb("UTLB", dc.cpu.utlb);
+        }
     }
     zgui.end();
 
