@@ -1200,6 +1200,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
         .sa = ptea.sa,
         .tc = ptea.tc,
     };
+    cpu.update_utlb_cache();
 
     sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
 

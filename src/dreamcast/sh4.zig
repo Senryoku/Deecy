@@ -174,11 +174,11 @@ pub const SH4 = struct {
 
     // System Registers
     pc: u32 = 0xA0000000, // Program counter
-    macl: u32 = undefined, // Multiply-and-accumulate register low
-    mach: u32 = undefined, // Multiply-and-accumulate register high
     pr: u32 = undefined, // Procedure register
     fpscr: FPSCR = .{}, // Floating-point status/control register
     fpul: u32 = undefined, // Floating-point communication register
+    macl: u32 = undefined, // Multiply-and-accumulate register low
+    mach: u32 = undefined, // Multiply-and-accumulate register high
 
     fp_banks: [2]extern union {
         fr: [16]f32,
@@ -191,6 +191,7 @@ pub const SH4 = struct {
     p4_registers: []u8 align(4),
     itlb: []mmu.TLBEntry,
     utlb: []mmu.TLBEntry,
+    sorted_utlb_cache: std.ArrayList(u8),
 
     interrupt_requests: u64 = 0,
     // NOTE: These are not serialized as they can easily be computed from P4 registers IPRA/B/C. See compute_interrupt_priorities.
@@ -225,6 +226,7 @@ pub const SH4 = struct {
             .p4_registers = try allocator.alloc(u8, 0x1000),
             .itlb = try allocator.alloc(mmu.TLBEntry, 4),
             .utlb = try allocator.alloc(mmu.TLBEntry, 64),
+            .sorted_utlb_cache = try .initCapacity(allocator, 64),
             ._allocator = allocator,
             ._operand_cache_state = try allocator.create(OperandCacheState),
         };
@@ -251,6 +253,7 @@ pub const SH4 = struct {
     }
 
     pub fn deinit(self: *@This()) void {
+        self.sorted_utlb_cache.deinit();
         self._allocator.free(self.utlb);
         self._allocator.free(self.itlb);
         self._allocator.free(self.p4_registers);
@@ -389,6 +392,7 @@ pub const SH4 = struct {
             self.itlb[i].v = false;
         for (0..self.utlb.len) |i|
             self.utlb[i].v = false;
+        self.update_utlb_cache();
 
         self._mmu_enabled = false;
     }
@@ -974,6 +978,18 @@ pub const SH4 = struct {
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
+    fn utlb_entry_order(self: *@This(), lhs: u8, rhs: u8) bool {
+        return std.math.order(self.utlb[lhs].vpn, self.utlb[rhs].vpn) == .lt;
+    }
+
+    pub fn update_utlb_cache(self: *@This()) void {
+        self.sorted_utlb_cache.clearRetainingCapacity();
+        for (0..self.utlb.len) |i| {
+            if (self.utlb[i].v) self.sorted_utlb_cache.appendAssumeCapacity(@intCast(i));
+        }
+        std.mem.sort(u8, self.sorted_utlb_cache.items, self, utlb_entry_order);
+    }
+
     pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
@@ -991,11 +1007,33 @@ pub const SH4 = struct {
 
         var found_entry: ?mmu.TLBEntry = null;
 
-        for (self.utlb) |entry| {
-            if (entry.match(check_asid, asid, vpn)) {
-                if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
-                found_entry = entry;
-                if (!EmulateUTLBMultipleHit) break;
+        if (true) {
+            var min_idx: u8 = 0;
+            var max_idx: u8 = @intCast(self.sorted_utlb_cache.items.len - 1);
+
+            var idx = (max_idx + min_idx) / 2;
+            while (min_idx + 1 < max_idx) {
+                if (self.utlb[self.sorted_utlb_cache.items[idx]].vpn < vpn) {
+                    min_idx = idx;
+                } else {
+                    max_idx = idx;
+                }
+                idx = (max_idx + min_idx) / 2;
+            }
+
+            for (min_idx..max_idx + 1) |i| {
+                if (self.utlb[self.sorted_utlb_cache.items[i]].match(check_asid, asid, vpn)) {
+                    found_entry = self.utlb[self.sorted_utlb_cache.items[i]];
+                    break;
+                }
+            }
+        } else {
+            for (self.utlb) |entry| {
+                if (entry.match(check_asid, asid, vpn)) {
+                    if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
+                    found_entry = entry;
+                    if (!EmulateUTLBMultipleHit) break;
+                }
             }
         }
 
@@ -1524,6 +1562,8 @@ pub const SH4 = struct {
                     self.utlb[entry].d = val.d;
                     self.utlb[entry].vpn = val.vpn;
 
+                    self.update_utlb_cache();
+
                     if (!std.meta.eql(before, self.utlb[entry]))
                         if (self._dc) |dc| dc.sh4_jit.request_reset();
                 }
@@ -1546,6 +1586,8 @@ pub const SH4 = struct {
                     self.utlb[entry].pr = val.pr;
                     self.utlb[entry].v = val.v;
                     self.utlb[entry].ppn = val.ppn;
+
+                    self.update_utlb_cache();
 
                     if (!std.meta.eql(before, self.utlb[entry]))
                         if (self._dc) |dc| dc.sh4_jit.request_reset();
@@ -1581,6 +1623,7 @@ pub const SH4 = struct {
                                         entry.v = false;
                                     for (self.utlb) |*entry|
                                         entry.v = false;
+                                    self.update_utlb_cache();
                                     val.ti = false; // Always return 0 when read.
                                 }
                                 if (val.at != self._mmu_enabled) if (self._dc) |dc| dc.sh4_jit.request_reset();
@@ -2089,6 +2132,7 @@ pub const SH4 = struct {
         self.compute_interrupt_priorities();
         self.update_sse_settings();
         self._mmu_enabled = self.read_p4_register(mmu.MMUCR, .MMUCR).at;
+        self.update_utlb_cache();
 
         return bytes;
     }
