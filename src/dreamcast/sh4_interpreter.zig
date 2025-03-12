@@ -1184,6 +1184,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
     const ptel = cpu.read_p4_register(sh4.mmu.PTEL, .PTEL);
     const ptea = cpu.read_p4_register(sh4.mmu.PTEA, .PTEA);
 
+    cpu.invalidate_utlb_fast_lookup(cpu.utlb[urc]);
     cpu.utlb[urc] = .{
         .asid = pteh.asid,
         .vpn = pteh.vpn,
@@ -1205,6 +1206,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
     sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
 
     // NOTE: I'm using the physical address - i.e. the address after translation - as key to the JIT cache, so this is useless. Probably? Right?
+    //       (Also this should invalidate the previous value of the entry too.)
     // if (cpu._dc) |dc| dc.sh4_jit.invalidate(cpu.utlb[urc].first_physical_address(), cpu.utlb[urc].first_physical_address() + cpu.utlb[urc].size());
 }
 

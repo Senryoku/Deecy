@@ -991,28 +991,30 @@ pub const SH4 = struct {
         }
     }
 
-    fn set_utlb_fast_lookup(self: *@This(), asid: u8, idx: u8) void {
-        const entry = self.utlb[idx];
-        const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
-        @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], idx + 1);
+    pub fn invalidate_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry) void {
+        self.update_utlb_fast_lookup(entry, 0);
     }
-
     pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
-        const entry = self.utlb[idx];
-
-        const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
+        self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
+    }
+    fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {
+        const mmucr = self.read_p4_register(mmu.MMUCR, .MMUCR);
         // Single Virtual Memory Mode: ASID does not matter and all checks will use 0.
         if (mmucr.sv) {
-            self.set_utlb_fast_lookup(0, idx);
+            self.set_utlb_fast_lookup(0, entry, value);
         } else {
             // Shared: Update it for all ASID
             if (entry.sh) {
                 for (0..256) |asid|
-                    self.set_utlb_fast_lookup(@intCast(asid), idx);
+                    self.set_utlb_fast_lookup(@intCast(asid), entry, value);
             } else {
-                self.set_utlb_fast_lookup(entry.asid, idx);
+                self.set_utlb_fast_lookup(entry.asid, entry, value);
             }
         }
+    }
+    fn set_utlb_fast_lookup(self: *@This(), asid: u8, entry: mmu.TLBEntry, value: u8) void {
+        const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
+        @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], value);
     }
 
     pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
@@ -1026,26 +1028,20 @@ pub const SH4 = struct {
         if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
 
         const check_asid = !mmucr.sv or self.sr.md == 0;
+        const asid = if (check_asid) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0x00;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
         if (true) {
-            const asid = if (check_asid) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0x00;
-            const key: u32 = @as(u32, asid) << 22 | virtual_addr >> 10;
+            const key: u32 = @as(u32, asid) << 22 | vpn;
             const idx = self._fast_utlb_lookup[key];
             if (idx != 0) {
                 const entry = self.utlb[idx - 1];
-                // Double check if the entry is still valid, and does match.
-                // TODO: This could be skipped if I was correctly invalidating the fast_lookup table on update.
-                if (entry.match(check_asid, asid, vpn)) {
-                    if (self.sr.md == 0 and entry.pr.privileged())
-                        return error.TLBProtectionViolation;
-                    return entry;
-                }
+                if (self.sr.md == 0 and entry.pr.privileged())
+                    return error.TLBProtectionViolation;
+                return entry;
             }
             return error.TLBMiss;
         }
-
-        const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
 
         var found_entry: ?mmu.TLBEntry = null;
 
@@ -1583,8 +1579,10 @@ pub const SH4 = struct {
                     self.utlb[entry].vpn = val.vpn;
 
                     if (!std.meta.eql(before, self.utlb[entry])) {
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
+
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
                     }
                 }
             },
@@ -1608,8 +1606,10 @@ pub const SH4 = struct {
                     self.utlb[entry].ppn = val.ppn;
 
                     if (!std.meta.eql(before, self.utlb[entry])) {
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
+
+                        if (self._dc) |dc| dc.sh4_jit.request_reset();
                     }
                 }
             },
