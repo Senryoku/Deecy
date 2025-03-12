@@ -697,7 +697,7 @@ pub const Dreamcast = struct {
 
     pub fn abort_gd_dma(self: *@This()) void {
         if (self.read_hw_register(u32, .SB_GDST) != 0) {
-            std.log.scoped(.gdrom).warn("Aborting GD-ROM DMA.", .{});
+            std.log.scoped(.gdrom).warn(termcolor.yellow("Aborting GD-ROM DMA."), .{});
             self.hw_register(u32, .SB_GDST).* = 0;
         }
     }

@@ -45,13 +45,23 @@ const Command = enum(u32) {
 };
 
 const StatusRegister = packed struct(u8) {
+    /// Becomes "1" when an error has occurred during execution of the command the previous time.
+    /// Error details can be determined by checking the sense key and error code
     check: u1 = 0,
     _r: u1 = 0,
+    /// Indicates that a correctable error has occurred.
     corr: u1 = 0,
+    /// Becomes "1" when preparations for data transfer between drive and host are
+    /// completed. Information held in the Interrupt Reason Register becomes valid in
+    /// the packet command when DRQ is set.
     drq: u1 = 0,
+    /// Becomes "1" when seek processing is completed.
     dsc: u1 = 0,
+    /// Returns drive fault information.
     df: u1 = 0,
+    /// Set to "1" when the drive is able to respond to an ATA command.
     drdy: u1 = 1,
+    /// BSY is always set to "1" when the drive accesses the command block.
     bsy: u1 = 0,
 };
 
