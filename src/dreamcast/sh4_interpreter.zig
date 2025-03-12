@@ -1203,7 +1203,8 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
 
     sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
 
-    if (cpu._dc) |dc| dc.sh4_jit.invalidate(cpu.utlb[urc].first_address(), cpu.utlb[urc].first_address() + cpu.utlb[urc].size());
+    // NOTE: I'm using the physical address - i.e. the address after translation - as key to the JIT cache, so this is useless. Probably? Right?
+    // if (cpu._dc) |dc| dc.sh4_jit.invalidate(cpu.utlb[urc].first_physical_address(), cpu.utlb[urc].first_physical_address() + cpu.utlb[urc].size());
 }
 
 pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) !void {

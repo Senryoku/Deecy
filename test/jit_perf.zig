@@ -14,7 +14,7 @@ pub const std_options: std.Options = .{
 // Sharing a single file accross module is a pain, easier to just paste that in for now. Keep it in sync.
 pub const SaveStateHeader = extern struct {
     const Signature: [8]u8 = .{ 'D', 'E', 'E', 'C', 'Y', 'S', 'A', 'V' };
-    const Version: u32 = 5;
+    const Version: u32 = 6;
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,

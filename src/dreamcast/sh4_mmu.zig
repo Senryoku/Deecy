@@ -121,7 +121,7 @@ pub const TLBEntry = packed struct {
         return (physical_page & ~mask) | (virtual_address & mask);
     }
 
-    pub inline fn first_address(self: @This()) u32 {
+    pub inline fn first_physical_address(self: @This()) u32 {
         return self.translate(@as(u32, self.vpn) << 10);
     }
 
