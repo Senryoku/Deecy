@@ -1189,7 +1189,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
         .asid = pteh.asid,
         .vpn = pteh.vpn,
 
-        .ppn = ptel.ppn,
+        ._ppn = @as(u32, ptel.ppn) << 10,
         .v = ptel.v,
         .sz = ptel.sz(),
         .pr = ptel.pr,

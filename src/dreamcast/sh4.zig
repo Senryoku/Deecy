@@ -1364,7 +1364,7 @@ pub const SH4 = struct {
                     .pr = entry.pr,
                     .sz1 = @truncate(entry.sz >> 1),
                     .v = entry.v,
-                    .ppn = entry.ppn,
+                    .ppn = entry.get_ppn(),
                 };
                 const r: u32 = @bitCast(val);
                 return switch (T) {
@@ -1521,7 +1521,7 @@ pub const SH4 = struct {
                     self.itlb[entry].sz = val.sz();
                     self.itlb[entry].pr = val.pr;
                     self.itlb[entry].v = val.v;
-                    self.itlb[entry].ppn = val.ppn;
+                    self.itlb[entry].set_ppn(val.ppn);
 
                     if (!std.meta.eql(before, self.itlb[entry]))
                         if (self._dc) |dc| dc.sh4_jit.request_reset();
@@ -1600,7 +1600,7 @@ pub const SH4 = struct {
                     self.utlb[entry].sz = val.sz();
                     self.utlb[entry].pr = val.pr;
                     self.utlb[entry].v = val.v;
-                    self.utlb[entry].ppn = val.ppn;
+                    self.utlb[entry].set_ppn(val.ppn);
 
                     if (!std.meta.eql(before, self.utlb[entry])) {
                         self.invalidate_utlb_fast_lookup(before);

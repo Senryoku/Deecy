@@ -91,7 +91,8 @@ pub const MMU = packed struct {
     mmucr: u32 = 0x00000000, // MMU control register
 };
 
-pub const TLBEntry = packed struct {
+// Memory layout isn't hardware accurate
+pub const TLBEntry = struct {
     asid: u8 = undefined, // Address space identifier
     vpn: u22 = undefined, // Virtual page number
     v: bool = false, // Validity bit
@@ -104,28 +105,40 @@ pub const TLBEntry = packed struct {
     c: bool = undefined, // Cacheability bit
     sh: bool = undefined, // Share status bit, 1 => Shared
     sz: u2 = undefined, // Page size
-    ppn: u19 = undefined, // Physical page number
-    _: u2 = 0,
 
-    pub inline fn valid(self: @This()) bool {
+    _ppn: u32 = undefined, // Physical page number, stored as u19 << 10
+
+    pub fn get_ppn(self: *const @This()) u19 {
+        return @truncate(self._ppn >> 10);
+    }
+
+    pub fn set_ppn(self: *@This(), ppn: u19) void {
+        self._ppn = @as(u32, ppn) << 10;
+    }
+
+    pub inline fn valid(self: *const @This()) bool {
         return self.v;
     }
 
-    pub inline fn match(self: @This(), check_asid: bool, asid: u8, vpn: u22) bool {
+    pub inline fn match(self: *const @This(), check_asid: bool, asid: u8, vpn: u22) bool {
         return self.valid() and (!check_asid or self.sh or self.asid == asid) and vpn_match(self.vpn, vpn, self.sz);
     }
 
-    pub inline fn translate(self: @This(), virtual_address: u32) u32 {
-        const physical_page = @as(u32, @intCast(self.ppn)) << 10;
-        const mask = self.size() - 1;
-        return (physical_page & ~mask) | (virtual_address & mask);
+    pub inline fn translate(self: *const @This(), virtual_address: u32) u32 {
+        const mask: u32 = switch (self.sz) {
+            0b00 => (1 << 10) - 1, // 1-Kbyte page
+            0b01 => (1 << 12) - 1, // 4-Kbyte page
+            0b10 => (1 << 16) - 1, // 64-Kbyte page
+            0b11 => (1 << 20) - 1, // 1-Mbyte page
+        };
+        return (self._ppn & ~mask) | (virtual_address & mask);
     }
 
-    pub inline fn first_physical_address(self: @This()) u32 {
+    pub inline fn first_physical_address(self: *const @This()) u32 {
         return self.translate(@as(u32, self.vpn) << 10);
     }
 
-    pub inline fn size(self: @This()) u32 {
+    pub inline fn size(self: *const @This()) u32 {
         return @as(u32, 1) << switch (self.sz) {
             0b00 => 10, // 1-Kbyte page
             0b01 => 12, // 4-Kbyte page
@@ -134,10 +147,10 @@ pub const TLBEntry = packed struct {
         };
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
-            @as(u32, self.ppn) << 10,
+            self._ppn,
             self.asid,
             self.v,
             self.tc,
