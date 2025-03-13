@@ -1374,7 +1374,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                 const vpn: u22 = @truncate(addr >> 10);
                 for (cpu.utlb) |entry| {
                     if (entry.match(false, 0, vpn)) {
-                        ext_addr = (@as(u32, entry.ppn) << 10) | (addr & 0xFFFE0);
+                        ext_addr = entry._ppn | (addr & 0xFFFE0);
                         break;
                     }
                 }
