@@ -29,9 +29,9 @@ pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them. (Incompatible with EnableUTLBFastLookup)
-const EmulateUTLBMultipleHit = false;
-const EmulateITLB = false;
-const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
+pub const EmulateUTLBMultipleHit = false;
+pub const EmulateITLB = false;
+pub const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
 const FastLookupType = if (EnableUTLBFastLookup) []u8 else void;
 
 pub const SR = packed struct(u32) {

@@ -734,7 +734,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn start_sort_dma(self: *@This()) void {
-        dc_log.info("Start Sort-DMA", .{});
+        dc_log.debug("Start Sort-DMA", .{});
         // NOTE: Uses ch0:DDT
         self.hw_register(u32, .SB_SDST).* = 1;
 
@@ -742,10 +742,10 @@ pub const Dreamcast = struct {
         const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
         const bit_width = self.hw_register(u32, .SB_SDWLT).*;
         const link_address = self.hw_register(u32, .SB_SDLAS).*;
-        dc_log.info("  Start Link Address Table: {X}", .{start_link_address_table});
-        dc_log.info("  Start Link Base Address: {X}", .{start_link_base_address});
-        dc_log.info("  Bit Width: {X}", .{bit_width});
-        dc_log.info("  Link Address: {X}", .{link_address});
+        dc_log.debug("  Start Link Address Table: {X}", .{start_link_address_table});
+        dc_log.debug("  Start Link Base Address: {X}", .{start_link_base_address});
+        dc_log.debug("  Bit Width: {X}", .{bit_width});
+        dc_log.debug("  Link Address: {X}", .{link_address});
 
         const r = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
 
@@ -776,7 +776,7 @@ pub const Dreamcast = struct {
             const offset_address = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
             sb_sddiv += 1;
 
-            dc_log.info("  [{d}] {X}", .{ offset, offset_address });
+            dc_log.debug("  [{d}] {X}", .{ offset, offset_address });
 
             if (offset_address == 1) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfList };
             if (offset_address == 2) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA };
@@ -807,7 +807,7 @@ pub const Dreamcast = struct {
         const current_data_size = self.cpu.read_physical(u32, addr + 0x18);
         const next_link_address = self.cpu.read_physical(u32, addr + 0x1C);
 
-        dc_log.info("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
+        dc_log.debug("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
 
         const block_count = if (current_data_size == 0) 0x100 else current_data_size;
         const bytes = block_count * 8 * 4;

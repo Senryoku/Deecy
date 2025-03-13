@@ -1189,39 +1189,21 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
+            std.debug.assert(cpu._mmu_enabled);
             const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
-                sh4_jit_log.info("MMU miss {s} for {X:0>8}", .{ @errorName(err), virtual_addr });
-                for (cpu.utlb, 0..) |utlb, idx| {
-                    if (utlb.valid())
-                        sh4_jit_log.debug("  [{d}] {any}", .{ idx, utlb });
-                }
-
                 cpu.report_address_exception(virtual_addr);
-                switch (err) {
-                    error.DataTLBMissRead, error.DataTLBMissWrite => {
-                        cpu.jump_to_exception(switch (access_type) {
-                            .Read => .DataTLBMissRead,
-                            .Write => .DataTLBMissWrite,
-                        });
-                        return .{ .address = 0, .exception = 1 };
+                const exception: sh4.Exception = switch (err) {
+                    error.DataTLBMissRead => if (access_type == .Read) .DataTLBMissRead else unreachable,
+                    error.DataTLBMissWrite => if (access_type == .Write) .DataTLBMissWrite else unreachable,
+                    error.InitialPageWrite => if (access_type == .Write) .InitialPageWrite else unreachable,
+                    error.DataTLBProtectionViolation => switch (access_type) {
+                        .Read => .DataTLBProtectionViolationRead,
+                        .Write => .DataTLBProtectionViolationWrite,
                     },
-                    error.InitialPageWrite => {
-                        std.debug.assert(access_type == .Write);
-                        cpu.jump_to_exception(.InitialPageWrite);
-                        return .{ .address = 0, .exception = 2 };
-                    },
-                    error.DataTLBProtectionViolation => {
-                        cpu.jump_to_exception(switch (access_type) {
-                            .Read => .DataTLBProtectionViolationRead,
-                            .Write => .DataTLBProtectionViolationWrite,
-                        });
-                        return .{ .address = 0, .exception = 3 };
-                    },
-                    error.DataTLBMultipleHit => {
-                        cpu.jump_to_exception(.DataTLBMultipleHit);
-                        return .{ .address = 0, .exception = 4 };
-                    },
-                }
+                    error.DataTLBMultipleHit => if (sh4.EmulateUTLBMultipleHit) .DataTLBMultipleHit else unreachable,
+                };
+                cpu.jump_to_exception(exception);
+                return .{ .address = 0, .exception = 1 };
             };
             return .{ .address = physical, .exception = 0 };
         }
