@@ -935,24 +935,31 @@ fn call(block: *IRBlock, ctx: *JITContext, func: *const anyopaque) !void {
 
 /// Helper function to ignore possible exceptions thrown by the interpreter fallback. Returns true if an exception was raised.
 //  (It's complicated to call zig functions with error handling from the JIT, wrapping it in a function that can't return an error makes it way easier).
-fn InterpreterFallback(comptime instr_index: u8) type {
+fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) type {
     const entry = sh4.instructions.Opcodes[instr_index];
-    return struct {
-        pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
-            entry.fn_(cpu, instr) catch |err| {
-                sh4_jit_log.warn("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
-                //std.debug.panic("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
-                switch (err) {
-                    error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
-                    error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
-                    error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
-                    else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
-                }
-                return 1;
-            };
-            return 0;
-        }
-    };
+    if (mmu_enabled) {
+        return struct {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
+                entry.fn_(cpu, instr) catch |err| {
+                    sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
+                    switch (err) {
+                        error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
+                        error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
+                        error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
+                        else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
+                    }
+                    return 1;
+                };
+                return 0;
+            }
+        };
+    } else {
+        return struct {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) void {
+                entry.fn_(cpu, instr) catch unreachable;
+            }
+        };
+    }
 }
 
 inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !void {
@@ -982,7 +989,14 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         const instr_index = sh4.instructions.JumpTable[instr.value];
         switch (instr_index) {
             sh4.instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
-            inline else => |idx| try call(block, ctx, InterpreterFallback(idx).handler),
+            inline else => |idx| try call(
+                block,
+                ctx,
+                if (ctx.mmu_enabled)
+                    InterpreterFallback(true, idx).handler
+                else
+                    InterpreterFallback(false, idx).handler,
+            ),
         }
 
         if (ctx.mmu_enabled) {
