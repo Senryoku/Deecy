@@ -257,8 +257,19 @@ const StorageFunctionDefinition = packed struct(u32) {
 const ScreenFunctionDefinition = packed struct(u32) {
     pt: u8, // Number of LCD - 1
     bb: u8, // (Number of bytes during Block transmission - 1) / 32
-    wa: u8, // Number of accesses to Block Write
-    hv: u8, // Specifies whether the LCD data rows are horizontal or vertical. 0/1 = Horizontal, 2/3 = Vertical
+    _: u4 = 0,
+    wa: u4, // Number of accesses to Block Write
+    _fd: u5 = 0, // Reserved,
+    bw: enum(u1) {
+        NormallyWhite = 0, // LCD Data = '0' is White and LCD Data = '1' is Black
+        NormallyBlack = 1, // LCD Data = '1' is White and LCD Data = '0' is Black
+    },
+    hv: enum(u2) {
+        Horizontal1 = 0,
+        Horizontal2 = 1,
+        Vertical1 = 2,
+        Vertical2 = 3,
+    },
 };
 
 const FATValue = enum(u16) {
@@ -272,7 +283,7 @@ pub const VMU = struct {
     const BlockSize: u32 = 512;
     const BlockCount = 256;
     const ReadAccessPerBlock = 1;
-    const WriteAccessPerBlock = 1;
+    const WriteAccessPerBlock = 4;
     const FATBlock = 0x00FE;
     const SystemBlock = BlockCount - 1;
 
@@ -282,8 +293,8 @@ pub const VMU = struct {
         .timer = 1,
     };
     const Subcapabilities: [3]u32 = .{
-        @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)),
-        @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // One of these is ScreenFunctionDefinition
+        @bitCast(@as(u32, 0b01000000_00111111_01111110_01111110)), // Timer Function
+        @bitCast(@as(u32, 0b00000000_00010000_00000101_00000000)), // ScreenFunctionDefinition
         @bitCast(StorageFunctionDefinition{
             .crc = 0,
             .rm = 0,
@@ -475,7 +486,7 @@ pub const VMU = struct {
     pub fn block_read(self: *const @This(), dest: [*]u8, function: u32, partition: u8, block_num: u16, phase: u8) u8 {
         std.debug.assert(partition == 0);
         switch (function) {
-            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
+            FunctionCodesMask.Storage.as_u32() => {
                 if (block_num >= BlockCount)
                     maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
                 const len = BlockSize / ReadAccessPerBlock;
@@ -491,7 +502,7 @@ pub const VMU = struct {
     /// Returns payload size in 32-bit words
     pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         switch (function) {
-            (FunctionCodesMask{ .screen = 1 }).as_u32() => {
+            FunctionCodesMask.Screen.as_u32() => {
                 //  - Partition is the screen number, should always be zero.
                 //  - Phase is used if a frame doesn't fit in one message.
                 //  - Block number specify the plane.
@@ -502,11 +513,11 @@ pub const VMU = struct {
                 }
                 return 48 * 32 / 8 / 4;
             },
-            (FunctionCodesMask{ .storage = 1 }).as_u32() => {
+            FunctionCodesMask.Storage.as_u32() => {
                 maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data length: {d} bytes)"), .{ partition, block_num, phase, data.len * 4 });
 
-                const start = phase * (BlockSize / 4);
-                const size = @min(BlockSize - start, data.len * 4);
+                const start = phase * (BlockSize / WriteAccessPerBlock);
+                const size = @min(BlockSize / WriteAccessPerBlock, data.len * 4);
                 @memcpy(self.blocks[block_num][start .. start + size], std.mem.sliceAsBytes(data)[0..size]);
 
                 self.last_unsaved_change = std.time.timestamp();
