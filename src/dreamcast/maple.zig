@@ -457,11 +457,11 @@ pub const VMU = struct {
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
             FunctionCodesMask.Screen.as_u32() => {
-                const value: packed struct { x_dots: u8, y_dots: u8, gradation: u4, contrast: u4, reserved: u8 = 0 } = .{
+                const value: packed struct { x_dots: u8, y_dots: u8, contrast: u4, gradation: u4, reserved: u8 = 0 } = .{
                     .x_dots = 48 - 1,
                     .y_dots = 32 - 1,
-                    .gradation = 1,
                     .contrast = 0,
+                    .gradation = 1,
                 };
                 @memcpy(dest[0..4], std.mem.asBytes(&value));
                 return 1;
