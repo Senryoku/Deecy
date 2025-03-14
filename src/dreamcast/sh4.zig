@@ -25,7 +25,6 @@ pub const Exception = @import("sh4_exceptions.zig").Exception;
 
 pub const instructions = @import("sh4_instructions.zig");
 pub const disassembly = @import("sh4_disassembly.zig");
-pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 pub const ExperimentalFullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them. (Incompatible with EnableUTLBFastLookup)
@@ -812,59 +811,6 @@ pub const SH4 = struct {
 
     pub inline fn add_cycles(self: *@This(), cycles: u32) void {
         self._pending_cycles += cycles;
-    }
-
-    pub fn execute(self: *@This(), max_instructions: u8) u32 {
-        self.handle_interrupts();
-
-        if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
-            for (0..max_instructions) |_| {
-                self._execute(self.pc);
-                self.pc +%= 2;
-            }
-
-            const cycles = self._pending_cycles;
-            self._pending_cycles = 0;
-            return cycles;
-        } else {
-            return 8;
-        }
-    }
-
-    pub fn _execute(self: *@This(), virtual_addr: u32) void {
-        const opcode = if (comptime !builtin.is_test) oc: {
-            const physical_addr = self.translate_intruction_address(virtual_addr);
-            if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
-                std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
-            // Guiding the compiler a bit. Yes, that helps a lot :)
-            // Instruction should be in Boot ROM, or RAM.
-            std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
-            break :oc @call(.always_inline, @This().read_physical, .{ self, u16, physical_addr });
-        } else self.read_physical(u16, virtual_addr);
-
-        if (interpreter_handlers.Enable) {
-            interpreter_handlers.InstructionHandlers[opcode](self);
-        } else {
-            const instr = Instr{ .value = opcode };
-            const desc = instructions.Opcodes[instructions.JumpTable[opcode]];
-
-            if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-                std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
-
-            desc.fn_(self, instr) catch |err| {
-                switch (err) {
-                    error.DataTLBMissRead => self.jump_to_exception(.DataAddressErrorRead),
-                    error.DataTLBMissWrite => self.jump_to_exception(.DataAddressErrorWrite),
-                    else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
-                }
-                self.pc -%= 2; // Compensate for the automatic increment that will follow in execute.
-            };
-
-            if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
-                std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ virtual_addr, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
-
-            self.add_cycles(desc.issue_cycles);
-        }
     }
 
     pub fn store_queue_write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) void {

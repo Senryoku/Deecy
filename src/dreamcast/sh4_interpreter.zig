@@ -9,6 +9,7 @@ const Instr = sh4.Instr;
 const sh4_log = sh4.sh4_log;
 
 const sh4_instructions = @import("sh4_instructions.zig");
+pub const interpreter_handlers = @import("sh4_interpreter_handlers.zig");
 
 const syscall = @import("syscall.zig");
 
@@ -23,6 +24,66 @@ const Experimental = struct {
     // https://godbolt.org/#g:!((g:!((g:!((h:codeEditor,i:(filename:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,selection:(endColumn:2,endLineNumber:13,positionColumn:2,positionLineNumber:13,selectionStartColumn:2,selectionStartLineNumber:13,startColumn:2,startLineNumber:13),source:'const+std+%3D+@import(%22std%22)%3B%0A%0Aexport+fn+fpir_fma(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++var+tmp:+f32+%3D+FVn%5B0%5D+*+FVm%5B0%5D%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B1%5D,+FVm%5B1%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B2%5D,+FVm%5B2%5D,+tmp)%3B%0A++++tmp+%3D+@mulAdd(f32,+FVn%5B3%5D,+FVm%5B3%5D,+tmp)%3B%0A++++return+tmp%3B%0A%7D%0A%0Aexport+fn+fpir_reduce(FVn:+@Vector(4,+f32),+FVm:+@Vector(4,+f32))+f32+%7B%0A++++return+@reduce(.Add,+FVn+*+FVm)%3B%0A%7D'),l:'5',n:'1',o:'Zig+source+%231',t:'0')),header:(),k:50,l:'4',m:100,n:'0',o:'',s:0,t:'0'),(g:!((g:!((h:compiler,i:(compiler:ztrunk,filters:(b:'0',binary:'1',binaryObject:'1',commentOnly:'0',debugCalls:'1',demangle:'0',directives:'0',execute:'1',intel:'0',libraryCode:'0',trim:'1',verboseDemangling:'0'),flagsViewOpen:'1',fontScale:14,fontUsePx:'0',j:1,lang:zig,libs:!(),options:'-OReleaseSafe',overrides:!(),selection:(endColumn:1,endLineNumber:1,positionColumn:1,positionLineNumber:1,selectionStartColumn:1,selectionStartLineNumber:1,startColumn:1,startLineNumber:1),source:1),l:'5',n:'0',o:'+zig+trunk+(Editor+%231)',t:'0')),header:(),k:50,l:'4',m:87.26851851851852,n:'0',o:'',s:0,t:'0'),(g:!((h:output,i:(compilerName:'zig+trunk',editorid:1,fontScale:14,fontUsePx:'0',j:1,wrap:'1'),l:'5',n:'0',o:'Output+of+zig+trunk+(Compiler+%231)',t:'0')),l:'4',m:12.731481481481477,n:'0',o:'',s:0,t:'0')),k:50,l:'3',n:'0',o:'',t:'0')),l:'2',n:'0',o:'',t:'0')),version:4
     const fpir: enum { FMA, Reduce } = .FMA;
 };
+
+pub fn execute(self: *SH4, max_instructions: u8) u32 {
+    self.handle_interrupts();
+
+    if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
+        for (0..max_instructions) |_| {
+            fetch_and_execute(self, self.pc);
+            self.pc +%= 2;
+        }
+
+        const cycles = self._pending_cycles;
+        self._pending_cycles = 0;
+        return cycles;
+    } else {
+        return 8;
+    }
+}
+
+fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
+    const opcode = fetch_instruction(self, virtual_addr);
+    _execute(self, opcode);
+}
+
+fn fetch_instruction(self: *SH4, virtual_addr: u32) u16 {
+    return if (comptime !builtin.is_test) oc: {
+        const physical_addr = self.translate_intruction_address(virtual_addr);
+        if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
+            std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
+        // Guiding the compiler a bit. Yes, that helps a lot :)
+        // Instruction should be in Boot ROM, or RAM.
+        std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
+        break :oc @call(.always_inline, SH4.read_physical, .{ self, u16, physical_addr });
+    } else self.read_physical(u16, virtual_addr);
+}
+
+fn _execute(self: *SH4, opcode: u16) void {
+    if (interpreter_handlers.Enable) {
+        interpreter_handlers.InstructionHandlers[opcode](self);
+    } else {
+        const instr = Instr{ .value = opcode };
+        const desc = sh4_instructions.Opcodes[sh4_instructions.JumpTable[opcode]];
+
+        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+            std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, sh4.disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+
+        desc.fn_(self, instr) catch |err| {
+            switch (err) {
+                error.DataTLBMissRead => self.jump_to_exception(.DataAddressErrorRead),
+                error.DataTLBMissWrite => self.jump_to_exception(.DataAddressErrorWrite),
+                else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
+            }
+            self.pc -%= 2; // Compensate for the automatic increment that will follow in execute.
+        };
+
+        if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
+            std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
+
+        self.add_cycles(desc.issue_cycles);
+    }
+}
 
 pub fn unknown(cpu: *SH4, opcode: Instr) !void {
     std.debug.print("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
@@ -1027,7 +1088,7 @@ inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
     // Set PC to the instruction that triggered the delay slot in case an exception is raised inside the delay slot.
     const current_pc = cpu.pc;
     cpu.pc = addr - 2;
-    cpu._execute(addr);
+    fetch_and_execute(cpu, addr);
     // Restore PC, unless an exception occured and PC was overwritten.
     if (cpu.pc == addr - 2)
         cpu.pc = current_pc;
@@ -1315,7 +1376,7 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) !void {
         const index = (addr / 32) & 255;
         sh4_log.debug("  ocbwb {X:0>8}, index={X:0>2}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
         if (cpu._operand_cache_state.addr[index] != ((addr & 0x1FFF_FFFF) & ~@as(u32, 31)))
-            sh4_log.warn("  (ocbwb_atRn) Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}\n", .{ cpu._operand_cache_state.addr[index], (addr & 0x1FFF_FFFF) & ~@as(u32, 31) });
+            sh4_log.warn("  (ocbwb_atRn) Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}", .{ cpu._operand_cache_state.addr[index], (addr & 0x1FFF_FFFF) & ~@as(u32, 31) });
         if (cpu._operand_cache_state.dirty[index]) {
             const target = cpu._operand_cache_state.addr[index] & 0x1FFF_FFFF;
             if (cpu._dc) |dc| {
@@ -1432,17 +1493,14 @@ pub fn rte(cpu: *SH4, _: Instr) !void {
     // delay slot instruction execution. The STC and STC.L SR instructions access all SR bits after
     // modification.
 
-    // NOTE: This is how reicast handles it, and thus helps us passing some sh4 unit tests.
-    // However I'm not sure this is the **correct** way to do it!
-    const old_sr = cpu.sr;
-    cpu.sr = @bitCast(cpu.ssr); // Intended! Update SR without triggering side effects like bank swithing.
-
-    execute_delay_slot(cpu, delay_slot);
-
-    cpu.sr = @bitCast(old_sr); // Intended!
-    cpu.set_sr(@bitCast(cpu.ssr)); // Actually bank change.
-
+    // execute_delay_slot, adapted for rte
+    const opcode = fetch_instruction(cpu, delay_slot);
+    cpu.set_sr(@bitCast(cpu.ssr));
     cpu.pc = spc;
+    _execute(cpu, opcode);
+    if (cpu.pc != spc)
+        std.debug.panic("Exception raised in RTE delay slot at PC={X:0>8}", .{cpu.pc});
+
     cpu.pc -%= 2; // Execute will add 2
 }
 

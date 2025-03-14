@@ -7,6 +7,7 @@ const dc_log = std.log.scoped(.dc);
 
 pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
+pub const SH4Interpreter = @import("sh4_interpreter.zig");
 pub const SH4JITModule = @import("jit/sh4_jit.zig");
 pub const HollyModule = @import("holly.zig");
 pub const AICAModule = @import("aica.zig");
@@ -486,7 +487,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn tick(self: *@This(), max_instructions: u8) !u32 {
-        const cycles = self.cpu.execute(max_instructions);
+        const cycles = SH4Interpreter.execute(&self.cpu, max_instructions);
         try self.tick_peripherals(cycles);
         return cycles;
     }
