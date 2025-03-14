@@ -630,6 +630,12 @@ pub const SH4JIT = struct {
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
         var ctx = start_ctx;
 
+        // When the MMU is enabled, crossing a page boundary might raise a exception.
+        // It's easier to just bail in this case.
+        // 1KB is the smallest page size, but I haven't seen it used in practice, this could
+        // probably be increased to 4KB (or use the actual size of the current page).
+        const next_page_boundary = std.mem.alignForward(u32, start_ctx.start_pc + 2, 1024);
+
         var b = &self._working_block;
 
         b.clearRetainingCapacity();
@@ -686,6 +692,8 @@ pub const SH4JIT = struct {
             ctx.current_physical_pc += 2;
 
             if (branch or ctx.cycles >= MaxCyclesPerBlock)
+                break;
+            if (ctx.mmu_enabled and ctx.current_pc >= next_page_boundary)
                 break;
         }
 
@@ -2915,8 +2923,13 @@ fn set_sr(block: *IRBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
 }
 
 pub fn rte(block: *IRBlock, ctx: *JITContext, _: sh4.Instr) !bool {
-    // NOTE: This differs from the interpreter behavior, but I'm nut sure which one is actually correct, and
-    //       the other one is harder to implement in JIT.
+    // NOTE:
+    // In an RTE delay slot, status register (SR) bits are referenced as follows. In instruction access, the
+    // MD bit is used before modification, and in data access, the MD bit is accessed after
+    // modification. The other bits - S, T, M, Q, FD, BL, and RB - after modification are used for
+    // delay slot instruction execution. The STC and STC.L SR instructions access all SR bits after
+    // modification.
+
     try set_sr(block, ctx, sh4_mem("ssr"));
     // pc = spc
     try block.mov(.{ .reg = ReturnRegister }, sh4_mem("spc"));
