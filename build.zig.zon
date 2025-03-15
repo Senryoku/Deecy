@@ -1,7 +1,8 @@
 .{
-    .name = "Deecy",
+    .name = .Deecy,
+    .fingerprint = 0x4ebcf692dadde066,
     .version = "0.4.1",
-    .minimum_zig_version = "0.14.0-dev.2577+271452d22",
+    .minimum_zig_version = "0.14.0",
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
@@ -57,8 +58,8 @@
             .hash = "1220ae4b69a35ab4ff66f158580785796c9ee200ee7c0920accd303141f75e5d0710",
         },
         .@"zig-lz4" = .{
-            .url = "https://github.com/SnorlaxAssist/zig-lz4/archive/dc9fd78b30c9c8155b613fcd1499f4a7b888cda4.tar.gz",
-            .hash = "1220afb45edd635ec8f7ba098379df10c682bfed886bf1239c8f83bf0fc963ac273b",
+            .url = "https://github.com/Senryoku/zig-lz4/archive/13dbe791ed06dca142e164b626eca91a466ee248.tar.gz",
+            .hash = "ziglz4-0.1.1-AAAAAPhcAACOYR6mnlQdCzCbbokCaMFBXALA8bmenbJb",
         },
     },
 }
