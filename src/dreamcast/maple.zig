@@ -21,6 +21,10 @@ const Instruction = packed struct(u32) {
     port_select: u2,
     _z1: u13 = 0,
     end_flag: u1,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("MapleInstruction{{ transfer_length: {X}, pattern: {s}, port_select: {X}, end_flag: {X} }}", .{ self.transfer_length, @tagName(self.pattern), self.port_select, self.end_flag });
+    }
 };
 
 // Structure of a transfer:
@@ -58,6 +62,10 @@ const CommandWord = packed struct(u32) {
     recipent_address: u8,
     sender_address: u8,
     payload_length: u8, // In 32-bit words.
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        try writer.print("{s}{{ recipent: {X}, sender: {X}, payload_length: {X} }}", .{ @tagName(self.command), self.recipent_address, self.sender_address, self.payload_length });
+    }
 };
 
 pub const InputCapabilities = packed struct(u32) {
@@ -121,7 +129,7 @@ const FunctionCodesMask = packed struct(u32) {
                 if (@field(self, field.name) == 1) try writer.writeAll(field.name);
             }
         } else {
-            try writer.print("FunctionCodesMask{X}", .{self.as_u32()});
+            try writer.print("{X}", .{self.as_u32()});
         }
     }
 };
@@ -181,15 +189,33 @@ const StandardControllerCapabilities: InputCapabilities = .{
     .analogVertical = 1,
 };
 
+const DualStickControllerCapabilities: InputCapabilities = .{
+    .b = 1,
+    .a = 1,
+    .start = 1,
+    .up = 1,
+    .down = 1,
+    .left = 1,
+    .right = 1,
+    .y = 1,
+    .x = 1,
+    .analogRtrigger = 1,
+    .analogLtrigger = 1,
+    .analogHorizontal = 1,
+    .analogVertical = 1,
+    .analogHorizontal2 = 1,
+    .analogVertical2 = 1,
+};
+
 pub const Controller = struct {
     pub const Capabilities: FunctionCodesMask = .{ .controller = 1 };
-    pub const Subcapabilities: [3]u32 = .{ @bitCast(StandardControllerCapabilities), 0, 0 };
+    pub const Subcapabilities: [3]u32 = .{ @bitCast(DualStickControllerCapabilities), 0, 0 };
 
     const Identity: DeviceInfoPayload = .{
         .FunctionCodesMask = Capabilities,
         .SubFunctionCodesMasks = Subcapabilities,
-        .DescriptionString = "Dreamcast Controller          \u{0}".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
-        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.    \u{0}".*,
+        .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
         .StandbyConsumption = 0x01AE,
         .MaximumConsumption = 0x01F4,
     };
@@ -240,7 +266,7 @@ const GetMediaInformationResponse = packed struct {
 
     save_area_block_number: u16,
     number_of_save_area_blocks: u16,
-    _reserved_for_execution_file: u32 = 0,
+    _reserved_for_execution_file: u32 = 0x80000000,
     _reserved2: u16 = 0,
 };
 
@@ -468,7 +494,7 @@ pub const VMU = struct {
                 return @sizeOf(GetMediaInformationResponse) / 4;
             },
             FunctionCodesMask.Screen.as_u32() => {
-                const value: packed struct { x_dots: u8, y_dots: u8, contrast: u4, gradation: u4, reserved: u8 = 0 } = .{
+                const value: packed struct { x_dots: u8, y_dots: u8, contrast: u4, gradation: u4, reserved: u8 = 2 } = .{
                     .x_dots = 48 - 1,
                     .y_dots = 32 - 1,
                     .contrast = 0,
@@ -588,7 +614,7 @@ const MaplePort = struct {
         std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = data[2];
-        maple_log.debug("  Dest: {X:0>8}, Command: {any}, FunctionType: {X:0>8}", .{ return_addr, command, function_type });
+        maple_log.debug("  Dest: {X:0>8}, Command: {any}, Function: {any}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
 
         // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
         // "When a main peripheral identifies itself in the response to a command, it sets the sub-peripheral bit for each sub-peripheral that is connected in addition to bit 5."
@@ -785,7 +811,7 @@ pub const MapleHost = struct {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            maple_log.debug("    Instruction: {any}", .{instr});
+            maple_log.debug("{any}", .{instr});
 
             switch (instr.pattern) {
                 .Normal => {

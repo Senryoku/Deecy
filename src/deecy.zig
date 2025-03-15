@@ -613,6 +613,8 @@ pub fn poll_controllers(self: *@This()) void {
                     c.axis[1] = 0;
                     c.axis[2] = 128;
                     c.axis[3] = 128;
+                    c.axis[4] = 128;
+                    c.axis[5] = 128;
 
                     // NOTE: Hackish keyboard input for controller 1.
                     var any_keyboard_key_pressed = false;
@@ -673,17 +675,22 @@ pub fn poll_controllers(self: *@This()) void {
                                     c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)], 0.0, 1.0) * 255));
                                     c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)], 0.0, 1.0) * 255));
 
-                                    var x_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_x)];
-                                    var y_axis = gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_y)];
-                                    if (@abs(x_axis) < host_controller.deadzone)
-                                        x_axis = 0.0;
-                                    if (@abs(y_axis) < host_controller.deadzone)
-                                        y_axis = 0.0;
-                                    // TODO: Remap with deadzone?
-                                    x_axis = x_axis * 0.5 + 0.5;
-                                    y_axis = y_axis * 0.5 + 0.5;
-                                    c.axis[2] = @as(u8, @intFromFloat(std.math.ceil(x_axis * 255)));
-                                    c.axis[3] = @as(u8, @intFromFloat(std.math.ceil(y_axis * 255)));
+                                    const capabilities: DreamcastModule.Maple.InputCapabilities = @bitCast(DreamcastModule.Maple.Controller.Subcapabilities[0]);
+                                    inline for ([_]struct { host: zglfw.Gamepad.Axis, guest: u8 }{
+                                        .{ .host = .left_x, .guest = 2 },
+                                        .{ .host = .left_y, .guest = 3 },
+                                        .{ .host = .right_x, .guest = 4 },
+                                        .{ .host = .right_y, .guest = 5 },
+                                    }, 0..) |binding, idx| {
+                                        if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) == 0) continue;
+
+                                        var value = gamepad_state.axes[@intFromEnum(binding.host)];
+                                        if (@abs(value) < host_controller.deadzone)
+                                            value = 0.0;
+                                        // TODO: Remap with deadzone?
+                                        value = value * 0.5 + 0.5;
+                                        c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                    }
                                 }
                             } else {
                                 // Not valid anymore? Disconnected?
