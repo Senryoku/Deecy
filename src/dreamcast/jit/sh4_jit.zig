@@ -58,7 +58,7 @@ const BlockCache = struct {
     // 0x02000000 possible addresses (0x0100_0000 for RAM and... 0x0100_0000 for boot), but 16bit aligned, multiplied by permutations of (sz, pr)
     const BlockEntryCount = (0x0200_0000 >> 1) << 2;
 
-    buffer: []align(std.mem.page_size) u8,
+    buffer: []align(std.heap.page_size_min) u8,
     cursor: usize = 0,
     blocks: []BasicBlock = undefined,
 

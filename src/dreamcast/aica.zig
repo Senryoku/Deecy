@@ -537,7 +537,7 @@ pub const AICA = struct {
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.
 
-    channel_states: [64]AICAChannelState = .{.{}} ** 64,
+    channel_states: [64]AICAChannelState = .{AICAChannelState{}} ** 64,
 
     sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
     sample_read_offset: usize = 0,

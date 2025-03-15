@@ -40,7 +40,7 @@ const DebugAlwaysFallbackToInterpreter = false;
 const BlockCache = struct {
     const BlockEntryCount = 0x200000 >> 2;
 
-    buffer: []align(std.mem.page_size) u8,
+    buffer: []align(std.heap.page_size_min) u8,
     cursor: usize = 0,
     blocks: []BasicBlock = undefined,
 

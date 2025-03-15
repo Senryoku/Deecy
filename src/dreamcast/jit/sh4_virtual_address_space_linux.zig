@@ -5,10 +5,10 @@ const Dreamcast = @import("../dreamcast.zig").Dreamcast;
 const Architecture = @import("x86_64.zig");
 const VAS = @import("sh4_virtual_address_space.zig");
 
-var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?[]align(std.mem.page_size) u8 = null;
+var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?[]align(std.heap.page_size_min) u8 = null;
 
-base: []align(std.mem.page_size) u8,
-mirrors: std.ArrayList([]align(std.mem.page_size) u8),
+base: []align(std.heap.page_size_min) u8,
+mirrors: std.ArrayList([]align(std.heap.page_size_min) u8),
 boot: std.posix.fd_t,
 ram: std.posix.fd_t,
 vram: std.posix.fd_t,
@@ -77,7 +77,7 @@ fn allocate_backing_memory(name: []const u8, size: u64) !std.posix.fd_t {
 }
 
 fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
-    std.debug.assert(offset % std.mem.page_size == 0);
+    std.debug.assert(offset % std.heap.page_size_min == 0);
     const result = try std.posix.mmap(
         @alignCast(@ptrCast(self.base[offset .. offset + size])),
         size,
