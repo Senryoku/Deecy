@@ -62,7 +62,7 @@ _memory: []u8,
 _ring_buffer: *const AICAModule.RingBufferAddress,
 
 _dirty_mpro: bool = true,
-_jit_buffer: ?[]align(std.mem.page_size) u8 = null,
+_jit_buffer: ?[]align(std.heap.page_size_min) u8 = null,
 _allocator: std.mem.Allocator,
 
 pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8, allocator: std.mem.Allocator) @This() {
