@@ -1581,7 +1581,7 @@ pub const SH4 = struct {
                                 sh4_log.debug("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
                                 const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
                                 if (val.ti) {
-                                    mmu_log.info("TLB Invalidation", .{});
+                                    mmu_log.debug("TLB Invalidation", .{});
                                     // Invalidate all TLB entries
                                     for (self.itlb) |*entry|
                                         entry.v = false;

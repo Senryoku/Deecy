@@ -32,6 +32,8 @@ const windows = @import("../host/windows.zig");
 const BlockBufferSize = 16 * 1024 * 1024;
 const MaxCyclesPerBlock = 32;
 pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
+const MMUDataProtectedCheck = false; // Check for access to protected memory (>= 0x80000000) in user mode.
+const MMUDataAlignmentCheck = false; // Check for unaligned memory access.
 
 // Enable or Disable some optimizations
 const Optimizations = .{
@@ -587,7 +589,7 @@ pub const SH4JIT = struct {
         if (!Optimizations.allow_immediate_reset and self._reset_requested) {
             @branchHint(.cold);
             self._reset_requested = false;
-            sh4_jit_log.warn("Executing requested reset.", .{});
+            sh4_jit_log.debug("Executing requested reset.", .{});
             try self.reset();
         }
 
@@ -1220,9 +1222,10 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
             std.debug.assert(cpu._mmu_enabled);
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
-            const unauthorized = (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
+            const unauthorized = MMUDataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
             // Alignment check
-            if (virtual_addr & (access_size / 8 - 1) != 0 or unauthorized) {
+            const unaligned = MMUDataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
+            if (unaligned or unauthorized) {
                 @branchHint(.unlikely);
                 sh4_jit_log.warn("DataAddressError: {s}({d}) Addr={X:0>8}, SR.MD={d}", .{ @tagName(access_type), access_size, virtual_addr, cpu.sr.md });
                 cpu.report_address_exception(virtual_addr);
@@ -1785,11 +1788,11 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 }
 
 fn fpu_disabled_exception(cpu: *sh4.SH4) void {
-    std.debug.print("GeneralFPUDisable: {X:0>8}\n", .{cpu.pc});
+    sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}\n", .{cpu.pc});
     cpu.jump_to_exception(.GeneralFPUDisable);
 }
 fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
-    std.debug.print("SlotFPUDisable: {X:0>8}\n", .{cpu.pc});
+    sh4_jit_log.debug("SlotFPUDisable: {X:0>8}\n", .{cpu.pc});
     cpu.jump_to_exception(.SlotFPUDisable);
 }
 

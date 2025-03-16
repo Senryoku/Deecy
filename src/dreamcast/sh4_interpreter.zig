@@ -1415,12 +1415,12 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
 
             if (sh4.ExperimentalFullMMUSupport) {
                 if (addr & 3 != 0 or (cpu.sr.md == 0 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 1)) {
-                    sh4_log.warn("DataAddressErrorRead exception in pref instruction: {X:0>8}", .{addr});
+                    sh4_log.debug("DataAddressErrorRead exception in pref instruction: {X:0>8}", .{addr});
                     return error.DataAddressErrorRead;
                 }
 
                 const entry = cpu.utlb_lookup(addr) catch |err| {
-                    sh4_log.warn("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
+                    sh4_log.debug("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
                     cpu.report_address_exception(addr);
                     return switch (err) {
                         error.TLBMiss => return error.DataTLBMissRead, // This is a bit weird, but the manual explicitly states that this is treated as a read access (20.3.1).

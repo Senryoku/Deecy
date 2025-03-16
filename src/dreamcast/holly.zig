@@ -1576,7 +1576,7 @@ pub const Holly = struct {
         // FIXME: This probably shouldn't be here.
         if (self._dc.read_hw_register(u32, .SB_MDEN) & 1 == 1 and self._dc.read_hw_register(u32, .SB_MDTSEL) & 1 == 1) {
             // NOTE: Registers SB_MSYS and SB_MSHTCL control some behaviours here and aren't emulated.
-            holly_log.warn("Maple DMA triggered over VBlankOut.", .{});
+            holly_log.info("Maple DMA triggered over VBlankOut.", .{});
             self._dc.start_maple_dma();
         }
         self._dc.raise_normal_interrupt(.{ .VBlankOut = 1 });
