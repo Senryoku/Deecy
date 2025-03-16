@@ -264,6 +264,8 @@ fn RegisterCache(comptime reg_type: type, comptime entries: u8) type {
                 try reg.commit(block);
         }
 
+        /// Commit without clearing the dirty bit. Allows it to be called in a branch for an early exit without
+        /// disturbing the normal flow of execution.
         pub fn commit_all_speculatively(self: *@This(), block: *IRBlock) !void {
             for (&self.entries) |*reg|
                 try reg.commit_speculatively(block);
@@ -686,6 +688,11 @@ pub const SH4JIT = struct {
                     if (op.use_fallback()) "!" else " ",
                     sh4.disassembly.disassemble(@bitCast(instr), self._allocator),
                 });
+            if (op.privileged and ctx.cpu.sr.md == 0)
+                sh4_jit_log.warn(termcolor.yellow("[{X:0>8}] Privileged instruction in User mode: {s}"), .{
+                    ctx.current_pc,
+                    sh4.disassembly.disassemble(@bitCast(instr), self._allocator),
+                });
             branch = try op.jit_emit_fn(b, &ctx, @bitCast(instr));
 
             ctx.cycles += op.issue_cycles;
@@ -976,7 +983,8 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
     const instr_index = sh4.instructions.JumpTable[instr.value];
 
     const entry = sh4.instructions.Opcodes[instr_index];
-    if (@as(u16, @bitCast(instr)) & 0xF000 == 0xF000 and entry.jit_emit_fn == interpreter_fallback_cached) {
+    // Is it an FPU instruction which doesn't have a JIT handler?
+    if (@as(u16, @bitCast(instr)) & 0xF000 == 0xF000 and entry.use_fallback()) {
         try check_fd_bit(block, ctx);
     }
 
@@ -2261,6 +2269,13 @@ pub fn lds_rn_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn sts_FPSCR_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
+    try store_register(block, ctx, instr.nmd.n, sh4_mem("fpscr"));
+    return false;
+}
+
 pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
@@ -2332,6 +2347,8 @@ pub fn stsl_FPUL_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !b
 }
 
 pub fn fschg(block: *IRBlock, ctx: *JITContext, _: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try block.append(.{
         .Xor = .{
             .dst = sh4_mem("fpscr"),

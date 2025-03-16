@@ -334,8 +334,8 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b1111000010111101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvds_DRn_FPUL, .name = "fcnvds DRn,FPUL", .latency_cycles = 4, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000010101101, .mask = 0b0000111000000000, .fn_ = interpreter.fcnvsd_FPUL_DRn, .name = "fcnvsd FPUL,DRn", .latency_cycles = 3, .access = .{ .r = .{}, .w = .{} } },
 
-    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .latency_cycles = 4, .jit_emit_fn = sh4_jit.lds_rn_FPSCR, .access = .{ .r = .Rn, .w = .{} } },
-    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .latency_cycles = 3, .access = .{ .r = .{}, .w = .Rn } },
+    .{ .code = 0b0100000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPSCR, .name = "lds Rn,FPSCR", .jit_emit_fn = sh4_jit.lds_rn_FPSCR, .latency_cycles = 4, .access = .{ .r = .Rn, .w = .{} } },
+    .{ .code = 0b0000000001101010, .mask = 0b0000111100000000, .fn_ = interpreter.sts_FPSCR_Rn, .name = "sts FPSCR,Rn", .jit_emit_fn = sh4_jit.sts_FPSCR_Rn, .latency_cycles = 3, .access = .{ .r = .{}, .w = .Rn } },
     .{ .code = 0b0100000001100110, .mask = 0b0000111100000000, .fn_ = interpreter.ldsl_atRnInc_FPSCR, .name = "lds.l @Rn+,FPSCR", .latency_cycles = 3, .jit_emit_fn = sh4_jit.ldsl_atRnInc_FPSCR, .access = .{ .r = .Rn, .w = .Rn } },
     .{ .code = 0b0100000001100010, .mask = 0b0000111100000000, .fn_ = interpreter.stsl_FPSCR_atDecRn, .name = "sts.l FPSCR,@-Rn", .jit_emit_fn = sh4_jit.stsl_FPSCR_atDecRn, .access = .{ .r = .Rn, .w = .Rn } },
     .{ .code = 0b0100000001011010, .mask = 0b0000111100000000, .fn_ = interpreter.lds_Rn_FPUL, .name = "lds Rn,FPUL", .jit_emit_fn = sh4_jit.lds_Rn_FPUL, .access = .{ .r = .Rn, .w = .{} } },
