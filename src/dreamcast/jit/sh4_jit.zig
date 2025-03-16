@@ -1202,10 +1202,25 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 }
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
-fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
+fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
             std.debug.assert(cpu._mmu_enabled);
+
+            // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
+            const unauthorized = (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
+            // Alignment check
+            if (virtual_addr & (access_size / 8 - 1) != 0 or unauthorized) {
+                @branchHint(.unlikely);
+                sh4_jit_log.warn("DataAddressError: {s}({d}) Addr={X:0>8}, SR.MD={d}", .{ @tagName(access_type), access_size, virtual_addr, cpu.sr.md });
+                cpu.report_address_exception(virtual_addr);
+                cpu.jump_to_exception(switch (access_type) {
+                    .Read => .DataAddressErrorRead,
+                    .Write => .DataAddressErrorWrite,
+                });
+                return .{ .address = 0, .exception = 1 };
+            }
+
             const physical = cpu.translate_address(access_type, virtual_addr) catch |err| {
                 cpu.report_address_exception(virtual_addr);
                 const exception: sh4.Exception = switch (err) {
@@ -1227,7 +1242,7 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType) type {
 }
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
-fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
+fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
     try ctx.gpr_cache.commit_all(block);
     try ctx.fpr_cache.commit_all(block);
 
@@ -1252,7 +1267,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, block: *IRBlock, ct
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     if (addr != ArgRegisters[1])
         try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr });
-    try call(block, ctx, &runtime_mmu_translation(access_type).handler);
+    try call(block, ctx, &runtime_mmu_translation(access_type, access_size).handler);
     if (addr != ReturnRegister)
         try block.mov(.{ .reg = addr }, .{ .reg = ReturnRegister });
 
@@ -1288,7 +1303,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: u
         try block.add(.{ .reg = addr }, .{ .imm32 = displacement });
 
     if (ctx.mmu_enabled)
-        try mmu_translation(.Read, block, ctx, addr, null);
+        try mmu_translation(.Read, size, block, ctx, addr, null);
 
     if (FastMem) {
         try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
@@ -1365,7 +1380,7 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: union(enum) { HostRe
             else => null,
         };
 
-        try mmu_translation(.Write, block, ctx, addr, register_to_save);
+        try mmu_translation(.Write, size, block, ctx, addr, register_to_save);
     }
 
     if (FastMem) {
