@@ -2240,7 +2240,7 @@ const fsca_table = @embedFile("../data/fsca.bin");
 pub fn fsca_FPUL_DRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
-    std.debug.assert(ctx.fpscr_pr == .Single);
+    std.debug.assert(ctx.fpscr_pr != .Double);
     std.debug.assert(instr.nmd.n & 1 == 0);
 
     try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "fpul"), .size = 16 } }); // Load low 16-bits of FPUL
