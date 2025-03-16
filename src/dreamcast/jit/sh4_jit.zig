@@ -37,11 +37,6 @@ const MMUDataAlignmentCheck = false; // Check for unaligned memory access.
 
 // Enable or Disable some optimizations
 const Optimizations = .{
-    // Allow resetting the block while in the JIT.
-    // IMPORTANT: Do not allow this when link_small_blocks is enabled: It would allow jumps
-    //            to released blocks (this is somehow fine otherwise, but this might be abusing cache or something)
-    .allow_immediate_reset = false,
-
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
@@ -530,7 +525,7 @@ pub const SH4JIT = struct {
     virtual_address_space: VirtualAddressSpace = undefined,
 
     /// Used to delay reset AFTER the current block is done excecuting.
-    _reset_requested: if (Optimizations.allow_immediate_reset) void else bool = if (Optimizations.allow_immediate_reset) {} else false,
+    _reset_requested: bool = false,
 
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
@@ -570,14 +565,7 @@ pub const SH4JIT = struct {
 
     pub fn request_reset(self: *@This()) void {
         sh4_jit_log.debug("Reset requested.", .{});
-        if (Optimizations.allow_immediate_reset) {
-            // Delaying is safer, but it works without it, and it's faster...
-            self.reset() catch |err| {
-                sh4_jit_log.err("Failed to reset JIT: {}", .{err});
-            };
-        } else {
-            self._reset_requested = true;
-        }
+        self._reset_requested = true;
     }
 
     pub fn reset(self: *@This()) !void {
@@ -586,7 +574,7 @@ pub const SH4JIT = struct {
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
-        if (!Optimizations.allow_immediate_reset and self._reset_requested) {
+        if (self._reset_requested) {
             @branchHint(.cold);
             self._reset_requested = false;
             sh4_jit_log.debug("Executing requested reset.", .{});
