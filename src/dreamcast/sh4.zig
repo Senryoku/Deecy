@@ -1879,8 +1879,9 @@ pub const SH4 = struct {
                                 if (value == 0x00007611)
                                     self.software_reset();
                             },
+                            .SB_PDST => if (value == 1) self._dc.?.start_pvr_dma(),
                             .SB_SDST => if (value == 1) self._dc.?.start_sort_dma(),
-                            .SB_E1ST, .SB_E2ST, .SB_DDST, .SB_PDST => {
+                            .SB_E1ST, .SB_E2ST, .SB_DDST => {
                                 if (value == 1)
                                     sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
                             },

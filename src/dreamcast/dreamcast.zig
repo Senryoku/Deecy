@@ -734,15 +734,44 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DST).* = 0;
     }
 
+    pub fn start_pvr_dma(self: *@This()) void {
+        if (self.read_hw_register(u32, .SB_PDEN) != 1) return;
+
+        self.hw_register(u32, .SB_PDST).* = 1;
+
+        const pvr_start = self.read_hw_register(u32, .SB_PDSTAP) & 0x1FFF_FFE0;
+        const mem_start = self.read_hw_register(u32, .SB_PDSTAR) & 0x1FFF_FFE0;
+        const len = self.read_hw_register(u32, .SB_PDLEN) & 0x00FF_FFE0;
+        const dir = self.read_hw_register(u32, .SB_PDDIR);
+
+        const src = if (dir == 0) mem_start else pvr_start;
+        const dst = if (dir == 0) pvr_start else mem_start;
+
+        dc_log.debug("  Start PVR DMA: {X:0>8} -> {X:0>8} ({X:0>8} bytes)", .{ src, dst, len });
+
+        var chcr = self.cpu.p4_register(SH4Module.P4.CHCR, .CHCR0);
+        chcr.ts = 4;
+        chcr.rs = 2;
+        self.cpu.p4_register(u32, .SAR0).* = src;
+        self.cpu.p4_register(u32, .DAR0).* = dst;
+        self.cpu.p4_register(u32, .DMATCR0).* = len / 32;
+
+        self.cpu.start_dmac(0);
+
+        self.hw_register(u32, .SB_PDST).* = 0;
+
+        self.schedule_interrupt(.{ .EoD_PVR = 1 }, 200); // FIXME: Arbitrary timing.
+    }
+
     pub fn start_sort_dma(self: *@This()) void {
         dc_log.debug("Start Sort-DMA", .{});
         // NOTE: Uses ch0:DDT
         self.hw_register(u32, .SB_SDST).* = 1;
 
-        const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
-        const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
-        const bit_width = self.hw_register(u32, .SB_SDWLT).*;
-        const link_address = self.hw_register(u32, .SB_SDLAS).*;
+        const start_link_address_table = self.read_hw_register(u32, .SB_SDSTAW);
+        const start_link_base_address = self.read_hw_register(u32, .SB_SDBAAW);
+        const bit_width = self.read_hw_register(u32, .SB_SDWLT);
+        const link_address = self.read_hw_register(u32, .SB_SDLAS);
         dc_log.debug("  Start Link Address Table: {X}", .{start_link_address_table});
         dc_log.debug("  Start Link Base Address: {X}", .{start_link_base_address});
         dc_log.debug("  Bit Width: {X}", .{bit_width});

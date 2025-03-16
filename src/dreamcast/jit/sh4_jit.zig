@@ -1703,17 +1703,16 @@ pub fn cmppz_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn stc_Reg_Rn(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    const T = struct {
+    return struct {
         fn stc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             try store_register(block, ctx, instr.nmd.n, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } });
             return false;
         }
-    };
-    return T.stc;
+    }.stc;
 }
 
 pub fn stcl_Reg_atDecRn(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) anyerror!bool {
-    const T = struct {
+    return struct {
         fn stcl(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
             try block.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, reg), .size = 32 } });
@@ -1729,8 +1728,7 @@ pub fn stcl_Reg_atDecRn(comptime reg: []const u8) fn (block: *IRBlock, ctx: *JIT
             }
             return false;
         }
-    };
-    return T.stcl;
+    }.stcl;
 }
 
 pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
