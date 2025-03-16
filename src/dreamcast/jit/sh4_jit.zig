@@ -304,7 +304,7 @@ pub const JITContext = struct {
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
     may_have_pending_cycles: bool = false,
-    jumps_to_end: [32]?JIT.PatchableJump = .{null} ** 32,
+    jumps_to_end: [128]?JIT.PatchableJump = .{null} ** 128,
 
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.
@@ -318,6 +318,7 @@ pub const JITContext = struct {
 
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
+    sr_fpu_status: enum { Disabled, Enabled, Unknown },
 
     in_delay_slot: bool = false,
 
@@ -380,6 +381,7 @@ pub const JITContext = struct {
             .instructions = @alignCast(@ptrCast(cpu._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
+            .sr_fpu_status = if (cpu.sr.fd) .Disabled else .Enabled,
         };
     }
 
@@ -971,6 +973,13 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
 }
 
 inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !void {
+    const instr_index = sh4.instructions.JumpTable[instr.value];
+
+    const entry = sh4.instructions.Opcodes[instr_index];
+    if (@as(u16, @bitCast(instr)) & 0xF000 == 0xF000 and entry.jit_emit_fn == interpreter_fallback_cached) {
+        try check_fd_bit(block, ctx);
+    }
+
     if (sh4_interpreter_handlers.Enable) {
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try call(block, ctx, sh4_interpreter_handlers.InstructionHandlers[instr.value]);
@@ -994,7 +1003,6 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
-        const instr_index = sh4.instructions.JumpTable[instr.value];
         switch (instr_index) {
             sh4.instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
             inline else => |idx| try call(
@@ -1749,7 +1757,47 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     return false;
 }
 
+fn fpu_disabled_exception(cpu: *sh4.SH4) void {
+    std.debug.print("GeneralFPUDisable: {X:0>8}\n", .{cpu.pc});
+    cpu.jump_to_exception(.GeneralFPUDisable);
+}
+fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
+    std.debug.print("SlotFPUDisable: {X:0>8}\n", .{cpu.pc});
+    cpu.jump_to_exception(.SlotFPUDisable);
+}
+
+fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
+    if (ctx.mmu_enabled) {
+        switch (ctx.sr_fpu_status) {
+            .Enabled, .Disabled, .Unknown => {
+                try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
+                try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "fd"));
+                var skip = try block.jmp(.NotCarry);
+
+                try ctx.gpr_cache.commit_all_speculatively(block);
+                try ctx.fpr_cache.commit_all_speculatively(block);
+                if (ctx.in_delay_slot) {
+                    try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
+                } else {
+                    try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+                }
+                try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
+                if (ctx.in_delay_slot) {
+                    try call(block, ctx, fpu_disabled_exception_delay_slot);
+                } else {
+                    try call(block, ctx, fpu_disabled_exception);
+                }
+                try ctx.add_jump_to_end(try block.jmp(.Always));
+
+                skip.patch();
+            },
+        }
+    }
+}
+
 pub fn fmov_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single => try store_fp_register(block, ctx, instr.nmd.n, try load_fp_register(block, ctx, instr.nmd.m)),
         .Double => try store_dfp_register(block, ctx, instr.nmd.n, try load_dfp_register(block, ctx, instr.nmd.m)),
@@ -1759,6 +1807,8 @@ pub fn fmov_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fmovs_atRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm]
@@ -1775,6 +1825,8 @@ pub fn fmovs_atRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 }
 
 pub fn fmovs_FRm_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single => {
             // [Rn] = FRm
@@ -1791,6 +1843,8 @@ pub fn fmovs_FRm_atRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 }
 
 pub fn fmovs_atRmInc_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single, .Double => |size| {
             _ = try fmovs_atRm_FRn(block, ctx, instr);
@@ -1804,6 +1858,8 @@ pub fn fmovs_atRmInc_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !b
 }
 
 pub fn fmovs_FRm_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single, .Double => |size| {
             const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
@@ -1834,6 +1890,8 @@ pub fn fmovs_FRm_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !b
 }
 
 pub fn fmovs_atR0Rm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single => {
             // FRn = [Rm+R0]
@@ -1850,6 +1908,8 @@ pub fn fmovs_atR0Rm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn fmovs_FRm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_sz) {
         .Single => {
             // [Rn+R0] = FRm
@@ -1866,6 +1926,8 @@ pub fn fmovs_FRm_atR0Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn fldi0_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => {
             // Might be a xor, but we don't care about the previous value here.
@@ -1879,17 +1941,23 @@ pub fn fldi0_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn flds_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const frn = try load_fp_register(block, ctx, instr.nmd.n);
     try block.mov(sh4_mem("fpul"), frn);
     return false;
 }
 
 pub fn fsts_FPUL_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try store_fp_register(block, ctx, instr.nmd.n, sh4_mem("fpul"));
     return false;
 }
 
 pub fn fldi1_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => {
             try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
@@ -1902,6 +1970,8 @@ pub fn fldi1_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fabs_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
     const tmp: JIT.Operand = .{ .reg = ReturnRegister };
     const ftmp: JIT.Operand = .{ .freg32 = FPScratchRegisters[0] };
@@ -1912,6 +1982,8 @@ pub fn fabs_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fneg_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
     const tmp: JIT.Operand = .{ .reg = ReturnRegister };
     const ftmp: JIT.Operand = .{ .freg32 = FPScratchRegisters[0] };
@@ -1922,6 +1994,8 @@ pub fn fneg_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fadd_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => {
             const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
@@ -1940,6 +2014,8 @@ pub fn fadd_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fsub_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.sub(
             try load_fp_register_for_writing(block, ctx, instr.nmd.n),
@@ -1956,6 +2032,8 @@ pub fn fsub_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fmul_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Mul = .{
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
@@ -1972,6 +2050,8 @@ pub fn fmul_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fmac_FR0_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => {
             const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
@@ -1996,6 +2076,8 @@ pub fn fmac_FR0_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn fdiv_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Div = .{
             .dst = try load_fp_register_for_writing(block, ctx, instr.nmd.n),
@@ -2012,6 +2094,8 @@ pub fn fdiv_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fsqrt_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => {
             const rn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
@@ -2024,6 +2108,8 @@ pub fn fsqrt_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn fcmp_eq_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Cmp = .{
             .lhs = try load_fp_register(block, ctx, instr.nmd.n),
@@ -2041,6 +2127,8 @@ pub fn fcmp_eq_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !boo
 }
 
 pub fn fcmp_gt_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Cmp = .{
             .lhs = try load_fp_register(block, ctx, instr.nmd.n),
@@ -2058,6 +2146,8 @@ pub fn fcmp_gt_FRm_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !boo
 }
 
 pub fn float_FPUL_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     switch (ctx.fpscr_pr) {
         .Single => try block.append(.{ .Convert = .{
             .dst = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) },
@@ -2074,6 +2164,8 @@ pub fn float_FPUL_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool
 }
 
 pub fn ftrc_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     // NOTE: Overflow behaviour differs from x86_64.
     //        x86_64 will return the "indefinite integer value" (0x80000000 or 0x80000000_00000000 if operand size is 64 bits)
     //        See interpreter implementation (ftrc_FRn_FPUL) for more details.
@@ -2107,6 +2199,8 @@ pub fn ftrc_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn fsrra_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     std.debug.assert(ctx.fpscr_pr == .Single);
     // NOTE: x86 rsqrt is less precise than its SH4 equivalent.
     const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
@@ -2121,6 +2215,8 @@ pub fn fsrra_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 const fsca_table = @embedFile("../data/fsca.bin");
 
 pub fn fsca_FPUL_DRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     std.debug.assert(ctx.fpscr_pr == .Single);
     std.debug.assert(instr.nmd.n & 1 == 0);
 
@@ -2135,6 +2231,8 @@ pub fn fsca_FPUL_DRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 }
 
 pub fn lds_rn_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
     const rn = try load_register(block, ctx, instr.nmd.n);
@@ -2149,6 +2247,8 @@ pub fn lds_rn_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 }
 
 pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try ctx.fpr_cache.commit_and_invalidate_all(block); // We may switch FP register banks
 
     try load_mem(block, ctx, ArgRegisters[1], .{ .Reg = instr.nmd.n }, 0, 32);
@@ -2164,6 +2264,8 @@ pub fn ldsl_atRnInc_FPSCR(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !
 }
 
 pub fn stsl_FPSCR_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const rn: JIT.Operand = .{ .reg = try load_register_for_writing(block, ctx, instr.nmd.n) };
     // Use a temporary register to 'roll back' the decrement in case a MMU exception is raised.
     try block.mov(.{ .reg = ArgRegisters[1] }, rn);
@@ -2176,17 +2278,23 @@ pub fn stsl_FPSCR_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !
 }
 
 pub fn lds_Rn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const rn = try load_register(block, ctx, instr.nmd.n);
     try block.mov(sh4_mem("fpul"), .{ .reg = rn });
     return false;
 }
 
 pub fn sts_FPUL_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try store_register(block, ctx, instr.nmd.n, sh4_mem("fpul"));
     return false;
 }
 
 pub fn ldsl_atRnInc_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.mov(sh4_mem("fpul"), .{ .reg = ReturnRegister });
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
@@ -2195,6 +2303,8 @@ pub fn ldsl_atRnInc_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !b
 }
 
 pub fn stsl_FPUL_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
     const rn: JIT.Operand = .{ .reg = try load_register_for_writing(block, ctx, instr.nmd.n) };
     // Use a temporary register to 'roll back' the decrement in case a MMU exception is raised.
     try block.mov(.{ .reg = ArgRegisters[1] }, rn);
@@ -2918,6 +3028,8 @@ fn set_sr(block: *IRBlock, ctx: *JITContext, sr_value: JIT.Operand) !void {
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try block.mov(.{ .reg = ArgRegisters[1] }, sr_value);
     try call(block, ctx, sh4.SH4.set_sr);
+
+    ctx.sr_fpu_status = .Unknown;
 }
 
 pub fn rte(block: *IRBlock, ctx: *JITContext, _: sh4.Instr) !bool {
