@@ -606,8 +606,7 @@ pub const Renderer = struct {
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
-    // TODO: Support multiple render passes.
-    render_passes: [1]struct { z_clear: bool = true, pre_sort: bool = false } = .{.{}} ** 1,
+    render_passes: [8]struct { enabled: bool = false, z_clear: bool = true, pre_sort: bool = false, lists: [5]HollyModule.RegionArrayDataConfiguration.ListPointer = undefined } = .{.{}} ** 8,
     ta_lists: HollyModule.TALists,
     ta_lists_to_render: HollyModule.TALists,
     _ta_lists_mutex: std.Thread.Mutex = .{},
@@ -1478,24 +1477,34 @@ pub const Renderer = struct {
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
             const header_type = dc.gpu.get_region_header_type();
+
+            for (&self.render_passes) |*render_pass| render_pass.enabled = false;
+
             var region_array_idx: usize = 0;
             var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-            switch (header_type) {
-                .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
-                .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
-            }
-
-            self.render_passes[0] = .{ .z_clear = region_config.settings.z_clear == .Clear, .pre_sort = region_config.settings.pre_sort };
-
-            while (region_array_idx < 8 and !region_config.settings.last_region) {
-                region_array_idx += 1;
-                region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+            while (region_array_idx < self.render_passes.len and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
                 switch (header_type) {
                     .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
                     .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
                 }
+
+                self.render_passes[region_array_idx] = .{
+                    .enabled = true,
+                    .z_clear = region_config.settings.z_clear == .Clear,
+                    .pre_sort = region_config.settings.pre_sort,
+                    .lists = .{
+                        region_config.opaque_list_pointer,
+                        region_config.opaque_modifier_volume_pointer,
+                        region_config.translucent_list_pointer,
+                        region_config.translucent_modifier_volume_pointer,
+                        region_config.punch_through_list_pointer,
+                    },
+                };
+
+                region_array_idx += 1;
+                region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+                if (region_config.settings.last_region) break;
             }
-            renderer_log.debug("", .{});
 
             // Clear the previous used TA lists and swap it with the one submitted by the game.
             // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
@@ -2476,6 +2485,7 @@ pub const Renderer = struct {
                     };
 
                     {
+                        //                                FIXME: Multipass
                         if (list_type == .Translucent and self.render_passes[0].pre_sort) {
                             // In this case, we need to preserve the order of the draw calls
                             const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
@@ -2714,380 +2724,40 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
-            skip_opaque: {
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{
-                    .{
-                        .view = target.resized.view,
-                        .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
-                        .store_op = .store,
-                    },
-                    .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
-                        .load_op = .clear,
-                        .store_op = .store,
-                    },
-                };
-                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                    .view = depth_view,
-                    .depth_load_op = .clear, // TODO: Check ZClear bit.
-                    .depth_store_op = .store,
-                    .depth_clear_value = DepthClearValue,
-                    .stencil_load_op = .clear,
-                    .stencil_store_op = .discard,
-                    .stencil_clear_value = 0,
-                    .stencil_read_only = .false,
-                };
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Opaque pass",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = &depth_attachment,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
+            for (self.render_passes) |render_pass| {
+                if (!render_pass.enabled) break;
 
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
-
-                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
-
-                // Draw background
-                const background_pipeline = try self.get_or_put_opaque_pipeline(.{
-                    .src_blend_factor = .one,
-                    .dst_blend_factor = .zero,
-                    .depth_compare = .always,
-                    .depth_write_enabled = false,
-                }, .Async);
-                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
-                pass.setPipeline(bg_pipeline);
-                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
-                pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
-
-                // Opaque and PunchThrough geometry
-                // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
-                inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
-                    var it = metadata.pipelines.iterator();
-                    while (it.next()) |entry| {
-                        // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
-                        if (entry.value_ptr.*.draw_calls.count() > 0) {
-                            const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
-                            const pipeline = gctx.lookupResource(pl) orelse break;
-                            pass.setPipeline(pipeline);
-
-                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                if (draw_call.index_count > 0) {
-                                    const clip = self.convert_clipping(draw_call.user_clip);
-                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
-
-                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
-            encoder.copyTextureToTexture(
-                .{ .texture = target.resized.texture },
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                .{ .width = self.resolution.width, .height = self.resolution.height },
-            );
-
-            if (ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
-                const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
-                const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
-                const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
-                const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
-
-                // Write to stencil buffer
-                {
-                    const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                    const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                    vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                    vs_uniform_mem.slice[0].max_depth = self.max_depth;
-
-                    const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
-
-                    const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                        .view = depth_view,
-                        .depth_load_op = .load,
-                        .depth_store_op = .store,
-                        .depth_clear_value = DepthClearValue,
-                        .depth_read_only = .false,
-                        .stencil_load_op = .clear,
-                        .stencil_store_op = .store,
-                        .stencil_clear_value = 0,
-                        .stencil_read_only = .false,
-                    };
-                    const render_pass_info = wgpu.RenderPassDescriptor{
-                        .label = "Modifier Volume Stencil",
-                        .color_attachment_count = 0,
-                        .color_attachments = null,
-                        .depth_stencil_attachment = &depth_attachment,
-                    };
-
-                    const pass = encoder.beginRenderPass(render_pass_info);
-                    defer {
-                        pass.end();
-                        pass.release();
-                    }
-
-                    pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-
-                    // Close volume pass.
-                    // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                        if (volume.closed) {
-                            pass.setStencilReference(0x00);
-                            pass.setPipeline(closed_modifier_volume_pipeline);
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-
-                            pass.setStencilReference(0x01);
-                            pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
-                            // NOTE: We could draw a single fullscreen quad here.
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                        }
-                    }
-                    // Open "volume" pass.
-                    // Triangle passing the depth test immediately set the stencil buffer.
-                    pass.setStencilReference(0x02);
-                    pass.setPipeline(open_modifier_volume_pipeline);
-                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                        if (!volume.closed)
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                    }
-                }
-                // Copy 'area 1' colors where the stencil buffer is non-zero.
-                {
-                    const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-                    const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
-                    const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
-                    const dest_view = target.resized.view;
-
-                    const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                        .view = depth_view,
-                        .depth_load_op = .undef,
-                        .depth_store_op = .undef,
-                        .depth_clear_value = DepthClearValue,
-                        .depth_read_only = .true,
-                        .stencil_load_op = .undef,
-                        .stencil_store_op = .undef,
-                        .stencil_clear_value = 0,
-                        .stencil_read_only = .true,
-                    };
-                    const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                        .view = dest_view,
-                        .load_op = .load,
-                        .store_op = .store,
-                    }};
-                    const render_pass_info = wgpu.RenderPassDescriptor{
-                        .label = "Modifier Volume Apply",
-                        .color_attachment_count = color_attachments.len,
-                        .color_attachments = &color_attachments,
-                        .depth_stencil_attachment = &depth_attachment,
-                    };
-
-                    const pass = encoder.beginRenderPass(render_pass_info);
-                    defer {
-                        pass.end();
-                        pass.release();
-                    }
-
-                    pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                    pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                    pass.setPipeline(modifier_volume_apply_pipeline);
-                    pass.setBindGroup(0, mva_bind_group, &.{});
-
-                    pass.setStencilReference(0x02);
-                    pass.drawIndexed(4, 1, 0, 0, 0);
-                }
-
-                // Copy the result to resized_framebuffer_copy_texture_view too.
-                encoder.copyTextureToTexture(
-                    .{ .texture = target.resized.texture },
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                    .{ .width = self.resolution.width, .height = self.resolution.height },
-                );
-            }
-
-            if (self.render_passes[0].pre_sort) {
-                // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
-                const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
-                pre_sort_uniform_mem.slice[0] = uniform_mem.slice[0];
-                pre_sort_uniform_mem.slice[0].pt_alpha_ref = -1.0;
-
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{
-                    .{
-                        .view = target.resized.view,
-                        .load_op = .load,
-                        .store_op = .store,
-                    },
-                    .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
-                        .load_op = .clear,
-                        .store_op = .store,
-                    },
-                };
-                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                    .view = depth_view,
-                    .depth_load_op = .load,
-                    .depth_store_op = .store,
-                    .stencil_load_op = .clear,
-                    .stencil_store_op = .discard,
-                    .stencil_clear_value = 0,
-                    .stencil_read_only = .false,
-                };
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Presorted Translucent pass",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = &depth_attachment,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
-
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
-
-                pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
-
-                var current_pipeline: ?PipelineKey = null;
-                var current_sampler: ?u8 = null;
-                for (self.pre_sorted_translucent_pass.items) |draw_call| {
-                    if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
-                        const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
-                        const pipeline = gctx.lookupResource(pl) orelse continue;
-                        pass.setPipeline(pipeline);
-                        current_pipeline = draw_call.pipeline_key;
-                    }
-
-                    if (draw_call.index_count > 0) {
-                        const clip = self.convert_clipping(draw_call.user_clip);
-                        pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
-
-                        if (current_sampler == null or draw_call.sampler != current_sampler.?) {
-                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                            current_sampler = draw_call.sampler;
-                        }
-                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
-                    }
-                }
-
-                // TODO: Support translucent modifier volumes in pre-sorted mode
-
-            } else {
-                // Generate all translucent fragments
-                const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
-                const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
-
-                const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = target.resized.view,
-                    .load_op = .load,
-                    .store_op = .store,
-                }};
-                const oit_render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Translucent Pass",
-                    .color_attachment_count = oit_color_attachments.len,
-                    .color_attachments = &oit_color_attachments,
-                    .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
-                    // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
-                    //       mode where the depth_compare mode can be set by the user (it is written, but unused).
-                };
-
-                const slice_size = self.resolution.height / OITHorizontalSlices;
-                for (0..OITHorizontalSlices) |i| {
-                    const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
-
-                    const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
-                    oit_uniform_mem.slice[0].target_width = self.resolution.width;
-                    oit_uniform_mem.slice[0].start_y = start_y;
-
-                    // Render Translucent Modifier Volumes
-                    if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
-                        const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
-                        const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
-
-                        oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
-
-                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                        const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
-                        const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
-                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                        vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                        vs_uniform_mem.slice[0].max_depth = self.max_depth;
-
-                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
-
+                if (!render_pass.lists[0].empty) {
+                    skip_opaque: {
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                            .{
+                                .view = target.resized.view,
+                                .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                                .store_op = .store,
+                            },
+                            .{
+                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .load_op = .clear,
+                                .store_op = .store,
+                            },
+                        };
                         const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                             .view = depth_view,
-                            .depth_read_only = .true,
-                            .stencil_read_only = .true,
+                            .depth_load_op = if (render_pass.z_clear) .clear else .load,
+                            .depth_store_op = .store,
+                            .depth_clear_value = DepthClearValue,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .discard,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
                         };
                         const render_pass_info = wgpu.RenderPassDescriptor{
-                            .label = "Translucent Modifier Volumes",
-                            .color_attachment_count = 0,
-                            .color_attachments = null,
+                            .label = "Opaque pass",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &depth_attachment,
                         };
-
-                        {
-                            const pass = encoder.beginRenderPass(render_pass_info);
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                            pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-                            pass.setPipeline(translucent_modvol_pipeline);
-                            pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
-
-                            // Close volume pass.
-                            var volume_index: u32 = 0;
-                            for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                                if (volume.closed) {
-                                    const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
-                                    oit_fs_uniform_mem.slice[0].volume_index = volume_index;
-                                    pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
-                                    volume_index += 1;
-
-                                    pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                                } else {
-                                    renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
-                                    // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
-                                    //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
-                                }
-                            }
-                        }
-
-                        {
-                            const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                            pass.setPipeline(translucent_modvol_merge_pipeline);
-
-                            pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
-                            pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
-                        }
-                    }
-
-                    oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
-
-                    skip: {
-                        const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
-
-                        const pass = encoder.beginRenderPass(oit_render_pass_info);
+                        const pass = encoder.beginRenderPass(render_pass_info);
                         defer {
                             pass.end();
                             pass.release();
@@ -3096,21 +2766,34 @@ pub const Renderer = struct {
                         pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                         pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                        pass.setPipeline(pipeline);
-
                         pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
-                        pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
-                        var it = self.translucent_pass.pipelines.iterator();
-                        while (it.next()) |entry| {
-                            if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                    if (draw_call.index_count > 0) {
-                                        var clip = self.convert_clipping(draw_call.user_clip);
-                                        const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
-                                        clip.y = @max(clip.y, start_y);
-                                        clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
-                                        if (clip.height > 0 and clip.width > 0) {
+                        // Draw background
+                        const background_pipeline = try self.get_or_put_opaque_pipeline(.{
+                            .src_blend_factor = .one,
+                            .dst_blend_factor = .zero,
+                            .depth_compare = .always,
+                            .depth_write_enabled = false,
+                        }, .Async);
+                        const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
+                        pass.setPipeline(bg_pipeline);
+                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
+                        pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
+
+                        // Opaque and PunchThrough geometry
+                        // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
+                        inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
+                            var it = metadata.pipelines.iterator();
+                            while (it.next()) |entry| {
+                                // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
+                                if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                    const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
+                                    const pipeline = gctx.lookupResource(pl) orelse break;
+                                    pass.setPipeline(pipeline);
+
+                                    for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                        if (draw_call.index_count > 0) {
+                                            const clip = self.convert_clipping(draw_call.user_clip);
                                             pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
                                             pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
@@ -3122,21 +2805,356 @@ pub const Renderer = struct {
                         }
                     }
 
-                    // Blend the results of the translucent pass
-                    skip_blend: {
-                        const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
+                    // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
+                    encoder.copyTextureToTexture(
+                        .{ .texture = target.resized.texture },
+                        .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
+                        .{ .width = self.resolution.width, .height = self.resolution.height },
+                    );
+                }
 
-                        const pass = encoder.beginComputePass(null);
+                if (!render_pass.lists[1].empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
+                    const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
+                    const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
+                    const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
+                    const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
+
+                    // Write to stencil buffer
+                    {
+                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                        vs_uniform_mem.slice[0].min_depth = self.min_depth;
+                        vs_uniform_mem.slice[0].max_depth = self.max_depth;
+
+                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .load,
+                            .depth_store_op = .store,
+                            .depth_clear_value = DepthClearValue,
+                            .depth_read_only = .false,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .store,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
+                        };
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Modifier Volume Stencil",
+                            .color_attachment_count = 0,
+                            .color_attachments = null,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+
+                        const pass = encoder.beginRenderPass(render_pass_info);
                         defer {
                             pass.end();
                             pass.release();
                         }
-                        const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                        pass.setPipeline(pipeline);
 
-                        pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
+                        pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                        pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
 
-                        pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                        // Close volume pass.
+                        // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
+                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                            if (volume.closed) {
+                                pass.setStencilReference(0x00);
+                                pass.setPipeline(closed_modifier_volume_pipeline);
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+
+                                pass.setStencilReference(0x01);
+                                pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
+                                // NOTE: We could draw a single fullscreen quad here.
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                            }
+                        }
+                        // Open "volume" pass.
+                        // Triangle passing the depth test immediately set the stencil buffer.
+                        pass.setStencilReference(0x02);
+                        pass.setPipeline(open_modifier_volume_pipeline);
+                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                            if (!volume.closed)
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                        }
+                    }
+                    // Copy 'area 1' colors where the stencil buffer is non-zero.
+                    {
+                        const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                        const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                        const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
+                        const dest_view = target.resized.view;
+
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .undef,
+                            .depth_store_op = .undef,
+                            .depth_clear_value = DepthClearValue,
+                            .depth_read_only = .true,
+                            .stencil_load_op = .undef,
+                            .stencil_store_op = .undef,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .true,
+                        };
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                            .view = dest_view,
+                            .load_op = .load,
+                            .store_op = .store,
+                        }};
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Modifier Volume Apply",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+
+                        const pass = encoder.beginRenderPass(render_pass_info);
+                        defer {
+                            pass.end();
+                            pass.release();
+                        }
+
+                        pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                        pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+                        pass.setPipeline(modifier_volume_apply_pipeline);
+                        pass.setBindGroup(0, mva_bind_group, &.{});
+
+                        pass.setStencilReference(0x02);
+                        pass.drawIndexed(4, 1, 0, 0, 0);
+                    }
+
+                    // Copy the result to resized_framebuffer_copy_texture_view too.
+                    encoder.copyTextureToTexture(
+                        .{ .texture = target.resized.texture },
+                        .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
+                        .{ .width = self.resolution.width, .height = self.resolution.height },
+                    );
+                }
+
+                if (!render_pass.lists[2].empty) {
+                    if (render_pass.pre_sort) {
+                        // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
+                        const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
+                        pre_sort_uniform_mem.slice[0] = uniform_mem.slice[0];
+                        pre_sort_uniform_mem.slice[0].pt_alpha_ref = -1.0;
+
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                            .{
+                                .view = target.resized.view,
+                                .load_op = .load,
+                                .store_op = .store,
+                            },
+                            .{
+                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .load_op = .clear,
+                                .store_op = .store,
+                            },
+                        };
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .load,
+                            .depth_store_op = .store,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .discard,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
+                        };
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Presorted Translucent pass",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+                        const pass = encoder.beginRenderPass(render_pass_info);
+                        defer {
+                            pass.end();
+                            pass.release();
+                        }
+
+                        pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                        pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                        pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
+
+                        var current_pipeline: ?PipelineKey = null;
+                        var current_sampler: ?u8 = null;
+                        for (self.pre_sorted_translucent_pass.items) |draw_call| {
+                            if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
+                                const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
+                                const pipeline = gctx.lookupResource(pl) orelse continue;
+                                pass.setPipeline(pipeline);
+                                current_pipeline = draw_call.pipeline_key;
+                            }
+
+                            if (draw_call.index_count > 0) {
+                                const clip = self.convert_clipping(draw_call.user_clip);
+                                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+
+                                if (current_sampler == null or draw_call.sampler != current_sampler.?) {
+                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                    current_sampler = draw_call.sampler;
+                                }
+                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                            }
+                        }
+
+                        // TODO: Support translucent modifier volumes in pre-sorted mode
+
+                    } else {
+                        // Generate all translucent fragments
+                        const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
+                        const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
+
+                        const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                            .view = target.resized.view,
+                            .load_op = .load,
+                            .store_op = .store,
+                        }};
+                        const oit_render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Translucent Pass",
+                            .color_attachment_count = oit_color_attachments.len,
+                            .color_attachments = &oit_color_attachments,
+                            .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+                            // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
+                            //       mode where the depth_compare mode can be set by the user (it is written, but unused).
+                        };
+
+                        const slice_size = self.resolution.height / OITHorizontalSlices;
+                        for (0..OITHorizontalSlices) |i| {
+                            const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
+
+                            const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
+                            oit_uniform_mem.slice[0].target_width = self.resolution.width;
+                            oit_uniform_mem.slice[0].start_y = start_y;
+
+                            // Render Translucent Modifier Volumes
+                            if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
+                                const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
+                                const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
+
+                                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
+
+                                const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                                const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
+                                const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
+                                const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                                vs_uniform_mem.slice[0].min_depth = self.min_depth;
+                                vs_uniform_mem.slice[0].max_depth = self.max_depth;
+
+                                const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+
+                                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                                    .view = depth_view,
+                                    .depth_read_only = .true,
+                                    .stencil_read_only = .true,
+                                };
+                                const render_pass_info = wgpu.RenderPassDescriptor{
+                                    .label = "Translucent Modifier Volumes",
+                                    .color_attachment_count = 0,
+                                    .color_attachments = null,
+                                    .depth_stencil_attachment = &depth_attachment,
+                                };
+
+                                {
+                                    const pass = encoder.beginRenderPass(render_pass_info);
+                                    defer {
+                                        pass.end();
+                                        pass.release();
+                                    }
+                                    pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+                                    pass.setPipeline(translucent_modvol_pipeline);
+                                    pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
+
+                                    // Close volume pass.
+                                    var volume_index: u32 = 0;
+                                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                                        if (volume.closed) {
+                                            const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
+                                            oit_fs_uniform_mem.slice[0].volume_index = volume_index;
+                                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
+                                            volume_index += 1;
+
+                                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                                        } else {
+                                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
+                                            // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
+                                            //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
+                                        }
+                                    }
+                                }
+
+                                {
+                                    const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
+                                    defer {
+                                        pass.end();
+                                        pass.release();
+                                    }
+                                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                    pass.setPipeline(translucent_modvol_merge_pipeline);
+
+                                    pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
+                                    pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                                }
+                            }
+
+                            oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
+
+                            skip: {
+                                const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
+
+                                const pass = encoder.beginRenderPass(oit_render_pass_info);
+                                defer {
+                                    pass.end();
+                                    pass.release();
+                                }
+
+                                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                                pass.setPipeline(pipeline);
+
+                                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                                pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
+
+                                var it = self.translucent_pass.pipelines.iterator();
+                                while (it.next()) |entry| {
+                                    if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                            if (draw_call.index_count > 0) {
+                                                var clip = self.convert_clipping(draw_call.user_clip);
+                                                const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
+                                                clip.y = @max(clip.y, start_y);
+                                                clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
+                                                if (clip.height > 0 and clip.width > 0) {
+                                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+
+                                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Blend the results of the translucent pass
+                            skip_blend: {
+                                const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
+
+                                const pass = encoder.beginComputePass(null);
+                                defer {
+                                    pass.end();
+                                    pass.release();
+                                }
+                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                pass.setPipeline(pipeline);
+
+                                pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
+
+                                pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                            }
+                        }
                     }
                 }
             }
