@@ -408,6 +408,10 @@ pub const JITContext = struct {
             });
         self.current_physical_pc += 2; // Same thing as in the interpreter, this is probably useless as instructions referring to PC should be illegal here, but just in case...
         self.current_pc += 2;
+
+        if (op.is_branch)
+            sh4_jit_log.warn("Branch in delay slot: [{X:0>8}] {s}", .{ self.current_pc, sh4.disassembly.disassemble(@bitCast(instr), self.cpu._allocator) });
+
         const branch = try op.jit_emit_fn(b, self, @bitCast(instr));
         std.debug.assert(!branch);
         self.current_pc -= 2;
@@ -1963,6 +1967,20 @@ pub fn fldi0_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
+pub fn fldi1_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    try check_fd_bit(block, ctx);
+
+    switch (ctx.fpscr_pr) {
+        .Single => {
+            try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
+            try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
+        },
+        .Double => return error.IllegalInstruction,
+        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
+    }
+    return false;
+}
+
 pub fn flds_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
@@ -1975,20 +1993,6 @@ pub fn fsts_FPUL_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
     try check_fd_bit(block, ctx);
 
     try store_fp_register(block, ctx, instr.nmd.n, sh4_mem("fpul"));
-    return false;
-}
-
-pub fn fldi1_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    try check_fd_bit(block, ctx);
-
-    switch (ctx.fpscr_pr) {
-        .Single => {
-            try block.mov(.{ .reg = ReturnRegister }, .{ .imm32 = 0x3F800000 }); // 1.0
-            try store_fp_register(block, ctx, instr.nmd.n, .{ .reg = ReturnRegister });
-        },
-        .Double => return error.IllegalInstruction,
-        .Unknown => return interpreter_fallback_cached(block, ctx, instr),
-    }
     return false;
 }
 
