@@ -317,7 +317,7 @@ pub const JITContext = struct {
 
     fpscr_sz: FPPrecision,
     fpscr_pr: FPPrecision,
-    sr_fpu_status: enum { Disabled, Enabled, Unknown },
+    sr_fpu_status: enum { Unknown, Checked } = .Unknown,
 
     in_delay_slot: bool = false,
 
@@ -380,7 +380,6 @@ pub const JITContext = struct {
             .instructions = @alignCast(@ptrCast(cpu._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
-            .sr_fpu_status = if (cpu.sr.fd) .Disabled else .Enabled,
         };
     }
 
@@ -1787,7 +1786,7 @@ fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
 fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
     if (ctx.mmu_enabled) {
         switch (ctx.sr_fpu_status) {
-            .Enabled, .Disabled, .Unknown => {
+            .Unknown => {
                 try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
                 try block.bit_test(ReturnRegister, @bitOffsetOf(sh4.SR, "fd"));
                 var skip = try block.jmp(.NotCarry);
@@ -1808,7 +1807,10 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
                 try ctx.add_jump_to_end(try block.jmp(.Always));
 
                 skip.patch();
+
+                ctx.sr_fpu_status = .Checked;
             },
+            .Checked => {},
         }
     }
 }
