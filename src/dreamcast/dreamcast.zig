@@ -777,17 +777,17 @@ pub const Dreamcast = struct {
         dc_log.debug("  Bit Width: {X}", .{bit_width});
         dc_log.debug("  Link Address: {X}", .{link_address});
 
-        const r = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
+        const bytes_transfered = if (bit_width == 0) self.sort_dma_link(u16) else self.sort_dma_link(u32);
 
         self.schedule_int_event(
             .{ .EoD_PVRSort = 1 },
             .EndSortDMA,
             // TODO: TA Bus? 1 GB/s?
-            r.bytes_transfered / (1024 * 1024 * 1024 / SH4Clock),
+            bytes_transfered / (1024 * 1024 * 1024 / SH4Clock),
         );
     }
 
-    fn sort_dma_link(self: *@This(), comptime T: type) struct { bytes_transfered: u32, next: enum { EndOfList, EndOfDMA } } {
+    fn sort_dma_link(self: *@This(), comptime T: type) u32 {
         const start_link_address_table = self.hw_register(u32, .SB_SDSTAW).*;
         const start_link_base_address = self.hw_register(u32, .SB_SDBAAW).*;
         const offset_factor: u32 = if (self.hw_register(u32, .SB_SDLAS).* == 1) 32 else 1;
@@ -803,50 +803,39 @@ pub const Dreamcast = struct {
         defer self.hw_register(u32, .SB_SDDIV).* = sb_sddiv;
 
         while (true) {
-            const offset_address = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
+            const start_link_address: u32 = self.cpu.read_physical(T, @intCast(start_link_address_table + offset));
             sb_sddiv += 1;
 
-            dc_log.debug("  [{d}] {X}", .{ offset, offset_address });
+            dc_log.debug("  [{d}] {X}", .{ offset, start_link_address });
 
-            if (offset_address == 1) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfList };
-            if (offset_address == 2) return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA };
-
-            var current_addr = start_link_base_address + offset_factor * offset_address;
+            var link_address = start_link_address;
             while (true) {
-                const r = sort_dma_list(self, current_addr);
-                bytes_transfered += r.bytes_transfered;
-                switch (r.next) {
-                    .EndOfList => break,
-                    .EndOfDMA => return .{ .bytes_transfered = bytes_transfered, .next = .EndOfDMA },
-                    .Continue => |next_link_address| {
-                        current_addr = start_link_base_address + offset_factor * next_link_address;
-                        continue;
-                    },
-                }
+                if (link_address == 1) break; // End of List
+                if (link_address == 2) return bytes_transfered; // End of DMA
+
+                link_address *= offset_factor;
+                link_address += start_link_base_address;
+
+                const parameter_control_word: HollyModule.ParameterControlWord = @bitCast(self.cpu.read_physical(u32, link_address));
+                // TODO: We should search for the first GlobalParameter to get the data_size and next_address, not assume this is the first one.
+                std.debug.assert(parameter_control_word.parameter_type == .PolygonOrModifierVolume or parameter_control_word.parameter_type == .SpriteList);
+
+                const current_data_size = self.cpu.read_physical(u32, link_address + 0x18);
+                const next_link_address = self.cpu.read_physical(u32, link_address + 0x1C);
+
+                dc_log.debug("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
+
+                const block_count = if (current_data_size == 0) 0x100 else current_data_size;
+                const bytes = block_count * 8 * 4;
+                var src: [*]u32 = @alignCast(@ptrCast(self.cpu._get_memory(link_address)));
+                self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
+                bytes_transfered += bytes;
+
+                link_address = next_link_address;
             }
 
             offset += @sizeOf(T);
         }
-    }
-
-    fn sort_dma_list(self: *@This(), addr: u32) struct { bytes_transfered: u32, next: union(enum) { Continue: u32, EndOfList, EndOfDMA } } {
-        const parameter_control_word: HollyModule.ParameterControlWord = @bitCast(self.cpu.read_physical(u32, addr));
-        // TODO: We should search for the first GlobalParameter to get the data_size and next_address, not assume this is the first one.
-        std.debug.assert(parameter_control_word.parameter_type == .PolygonOrModifierVolume or parameter_control_word.parameter_type == .SpriteList);
-
-        const current_data_size = self.cpu.read_physical(u32, addr + 0x18);
-        const next_link_address = self.cpu.read_physical(u32, addr + 0x1C);
-
-        dc_log.debug("   - Size: {d}, Next: {X}", .{ current_data_size, next_link_address });
-
-        const block_count = if (current_data_size == 0) 0x100 else current_data_size;
-        const bytes = block_count * 8 * 4;
-        var src: [*]u32 = @alignCast(@ptrCast(self.cpu._get_memory(addr)));
-        self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
-
-        if (next_link_address == 1) return .{ .bytes_transfered = bytes, .next = .EndOfList };
-        if (next_link_address == 2) return .{ .bytes_transfered = bytes, .next = .EndOfDMA };
-        return .{ .bytes_transfered = bytes, .next = .{ .Continue = next_link_address } };
     }
 
     pub fn end_sort_dma(self: *@This()) void {
