@@ -1485,7 +1485,7 @@ pub const Renderer = struct {
                 .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
             }
 
-            self.render_passes[0] = .{ .z_clear = region_config.settings.z_clear, .pre_sort = region_config.settings.pre_sort };
+            self.render_passes[0] = .{ .z_clear = region_config.settings.z_clear == .Clear, .pre_sort = region_config.settings.pre_sort };
 
             while (region_array_idx < 8 and !region_config.settings.last_region) {
                 region_array_idx += 1;

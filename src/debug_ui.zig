@@ -901,7 +901,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             while (idx < 512) : (idx += 1) {
                 zgui.text("[{d:<3}] {d:<2} {d:<2}", .{ idx, region.settings.tile_x_position, region.settings.tile_y_position });
                 inline_bool(region.settings.flush_accumulate, "Flush-Accumulate ");
-                inline_bool(region.settings.z_clear, "Z-Clear ");
+                inline_bool(region.settings.z_clear == .Clear, "Z-Clear ");
                 inline_bool(region.settings.pre_sort, "Pre-Sort ");
                 inline_bool(region.settings.last_region, "Last-Region ");
                 zgui.text("      ", .{});

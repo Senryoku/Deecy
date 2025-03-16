@@ -460,7 +460,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         _r1: u14,
         flush_accumulate: bool,
         pre_sort: bool, // Forced 0 for Type 1
-        z_clear: bool,
+        z_clear: enum(u1) { Clear = 0, Load = 1 },
         last_region: bool,
 
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -469,7 +469,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
                 self.tile_y_position,
                 termcolor.colored_bool(self.flush_accumulate),
                 termcolor.colored_bool(self.pre_sort),
-                termcolor.colored_bool(self.z_clear),
+                termcolor.colored_bool(self.z_clear == .Clear),
                 termcolor.colored_bool(self.last_region),
             });
         }
