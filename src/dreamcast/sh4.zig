@@ -797,12 +797,12 @@ pub const SH4 = struct {
                 if (tcnt.* >= diff) {
                     tcnt.* -= @intCast(diff);
                 } else {
-                    const reset_constant = self.p4_register(u32, TimerRegisters[channel].constant).*;
-                    const mod = (@as(u32, @truncate(diff)) % reset_constant);
-                    if (tcnt.* < mod) {
-                        tcnt.* = reset_constant - mod;
+                    const reset_constant = self.read_p4_register(u32, TimerRegisters[channel].constant);
+                    const mod = (@as(u32, @truncate(diff)) % (reset_constant + 1));
+                    if (tcnt.* >= mod) {
+                        tcnt.* -= mod;
                     } else {
-                        tcnt.* -%= mod;
+                        tcnt.* = (tcnt.* + reset_constant) - mod;
                     }
                 }
             } else self._last_timer_update[channel] = dc._global_cycles;
