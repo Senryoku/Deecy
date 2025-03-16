@@ -659,7 +659,7 @@ const MaplePort = struct {
                 .GetMediaInformation => {
                     std.debug.assert(command.payload_length == 2);
                     const partition_number: u8 = @truncate(data[3] >> 24);
-                    maple_log.warn(termcolor.yellow("  GetMediaInformation: Function type: {X:0>8} Partition number: {any}"), .{ function_type, partition_number });
+                    maple_log.warn(termcolor.yellow("  GetMediaInformation: Function: {any}, Partition number: {any}"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
 
                     switch (target.*) {
                         .VMU => |*v| {

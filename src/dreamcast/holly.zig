@@ -1676,7 +1676,7 @@ pub const Holly = struct {
                     self._get_register(u32, .TA_NEXT_OPB).* = self.read_register(u32, .TA_NEXT_OPB_INIT);
                     self._get_register(u32, .TA_ITP_CURRENT).* = self.read_register(u32, .TA_ISP_BASE);
 
-                    holly_log.debug("TA_LIST_INIT: PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
+                    holly_log.info("TA_LIST_INIT: PARAM_BASE: {X:0>8} | TA_OL_BASE: {X:0>8} | TA_ISP_BASE: {X:0>8} | TA_NEXT_OPB_INIT: {X:0>8}", .{
                         self.read_register(u32, .PARAM_BASE),
                         self.read_register(u32, .TA_OL_BASE),
                         self.read_register(u32, .TA_ISP_BASE),
@@ -1688,7 +1688,7 @@ pub const Holly = struct {
                 return;
             },
             .TA_LIST_CONT => {
-                holly_log.warn("Write to TA_LIST_CONT: {X:0>8}", .{v});
+                holly_log.debug("Write to TA_LIST_CONT: {X:0>8}", .{v});
                 // Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers? (Not really tested yet)
                 if (v == 0x80000000) {
                     self._ta_command_buffer_index = 0;
