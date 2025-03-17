@@ -420,10 +420,15 @@ const PassMetadata = struct {
 };
 
 const RenderPass = struct {
-    enabled: bool = false,
     z_clear: bool = true,
     pre_sort: bool = false,
-    lists: [5]HollyModule.RegionArrayDataConfiguration.ListPointer = undefined,
+
+    opaque_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    opaque_modifier_volume_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    translucent_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    translucent_modifier_volume_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    punchthrough_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+
     opaque_pass: PassMetadata,
     punchthrough_pass: PassMetadata,
     translucent_pass: PassMetadata,
@@ -1510,16 +1515,13 @@ pub const Renderer = struct {
 
                 if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(.init(self._allocator)) catch @panic("Out of memory");
 
-                self.render_passes.items[region_array_idx].enabled = true;
                 self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
                 self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
-                self.render_passes.items[region_array_idx].lists = .{
-                    region_config.opaque_list_pointer,
-                    region_config.opaque_modifier_volume_pointer,
-                    region_config.translucent_list_pointer,
-                    region_config.translucent_modifier_volume_pointer,
-                    region_config.punch_through_list_pointer,
-                };
+                self.render_passes.items[region_array_idx].opaque_list_pointer = region_config.opaque_list_pointer;
+                self.render_passes.items[region_array_idx].opaque_modifier_volume_pointer = region_config.opaque_modifier_volume_pointer;
+                self.render_passes.items[region_array_idx].translucent_list_pointer = region_config.translucent_list_pointer;
+                self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
+                self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
 
                 if (region_config.settings.last_region) break;
 
@@ -2091,7 +2093,7 @@ pub const Renderer = struct {
         defer pre_sorted_indices.deinit();
 
         for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
-            if (!render_pass.enabled or self.ta_lists_to_render.items.len <= pass_idx) break;
+            if (self.ta_lists_to_render.items.len <= pass_idx) break;
 
             const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
@@ -2760,16 +2762,69 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
+            skip_background: {
+                const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                    .{
+                        .view = target.resized.view,
+                        .load_op = .load,
+                        .store_op = .store,
+                    },
+                    .{
+                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                        .load_op = .clear,
+                        .store_op = .store,
+                    },
+                };
+                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                    .view = depth_view,
+                    .depth_load_op = .clear,
+                    .depth_store_op = .store,
+                    .depth_clear_value = DepthClearValue,
+                    .stencil_load_op = .clear,
+                    .stencil_store_op = .discard,
+                    .stencil_clear_value = 0,
+                    .stencil_read_only = .false,
+                };
+                const render_pass_info = wgpu.RenderPassDescriptor{
+                    .label = "Background",
+                    .color_attachment_count = color_attachments.len,
+                    .color_attachments = &color_attachments,
+                    .depth_stencil_attachment = &depth_attachment,
+                };
+                const pass = encoder.beginRenderPass(render_pass_info);
+                defer {
+                    pass.end();
+                    pass.release();
+                }
+
+                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+
+                // Draw background
+                const background_pipeline = try self.get_or_put_opaque_pipeline(.{
+                    .src_blend_factor = .one,
+                    .dst_blend_factor = .zero,
+                    .depth_compare = .always,
+                    .depth_write_enabled = false,
+                }, .Async);
+                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_background;
+                pass.setPipeline(bg_pipeline);
+                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
+                pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
+            }
+
             for (self.render_passes.items, 0..) |render_pass, pass_idx| {
-                if (!render_pass.enabled or self.ta_lists_to_render.items.len <= pass_idx) break;
+                if (self.ta_lists_to_render.items.len <= pass_idx) break;
                 const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
-                if (!render_pass.lists[0].empty) {
-                    skip_opaque: {
+                if (!render_pass.opaque_list_pointer.empty) {
+                    {
                         const color_attachments = [_]wgpu.RenderPassColorAttachment{
                             .{
                                 .view = target.resized.view,
-                                .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                                .load_op = .load,
                                 .store_op = .store,
                             },
                             .{
@@ -2805,18 +2860,6 @@ pub const Renderer = struct {
 
                         pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
 
-                        // Draw background
-                        const background_pipeline = try self.get_or_put_opaque_pipeline(.{
-                            .src_blend_factor = .one,
-                            .dst_blend_factor = .zero,
-                            .depth_compare = .always,
-                            .depth_write_enabled = false,
-                        }, .Async);
-                        const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
-                        pass.setPipeline(bg_pipeline);
-                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
-                        pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
-
                         // Opaque and PunchThrough geometry
                         // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
                         inline for ([2]*const PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
@@ -2825,7 +2868,7 @@ pub const Renderer = struct {
                                 // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                                 if (entry.value_ptr.*.draw_calls.count() > 0) {
                                     const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
-                                    const pipeline = gctx.lookupResource(pl) orelse break;
+                                    const pipeline = gctx.lookupResource(pl) orelse continue;
                                     pass.setPipeline(pipeline);
 
                                     for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
@@ -2850,7 +2893,7 @@ pub const Renderer = struct {
                     );
                 }
 
-                if (!render_pass.lists[1].empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
+                if (!render_pass.opaque_modifier_volume_pointer.empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
                     const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
                     const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
                     const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
@@ -2968,7 +3011,7 @@ pub const Renderer = struct {
                     );
                 }
 
-                if (!render_pass.lists[2].empty) {
+                if (!render_pass.translucent_list_pointer.empty) {
                     if (render_pass.pre_sort) {
                         // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
                         const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);

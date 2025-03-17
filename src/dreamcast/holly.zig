@@ -448,6 +448,8 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         _1: u7 = 0,
         empty: bool,
 
+        pub const Empty = ListPointer{ .pointer_to_object_list = std.math.maxInt(u22), .empty = true };
+
         pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("{s}{X:<6}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
         }

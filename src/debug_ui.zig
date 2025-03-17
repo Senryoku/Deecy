@@ -921,116 +921,114 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         // NOTE: We're looking at the last list used during a START_RENDER.
         for (d.renderer.render_passes.items, 0..) |render_pass, pass_idx| {
-            zgui.text("Pass #{d}", .{pass_idx});
+            zgui.text("Pass #{d}: ZClear={any}, Pre-Sort={any}", .{ pass_idx, render_pass.z_clear, render_pass.pre_sort });
             zgui.indent(.{});
             defer zgui.unindent(.{});
             zgui.pushIntId(@intCast(pass_idx));
             defer zgui.popId();
-            if (render_pass.enabled) {
-                if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
-                    zgui.indent(.{});
-                    inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
-                        const list = d.renderer.ta_lists_to_render.items[pass_idx].get_list(list_type);
-                        const name = @tagName(@as(Holly.ListType, list_type));
-                        const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
+            if (zgui.collapsingHeader("Polygons", .{ .frame_padding = true })) {
+                zgui.indent(.{});
+                inline for (.{ Holly.ListType.Opaque, Holly.ListType.Translucent, Holly.ListType.PunchThrough }) |list_type| {
+                    const list = d.renderer.ta_lists_to_render.items[pass_idx].get_list(list_type);
+                    const name = @tagName(@as(Holly.ListType, list_type));
+                    const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
-                        if (zgui.collapsingHeader(header, .{})) {
-                            zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
-                            for (list.vertex_strips.items, 0..) |strip, idx| {
-                                const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d}) - {s}###strip_{d}", .{
-                                    @tagName(strip.polygon.tag()),
-                                    strip.vertex_parameter_count,
-                                    @tagName(strip.polygon.tsp_instruction().texture_shading_instruction),
-                                    idx,
+                    if (zgui.collapsingHeader(header, .{})) {
+                        zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
+                        for (list.vertex_strips.items, 0..) |strip, idx| {
+                            const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d}) - {s}###strip_{d}", .{
+                                @tagName(strip.polygon.tag()),
+                                strip.vertex_parameter_count,
+                                @tagName(strip.polygon.tsp_instruction().texture_shading_instruction),
+                                idx,
+                            });
+                            {
+                                zgui.beginGroup();
+                                const node_open = zgui.treeNodeFlags(strip_header, .{
+                                    .open_on_double_click = true,
+                                    .open_on_arrow = true,
                                 });
-                                {
-                                    zgui.beginGroup();
-                                    const node_open = zgui.treeNodeFlags(strip_header, .{
-                                        .open_on_double_click = true,
-                                        .open_on_arrow = true,
-                                    });
-                                    if (zgui.isItemClicked(.left) and !zgui.isItemToggledOpen()) {
-                                        self.selected_strip_focus = true;
-                                        self.selected_strip_list = list_type;
-                                        self.selected_strip_index = @intCast(idx);
-                                        self.selected_strip_pass_idx = pass_idx;
-                                    }
-                                    if (node_open) {
-                                        if (idx < list.vertex_strips.items.len) {
-                                            self.display_strip_info(d.renderer, &list.vertex_strips.items[idx]);
-                                            for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
-                                                if (i < list.vertex_parameters.items.len)
-                                                    self.display_vertex_data(&list.vertex_parameters.items[i]);
-                                            }
-                                        }
-                                        zgui.treePop();
-                                    }
-                                    zgui.endGroup();
-                                }
-                                if (zgui.isItemClicked(.right)) {
-                                    self.selected_strip_focus = false;
-                                }
-                                if (!self.selected_strip_focus and zgui.isItemHovered(.{})) {
+                                if (zgui.isItemClicked(.left) and !zgui.isItemToggledOpen()) {
+                                    self.selected_strip_focus = true;
                                     self.selected_strip_list = list_type;
                                     self.selected_strip_index = @intCast(idx);
                                     self.selected_strip_pass_idx = pass_idx;
                                 }
+                                if (node_open) {
+                                    if (idx < list.vertex_strips.items.len) {
+                                        self.display_strip_info(d.renderer, &list.vertex_strips.items[idx]);
+                                        for (strip.vertex_parameter_index..(strip.vertex_parameter_index + strip.vertex_parameter_count)) |i| {
+                                            if (i < list.vertex_parameters.items.len)
+                                                self.display_vertex_data(&list.vertex_parameters.items[i]);
+                                        }
+                                    }
+                                    zgui.treePop();
+                                }
+                                zgui.endGroup();
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_strip_focus = false;
+                            }
+                            if (!self.selected_strip_focus and zgui.isItemHovered(.{})) {
+                                self.selected_strip_list = list_type;
+                                self.selected_strip_index = @intCast(idx);
+                                self.selected_strip_pass_idx = pass_idx;
                             }
                         }
                     }
-                    zgui.unindent(.{});
                 }
-                if (zgui.collapsingHeader("Modifier Volumes", .{ .frame_padding = true })) {
-                    zgui.indent(.{});
-                    // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
-                    {
-                        const list = d.renderer.ta_lists_to_render.items[pass_idx].opaque_modifier_volumes;
-                        const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
-                        if (zgui.collapsingHeader(header, .{})) {
-                            for (list.items, 0..) |vol, idx| {
-                                zgui.text("  {any}", .{vol});
-                                if (zgui.isItemClicked(.left)) {
-                                    self.selected_volume_focus = true;
-                                    self.selected_volume_list = .OpaqueModifierVolume;
-                                    self.selected_volume_index = @intCast(idx);
-                                    self.selected_volume_pass_idx = pass_idx;
-                                }
-                                if (zgui.isItemClicked(.right)) {
-                                    self.selected_volume_focus = false;
-                                }
-                                if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
-                                    self.selected_volume_list = .OpaqueModifierVolume;
-                                    self.selected_volume_index = @intCast(idx);
-                                    self.selected_volume_pass_idx = pass_idx;
-                                }
+                zgui.unindent(.{});
+            }
+            if (zgui.collapsingHeader("Modifier Volumes", .{ .frame_padding = true })) {
+                zgui.indent(.{});
+                // NOTE: By the time we get there, the renderer took the volumes for itself (rather than copying them).
+                {
+                    const list = d.renderer.ta_lists_to_render.items[pass_idx].opaque_modifier_volumes;
+                    const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
+                    if (zgui.collapsingHeader(header, .{})) {
+                        for (list.items, 0..) |vol, idx| {
+                            zgui.text("  {any}", .{vol});
+                            if (zgui.isItemClicked(.left)) {
+                                self.selected_volume_focus = true;
+                                self.selected_volume_list = .OpaqueModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                                self.selected_volume_pass_idx = pass_idx;
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_volume_focus = false;
+                            }
+                            if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
+                                self.selected_volume_list = .OpaqueModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                                self.selected_volume_pass_idx = pass_idx;
                             }
                         }
                     }
-                    {
-                        const list = d.renderer.ta_lists_to_render.items[pass_idx].translucent_modifier_volumes;
-                        const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
-                        if (zgui.collapsingHeader(header, .{})) {
-                            for (list.items, 0..) |vol, idx| {
-                                zgui.text("  {any}", .{vol});
-                                if (zgui.isItemClicked(.left)) {
-                                    self.selected_volume_focus = true;
-                                    self.selected_volume_list = .TranslucentModifierVolume;
-                                    self.selected_volume_index = @intCast(idx);
-                                    self.selected_volume_pass_idx = pass_idx;
-                                }
-                                if (zgui.isItemClicked(.right)) {
-                                    self.selected_volume_focus = false;
-                                }
-                                if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
-                                    self.selected_volume_list = .TranslucentModifierVolume;
-                                    self.selected_volume_index = @intCast(idx);
-                                    self.selected_volume_pass_idx = pass_idx;
-                                }
-                            }
-                        }
-                    }
-                    zgui.unindent(.{});
                 }
+                {
+                    const list = d.renderer.ta_lists_to_render.items[pass_idx].translucent_modifier_volumes;
+                    const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
+                    if (zgui.collapsingHeader(header, .{})) {
+                        for (list.items, 0..) |vol, idx| {
+                            zgui.text("  {any}", .{vol});
+                            if (zgui.isItemClicked(.left)) {
+                                self.selected_volume_focus = true;
+                                self.selected_volume_list = .TranslucentModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                                self.selected_volume_pass_idx = pass_idx;
+                            }
+                            if (zgui.isItemClicked(.right)) {
+                                self.selected_volume_focus = false;
+                            }
+                            if (!self.selected_volume_focus and zgui.isItemHovered(.{})) {
+                                self.selected_volume_list = .TranslucentModifierVolume;
+                                self.selected_volume_index = @intCast(idx);
+                                self.selected_volume_pass_idx = pass_idx;
+                            }
+                        }
+                    }
+                }
+                zgui.unindent(.{});
             }
         }
 
