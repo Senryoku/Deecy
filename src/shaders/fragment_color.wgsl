@@ -317,11 +317,6 @@ fn fragment_color(
         output.area1 = output.area0;
     }
 
-    if punch_through {
-        output.area0.a = 1.0;
-        output.area1.a = 1.0;
-    }
-
     return output;
 }
 
