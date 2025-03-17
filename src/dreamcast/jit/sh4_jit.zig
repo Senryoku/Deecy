@@ -2221,7 +2221,7 @@ pub fn ftrc_FRn_FPUL(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool 
 pub fn fsrra_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     try check_fd_bit(block, ctx);
 
-    std.debug.assert(ctx.fpscr_pr == .Single);
+    std.debug.assert(ctx.fpscr_pr != .Double);
     // NOTE: x86 rsqrt is less precise than its SH4 equivalent.
     const frn = try load_fp_register_for_writing(block, ctx, instr.nmd.n);
     try block.append(.{ .Sqrt = .{ .dst = .{ .freg32 = .xmm0 }, .src = frn } }); // xmm0 = sqrt(FRn)
