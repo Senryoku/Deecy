@@ -1503,11 +1503,23 @@ pub const Renderer = struct {
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
+            // Clear the previous used TA lists and swap it with the one submitted by the game.
+            // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
+            //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
+            for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
+            const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
+            std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+            if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
+                renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
+            }
+
             const header_type = dc.gpu.get_region_header_type();
 
-            var region_array_idx: usize = 0;
-            var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-            while (region_array_idx < 8 and !region_config.empty() and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
+            var region_count: u32 = 0;
+            for (0..self.ta_lists.items.len) |region_array_idx| {
+                var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+                if (region_config.empty()) break;
+
                 switch (header_type) {
                     .Type1 => renderer_log.debug("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
                     .Type2 => renderer_log.debug("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
@@ -1522,28 +1534,17 @@ pub const Renderer = struct {
                 self.render_passes.items[region_array_idx].translucent_list_pointer = region_config.translucent_list_pointer;
                 self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
                 self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
-
+                region_count += 1;
                 if (region_config.settings.last_region) break;
-
-                region_array_idx += 1;
-                region_config = dc.gpu.get_region_array_data_config(region_array_idx);
             }
 
-            if (region_array_idx < self.render_passes.items.len) {
-                for (region_array_idx..self.render_passes.items.len) |i| {
+            if (region_count != self.ta_lists.items.len)
+                renderer_log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
+
+            if (region_count < self.render_passes.items.len) {
+                for (region_count..self.render_passes.items.len) |i|
                     self.render_passes.items[i].deinit();
-                }
                 self.render_passes.shrinkRetainingCapacity(self.render_passes.items.len);
-            }
-
-            // Clear the previous used TA lists and swap it with the one submitted by the game.
-            // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
-            //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
-            for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
-            const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
-            std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
-            if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
-                renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
             }
 
             self.render_start = true;
