@@ -1409,7 +1409,9 @@ pub const Holly = struct {
     // 16 different values (actually 8 in the case of the base DC and its 8MB of VRAM).
     // We don't emulate the object writes to VRAM, but some games submit multiple lists concurently
     // ("double buffering" the object lists), so we have to keep track of that.
-    _ta_lists: [16][8]TALists = undefined,
+    // Most games will only need a single list per frame, but when using List Continuation for
+    // multipass rendering, we'll allocate more as needed.
+    _ta_lists: [16]std.ArrayList(TALists) = undefined,
 
     _pixel: u64 = 0,
     _tmp_subcycles: u64 = 0,
@@ -1423,16 +1425,16 @@ pub const Holly = struct {
             ._dc = dc,
         };
         for (&r._ta_lists) |*ta_list| {
-            for (ta_list) |*pass|
-                pass.* = .init(allocator);
+            ta_list.* = .init(allocator);
+            try ta_list.append(.init(allocator));
         }
         return r;
     }
 
     pub fn deinit(self: *@This()) void {
-        for (&self._ta_lists) |*ta_list| {
-            for (ta_list) |*pass|
-                pass.deinit();
+        for (&self._ta_lists) |*ta_lists| {
+            for (ta_lists.items) |*list|
+                list.deinit();
         }
         self._allocator.free(self.registers);
     }
@@ -1441,8 +1443,8 @@ pub const Holly = struct {
         @memset(self.vram, 0);
         @memset(self.registers, 0);
 
-        for (&self._ta_lists) |*ta_list| {
-            for (ta_list) |*list|
+        for (&self._ta_lists) |*ta_lists| {
+            for (ta_lists.items) |*list|
                 list.clearRetainingCapacity();
         }
 
@@ -1702,6 +1704,8 @@ pub const Holly = struct {
                 // Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers? (Not really tested yet)
                 if (v == 0x80000000) {
                     self._ta_current_pass += 1;
+                    if (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass)
+                        self._ta_lists[self.ta_list_index()].append(.init(self._allocator)) catch @panic("Out of memory");
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1922,7 +1926,7 @@ pub const Holly = struct {
     }
 
     fn ta_current_lists(self: *@This()) *TALists {
-        return &self._ta_lists[self.ta_list_index()][self._ta_current_pass];
+        return &self._ta_lists[self.ta_list_index()].items[self._ta_current_pass];
     }
 
     fn start_list(self: *@This(), list_type: ListType) void {
@@ -2353,11 +2357,14 @@ pub const Holly = struct {
         bytes += try writer.write(std.mem.asBytes(&self._ta_user_tile_clip));
         bytes += try writer.write(std.mem.asBytes(&self._ta_current_volume));
         bytes += try writer.write(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
-        for (&self._ta_lists) |*lists| {
-            for (lists) |*list| {
-                bytes += try list.serialize(writer);
-            }
-        }
+        // NOTE: We're not currently serializing TA Lists.
+        // for (&self._ta_lists) |*lists| {
+        //     var list_count = lists.items.len;
+        //     bytes += try writer.write(std.mem.asBytes(&list_count));
+        //     for (lists.items) |*list| {
+        //         bytes += try list.serialize(writer);
+        //     }
+        // }
         bytes += try writer.write(std.mem.asBytes(&self._pixel));
         bytes += try writer.write(std.mem.asBytes(&self._tmp_subcycles));
         bytes += try writer.write(std.mem.asBytes(&self._last_spg_update));
@@ -2375,11 +2382,18 @@ pub const Holly = struct {
         bytes += try reader.read(std.mem.asBytes(&self._ta_user_tile_clip));
         bytes += try reader.read(std.mem.asBytes(&self._ta_current_volume));
         bytes += try reader.read(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
-        for (&self._ta_lists) |*lists| {
-            for (lists) |*list| {
-                bytes += try list.deserialize(reader);
-            }
-        }
+        // for (&self._ta_lists) |*lists| {
+        //     for (lists.items) |*list| {
+        //         list.deinit();
+        //     }
+        //     lists.clearRetainingCapacity();
+        //     var list_count: u32 = 0;
+        //     bytes += try reader.read(std.mem.asBytes(&list_count));
+        //     for (0..list_count) |i| {
+        //         try lists.append(.init(self._allocator));
+        //         bytes += try lists.items[i].deserialize(reader);
+        //     }
+        // }
         bytes += try reader.read(std.mem.asBytes(&self._pixel));
         bytes += try reader.read(std.mem.asBytes(&self._tmp_subcycles));
         bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));

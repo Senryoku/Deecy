@@ -640,9 +640,9 @@ pub const Renderer = struct {
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
-    render_passes: [8]RenderPass = undefined,
-    ta_lists: [8]HollyModule.TALists = undefined,
-    ta_lists_to_render: [8]HollyModule.TALists = undefined,
+    render_passes: std.ArrayList(RenderPass),
+    ta_lists: std.ArrayList(HollyModule.TALists),
+    ta_lists_to_render: std.ArrayList(HollyModule.TALists),
     _ta_lists_mutex: std.Thread.Mutex = .{},
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
@@ -1192,16 +1192,17 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
+            .render_passes = .init(allocator),
+            .ta_lists = .init(allocator),
+            .ta_lists_to_render = .init(allocator),
+
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
             ._gctx = gctx,
             ._allocator = allocator,
         };
-        for (&renderer.ta_lists) |*list|
-            list.* = .init(allocator);
-        for (&renderer.ta_lists_to_render) |*list|
-            list.* = .init(allocator);
-        for (&renderer.render_passes) |*pass| pass.* = .init(allocator);
+        try renderer.ta_lists.append(.init(allocator));
+        try renderer.ta_lists_to_render.append(.init(allocator));
 
         MipMap.init(allocator, gctx);
         // Blit pipeline
@@ -1380,8 +1381,12 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
-        for (&self.ta_lists) |*list| list.deinit();
-        for (&self.ta_lists_to_render) |*list| list.deinit();
+        for (self.ta_lists.items) |*list| list.deinit();
+        self.ta_lists.deinit();
+        for (self.ta_lists_to_render.items) |*list| list.deinit();
+        self.ta_lists_to_render.deinit();
+        for (self.render_passes.items) |*pass| pass.deinit();
+        self.render_passes.deinit();
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
@@ -1410,8 +1415,6 @@ pub const Renderer = struct {
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
-
-        for (&self.render_passes) |*render_pass| render_pass.deinit();
 
         self.modifier_volume_vertices.deinit();
         self.strips_metadata.deinit();
@@ -1476,9 +1479,9 @@ pub const Renderer = struct {
         self.render_start = false;
         self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
 
-        for (&self.ta_lists_to_render) |*list| list.clearRetainingCapacity();
-        for (&self.ta_lists) |*list| list.clearRetainingCapacity();
-        for (&self.render_passes) |*pass| pass.clearRetainingCapacity();
+        for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
+        for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
+        for (self.render_passes.items) |*pass| pass.clearRetainingCapacity();
 
         self.modifier_volume_vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -1490,28 +1493,27 @@ pub const Renderer = struct {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
 
-            if (self.render_start) {
+            if (self.render_start)
                 renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
-            }
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
 
             const header_type = dc.gpu.get_region_header_type();
 
-            for (&self.render_passes) |*render_pass| render_pass.enabled = false;
-
             var region_array_idx: usize = 0;
             var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-            while (region_array_idx < self.render_passes.len and !region_config.empty() and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
+            while (region_array_idx < 8 and !region_config.empty() and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
                 switch (header_type) {
-                    .Type1 => renderer_log.info("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
-                    .Type2 => renderer_log.info("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
+                    .Type1 => renderer_log.debug("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
+                    .Type2 => renderer_log.debug("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
                 }
 
-                self.render_passes[region_array_idx].enabled = true;
-                self.render_passes[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
-                self.render_passes[region_array_idx].pre_sort = region_config.settings.pre_sort;
-                self.render_passes[region_array_idx].lists = .{
+                if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(.init(self._allocator)) catch @panic("Out of memory");
+
+                self.render_passes.items[region_array_idx].enabled = true;
+                self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
+                self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
+                self.render_passes.items[region_array_idx].lists = .{
                     region_config.opaque_list_pointer,
                     region_config.opaque_modifier_volume_pointer,
                     region_config.translucent_list_pointer,
@@ -1525,13 +1527,20 @@ pub const Renderer = struct {
                 region_config = dc.gpu.get_region_array_data_config(region_array_idx);
             }
 
+            if (region_array_idx < self.render_passes.items.len) {
+                for (region_array_idx..self.render_passes.items.len) |i| {
+                    self.render_passes.items[i].deinit();
+                }
+                self.render_passes.shrinkRetainingCapacity(self.render_passes.items.len);
+            }
+
             // Clear the previous used TA lists and swap it with the one submitted by the game.
             // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
             //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
-            for (&self.ta_lists) |*list| list.clearRetainingCapacity();
+            for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
             const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
-            std.mem.swap([8]HollyModule.TALists, &dc.gpu._ta_lists[list_idx], &self.ta_lists);
-            if (self.ta_lists[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists[0].translucent_list.vertex_strips.items.len == 0) {
+            std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+            if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
                 renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
             }
 
@@ -2031,10 +2040,10 @@ pub const Renderer = struct {
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
-            for (&self.ta_lists_to_render) |*ta_list| {
-                ta_list.clearRetainingCapacity();
+            for (self.ta_lists_to_render.items) |*list| {
+                list.clearRetainingCapacity();
             }
-            std.mem.swap([8]HollyModule.TALists, &self.ta_lists, &self.ta_lists_to_render);
+            std.mem.swap(std.ArrayList(HollyModule.TALists), &self.ta_lists, &self.ta_lists_to_render);
         }
 
         self.vertices.clearRetainingCapacity();
@@ -2043,44 +2052,48 @@ pub const Renderer = struct {
         self.reset_texture_usage();
         defer self.check_texture_usage();
 
-        var strip_offset: usize = 0;
-        var vertices_offset: usize = FirstVertex * @sizeOf(Vertex);
+        self.min_depth = std.math.floatMax(f32);
+        self.max_depth = 0.0;
+
+        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
+
+        self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
+
+        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
+        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
+
+        self.fog_col_pal = fRGBA.from_packed(col_pal, true);
+        self.fog_col_vert = fRGBA.from_packed(col_vert, true);
+        const fog_density = gpu.read_register(u16, .FOG_DENSITY);
+        const fog_density_mantissa = (fog_density >> 8) & 0xFF;
+        const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
+        self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
+        for (0..0x80) |i| {
+            self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
+        }
+
+        const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
+        const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
+        self.global_clip.x.min = x_clip.min;
+        self.global_clip.x.max = x_clip.max;
+        self.global_clip.y.min = y_clip.min;
+        self.global_clip.y.max = y_clip.max;
+
+        try self.update_background(gpu);
+        try self.update_palette(gpu);
+
         var modifier_volumes_offset: usize = 0;
 
-        for (&self.render_passes, 0..) |*render_pass, pass_idx| {
-            if (!render_pass.enabled) break;
+        const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
+        var index_buffer_pointer = FirstIndex;
 
-            const ta_lists = &self.ta_lists_to_render[pass_idx];
+        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
+        defer pre_sorted_indices.deinit();
 
-            self.min_depth = std.math.floatMax(f32);
-            self.max_depth = 0.0;
+        for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
+            if (!render_pass.enabled or self.ta_lists_to_render.items.len <= pass_idx) break;
 
-            self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
-
-            self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
-
-            const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
-            const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
-
-            self.fog_col_pal = fRGBA.from_packed(col_pal, true);
-            self.fog_col_vert = fRGBA.from_packed(col_vert, true);
-            const fog_density = gpu.read_register(u16, .FOG_DENSITY);
-            const fog_density_mantissa = (fog_density >> 8) & 0xFF;
-            const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
-            self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
-            for (0..0x80) |i| {
-                self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
-            }
-
-            const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
-            const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
-            self.global_clip.x.min = x_clip.min;
-            self.global_clip.x.max = x_clip.max;
-            self.global_clip.y.min = y_clip.min;
-            self.global_clip.y.max = y_clip.max;
-
-            try self.update_background(gpu);
-            try self.update_palette(gpu);
+            const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
             for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
                 // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
@@ -2096,11 +2109,8 @@ pub const Renderer = struct {
             }
 
             render_pass.pre_sorted_translucent_pass.clearRetainingCapacity();
-            var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
-            defer pre_sorted_indices.deinit();
-
-            const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
-            var index_buffer_pointer = FirstIndex;
+            pre_sorted_indices.clearRetainingCapacity();
+            var pre_sorted_index_offset: u32 = 0;
 
             inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
                 // Parameters specific to a polygon type
@@ -2111,7 +2121,7 @@ pub const Renderer = struct {
                 const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
                 for (0..display_list.vertex_strips.items.len) |idx| {
-                    const start: u32 = @intCast(self.vertices.items.len);
+                    const strip_first_vertex_index: usize = self.vertices.items.len;
                     const polygon = display_list.vertex_strips.items[idx].polygon;
 
                     // Generic Parameters
@@ -2491,14 +2501,14 @@ pub const Renderer = struct {
                     }
 
                     // Triangle Strips
-                    if (self.vertices.items.len - start < 3) {
-                        renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
+                    if (self.vertices.items.len - strip_first_vertex_index < 3) {
+                        renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - strip_first_vertex_index});
                     } else {
                         // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
                         if (isp_tsp_instruction.gouraud == 0) {
                             // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
                             // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
-                            for (start..self.vertices.items.len - 2) |i| {
+                            for (strip_first_vertex_index..self.vertices.items.len - 2) |i| {
                                 self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
                                 self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
                                 // TODO: Bump map parameters?
@@ -2522,9 +2532,9 @@ pub const Renderer = struct {
                                     prev_draw_call.?.sampler != sampler)
                                 {
                                     if (prev_draw_call) |draw_call| {
-                                        draw_call.start_index = index_buffer_pointer;
-                                        draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-                                        index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
+                                        draw_call.start_index = index_buffer_pointer + pre_sorted_index_offset;
+                                        draw_call.index_count = @intCast(pre_sorted_indices.items.len - pre_sorted_index_offset);
+                                        pre_sorted_index_offset += draw_call.index_count;
                                     }
 
                                     try render_pass.pre_sorted_translucent_pass.append(.{
@@ -2533,7 +2543,7 @@ pub const Renderer = struct {
                                         .user_clip = display_list.vertex_strips.items[idx].user_clip,
                                     });
                                 }
-                                for (start..self.vertices.items.len) |i|
+                                for (strip_first_vertex_index..self.vertices.items.len) |i|
                                     try pre_sorted_indices.append(@intCast(FirstVertex + i));
                                 try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
@@ -2560,7 +2570,7 @@ pub const Renderer = struct {
                                     ));
                                     draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                                 }
-                                for (start..self.vertices.items.len) |i|
+                                for (strip_first_vertex_index..self.vertices.items.len) |i|
                                     try draw_call.?.indices.append(@intCast(FirstVertex + i));
                                 try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             }
@@ -2569,31 +2579,24 @@ pub const Renderer = struct {
                 }
             }
 
-            // Finalize the last pre-sorted draw call
             if (pre_sorted_indices.items.len > 0) {
+                // Finalize the last pre-sorted draw call
                 const draw_call = &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
-                draw_call.start_index = index_buffer_pointer;
-                draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-                index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
+                draw_call.start_index = index_buffer_pointer + pre_sorted_index_offset;
+                draw_call.index_count = @intCast(pre_sorted_indices.items.len - pre_sorted_index_offset);
                 // And send all indices to the GPU
-                self._gctx.queue.writeBuffer(index_buffer, FirstIndex * @sizeOf(u32), u32, pre_sorted_indices.items);
+                self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, pre_sorted_indices.items);
+                index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
             }
 
-            // Send everything to the GPU
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, strip_offset, StripMetadata, self.strips_metadata.items);
-            strip_offset += @sizeOf(StripMetadata) * self.strips_metadata.items.len;
-
             if (self.vertices.items.len > 0) {
-                self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
-                vertices_offset += @sizeOf(Vertex) * self.vertices.items.len;
-
                 for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
                     var it = pass.pipelines.iterator();
                     while (it.next()) |entry| {
                         for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
                             draw_call.start_index = index_buffer_pointer;
                             draw_call.index_count = @intCast(draw_call.indices.items.len);
-                            self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, draw_call.indices.items);
+                            self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, draw_call.indices.items);
                             index_buffer_pointer += @intCast(draw_call.indices.items.len);
 
                             draw_call.indices.clearRetainingCapacity();
@@ -2620,6 +2623,9 @@ pub const Renderer = struct {
             self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, modifier_volumes_offset, [4]f32, self.modifier_volume_vertices.items);
             modifier_volumes_offset += @sizeOf([4]f32) * self.modifier_volume_vertices.items.len;
         }
+        // Send everything else to the GPU
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, 0, StripMetadata, self.strips_metadata.items);
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, @sizeOf(Vertex) * FirstVertex, Vertex, self.vertices.items);
     }
 
     fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
@@ -2754,9 +2760,9 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
-            for (self.render_passes, 0..) |render_pass, pass_idx| {
-                if (!render_pass.enabled) break;
-                const ta_lists = &self.ta_lists_to_render[pass_idx];
+            for (self.render_passes.items, 0..) |render_pass, pass_idx| {
+                if (!render_pass.enabled or self.ta_lists_to_render.items.len <= pass_idx) break;
+                const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
                 if (!render_pass.lists[0].empty) {
                     skip_opaque: {
