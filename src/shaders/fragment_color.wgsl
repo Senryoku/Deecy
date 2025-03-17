@@ -178,6 +178,7 @@ fn area_color(
         // NOTE: Doc. says alpha should be checked *after* applying the shading instructions, (i.e.
         //       testing final_color.a instead of tex_a), but I found at least one instance 
         //       where it doesn't produce the expected result: Ecco splash screen.
+        // FIXME: What about area 1? Surely this should be done after modifier volumes are applied?...
         if punch_through && tex_a < uniforms.pt_alpha_ref {
             // NOTE: Documentation says:
             //  "In the case of a Punch Through polygon, "4" (SRC Alpha) must be
@@ -314,6 +315,11 @@ fn fragment_color(
         }
     } else {
         output.area1 = output.area0;
+    }
+
+    if punch_through {
+        output.area0.a = 1.0;
+        output.area1.a = 1.0;
     }
 
     return output;
