@@ -419,6 +419,40 @@ const PassMetadata = struct {
     }
 };
 
+const RenderPass = struct {
+    enabled: bool = false,
+    z_clear: bool = true,
+    pre_sort: bool = false,
+    lists: [5]HollyModule.RegionArrayDataConfiguration.ListPointer = undefined,
+    opaque_pass: PassMetadata,
+    punchthrough_pass: PassMetadata,
+    translucent_pass: PassMetadata,
+    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
+
+    pub fn init(allocator: std.mem.Allocator) RenderPass {
+        return .{
+            .opaque_pass = .init(allocator, .Opaque),
+            .punchthrough_pass = .init(allocator, .PunchThrough),
+            .translucent_pass = .init(allocator, .Translucent),
+            .pre_sorted_translucent_pass = .init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.opaque_pass.deinit();
+        self.punchthrough_pass.deinit();
+        self.translucent_pass.deinit();
+        self.pre_sorted_translucent_pass.deinit();
+    }
+
+    pub fn clearRetainingCapacity(self: *@This()) void {
+        self.opaque_pass.reset();
+        self.punchthrough_pass.reset();
+        self.translucent_pass.reset();
+        self.pre_sorted_translucent_pass.clearRetainingCapacity();
+    }
+};
+
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     var r: [4]Vertex = .{Vertex.undef()} ** 4;
 
@@ -606,9 +640,9 @@ pub const Renderer = struct {
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
-    render_passes: [8]struct { enabled: bool = false, z_clear: bool = true, pre_sort: bool = false, lists: [5]HollyModule.RegionArrayDataConfiguration.ListPointer = undefined } = .{.{}} ** 8,
-    ta_lists: HollyModule.TALists,
-    ta_lists_to_render: HollyModule.TALists,
+    render_passes: [8]RenderPass = undefined,
+    ta_lists: [8]HollyModule.TALists = undefined,
+    ta_lists_to_render: [8]HollyModule.TALists = undefined,
     _ta_lists_mutex: std.Thread.Mutex = .{},
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
@@ -692,11 +726,6 @@ pub const Renderer = struct {
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
-
-    opaque_pass: PassMetadata,
-    punchthrough_pass: PassMetadata,
-    translucent_pass: PassMetadata,
-    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
 
     min_depth: f32 = std.math.floatMax(f32),
     max_depth: f32 = 0.0,
@@ -1163,19 +1192,16 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .opaque_pass = .init(allocator, .Opaque),
-            .punchthrough_pass = .init(allocator, .PunchThrough),
-            .translucent_pass = .init(allocator, .Translucent),
-            .pre_sorted_translucent_pass = .init(allocator),
-
-            .ta_lists = .init(allocator),
-            .ta_lists_to_render = .init(allocator),
-
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
 
             ._gctx = gctx,
             ._allocator = allocator,
         };
+        for (&renderer.ta_lists) |*list|
+            list.* = .init(allocator);
+        for (&renderer.ta_lists_to_render) |*list|
+            list.* = .init(allocator);
+        for (&renderer.render_passes) |*pass| pass.* = .init(allocator);
 
         MipMap.init(allocator, gctx);
         // Blit pipeline
@@ -1354,8 +1380,8 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
-        self.ta_lists.deinit();
-        self.ta_lists_to_render.deinit();
+        for (&self.ta_lists) |*list| list.deinit();
+        for (&self.ta_lists_to_render) |*list| list.deinit();
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
@@ -1385,10 +1411,7 @@ pub const Renderer = struct {
 
         self._allocator.free(self._scratch_pad);
 
-        self.pre_sorted_translucent_pass.deinit();
-        self.translucent_pass.deinit();
-        self.punchthrough_pass.deinit();
-        self.opaque_pass.deinit();
+        for (&self.render_passes) |*render_pass| render_pass.deinit();
 
         self.modifier_volume_vertices.deinit();
         self.strips_metadata.deinit();
@@ -1453,12 +1476,9 @@ pub const Renderer = struct {
         self.render_start = false;
         self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
 
-        self.ta_lists_to_render.clearRetainingCapacity();
-        self.ta_lists.clearRetainingCapacity();
-
-        self.translucent_pass.reset();
-        self.punchthrough_pass.reset();
-        self.opaque_pass.reset();
+        for (&self.ta_lists_to_render) |*list| list.clearRetainingCapacity();
+        for (&self.ta_lists) |*list| list.clearRetainingCapacity();
+        for (&self.render_passes) |*pass| pass.clearRetainingCapacity();
 
         self.modifier_volume_vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -1482,37 +1502,36 @@ pub const Renderer = struct {
 
             var region_array_idx: usize = 0;
             var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-            while (region_array_idx < self.render_passes.len and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
+            while (region_array_idx < self.render_passes.len and !region_config.empty() and region_config.settings.tile_x_position == 0 and region_config.settings.tile_y_position == 0) {
                 switch (header_type) {
-                    .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
-                    .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
+                    .Type1 => renderer_log.info("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
+                    .Type2 => renderer_log.info("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
                 }
 
-                self.render_passes[region_array_idx] = .{
-                    .enabled = true,
-                    .z_clear = region_config.settings.z_clear == .Clear,
-                    .pre_sort = region_config.settings.pre_sort,
-                    .lists = .{
-                        region_config.opaque_list_pointer,
-                        region_config.opaque_modifier_volume_pointer,
-                        region_config.translucent_list_pointer,
-                        region_config.translucent_modifier_volume_pointer,
-                        region_config.punch_through_list_pointer,
-                    },
+                self.render_passes[region_array_idx].enabled = true;
+                self.render_passes[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
+                self.render_passes[region_array_idx].pre_sort = region_config.settings.pre_sort;
+                self.render_passes[region_array_idx].lists = .{
+                    region_config.opaque_list_pointer,
+                    region_config.opaque_modifier_volume_pointer,
+                    region_config.translucent_list_pointer,
+                    region_config.translucent_modifier_volume_pointer,
+                    region_config.punch_through_list_pointer,
                 };
+
+                if (region_config.settings.last_region) break;
 
                 region_array_idx += 1;
                 region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-                if (region_config.settings.last_region) break;
             }
 
             // Clear the previous used TA lists and swap it with the one submitted by the game.
             // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
             //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
-            self.ta_lists.clearRetainingCapacity();
+            for (&self.ta_lists) |*list| list.clearRetainingCapacity();
             const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
-            std.mem.swap(HollyModule.TALists, &dc.gpu._ta_lists[list_idx], &self.ta_lists);
-            if (self.ta_lists.opaque_list.vertex_strips.items.len == 0 and self.ta_lists.punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.translucent_list.vertex_strips.items.len == 0) {
+            std.mem.swap([8]HollyModule.TALists, &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+            if (self.ta_lists[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists[0].translucent_list.vertex_strips.items.len == 0) {
                 renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
             }
 
@@ -2012,11 +2031,11 @@ pub const Renderer = struct {
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
-            self.ta_lists_to_render.clearRetainingCapacity();
-            std.mem.swap(HollyModule.TALists, &self.ta_lists, &self.ta_lists_to_render);
+            for (&self.ta_lists_to_render) |*ta_list| {
+                ta_list.clearRetainingCapacity();
+            }
+            std.mem.swap([8]HollyModule.TALists, &self.ta_lists, &self.ta_lists_to_render);
         }
-
-        const ta_lists = &self.ta_lists_to_render;
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -2024,570 +2043,583 @@ pub const Renderer = struct {
         self.reset_texture_usage();
         defer self.check_texture_usage();
 
-        self.min_depth = std.math.floatMax(f32);
-        self.max_depth = 0.0;
+        var strip_offset: usize = 0;
+        var vertices_offset: usize = FirstVertex * @sizeOf(Vertex);
+        var modifier_volumes_offset: usize = 0;
 
-        self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
+        for (&self.render_passes, 0..) |*render_pass, pass_idx| {
+            if (!render_pass.enabled) break;
 
-        self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
+            const ta_lists = &self.ta_lists_to_render[pass_idx];
 
-        const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
-        const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
+            self.min_depth = std.math.floatMax(f32);
+            self.max_depth = 0.0;
 
-        self.fog_col_pal = fRGBA.from_packed(col_pal, true);
-        self.fog_col_vert = fRGBA.from_packed(col_vert, true);
-        const fog_density = gpu.read_register(u16, .FOG_DENSITY);
-        const fog_density_mantissa = (fog_density >> 8) & 0xFF;
-        const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
-        self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
-        for (0..0x80) |i| {
-            self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
-        }
+            self.pt_alpha_ref = @as(f32, @floatFromInt(gpu.read_register(u8, .PT_ALPHA_REF))) / 255.0;
 
-        const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
-        const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
-        self.global_clip.x.min = x_clip.min;
-        self.global_clip.x.max = x_clip.max;
-        self.global_clip.y.min = y_clip.min;
-        self.global_clip.y.max = y_clip.max;
+            self.fpu_shad_scale = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).get_factor();
 
-        try self.update_background(gpu);
-        try self.update_palette(gpu);
+            const col_pal = gpu.read_register(PackedColor, .FOG_COL_RAM);
+            const col_vert = gpu.read_register(PackedColor, .FOG_COL_VERT);
 
-        for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
-            // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
-            //             which is okay, I think. However this might become problematic down the line.
-            //             We're saving a lot of allocations this way, but there's probably a better way to do it.
-            var it = pass.pipelines.iterator();
-            while (it.next()) |pipeline| {
-                for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
-                    draw_call.start_index = 0;
-                    draw_call.index_count = 0;
+            self.fog_col_pal = fRGBA.from_packed(col_pal, true);
+            self.fog_col_vert = fRGBA.from_packed(col_vert, true);
+            const fog_density = gpu.read_register(u16, .FOG_DENSITY);
+            const fog_density_mantissa = (fog_density >> 8) & 0xFF;
+            const fog_density_exponent: i8 = @bitCast(@as(u8, @truncate(fog_density & 0xFF)));
+            self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
+            for (0..0x80) |i| {
+                self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
+            }
+
+            const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
+            const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
+            self.global_clip.x.min = x_clip.min;
+            self.global_clip.x.max = x_clip.max;
+            self.global_clip.y.min = y_clip.min;
+            self.global_clip.y.max = y_clip.max;
+
+            try self.update_background(gpu);
+            try self.update_palette(gpu);
+
+            for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
+                // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
+                //             which is okay, I think. However this might become problematic down the line.
+                //             We're saving a lot of allocations this way, but there's probably a better way to do it.
+                var it = pass.pipelines.iterator();
+                while (it.next()) |pipeline| {
+                    for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
+                        draw_call.start_index = 0;
+                        draw_call.index_count = 0;
+                    }
                 }
             }
-        }
 
-        self.pre_sorted_translucent_pass.clearRetainingCapacity();
-        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
-        defer pre_sorted_indices.deinit();
+            render_pass.pre_sorted_translucent_pass.clearRetainingCapacity();
+            var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
+            defer pre_sorted_indices.deinit();
 
-        const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
-        var index_buffer_pointer = FirstIndex;
+            const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
+            var index_buffer_pointer = FirstIndex;
 
-        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
-            // Parameters specific to a polygon type
-            var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
-            var face_offset_color: fARGB = undefined;
-            var area1_face_color: fARGB = undefined;
-            var area1_face_offset_color: fARGB = undefined;
-            const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
+            inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
+                // Parameters specific to a polygon type
+                var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
+                var face_offset_color: fARGB = undefined;
+                var area1_face_color: fARGB = undefined;
+                var area1_face_offset_color: fARGB = undefined;
+                const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
-            for (0..display_list.vertex_strips.items.len) |idx| {
-                const start: u32 = @intCast(self.vertices.items.len);
-                const polygon = display_list.vertex_strips.items[idx].polygon;
+                for (0..display_list.vertex_strips.items.len) |idx| {
+                    const start: u32 = @intCast(self.vertices.items.len);
+                    const polygon = display_list.vertex_strips.items[idx].polygon;
 
-                // Generic Parameters
-                const parameter_control_word = polygon.control_word();
-                const isp_tsp_instruction = polygon.isp_tsp_instruction();
-                const tsp_instruction = polygon.tsp_instruction();
-                const texture_control = polygon.texture_control();
-                const area1_tsp_instruction = polygon.area1_tsp_instruction();
-                const area1_texture_control = polygon.area1_texture_control();
+                    // Generic Parameters
+                    const parameter_control_word = polygon.control_word();
+                    const isp_tsp_instruction = polygon.isp_tsp_instruction();
+                    const tsp_instruction = polygon.tsp_instruction();
+                    const texture_control = polygon.texture_control();
+                    const area1_tsp_instruction = polygon.area1_tsp_instruction();
+                    const area1_texture_control = polygon.area1_texture_control();
 
-                if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
-                    switch (polygon) {
-                        .PolygonType1 => |p| {
-                            face_color = p.face_color;
-                        },
-                        .PolygonType2 => |p| {
-                            face_color = p.face_color;
-                            face_offset_color = p.face_offset_color;
-                        },
-                        .PolygonType4 => |p| {
-                            // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
-                            face_color = p.face_color_0;
-                            face_offset_color = p.face_color_0;
-                            area1_face_color = p.face_color_1;
-                            area1_face_offset_color = p.face_color_1;
-                        },
-                        else => {},
-                    }
-                }
-
-                var sprite_base_color: PackedColor = undefined;
-                var sprite_offset_color: PackedColor = undefined;
-                if (polygon == .Sprite) {
-                    sprite_base_color = polygon.Sprite.base_color;
-                    sprite_offset_color = polygon.Sprite.offset_color;
-                }
-
-                var tex_idx: TextureIndex = 0;
-                var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
-                const textured = parameter_control_word.obj_control.texture == 1;
-                if (textured) {
-                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
-                    self.texture_metadata[texture_size_index][tex_idx].usage += 1;
-                }
-                if (area1_texture_control) |tc| {
-                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
-                    self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
-                }
-
-                const use_alpha = tsp_instruction.use_alpha == 1;
-                const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
-
-                const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-                const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
-
-                const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-                const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
-
-                const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
-                const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
-
-                // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
-                // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
-                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
-
-                const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
-
-                const area0_instructions: VertexTextureInfo = .{
-                    .index = tex_idx,
-                    .palette = .{
-                        .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                        .filtered = tsp_instruction.filter_mode != .Point,
-                        .selector = @truncate(texture_control.palette_selector() >> 4),
-                    },
-                    .shading = .{
-                        .textured = parameter_control_word.obj_control.texture,
-                        .mode = tsp_instruction.texture_shading_instruction,
-                        .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                        .tex_u_size = tsp_instruction.texture_u_size,
-                        .tex_v_size = tsp_instruction.texture_v_size,
-                        .src_blend_factor = tsp_instruction.src_alpha_instr,
-                        .dst_blend_factor = tsp_instruction.dst_alpha_instr,
-                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                        .fog_control = tsp_instruction.fog_control,
-                        .offset_bit = isp_tsp_instruction.offset,
-                        .shadow_bit = parameter_control_word.obj_control.shadow,
-                        .gouraud_bit = isp_tsp_instruction.gouraud,
-                        .volume_bit = parameter_control_word.obj_control.volume,
-                        .mipmap_bit = texture_control.mip_mapped,
-                    },
-                };
-
-                const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
-                    .index = tex_idx_area_1,
-                    .palette = .{
-                        .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
-                        .filtered = atspi.filter_mode != .Point,
-                        .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
-                    },
-                    .shading = .{
-                        .textured = parameter_control_word.obj_control.texture,
-                        .mode = atspi.texture_shading_instruction,
-                        .ignore_alpha = atspi.ignore_texture_alpha,
-                        .tex_u_size = atspi.texture_u_size,
-                        .tex_v_size = atspi.texture_v_size,
-                        .src_blend_factor = atspi.src_alpha_instr,
-                        .dst_blend_factor = atspi.dst_alpha_instr,
-                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                        .fog_control = atspi.fog_control,
-                        .offset_bit = isp_tsp_instruction.offset,
-                        .shadow_bit = parameter_control_word.obj_control.shadow,
-                        .gouraud_bit = isp_tsp_instruction.gouraud,
-                        .volume_bit = parameter_control_word.obj_control.volume,
-                        .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
-                    },
-                } else VertexTextureInfo.invalid();
-
-                const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
-                const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
-
-                const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
-                try self.strips_metadata.append(.{
-                    .area0_instructions = area0_instructions,
-                    .area1_instructions = area1_instructions,
-                });
-
-                for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
-                    switch (vertex) {
-                        // Packed Color, Non-Textured
-                        .Type0 => |v| {
-                            // Sanity checks.
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Floating Color
-                        .Type1 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Intensity
-                        .Type2 => |v| {
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                            });
-                        },
-                        // Packed Color, Textured 32bit UV
-                        .Type3 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Packed Color, Textured 16bit UV
-                        .Type4 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Floating Color, Textured
-                        .Type5 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Floating Color, Textured 16bit UV
-                        .Type6 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Intensity
-                        .Type7 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Intensity, 16bit UV
-                        .Type8 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Non-Textured, Packed Color, with Two Volumes
-                        .Type9 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Intensity, with Two Volumes
-                        .Type10 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                            });
-                        },
-                        // Textured, Packed Color, with Two Volumes
-                        .Type11 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
-                                .u = v.u0,
-                                .v = v.v0,
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
-                                .area1_u = v.u1,
-                                .area1_v = v.v1,
-                            });
-                        },
-                        // Textured, Packed Color, 16bit UV, with Two Volumes
-                        .Type12 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
-                                .u = v.uv_0.u_as_f32(),
-                                .v = v.uv_0.v_as_f32(),
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
-                                .area1_u = v.uv_1.u_as_f32(),
-                                .area1_v = v.uv_1.v_as_f32(),
-                            });
-                        },
-                        // Textured, Intensity, with Two Volumes
-                        .Type13 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
-                                .u = v.u0,
-                                .v = v.v0,
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
-                                .area1_u = v.u1,
-                                .area1_v = v.v1,
-                            });
-                        },
-                        // Textured, Intensity, with Two Volumes
-                        .Type14 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
-                                .u = v.uv_0.u_as_f32(),
-                                .v = v.uv_0.v_as_f32(),
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
-                                .area1_u = v.uv_1.u_as_f32(),
-                                .area1_v = v.uv_1.v_as_f32(),
-                            });
-                        },
-                        .SpriteType0, .SpriteType1 => {
-                            var vs = gen_sprite_vertices(vertex);
-                            for (&vs) |*v| {
-                                v.primitive_index = primitive_index;
-                                v.base_color = sprite_base_color.with_alpha(use_alpha);
-                                if (use_offset)
-                                    v.offset_color = sprite_offset_color;
-                                self.min_depth = @min(self.min_depth, v.z);
-                                self.max_depth = @max(self.max_depth, v.z);
-
-                                try self.vertices.append(v.*);
-                            }
-                        },
-                    }
-
-                    self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
-                    self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
-                }
-
-                // Triangle Strips
-                if (self.vertices.items.len - start < 3) {
-                    renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
-                } else {
-                    // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
-                    if (isp_tsp_instruction.gouraud == 0) {
-                        // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
-                        // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
-                        for (start..self.vertices.items.len - 2) |i| {
-                            self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
-                            self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
-                            // TODO: Bump map parameters?
+                    if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
+                        switch (polygon) {
+                            .PolygonType1 => |p| {
+                                face_color = p.face_color;
+                            },
+                            .PolygonType2 => |p| {
+                                face_color = p.face_color;
+                                face_offset_color = p.face_offset_color;
+                            },
+                            .PolygonType4 => |p| {
+                                // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                                face_color = p.face_color_0;
+                                face_offset_color = p.face_color_0;
+                                area1_face_color = p.face_color_1;
+                                area1_face_offset_color = p.face_color_1;
+                            },
+                            else => {},
                         }
                     }
 
-                    const pipeline_key = PipelineKey{
-                        .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
-                        .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
-                        .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
-                        .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                    var sprite_base_color: PackedColor = undefined;
+                    var sprite_offset_color: PackedColor = undefined;
+                    if (polygon == .Sprite) {
+                        sprite_base_color = polygon.Sprite.base_color;
+                        sprite_offset_color = polygon.Sprite.offset_color;
+                    }
+
+                    var tex_idx: TextureIndex = 0;
+                    var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
+                    const textured = parameter_control_word.obj_control.texture == 1;
+                    if (textured) {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+                        self.texture_metadata[texture_size_index][tex_idx].usage += 1;
+                    }
+                    if (area1_texture_control) |tc| {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
+                        self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
+                    }
+
+                    const use_alpha = tsp_instruction.use_alpha == 1;
+                    const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
+
+                    const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
+                    const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
+
+                    const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
+                    const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
+
+                    const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+                    const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+
+                    // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                    // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
+                    const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
+
+                    const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
+
+                    const area0_instructions: VertexTextureInfo = .{
+                        .index = tex_idx,
+                        .palette = .{
+                            .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                            .filtered = tsp_instruction.filter_mode != .Point,
+                            .selector = @truncate(texture_control.palette_selector() >> 4),
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = tsp_instruction.texture_shading_instruction,
+                            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+                            .tex_u_size = tsp_instruction.texture_u_size,
+                            .tex_v_size = tsp_instruction.texture_v_size,
+                            .src_blend_factor = tsp_instruction.src_alpha_instr,
+                            .dst_blend_factor = tsp_instruction.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = tsp_instruction.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = texture_control.mip_mapped,
+                        },
                     };
 
-                    {
-                        //                                FIXME: Multipass
-                        if (list_type == .Translucent and self.render_passes[0].pre_sort) {
-                            // In this case, we need to preserve the order of the draw calls
-                            const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
-                            if (prev_draw_call == null or
-                                !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
-                                !std.meta.eql(prev_draw_call.?.user_clip, display_list.vertex_strips.items[idx].user_clip) or
-                                prev_draw_call.?.sampler != sampler)
-                            {
-                                if (prev_draw_call) |draw_call| {
-                                    draw_call.start_index = index_buffer_pointer;
-                                    draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-                                    index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
-                                }
+                    const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
+                        .index = tex_idx_area_1,
+                        .palette = .{
+                            .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                            .filtered = atspi.filter_mode != .Point,
+                            .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = atspi.texture_shading_instruction,
+                            .ignore_alpha = atspi.ignore_texture_alpha,
+                            .tex_u_size = atspi.texture_u_size,
+                            .tex_v_size = atspi.texture_v_size,
+                            .src_blend_factor = atspi.src_alpha_instr,
+                            .dst_blend_factor = atspi.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = atspi.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
+                        },
+                    } else VertexTextureInfo.invalid();
 
-                                try self.pre_sorted_translucent_pass.append(.{
-                                    .pipeline_key = pipeline_key,
-                                    .sampler = sampler,
-                                    .user_clip = display_list.vertex_strips.items[idx].user_clip,
+                    const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
+                    const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
+
+                    const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
+                    try self.strips_metadata.append(.{
+                        .area0_instructions = area0_instructions,
+                        .area1_instructions = area1_instructions,
+                    });
+
+                    for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
+                        switch (vertex) {
+                            // Packed Color, Non-Textured
+                            .Type0 => |v| {
+                                // Sanity checks.
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
                                 });
+                            },
+                            // Non-Textured, Floating Color
+                            .Type1 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                });
+                            },
+                            // Non-Textured, Intensity
+                            .Type2 => |v| {
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                });
+                            },
+                            // Packed Color, Textured 32bit UV
+                            .Type3 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Packed Color, Textured 16bit UV
+                            .Type4 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Floating Color, Textured
+                            .Type5 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Floating Color, Textured 16bit UV
+                            .Type6 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Intensity
+                            .Type7 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Intensity, 16bit UV
+                            .Type8 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Non-Textured, Packed Color, with Two Volumes
+                            .Type9 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                });
+                            },
+                            // Non-Textured, Intensity, with Two Volumes
+                            .Type10 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                });
+                            },
+                            // Textured, Packed Color, with Two Volumes
+                            .Type11 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .u = v.u0,
+                                    .v = v.v0,
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_u = v.u1,
+                                    .area1_v = v.v1,
+                                });
+                            },
+                            // Textured, Packed Color, 16bit UV, with Two Volumes
+                            .Type12 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .u = v.uv_0.u_as_f32(),
+                                    .v = v.uv_0.v_as_f32(),
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_u = v.uv_1.u_as_f32(),
+                                    .area1_v = v.uv_1.v_as_f32(),
+                                });
+                            },
+                            // Textured, Intensity, with Two Volumes
+                            .Type13 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .u = v.u0,
+                                    .v = v.v0,
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_u = v.u1,
+                                    .area1_v = v.v1,
+                                });
+                            },
+                            // Textured, Intensity, with Two Volumes
+                            .Type14 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .u = v.uv_0.u_as_f32(),
+                                    .v = v.uv_0.v_as_f32(),
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_u = v.uv_1.u_as_f32(),
+                                    .area1_v = v.uv_1.v_as_f32(),
+                                });
+                            },
+                            .SpriteType0, .SpriteType1 => {
+                                var vs = gen_sprite_vertices(vertex);
+                                for (&vs) |*v| {
+                                    v.primitive_index = primitive_index;
+                                    v.base_color = sprite_base_color.with_alpha(use_alpha);
+                                    if (use_offset)
+                                        v.offset_color = sprite_offset_color;
+                                    self.min_depth = @min(self.min_depth, v.z);
+                                    self.max_depth = @max(self.max_depth, v.z);
+
+                                    try self.vertices.append(v.*);
+                                }
+                            },
+                        }
+
+                        self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
+                        self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
+                    }
+
+                    // Triangle Strips
+                    if (self.vertices.items.len - start < 3) {
+                        renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
+                    } else {
+                        // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
+                        if (isp_tsp_instruction.gouraud == 0) {
+                            // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
+                            // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
+                            for (start..self.vertices.items.len - 2) |i| {
+                                self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
+                                self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
+                                // TODO: Bump map parameters?
                             }
-                            for (start..self.vertices.items.len) |i|
-                                try pre_sorted_indices.append(@intCast(FirstVertex + i));
-                            try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
-                        } else {
-                            const pass = switch (list_type) {
-                                .Opaque => &self.opaque_pass,
-                                .PunchThrough => &self.punchthrough_pass,
-                                .Translucent => &self.translucent_pass,
-                                else => @compileError("Invalid list type"),
-                            };
+                        }
 
-                            var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
-                                try pass.pipelines.put(pipeline_key, .init(self._allocator));
-                                break :put pass.pipelines.getPtr(pipeline_key).?;
-                            };
+                        const pipeline_key = PipelineKey{
+                            .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
+                            .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
+                            .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
+                            .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                        };
 
-                            const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
+                        {
+                            if (list_type == .Translucent and render_pass.pre_sort) {
+                                // In this case, we need to preserve the order of the draw calls
+                                const prev_draw_call = if (render_pass.pre_sorted_translucent_pass.items.len == 0) null else &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
+                                if (prev_draw_call == null or
+                                    !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
+                                    !std.meta.eql(prev_draw_call.?.user_clip, display_list.vertex_strips.items[idx].user_clip) or
+                                    prev_draw_call.?.sampler != sampler)
+                                {
+                                    if (prev_draw_call) |draw_call| {
+                                        draw_call.start_index = index_buffer_pointer;
+                                        draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
+                                        index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
+                                    }
 
-                            var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
-                            if (draw_call == null) {
-                                try pipeline.draw_calls.put(draw_call_key, .init(
-                                    self._allocator,
-                                    sampler,
-                                    display_list.vertex_strips.items[idx].user_clip,
-                                ));
-                                draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                    try render_pass.pre_sorted_translucent_pass.append(.{
+                                        .pipeline_key = pipeline_key,
+                                        .sampler = sampler,
+                                        .user_clip = display_list.vertex_strips.items[idx].user_clip,
+                                    });
+                                }
+                                for (start..self.vertices.items.len) |i|
+                                    try pre_sorted_indices.append(@intCast(FirstVertex + i));
+                                try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                            } else {
+                                const pass = switch (list_type) {
+                                    .Opaque => &render_pass.opaque_pass,
+                                    .PunchThrough => &render_pass.punchthrough_pass,
+                                    .Translucent => &render_pass.translucent_pass,
+                                    else => @compileError("Invalid list type"),
+                                };
+
+                                var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
+                                    try pass.pipelines.put(pipeline_key, .init(self._allocator));
+                                    break :put pass.pipelines.getPtr(pipeline_key).?;
+                                };
+
+                                const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
+
+                                var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                if (draw_call == null) {
+                                    try pipeline.draw_calls.put(draw_call_key, .init(
+                                        self._allocator,
+                                        sampler,
+                                        display_list.vertex_strips.items[idx].user_clip,
+                                    ));
+                                    draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                }
+                                for (start..self.vertices.items.len) |i|
+                                    try draw_call.?.indices.append(@intCast(FirstVertex + i));
+                                try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             }
-                            for (start..self.vertices.items.len) |i|
-                                try draw_call.?.indices.append(@intCast(FirstVertex + i));
-                            try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                         }
                     }
                 }
             }
-        }
 
-        // Finalize the last pre-sorted draw call
-        if (pre_sorted_indices.items.len > 0) {
-            const draw_call = &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
-            draw_call.start_index = index_buffer_pointer;
-            draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-            index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
-            // And send all indices to the GPU
-            self._gctx.queue.writeBuffer(index_buffer, FirstIndex * @sizeOf(u32), u32, pre_sorted_indices.items);
-        }
+            // Finalize the last pre-sorted draw call
+            if (pre_sorted_indices.items.len > 0) {
+                const draw_call = &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
+                draw_call.start_index = index_buffer_pointer;
+                draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
+                index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
+                // And send all indices to the GPU
+                self._gctx.queue.writeBuffer(index_buffer, FirstIndex * @sizeOf(u32), u32, pre_sorted_indices.items);
+            }
 
-        // Send everything to the GPU
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, 0, StripMetadata, self.strips_metadata.items);
-        if (self.vertices.items.len > 0) {
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
+            // Send everything to the GPU
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, strip_offset, StripMetadata, self.strips_metadata.items);
+            strip_offset += @sizeOf(StripMetadata) * self.strips_metadata.items.len;
 
-            for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
-                var it = pass.pipelines.iterator();
-                while (it.next()) |entry| {
-                    for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
-                        draw_call.start_index = index_buffer_pointer;
-                        draw_call.index_count = @intCast(draw_call.indices.items.len);
-                        self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, draw_call.indices.items);
-                        index_buffer_pointer += @intCast(draw_call.indices.items.len);
+            if (self.vertices.items.len > 0) {
+                self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
+                vertices_offset += @sizeOf(Vertex) * self.vertices.items.len;
 
-                        draw_call.indices.clearRetainingCapacity();
+                for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
+                    var it = pass.pipelines.iterator();
+                    while (it.next()) |entry| {
+                        for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
+                            draw_call.start_index = index_buffer_pointer;
+                            draw_call.index_count = @intCast(draw_call.indices.items.len);
+                            self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, draw_call.indices.items);
+                            index_buffer_pointer += @intCast(draw_call.indices.items.len);
+
+                            draw_call.indices.clearRetainingCapacity();
+                        }
                     }
                 }
             }
+
+            // Modifier volumes
+            self.modifier_volume_vertices.clearRetainingCapacity();
+
+            for (ta_lists.volume_triangles.items) |triangle| {
+                try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
+                try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
+                try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
+                self.min_depth = @min(self.min_depth, triangle.az);
+                self.max_depth = @max(self.max_depth, triangle.az);
+                self.min_depth = @min(self.min_depth, triangle.bz);
+                self.max_depth = @max(self.max_depth, triangle.bz);
+                self.min_depth = @min(self.min_depth, triangle.cz);
+                self.max_depth = @max(self.max_depth, triangle.cz);
+            }
+
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, modifier_volumes_offset, [4]f32, self.modifier_volume_vertices.items);
+            modifier_volumes_offset += @sizeOf([4]f32) * self.modifier_volume_vertices.items.len;
         }
-
-        // Modifier volumes
-        self.modifier_volume_vertices.clearRetainingCapacity();
-
-        for (ta_lists.volume_triangles.items) |triangle| {
-            try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
-            try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
-            try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
-            self.min_depth = @min(self.min_depth, triangle.az);
-            self.max_depth = @max(self.max_depth, triangle.az);
-            self.min_depth = @min(self.min_depth, triangle.bz);
-            self.max_depth = @max(self.max_depth, triangle.bz);
-            self.min_depth = @min(self.min_depth, triangle.cz);
-            self.max_depth = @max(self.max_depth, triangle.cz);
-        }
-
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, 0, [4]f32, self.modifier_volume_vertices.items);
     }
 
     fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
@@ -2671,8 +2703,6 @@ pub const Renderer = struct {
     pub fn render(self: *Renderer, holly: *HollyModule.Holly) !void {
         const gctx = self._gctx;
 
-        const ta_lists = &self.ta_lists_to_render;
-
         const render_to_texture = holly.render_to_texture();
         if (render_to_texture) {
             renderer_log.info("Rendering to texture!", .{});
@@ -2724,8 +2754,9 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
-            for (self.render_passes) |render_pass| {
+            for (self.render_passes, 0..) |render_pass, pass_idx| {
                 if (!render_pass.enabled) break;
+                const ta_lists = &self.ta_lists_to_render[pass_idx];
 
                 if (!render_pass.lists[0].empty) {
                     skip_opaque: {
@@ -2782,7 +2813,7 @@ pub const Renderer = struct {
 
                         // Opaque and PunchThrough geometry
                         // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
-                        inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
+                        inline for ([2]*const PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
                             var it = metadata.pipelines.iterator();
                             while (it.next()) |entry| {
                                 // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
@@ -2978,7 +3009,7 @@ pub const Renderer = struct {
 
                         var current_pipeline: ?PipelineKey = null;
                         var current_sampler: ?u8 = null;
-                        for (self.pre_sorted_translucent_pass.items) |draw_call| {
+                        for (render_pass.pre_sorted_translucent_pass.items) |draw_call| {
                             if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
                                 const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
                                 const pipeline = gctx.lookupResource(pl) orelse continue;
@@ -3117,7 +3148,7 @@ pub const Renderer = struct {
                                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
                                 pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
-                                var it = self.translucent_pass.pipelines.iterator();
+                                var it = render_pass.translucent_pass.pipelines.iterator();
                                 while (it.next()) |entry| {
                                     if (entry.value_ptr.*.draw_calls.count() > 0) {
                                         for (entry.value_ptr.*.draw_calls.values()) |draw_call| {

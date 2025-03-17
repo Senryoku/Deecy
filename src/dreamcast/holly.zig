@@ -480,6 +480,10 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
     translucent_modifier_volume_pointer: ListPointer,
     punch_through_list_pointer: ListPointer, // Absent for Type 1
 
+    pub fn empty(self: @This()) bool {
+        return self.opaque_list_pointer.empty and self.opaque_modifier_volume_pointer.empty and self.translucent_list_pointer.empty and self.translucent_modifier_volume_pointer.empty and self.punch_through_list_pointer.empty;
+    }
+
     pub fn format(self: @This(), comptime _: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
         if (opt.width == 0) {
             try writer.print("{any}", .{self.settings});
@@ -1391,6 +1395,7 @@ pub const Holly = struct {
     _allocator: std.mem.Allocator,
     _dc: *Dreamcast,
 
+    _ta_current_pass: u8 = 0,
     _ta_command_buffer: [16]u32 align(32) = .{0} ** 16,
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
@@ -1404,7 +1409,7 @@ pub const Holly = struct {
     // 16 different values (actually 8 in the case of the base DC and its 8MB of VRAM).
     // We don't emulate the object writes to VRAM, but some games submit multiple lists concurently
     // ("double buffering" the object lists), so we have to keep track of that.
-    _ta_lists: [16]TALists = undefined,
+    _ta_lists: [16][8]TALists = undefined,
 
     _pixel: u64 = 0,
     _tmp_subcycles: u64 = 0,
@@ -1417,14 +1422,17 @@ pub const Holly = struct {
             ._allocator = allocator,
             ._dc = dc,
         };
-        for (&r._ta_lists) |*ta_list|
-            ta_list.* = .init(allocator);
+        for (&r._ta_lists) |*ta_list| {
+            for (ta_list) |*pass|
+                pass.* = .init(allocator);
+        }
         return r;
     }
 
     pub fn deinit(self: *@This()) void {
         for (&self._ta_lists) |*ta_list| {
-            ta_list.deinit();
+            for (ta_list) |*pass|
+                pass.deinit();
         }
         self._allocator.free(self.registers);
     }
@@ -1434,7 +1442,8 @@ pub const Holly = struct {
         @memset(self.registers, 0);
 
         for (&self._ta_lists) |*ta_list| {
-            ta_list.clearRetainingCapacity();
+            for (ta_list) |*list|
+                list.clearRetainingCapacity();
         }
 
         self._get_register(u32, .ID).* = 0x17FD11DB;
@@ -1668,6 +1677,7 @@ pub const Holly = struct {
             },
             .TA_LIST_INIT => {
                 if (v == 0x80000000) {
+                    self._ta_current_pass = 0;
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1691,6 +1701,7 @@ pub const Holly = struct {
                 holly_log.debug("Write to TA_LIST_CONT: {X:0>8}", .{v});
                 // Same thing as TA_LIST_INIT, but without reseting the list, nor the TA registers? (Not really tested yet)
                 if (v == 0x80000000) {
+                    self._ta_current_pass += 1;
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1911,7 +1922,7 @@ pub const Holly = struct {
     }
 
     fn ta_current_lists(self: *@This()) *TALists {
-        return &self._ta_lists[self.ta_list_index()];
+        return &self._ta_lists[self.ta_list_index()][self._ta_current_pass];
     }
 
     fn start_list(self: *@This(), list_type: ListType) void {
@@ -2342,8 +2353,10 @@ pub const Holly = struct {
         bytes += try writer.write(std.mem.asBytes(&self._ta_user_tile_clip));
         bytes += try writer.write(std.mem.asBytes(&self._ta_current_volume));
         bytes += try writer.write(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
-        for (self._ta_lists) |list| {
-            bytes += try list.serialize(writer);
+        for (&self._ta_lists) |*lists| {
+            for (lists) |*list| {
+                bytes += try list.serialize(writer);
+            }
         }
         bytes += try writer.write(std.mem.asBytes(&self._pixel));
         bytes += try writer.write(std.mem.asBytes(&self._tmp_subcycles));
@@ -2362,8 +2375,10 @@ pub const Holly = struct {
         bytes += try reader.read(std.mem.asBytes(&self._ta_user_tile_clip));
         bytes += try reader.read(std.mem.asBytes(&self._ta_current_volume));
         bytes += try reader.read(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
-        for (&self._ta_lists) |*list| {
-            bytes += try list.deserialize(reader);
+        for (&self._ta_lists) |*lists| {
+            for (lists) |*list| {
+                bytes += try list.deserialize(reader);
+            }
         }
         bytes += try reader.read(std.mem.asBytes(&self._pixel));
         bytes += try reader.read(std.mem.asBytes(&self._tmp_subcycles));
