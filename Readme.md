@@ -48,12 +48,11 @@ sudo apt install libgtk-3-dev
 ## Things I know I have to do
 
 -   Debug, debug, debug.
--   MMU: Currently disabled by default as it is still incomplete, and a performance hit.
-    -   Games using it only for store queue writes with the pref intruction (like Ikaruga) should work without enabling the full support.
-    -   Windows CE don't work at all yet, even with full emulation on (Crashes with PC=FFFFFD1F).
-    -   It is slow:
-        -   Exception handling resort back to the interpreter.
-        -   No effort was made to speed up normal operation either: It is still non functioning where it matters.
+-   SH4:
+    -   MMU:
+        -   Windows CE: Test and Debug more games.
+        -   Detect games using only a limited portion of MMU capabilities (Ikaruga...) to revert back to the previous hack.
+        -   Optimize.
 -   AICA:
     -   Debug
 -   Renderer:
@@ -65,15 +64,11 @@ sudo apt install libgtk-3-dev
         -   Missing: Exclusion volumes.
         -   Missing: Translucent MV in pre-sort mode.
     -   Region Array Data Configuration are mostly ignored.
-        -   Z Clear bit.
-        -   Flush Accumulate? (Secondary accumulate buffer)
-        -   Multipass rendering.
+        -   Flush Accumulate (Secondary accumulate buffer)
     -   Fog LUT Mode 2.
     -   User Tile Clip, only the simplest version is supported.
-    -   Bump mapping.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Mipmaps for palette textures?
-    -   Sort-DMA?
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 
 ### Nice to have
