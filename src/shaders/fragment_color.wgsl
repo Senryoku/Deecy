@@ -128,7 +128,9 @@ fn apply_fog(shading_instructions: u32, z: f32, color: vec4<f32>, offset_alpha: 
         }
         case 0x1u: {
             // Per vertex mode
-            if extractBits(shading_instructions, 21, 1) == 1 { // Using Offset color?
+            let offset_color = extractBits(shading_instructions, 21, 1) == 1;
+            let bump_mapping = extractBits(shading_instructions, 26, 1) == 1;
+            if offset_color && !bump_mapping { // Using Offset color?
                 return vec4<f32>(mix(color.rgb, uniforms.fog_col_vert.rgb, offset_alpha), color.a);
             } else {
                 // If the polygon is not set up to use an Offset Color, Fog processing is not performed.
@@ -169,7 +171,27 @@ fn area_color(
         let u_size: f32 = tex_size(extractBits(shading_instructions, 4, 3));
         let v_size: f32 = tex_size(extractBits(shading_instructions, 7, 3));
         let uv_factor = select(vec2<f32>(1.0, v_size / u_size), vec2<f32>(u_size / v_size, 1.0), u_size < v_size);
-        let tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
+        var tex_color = tex_sample(uv_factor * uv, uv_factor * duvdx, uv_factor * duvdy, palette_instructions, shading_instructions, texture_index);
+
+        var offset_rgb = offset_color.rgb;
+
+        let bump_mapping = extractBits(shading_instructions, 26, 1) == 1;
+        if bump_mapping {
+            const pi = radians(180.0);
+            // the texture has the S and R angles
+            let s = 0.5 * pi * tex_color.b; // 0-90°
+            let r = 2.0 * pi * tex_color.g; // 0-360°
+            // offset_color contains the bump map parameters K1, K2, K3 and Q
+            let k1 = offset_color.a;
+            let k2 = offset_color.r;
+            let k3 = offset_color.g;
+            let q = 2.0 * pi * offset_color.b; // 0-360°
+            // 3.4.7.3.1
+            let a = k1 + k2 * sin(s) + k3 * cos(s) * cos(r - q);
+
+            tex_color = vec4<f32>(1.0, 1.0, 1.0, a);
+            offset_rgb = vec3<f32>(0.0, 0.0, 0.0); // Do not use the bump map parameters as an offset color.
+        }
 
         let shading = extractBits(shading_instructions, 1, 2);
         let ignore_tex_alpha = extractBits(shading_instructions, 3, 1) == 1;
@@ -197,29 +219,29 @@ fn area_color(
         switch(shading)  {
             // Decal
             case 0u: {
-                let rgb = tex_color.rgb + offset_color.rgb;
+                let rgb = tex_color.rgb + offset_rgb;
                 let a = tex_a;
                 final_color = vec4<f32>(rgb, a);
             }
             // Modulate
             case 1u: {
-                let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
+                let rgb = base_color.rgb * tex_color.rgb + offset_rgb;
                 let a = tex_a;
                 final_color = vec4<f32>(rgb, a);
             }
             // Decal Alpha
             case 2u: {
-                let rgb = tex_a * tex_color.rgb + (1.0 - tex_a) * base_color.rgb + offset_color.rgb;
+                let rgb = tex_a * tex_color.rgb + (1.0 - tex_a) * base_color.rgb + offset_rgb;
                 let a = base_color.a;
                 final_color = vec4<f32>(rgb, a);
             }
             // Modulate Alpha
             case 3u: {
-                let rgb = base_color.rgb * tex_color.rgb + offset_color.rgb;
+                let rgb = base_color.rgb * tex_color.rgb + offset_rgb;
                 let a = base_color.a * tex_a;
                 final_color = vec4<f32>(rgb, a);
             }
-            default: { final_color = base_color + vec4<f32>(offset_color.rgb, 0.0); }
+            default: { final_color = base_color + vec4<f32>(offset_rgb, 0.0); }
         }
     }
 

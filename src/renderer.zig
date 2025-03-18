@@ -123,13 +123,12 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
             }
         },
         .BumpMap => {
-            renderer_log.err(termcolor.red("Unsupported pixel format {any}"), .{pixel_format});
-            for (0..v_size) |v| {
-                for (0..u_size) |u| {
-                    const pixel_idx = v * u_size + u;
-                    const texel_idx = 2 * pixel_idx;
-                    const texels: [2]u8 = @as([*]const u8, @alignCast(@ptrCast(&texture[texel_idx])))[0..2].*;
-                    dest_bgra[pixel_idx] = .{ texels[0], texels[1], 0, 0 };
+            const texels = std.mem.bytesAsSlice([2]u8, texture[0..]);
+            for (0..v_size) |y| {
+                for (0..u_size) |x| {
+                    const pixel_index: usize = y * u_size + x;
+                    const texel_index: usize = if (twiddled) untwiddle(@intCast(x), @intCast(y), u_size, v_size) else pixel_index;
+                    dest_bgra[pixel_index] = .{ texels[texel_index][0], texels[texel_index][1], 0, 255 };
                 }
             }
         },
@@ -179,7 +178,8 @@ const ShadingInstructions = packed struct(u32) {
     gouraud_bit: u1,
     volume_bit: u1,
     mipmap_bit: u1,
-    _: u6 = 0,
+    bump_mapping_bit: u1,
+    _: u5 = 0,
 };
 
 fn sampler_index(mag_filter: wgpu.FilterMode, min_filter: wgpu.FilterMode, mipmap_filter: wgpu.MipmapFilterMode, address_mode_u: wgpu.AddressMode, address_mode_v: wgpu.AddressMode) u8 {
@@ -1920,6 +1920,7 @@ pub const Renderer = struct {
                 .gouraud_bit = isp_tsp_instruction.gouraud,
                 .volume_bit = 0,
                 .mipmap_bit = 0,
+                .bump_mapping_bit = 0,
             },
         };
 
@@ -2216,6 +2217,7 @@ pub const Renderer = struct {
                             .gouraud_bit = isp_tsp_instruction.gouraud,
                             .volume_bit = parameter_control_word.obj_control.volume,
                             .mipmap_bit = texture_control.mip_mapped,
+                            .bump_mapping_bit = if (texture_control.pixel_format == .BumpMap) 1 else 0,
                         },
                     };
 
@@ -2240,7 +2242,8 @@ pub const Renderer = struct {
                             .shadow_bit = parameter_control_word.obj_control.shadow,
                             .gouraud_bit = isp_tsp_instruction.gouraud,
                             .volume_bit = parameter_control_word.obj_control.volume,
-                            .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
+                            .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
+                            .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
                         },
                     } else VertexTextureInfo.invalid();
 
