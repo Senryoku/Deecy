@@ -419,6 +419,45 @@ const PassMetadata = struct {
     }
 };
 
+const RenderPass = struct {
+    z_clear: bool = true,
+    pre_sort: bool = false,
+
+    opaque_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    opaque_modifier_volume_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    translucent_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    translucent_modifier_volume_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+    punchthrough_list_pointer: HollyModule.RegionArrayDataConfiguration.ListPointer = .Empty,
+
+    opaque_pass: PassMetadata,
+    punchthrough_pass: PassMetadata,
+    translucent_pass: PassMetadata,
+    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
+
+    pub fn init(allocator: std.mem.Allocator) RenderPass {
+        return .{
+            .opaque_pass = .init(allocator, .Opaque),
+            .punchthrough_pass = .init(allocator, .PunchThrough),
+            .translucent_pass = .init(allocator, .Translucent),
+            .pre_sorted_translucent_pass = .init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *@This()) void {
+        self.opaque_pass.deinit();
+        self.punchthrough_pass.deinit();
+        self.translucent_pass.deinit();
+        self.pre_sorted_translucent_pass.deinit();
+    }
+
+    pub fn clearRetainingCapacity(self: *@This()) void {
+        self.opaque_pass.reset();
+        self.punchthrough_pass.reset();
+        self.translucent_pass.reset();
+        self.pre_sorted_translucent_pass.clearRetainingCapacity();
+    }
+};
+
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
     var r: [4]Vertex = .{Vertex.undef()} ** 4;
 
@@ -606,10 +645,9 @@ pub const Renderer = struct {
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
-    // TODO: Support multiple render passes.
-    render_passes: [1]struct { z_clear: bool = true, pre_sort: bool = false } = .{.{}} ** 1,
-    ta_lists: HollyModule.TALists,
-    ta_lists_to_render: HollyModule.TALists,
+    render_passes: std.ArrayList(RenderPass),
+    ta_lists: std.ArrayList(HollyModule.TALists),
+    ta_lists_to_render: std.ArrayList(HollyModule.TALists),
     _ta_lists_mutex: std.Thread.Mutex = .{},
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
@@ -693,11 +731,6 @@ pub const Renderer = struct {
 
     samplers: [256]zgpu.SamplerHandle,
     sampler_bind_groups: [256]zgpu.BindGroupHandle, // FIXME: Use a single one? (Dynamic uniform)
-
-    opaque_pass: PassMetadata,
-    punchthrough_pass: PassMetadata,
-    translucent_pass: PassMetadata,
-    pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
 
     min_depth: f32 = std.math.floatMax(f32),
     max_depth: f32 = 0.0,
@@ -1164,11 +1197,7 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .opaque_pass = .init(allocator, .Opaque),
-            .punchthrough_pass = .init(allocator, .PunchThrough),
-            .translucent_pass = .init(allocator, .Translucent),
-            .pre_sorted_translucent_pass = .init(allocator),
-
+            .render_passes = .init(allocator),
             .ta_lists = .init(allocator),
             .ta_lists_to_render = .init(allocator),
 
@@ -1177,6 +1206,8 @@ pub const Renderer = struct {
             ._gctx = gctx,
             ._allocator = allocator,
         };
+        try renderer.ta_lists.append(.init(allocator));
+        try renderer.ta_lists_to_render.append(.init(allocator));
 
         MipMap.init(allocator, gctx);
         // Blit pipeline
@@ -1355,8 +1386,12 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
+        for (self.ta_lists.items) |*list| list.deinit();
         self.ta_lists.deinit();
+        for (self.ta_lists_to_render.items) |*list| list.deinit();
         self.ta_lists_to_render.deinit();
+        for (self.render_passes.items) |*pass| pass.deinit();
+        self.render_passes.deinit();
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
@@ -1385,11 +1420,6 @@ pub const Renderer = struct {
         self.deinit_screen_textures();
 
         self._allocator.free(self._scratch_pad);
-
-        self.pre_sorted_translucent_pass.deinit();
-        self.translucent_pass.deinit();
-        self.punchthrough_pass.deinit();
-        self.opaque_pass.deinit();
 
         self.modifier_volume_vertices.deinit();
         self.strips_metadata.deinit();
@@ -1454,12 +1484,9 @@ pub const Renderer = struct {
         self.render_start = false;
         self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
 
-        self.ta_lists_to_render.clearRetainingCapacity();
-        self.ta_lists.clearRetainingCapacity();
-
-        self.translucent_pass.reset();
-        self.punchthrough_pass.reset();
-        self.opaque_pass.reset();
+        for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
+        for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
+        for (self.render_passes.items) |*pass| pass.clearRetainingCapacity();
 
         self.modifier_volume_vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -1471,40 +1498,53 @@ pub const Renderer = struct {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
 
-            if (self.render_start) {
+            if (self.render_start)
                 renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
-            }
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
-
-            const header_type = dc.gpu.get_region_header_type();
-            var region_array_idx: usize = 0;
-            var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-            switch (header_type) {
-                .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
-                .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
-            }
-
-            self.render_passes[0] = .{ .z_clear = region_config.settings.z_clear == .Clear, .pre_sort = region_config.settings.pre_sort };
-
-            while (region_array_idx < 8 and !region_config.settings.last_region) {
-                region_array_idx += 1;
-                region_config = dc.gpu.get_region_array_data_config(region_array_idx);
-                switch (header_type) {
-                    .Type1 => renderer_log.debug("[{d}] ({d}) {any:0}", .{ header_type, region_array_idx, region_config }),
-                    .Type2 => renderer_log.debug("[{d}] ({d}) {any:1}", .{ header_type, region_array_idx, region_config }),
-                }
-            }
-            renderer_log.debug("", .{});
 
             // Clear the previous used TA lists and swap it with the one submitted by the game.
             // NOTE: Clearing the lists here means the game cannot render lists more than once (i.e. starting a render without
             //       writing to LIST_INIT). No idea if there are games that actually do that, but just in case, emit a warning.
-            self.ta_lists.clearRetainingCapacity();
+            for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
             const list_idx: u4 = @truncate(self.on_render_start_param_base >> 20);
-            std.mem.swap(HollyModule.TALists, &dc.gpu._ta_lists[list_idx], &self.ta_lists);
-            if (self.ta_lists.opaque_list.vertex_strips.items.len == 0 and self.ta_lists.punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.translucent_list.vertex_strips.items.len == 0) {
+            std.mem.swap(std.ArrayList(HollyModule.TALists), &dc.gpu._ta_lists[list_idx], &self.ta_lists);
+            if (self.ta_lists.items[0].opaque_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].punchthrough_list.vertex_strips.items.len == 0 and self.ta_lists.items[0].translucent_list.vertex_strips.items.len == 0) {
                 renderer_log.warn(termcolor.yellow("on_render_start: Empty TA lists submitted. Is the game trying to reuse the previous TA lists?"), .{});
+            }
+
+            const header_type = dc.gpu.get_region_header_type();
+
+            var region_count: u32 = 0;
+            for (0..self.ta_lists.items.len) |region_array_idx| {
+                var region_config = dc.gpu.get_region_array_data_config(region_array_idx);
+                if (region_config.empty()) break;
+
+                switch (header_type) {
+                    .Type1 => renderer_log.debug("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
+                    .Type2 => renderer_log.debug("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
+                }
+
+                if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(.init(self._allocator)) catch @panic("Out of memory");
+
+                self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
+                self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
+                self.render_passes.items[region_array_idx].opaque_list_pointer = region_config.opaque_list_pointer;
+                self.render_passes.items[region_array_idx].opaque_modifier_volume_pointer = region_config.opaque_modifier_volume_pointer;
+                self.render_passes.items[region_array_idx].translucent_list_pointer = region_config.translucent_list_pointer;
+                self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
+                self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
+                region_count += 1;
+                if (region_config.settings.last_region) break;
+            }
+
+            if (region_count != self.ta_lists.items.len)
+                renderer_log.warn(termcolor.yellow("Expected {d} regions, found {d}"), .{ self.ta_lists.items.len, region_count });
+
+            if (region_count < self.render_passes.items.len) {
+                for (region_count..self.render_passes.items.len) |i|
+                    self.render_passes.items[i].deinit();
+                self.render_passes.shrinkRetainingCapacity(self.render_passes.items.len);
             }
 
             self.render_start = true;
@@ -2003,11 +2043,11 @@ pub const Renderer = struct {
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
-            self.ta_lists_to_render.clearRetainingCapacity();
-            std.mem.swap(HollyModule.TALists, &self.ta_lists, &self.ta_lists_to_render);
+            for (self.ta_lists_to_render.items) |*list| {
+                list.clearRetainingCapacity();
+            }
+            std.mem.swap(std.ArrayList(HollyModule.TALists), &self.ta_lists, &self.ta_lists_to_render);
         }
-
-        const ta_lists = &self.ta_lists_to_render;
 
         self.vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -2045,539 +2085,550 @@ pub const Renderer = struct {
         try self.update_background(gpu);
         try self.update_palette(gpu);
 
-        for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
-            // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
-            //             which is okay, I think. However this might become problematic down the line.
-            //             We're saving a lot of allocations this way, but there's probably a better way to do it.
-            var it = pass.pipelines.iterator();
-            while (it.next()) |pipeline| {
-                for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
-                    draw_call.start_index = 0;
-                    draw_call.index_count = 0;
-                }
-            }
-        }
-
-        self.pre_sorted_translucent_pass.clearRetainingCapacity();
-        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
-        defer pre_sorted_indices.deinit();
+        var modifier_volumes_offset: usize = 0;
 
         const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
         var index_buffer_pointer = FirstIndex;
 
-        inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
-            // Parameters specific to a polygon type
-            var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
-            var face_offset_color: fARGB = undefined;
-            var area1_face_color: fARGB = undefined;
-            var area1_face_offset_color: fARGB = undefined;
-            const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
+        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
+        defer pre_sorted_indices.deinit();
 
-            for (0..display_list.vertex_strips.items.len) |idx| {
-                const start: u32 = @intCast(self.vertices.items.len);
-                const polygon = display_list.vertex_strips.items[idx].polygon;
+        for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
+            if (self.ta_lists_to_render.items.len <= pass_idx) break;
 
-                // Generic Parameters
-                const parameter_control_word = polygon.control_word();
-                const isp_tsp_instruction = polygon.isp_tsp_instruction();
-                const tsp_instruction = polygon.tsp_instruction();
-                const texture_control = polygon.texture_control();
-                const area1_tsp_instruction = polygon.area1_tsp_instruction();
-                const area1_texture_control = polygon.area1_texture_control();
+            const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
-                if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
-                    switch (polygon) {
-                        .PolygonType1 => |p| {
-                            face_color = p.face_color;
-                        },
-                        .PolygonType2 => |p| {
-                            face_color = p.face_color;
-                            face_offset_color = p.face_offset_color;
-                        },
-                        .PolygonType4 => |p| {
-                            // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
-                            face_color = p.face_color_0;
-                            face_offset_color = p.face_color_0;
-                            area1_face_color = p.face_color_1;
-                            area1_face_offset_color = p.face_color_1;
-                        },
-                        else => {},
+            for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
+                // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
+                //             which is okay, I think. However this might become problematic down the line.
+                //             We're saving a lot of allocations this way, but there's probably a better way to do it.
+                var it = pass.pipelines.iterator();
+                while (it.next()) |pipeline| {
+                    for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
+                        draw_call.start_index = 0;
+                        draw_call.index_count = 0;
                     }
                 }
+            }
 
-                var sprite_base_color: PackedColor = undefined;
-                var sprite_offset_color: PackedColor = undefined;
-                if (polygon == .Sprite) {
-                    sprite_base_color = polygon.Sprite.base_color;
-                    sprite_offset_color = polygon.Sprite.offset_color;
-                }
+            render_pass.pre_sorted_translucent_pass.clearRetainingCapacity();
+            pre_sorted_indices.clearRetainingCapacity();
+            var pre_sorted_index_offset: u32 = 0;
 
-                var tex_idx: TextureIndex = 0;
-                var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
-                const textured = parameter_control_word.obj_control.texture == 1;
-                if (textured) {
-                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
-                    self.texture_metadata[texture_size_index][tex_idx].usage += 1;
-                }
-                if (area1_texture_control) |tc| {
-                    const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                    tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
-                    self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
-                }
+            inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
+                // Parameters specific to a polygon type
+                var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
+                var face_offset_color: fARGB = undefined;
+                var area1_face_color: fARGB = undefined;
+                var area1_face_offset_color: fARGB = undefined;
+                const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
-                const use_alpha = tsp_instruction.use_alpha == 1;
-                const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
+                for (0..display_list.vertex_strips.items.len) |idx| {
+                    const strip_first_vertex_index: usize = self.vertices.items.len;
+                    const polygon = display_list.vertex_strips.items[idx].polygon;
 
-                const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-                const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
+                    // Generic Parameters
+                    const parameter_control_word = polygon.control_word();
+                    const isp_tsp_instruction = polygon.isp_tsp_instruction();
+                    const tsp_instruction = polygon.tsp_instruction();
+                    const texture_control = polygon.texture_control();
+                    const area1_tsp_instruction = polygon.area1_tsp_instruction();
+                    const area1_texture_control = polygon.area1_texture_control();
 
-                const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-                const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
-
-                const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
-                const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
-
-                // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
-                // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
-                const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
-
-                const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
-
-                const area0_instructions: VertexTextureInfo = .{
-                    .index = tex_idx,
-                    .palette = .{
-                        .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                        .filtered = tsp_instruction.filter_mode != .Point,
-                        .selector = @truncate(texture_control.palette_selector() >> 4),
-                    },
-                    .shading = .{
-                        .textured = parameter_control_word.obj_control.texture,
-                        .mode = tsp_instruction.texture_shading_instruction,
-                        .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                        .tex_u_size = tsp_instruction.texture_u_size,
-                        .tex_v_size = tsp_instruction.texture_v_size,
-                        .src_blend_factor = tsp_instruction.src_alpha_instr,
-                        .dst_blend_factor = tsp_instruction.dst_alpha_instr,
-                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                        .fog_control = tsp_instruction.fog_control,
-                        .offset_bit = isp_tsp_instruction.offset,
-                        .shadow_bit = parameter_control_word.obj_control.shadow,
-                        .gouraud_bit = isp_tsp_instruction.gouraud,
-                        .volume_bit = parameter_control_word.obj_control.volume,
-                        .mipmap_bit = texture_control.mip_mapped,
-                    },
-                };
-
-                const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
-                    .index = tex_idx_area_1,
-                    .palette = .{
-                        .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
-                        .filtered = atspi.filter_mode != .Point,
-                        .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
-                    },
-                    .shading = .{
-                        .textured = parameter_control_word.obj_control.texture,
-                        .mode = atspi.texture_shading_instruction,
-                        .ignore_alpha = atspi.ignore_texture_alpha,
-                        .tex_u_size = atspi.texture_u_size,
-                        .tex_v_size = atspi.texture_v_size,
-                        .src_blend_factor = atspi.src_alpha_instr,
-                        .dst_blend_factor = atspi.dst_alpha_instr,
-                        .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                        .fog_control = atspi.fog_control,
-                        .offset_bit = isp_tsp_instruction.offset,
-                        .shadow_bit = parameter_control_word.obj_control.shadow,
-                        .gouraud_bit = isp_tsp_instruction.gouraud,
-                        .volume_bit = parameter_control_word.obj_control.volume,
-                        .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
-                    },
-                } else VertexTextureInfo.invalid();
-
-                const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
-                const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
-
-                const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
-                try self.strips_metadata.append(.{
-                    .area0_instructions = area0_instructions,
-                    .area1_instructions = area1_instructions,
-                });
-
-                for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
-                    switch (vertex) {
-                        // Packed Color, Non-Textured
-                        .Type0 => |v| {
-                            // Sanity checks.
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Floating Color
-                        .Type1 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Intensity
-                        .Type2 => |v| {
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                            });
-                        },
-                        // Packed Color, Textured 32bit UV
-                        .Type3 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Packed Color, Textured 16bit UV
-                        .Type4 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Floating Color, Textured
-                        .Type5 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Floating Color, Textured 16bit UV
-                        .Type6 => |v| {
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color.to_packed(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Intensity
-                        .Type7 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
-                                .u = v.u,
-                                .v = v.v,
-                            });
-                        },
-                        // Intensity, 16bit UV
-                        .Type8 => |v| {
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
-                                .u = v.uv.u_as_f32(),
-                                .v = v.uv.v_as_f32(),
-                            });
-                        },
-                        // Non-Textured, Packed Color, with Two Volumes
-                        .Type9 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                            });
-                        },
-                        // Non-Textured, Intensity, with Two Volumes
-                        .Type10 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(!textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                            });
-                        },
-                        // Textured, Packed Color, with Two Volumes
-                        .Type11 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
-                                .u = v.u0,
-                                .v = v.v0,
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
-                                .area1_u = v.u1,
-                                .area1_v = v.v1,
-                            });
-                        },
-                        // Textured, Packed Color, 16bit UV, with Two Volumes
-                        .Type12 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = v.base_color_0.with_alpha(use_alpha),
-                                .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
-                                .u = v.uv_0.u_as_f32(),
-                                .v = v.uv_0.v_as_f32(),
-                                .area1_base_color = v.base_color_1.with_alpha(use_alpha),
-                                .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
-                                .area1_u = v.uv_1.u_as_f32(),
-                                .area1_v = v.uv_1.v_as_f32(),
-                            });
-                        },
-                        // Textured, Intensity, with Two Volumes
-                        .Type13 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
-                                .u = v.u0,
-                                .v = v.v0,
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
-                                .area1_u = v.u1,
-                                .area1_v = v.v1,
-                            });
-                        },
-                        // Textured, Intensity, with Two Volumes
-                        .Type14 => |v| {
-                            std.debug.assert(area1_tsp_instruction != null);
-                            std.debug.assert(area1_texture_control != null);
-                            std.debug.assert(textured);
-                            try self.vertices.append(.{
-                                .primitive_index = primitive_index,
-                                .x = v.x,
-                                .y = v.y,
-                                .z = v.z,
-                                .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
-                                .u = v.uv_0.u_as_f32(),
-                                .v = v.uv_0.v_as_f32(),
-                                .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
-                                .area1_u = v.uv_1.u_as_f32(),
-                                .area1_v = v.uv_1.v_as_f32(),
-                            });
-                        },
-                        .SpriteType0, .SpriteType1 => {
-                            var vs = gen_sprite_vertices(vertex);
-                            for (&vs) |*v| {
-                                v.primitive_index = primitive_index;
-                                v.base_color = sprite_base_color.with_alpha(use_alpha);
-                                if (use_offset)
-                                    v.offset_color = sprite_offset_color;
-                                self.min_depth = @min(self.min_depth, v.z);
-                                self.max_depth = @max(self.max_depth, v.z);
-
-                                try self.vertices.append(v.*);
-                            }
-                        },
-                    }
-
-                    self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
-                    self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
-                }
-
-                // Triangle Strips
-                if (self.vertices.items.len - start < 3) {
-                    renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - start});
-                } else {
-                    // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
-                    if (isp_tsp_instruction.gouraud == 0) {
-                        // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
-                        // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
-                        for (start..self.vertices.items.len - 2) |i| {
-                            self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
-                            self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
-                            // TODO: Bump map parameters?
+                    if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
+                        switch (polygon) {
+                            .PolygonType1 => |p| {
+                                face_color = p.face_color;
+                            },
+                            .PolygonType2 => |p| {
+                                face_color = p.face_color;
+                                face_offset_color = p.face_offset_color;
+                            },
+                            .PolygonType4 => |p| {
+                                // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                                face_color = p.face_color_0;
+                                face_offset_color = p.face_color_0;
+                                area1_face_color = p.face_color_1;
+                                area1_face_offset_color = p.face_color_1;
+                            },
+                            else => {},
                         }
                     }
 
-                    const pipeline_key = PipelineKey{
-                        .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
-                        .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
-                        .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
-                        .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                    var sprite_base_color: PackedColor = undefined;
+                    var sprite_offset_color: PackedColor = undefined;
+                    if (polygon == .Sprite) {
+                        sprite_base_color = polygon.Sprite.base_color;
+                        sprite_offset_color = polygon.Sprite.offset_color;
+                    }
+
+                    var tex_idx: TextureIndex = 0;
+                    var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
+                    const textured = parameter_control_word.obj_control.texture == 1;
+                    if (textured) {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+                        self.texture_metadata[texture_size_index][tex_idx].usage += 1;
+                    }
+                    if (area1_texture_control) |tc| {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
+                        self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
+                    }
+
+                    const use_alpha = tsp_instruction.use_alpha == 1;
+                    const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
+
+                    const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
+                    const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
+
+                    const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
+                    const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
+
+                    const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+                    const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+
+                    // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                    // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
+                    const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
+
+                    const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
+
+                    const area0_instructions: VertexTextureInfo = .{
+                        .index = tex_idx,
+                        .palette = .{
+                            .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                            .filtered = tsp_instruction.filter_mode != .Point,
+                            .selector = @truncate(texture_control.palette_selector() >> 4),
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = tsp_instruction.texture_shading_instruction,
+                            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+                            .tex_u_size = tsp_instruction.texture_u_size,
+                            .tex_v_size = tsp_instruction.texture_v_size,
+                            .src_blend_factor = tsp_instruction.src_alpha_instr,
+                            .dst_blend_factor = tsp_instruction.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = tsp_instruction.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = texture_control.mip_mapped,
+                        },
                     };
 
-                    {
-                        if (list_type == .Translucent and self.render_passes[0].pre_sort) {
-                            // In this case, we need to preserve the order of the draw calls
-                            const prev_draw_call = if (self.pre_sorted_translucent_pass.items.len == 0) null else &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
-                            if (prev_draw_call == null or
-                                !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
-                                !std.meta.eql(prev_draw_call.?.user_clip, display_list.vertex_strips.items[idx].user_clip) or
-                                prev_draw_call.?.sampler != sampler)
-                            {
-                                if (prev_draw_call) |draw_call| {
-                                    draw_call.start_index = index_buffer_pointer;
-                                    draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-                                    index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
-                                }
+                    const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
+                        .index = tex_idx_area_1,
+                        .palette = .{
+                            .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                            .filtered = atspi.filter_mode != .Point,
+                            .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = atspi.texture_shading_instruction,
+                            .ignore_alpha = atspi.ignore_texture_alpha,
+                            .tex_u_size = atspi.texture_u_size,
+                            .tex_v_size = atspi.texture_v_size,
+                            .src_blend_factor = atspi.src_alpha_instr,
+                            .dst_blend_factor = atspi.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = atspi.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = if (area1_texture_control) |a| a.mip_mapped else 0,
+                        },
+                    } else VertexTextureInfo.invalid();
 
-                                try self.pre_sorted_translucent_pass.append(.{
-                                    .pipeline_key = pipeline_key,
-                                    .sampler = sampler,
-                                    .user_clip = display_list.vertex_strips.items[idx].user_clip,
+                    const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
+                    const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
+
+                    const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
+                    try self.strips_metadata.append(.{
+                        .area0_instructions = area0_instructions,
+                        .area1_instructions = area1_instructions,
+                    });
+
+                    for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
+                        switch (vertex) {
+                            // Packed Color, Non-Textured
+                            .Type0 => |v| {
+                                // Sanity checks.
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
                                 });
+                            },
+                            // Non-Textured, Floating Color
+                            .Type1 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                });
+                            },
+                            // Non-Textured, Intensity
+                            .Type2 => |v| {
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                });
+                            },
+                            // Packed Color, Textured 32bit UV
+                            .Type3 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Packed Color, Textured 16bit UV
+                            .Type4 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.with_alpha(true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Floating Color, Textured
+                            .Type5 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Floating Color, Textured 16bit UV
+                            .Type6 => |v| {
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color.to_packed(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color.to_packed(true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Intensity
+                            .Type7 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .u = v.u,
+                                    .v = v.v,
+                                });
+                            },
+                            // Intensity, 16bit UV
+                            .Type8 => |v| {
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .u = v.uv.u_as_f32(),
+                                    .v = v.uv.v_as_f32(),
+                                });
+                            },
+                            // Non-Textured, Packed Color, with Two Volumes
+                            .Type9 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                });
+                            },
+                            // Non-Textured, Intensity, with Two Volumes
+                            .Type10 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(!textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                });
+                            },
+                            // Textured, Packed Color, with Two Volumes
+                            .Type11 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .u = v.u0,
+                                    .v = v.v0,
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_u = v.u1,
+                                    .area1_v = v.v1,
+                                });
+                            },
+                            // Textured, Packed Color, 16bit UV, with Two Volumes
+                            .Type12 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = v.base_color_0.with_alpha(use_alpha),
+                                    .offset_color = if (use_offset) v.offset_color_0.with_alpha(true) else .{},
+                                    .u = v.uv_0.u_as_f32(),
+                                    .v = v.uv_0.v_as_f32(),
+                                    .area1_base_color = v.base_color_1.with_alpha(use_alpha),
+                                    .area1_offset_color = if (use_offset) v.offset_color_1.with_alpha(true) else .{},
+                                    .area1_u = v.uv_1.u_as_f32(),
+                                    .area1_v = v.uv_1.v_as_f32(),
+                                });
+                            },
+                            // Textured, Intensity, with Two Volumes
+                            .Type13 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .u = v.u0,
+                                    .v = v.v0,
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_u = v.u1,
+                                    .area1_v = v.v1,
+                                });
+                            },
+                            // Textured, Intensity, with Two Volumes
+                            .Type14 => |v| {
+                                std.debug.assert(area1_tsp_instruction != null);
+                                std.debug.assert(area1_texture_control != null);
+                                std.debug.assert(textured);
+                                try self.vertices.append(.{
+                                    .primitive_index = primitive_index,
+                                    .x = v.x,
+                                    .y = v.y,
+                                    .z = v.z,
+                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .u = v.uv_0.u_as_f32(),
+                                    .v = v.uv_0.v_as_f32(),
+                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_u = v.uv_1.u_as_f32(),
+                                    .area1_v = v.uv_1.v_as_f32(),
+                                });
+                            },
+                            .SpriteType0, .SpriteType1 => {
+                                var vs = gen_sprite_vertices(vertex);
+                                for (&vs) |*v| {
+                                    v.primitive_index = primitive_index;
+                                    v.base_color = sprite_base_color.with_alpha(use_alpha);
+                                    if (use_offset)
+                                        v.offset_color = sprite_offset_color;
+                                    self.min_depth = @min(self.min_depth, v.z);
+                                    self.max_depth = @max(self.max_depth, v.z);
+
+                                    try self.vertices.append(v.*);
+                                }
+                            },
+                        }
+
+                        self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
+                        self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
+                    }
+
+                    // Triangle Strips
+                    if (self.vertices.items.len - strip_first_vertex_index < 3) {
+                        renderer_log.err("Not enough vertices in strip: {d} vertices.", .{self.vertices.items.len - strip_first_vertex_index});
+                    } else {
+                        // "In the case of a flat-shaded polygon, the Shading Color data (the Base Color, Offset Color, and Bump Map parameters) become valid starting with the third vertex after the start of the strip." - Thanks MetalliC for pointing that out!
+                        if (isp_tsp_instruction.gouraud == 0) {
+                            // WebGPU uses the parameters of the first vertex by default (you can specify first or either (implementation dependent), but not force last),
+                            // while the DC used the last (3rd) of each triangle. This shifts the concerned parameters.
+                            for (strip_first_vertex_index..self.vertices.items.len - 2) |i| {
+                                self.vertices.items[i].base_color = self.vertices.items[i + 2].base_color;
+                                self.vertices.items[i].offset_color = self.vertices.items[i + 2].offset_color;
+                                // TODO: Bump map parameters?
                             }
-                            for (start..self.vertices.items.len) |i|
-                                try pre_sorted_indices.append(@intCast(FirstVertex + i));
-                            try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
-                        } else {
-                            const pass = switch (list_type) {
-                                .Opaque => &self.opaque_pass,
-                                .PunchThrough => &self.punchthrough_pass,
-                                .Translucent => &self.translucent_pass,
-                                else => @compileError("Invalid list type"),
-                            };
+                        }
 
-                            var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
-                                try pass.pipelines.put(pipeline_key, .init(self._allocator));
-                                break :put pass.pipelines.getPtr(pipeline_key).?;
-                            };
+                        const pipeline_key = PipelineKey{
+                            .src_blend_factor = translate_src_blend_factor(tsp_instruction.src_alpha_instr),
+                            .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
+                            .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
+                            .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                        };
 
-                            const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
+                        {
+                            if (list_type == .Translucent and render_pass.pre_sort) {
+                                // In this case, we need to preserve the order of the draw calls
+                                const prev_draw_call = if (render_pass.pre_sorted_translucent_pass.items.len == 0) null else &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
+                                if (prev_draw_call == null or
+                                    !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
+                                    !std.meta.eql(prev_draw_call.?.user_clip, display_list.vertex_strips.items[idx].user_clip) or
+                                    prev_draw_call.?.sampler != sampler)
+                                {
+                                    if (prev_draw_call) |draw_call| {
+                                        draw_call.start_index = index_buffer_pointer + pre_sorted_index_offset;
+                                        draw_call.index_count = @intCast(pre_sorted_indices.items.len - pre_sorted_index_offset);
+                                        pre_sorted_index_offset += draw_call.index_count;
+                                    }
 
-                            var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
-                            if (draw_call == null) {
-                                try pipeline.draw_calls.put(draw_call_key, .init(
-                                    self._allocator,
-                                    sampler,
-                                    display_list.vertex_strips.items[idx].user_clip,
-                                ));
-                                draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                    try render_pass.pre_sorted_translucent_pass.append(.{
+                                        .pipeline_key = pipeline_key,
+                                        .sampler = sampler,
+                                        .user_clip = display_list.vertex_strips.items[idx].user_clip,
+                                    });
+                                }
+                                for (strip_first_vertex_index..self.vertices.items.len) |i|
+                                    try pre_sorted_indices.append(@intCast(FirstVertex + i));
+                                try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                            } else {
+                                const pass = switch (list_type) {
+                                    .Opaque => &render_pass.opaque_pass,
+                                    .PunchThrough => &render_pass.punchthrough_pass,
+                                    .Translucent => &render_pass.translucent_pass,
+                                    else => @compileError("Invalid list type"),
+                                };
+
+                                var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
+                                    try pass.pipelines.put(pipeline_key, .init(self._allocator));
+                                    break :put pass.pipelines.getPtr(pipeline_key).?;
+                                };
+
+                                const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
+
+                                var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                if (draw_call == null) {
+                                    try pipeline.draw_calls.put(draw_call_key, .init(
+                                        self._allocator,
+                                        sampler,
+                                        display_list.vertex_strips.items[idx].user_clip,
+                                    ));
+                                    draw_call = pipeline.draw_calls.getPtr(draw_call_key);
+                                }
+                                for (strip_first_vertex_index..self.vertices.items.len) |i|
+                                    try draw_call.?.indices.append(@intCast(FirstVertex + i));
+                                try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             }
-                            for (start..self.vertices.items.len) |i|
-                                try draw_call.?.indices.append(@intCast(FirstVertex + i));
-                            try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                         }
                     }
                 }
             }
-        }
 
-        // Finalize the last pre-sorted draw call
-        if (pre_sorted_indices.items.len > 0) {
-            const draw_call = &self.pre_sorted_translucent_pass.items[self.pre_sorted_translucent_pass.items.len - 1];
-            draw_call.start_index = index_buffer_pointer;
-            draw_call.index_count = @intCast(pre_sorted_indices.items.len - (index_buffer_pointer - FirstIndex));
-            index_buffer_pointer = @intCast(FirstIndex + pre_sorted_indices.items.len);
-            // And send all indices to the GPU
-            self._gctx.queue.writeBuffer(index_buffer, FirstIndex * @sizeOf(u32), u32, pre_sorted_indices.items);
-        }
+            if (pre_sorted_indices.items.len > 0) {
+                // Finalize the last pre-sorted draw call
+                const draw_call = &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
+                draw_call.start_index = index_buffer_pointer + pre_sorted_index_offset;
+                draw_call.index_count = @intCast(pre_sorted_indices.items.len - pre_sorted_index_offset);
+                // And send all indices to the GPU
+                self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, pre_sorted_indices.items);
+                index_buffer_pointer += @intCast(pre_sorted_indices.items.len);
+            }
 
-        // Send everything to the GPU
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, 0, StripMetadata, self.strips_metadata.items);
-        if (self.vertices.items.len > 0) {
-            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, FirstVertex * @sizeOf(Vertex), Vertex, self.vertices.items);
+            if (self.vertices.items.len > 0) {
+                for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
+                    var it = pass.pipelines.iterator();
+                    while (it.next()) |entry| {
+                        for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
+                            draw_call.start_index = index_buffer_pointer;
+                            draw_call.index_count = @intCast(draw_call.indices.items.len);
+                            self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, draw_call.indices.items);
+                            index_buffer_pointer += @intCast(draw_call.indices.items.len);
 
-            for ([3]*PassMetadata{ &self.opaque_pass, &self.punchthrough_pass, &self.translucent_pass }) |pass| {
-                var it = pass.pipelines.iterator();
-                while (it.next()) |entry| {
-                    for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
-                        draw_call.start_index = index_buffer_pointer;
-                        draw_call.index_count = @intCast(draw_call.indices.items.len);
-                        self._gctx.queue.writeBuffer(index_buffer, index_buffer_pointer * @sizeOf(u32), u32, draw_call.indices.items);
-                        index_buffer_pointer += @intCast(draw_call.indices.items.len);
-
-                        draw_call.indices.clearRetainingCapacity();
+                            draw_call.indices.clearRetainingCapacity();
+                        }
                     }
                 }
             }
+
+            // Modifier volumes
+            self.modifier_volume_vertices.clearRetainingCapacity();
+
+            for (ta_lists.volume_triangles.items) |triangle| {
+                try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
+                try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
+                try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
+                self.min_depth = @min(self.min_depth, triangle.az);
+                self.max_depth = @max(self.max_depth, triangle.az);
+                self.min_depth = @min(self.min_depth, triangle.bz);
+                self.max_depth = @max(self.max_depth, triangle.bz);
+                self.min_depth = @min(self.min_depth, triangle.cz);
+                self.max_depth = @max(self.max_depth, triangle.cz);
+            }
+
+            self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, modifier_volumes_offset, [4]f32, self.modifier_volume_vertices.items);
+            modifier_volumes_offset += @sizeOf([4]f32) * self.modifier_volume_vertices.items.len;
         }
-
-        // Modifier volumes
-        self.modifier_volume_vertices.clearRetainingCapacity();
-
-        for (ta_lists.volume_triangles.items) |triangle| {
-            try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
-            try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
-            try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
-            self.min_depth = @min(self.min_depth, triangle.az);
-            self.max_depth = @max(self.max_depth, triangle.az);
-            self.min_depth = @min(self.min_depth, triangle.bz);
-            self.max_depth = @max(self.max_depth, triangle.bz);
-            self.min_depth = @min(self.min_depth, triangle.cz);
-            self.max_depth = @max(self.max_depth, triangle.cz);
-        }
-
-        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.modifier_volume_vertex_buffer).?, 0, [4]f32, self.modifier_volume_vertices.items);
+        // Send everything else to the GPU
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.strips_metadata_buffer).?, 0, StripMetadata, self.strips_metadata.items);
+        self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, @sizeOf(Vertex) * FirstVertex, Vertex, self.vertices.items);
     }
 
     fn convert_clipping(self: *Renderer, user_clip: ?HollyModule.UserTileClipInfo) HollyModule.UserTileClipInfo {
@@ -2661,8 +2712,6 @@ pub const Renderer = struct {
     pub fn render(self: *Renderer, holly: *HollyModule.Holly) !void {
         const gctx = self._gctx;
 
-        const ta_lists = &self.ta_lists_to_render;
-
         const render_to_texture = holly.render_to_texture();
         if (render_to_texture) {
             renderer_log.info("Rendering to texture!", .{});
@@ -2714,11 +2763,11 @@ pub const Renderer = struct {
             const bind_group = gctx.lookupResource(self.bind_group).?;
             const depth_view = gctx.lookupResource(self.depth.view).?;
 
-            skip_opaque: {
+            skip_background: {
                 const color_attachments = [_]wgpu.RenderPassColorAttachment{
                     .{
                         .view = target.resized.view,
-                        .load_op = .load, // NOTE: I don't know if some games mixes direct writes to the framebuffer with renders using the PVR, but if this is the case, we'll want to load here.
+                        .load_op = .load,
                         .store_op = .store,
                     },
                     .{
@@ -2729,7 +2778,7 @@ pub const Renderer = struct {
                 };
                 const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                     .view = depth_view,
-                    .depth_load_op = .clear, // TODO: Check ZClear bit.
+                    .depth_load_op = .clear,
                     .depth_store_op = .store,
                     .depth_clear_value = DepthClearValue,
                     .stencil_load_op = .clear,
@@ -2738,7 +2787,7 @@ pub const Renderer = struct {
                     .stencil_read_only = .false,
                 };
                 const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Opaque pass",
+                    .label = "Background",
                     .color_attachment_count = color_attachments.len,
                     .color_attachments = &color_attachments,
                     .depth_stencil_attachment = &depth_attachment,
@@ -2761,333 +2810,47 @@ pub const Renderer = struct {
                     .depth_compare = .always,
                     .depth_write_enabled = false,
                 }, .Async);
-                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_opaque;
+                const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_background;
                 pass.setPipeline(bg_pipeline);
                 pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge)]).?, &.{});
                 pass.drawIndexed(FirstIndex, 1, 0, 0, 0);
-
-                // Opaque and PunchThrough geometry
-                // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
-                inline for ([2]*const PassMetadata{ &self.opaque_pass, &self.punchthrough_pass }) |metadata| {
-                    var it = metadata.pipelines.iterator();
-                    while (it.next()) |entry| {
-                        // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
-                        if (entry.value_ptr.*.draw_calls.count() > 0) {
-                            const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
-                            const pipeline = gctx.lookupResource(pl) orelse break;
-                            pass.setPipeline(pipeline);
-
-                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                if (draw_call.index_count > 0) {
-                                    const clip = self.convert_clipping(draw_call.user_clip);
-                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
-
-                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
-                                }
-                            }
-                        }
-                    }
-                }
             }
 
-            // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
-            encoder.copyTextureToTexture(
-                .{ .texture = target.resized.texture },
-                .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                .{ .width = self.resolution.width, .height = self.resolution.height },
-            );
+            for (self.render_passes.items, 0..) |render_pass, pass_idx| {
+                if (self.ta_lists_to_render.items.len <= pass_idx) break;
+                const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
-            if (ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
-                const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
-                const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
-                const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
-                const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
-
-                // Write to stencil buffer
-                {
-                    const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                    const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                    vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                    vs_uniform_mem.slice[0].max_depth = self.max_depth;
-
-                    const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
-
-                    const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                        .view = depth_view,
-                        .depth_load_op = .load,
-                        .depth_store_op = .store,
-                        .depth_clear_value = DepthClearValue,
-                        .depth_read_only = .false,
-                        .stencil_load_op = .clear,
-                        .stencil_store_op = .store,
-                        .stencil_clear_value = 0,
-                        .stencil_read_only = .false,
-                    };
-                    const render_pass_info = wgpu.RenderPassDescriptor{
-                        .label = "Modifier Volume Stencil",
-                        .color_attachment_count = 0,
-                        .color_attachments = null,
-                        .depth_stencil_attachment = &depth_attachment,
-                    };
-
-                    const pass = encoder.beginRenderPass(render_pass_info);
-                    defer {
-                        pass.end();
-                        pass.release();
-                    }
-
-                    pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-
-                    // Close volume pass.
-                    // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
-                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                        if (volume.closed) {
-                            pass.setStencilReference(0x00);
-                            pass.setPipeline(closed_modifier_volume_pipeline);
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-
-                            pass.setStencilReference(0x01);
-                            pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
-                            // NOTE: We could draw a single fullscreen quad here.
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                        }
-                    }
-                    // Open "volume" pass.
-                    // Triangle passing the depth test immediately set the stencil buffer.
-                    pass.setStencilReference(0x02);
-                    pass.setPipeline(open_modifier_volume_pipeline);
-                    for (ta_lists.opaque_modifier_volumes.items) |volume| {
-                        if (!volume.closed)
-                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                    }
-                }
-                // Copy 'area 1' colors where the stencil buffer is non-zero.
-                {
-                    const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
-                    const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
-                    const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
-                    const dest_view = target.resized.view;
-
-                    const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                        .view = depth_view,
-                        .depth_load_op = .undef,
-                        .depth_store_op = .undef,
-                        .depth_clear_value = DepthClearValue,
-                        .depth_read_only = .true,
-                        .stencil_load_op = .undef,
-                        .stencil_store_op = .undef,
-                        .stencil_clear_value = 0,
-                        .stencil_read_only = .true,
-                    };
-                    const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                        .view = dest_view,
-                        .load_op = .load,
-                        .store_op = .store,
-                    }};
-                    const render_pass_info = wgpu.RenderPassDescriptor{
-                        .label = "Modifier Volume Apply",
-                        .color_attachment_count = color_attachments.len,
-                        .color_attachments = &color_attachments,
-                        .depth_stencil_attachment = &depth_attachment,
-                    };
-
-                    const pass = encoder.beginRenderPass(render_pass_info);
-                    defer {
-                        pass.end();
-                        pass.release();
-                    }
-
-                    pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
-                    pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                    pass.setPipeline(modifier_volume_apply_pipeline);
-                    pass.setBindGroup(0, mva_bind_group, &.{});
-
-                    pass.setStencilReference(0x02);
-                    pass.drawIndexed(4, 1, 0, 0, 0);
-                }
-
-                // Copy the result to resized_framebuffer_copy_texture_view too.
-                encoder.copyTextureToTexture(
-                    .{ .texture = target.resized.texture },
-                    .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
-                    .{ .width = self.resolution.width, .height = self.resolution.height },
-                );
-            }
-
-            if (self.render_passes[0].pre_sort) {
-                // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
-                const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
-                pre_sort_uniform_mem.slice[0] = uniform_mem.slice[0];
-                pre_sort_uniform_mem.slice[0].pt_alpha_ref = -1.0;
-
-                const color_attachments = [_]wgpu.RenderPassColorAttachment{
-                    .{
-                        .view = target.resized.view,
-                        .load_op = .load,
-                        .store_op = .store,
-                    },
-                    .{
-                        .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
-                        .load_op = .clear,
-                        .store_op = .store,
-                    },
-                };
-                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
-                    .view = depth_view,
-                    .depth_load_op = .load,
-                    .depth_store_op = .store,
-                    .stencil_load_op = .clear,
-                    .stencil_store_op = .discard,
-                    .stencil_clear_value = 0,
-                    .stencil_read_only = .false,
-                };
-                const render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Presorted Translucent pass",
-                    .color_attachment_count = color_attachments.len,
-                    .color_attachments = &color_attachments,
-                    .depth_stencil_attachment = &depth_attachment,
-                };
-                const pass = encoder.beginRenderPass(render_pass_info);
-                defer {
-                    pass.end();
-                    pass.release();
-                }
-
-                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
-                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
-
-                pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
-
-                var current_pipeline: ?PipelineKey = null;
-                var current_sampler: ?u8 = null;
-                for (self.pre_sorted_translucent_pass.items) |draw_call| {
-                    if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
-                        const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
-                        const pipeline = gctx.lookupResource(pl) orelse continue;
-                        pass.setPipeline(pipeline);
-                        current_pipeline = draw_call.pipeline_key;
-                    }
-
-                    if (draw_call.index_count > 0) {
-                        const clip = self.convert_clipping(draw_call.user_clip);
-                        pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
-
-                        if (current_sampler == null or draw_call.sampler != current_sampler.?) {
-                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                            current_sampler = draw_call.sampler;
-                        }
-                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
-                    }
-                }
-
-                // TODO: Support translucent modifier volumes in pre-sorted mode
-
-            } else {
-                // Generate all translucent fragments
-                const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
-                const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
-
-                const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
-                    .view = target.resized.view,
-                    .load_op = .load,
-                    .store_op = .store,
-                }};
-                const oit_render_pass_info = wgpu.RenderPassDescriptor{
-                    .label = "Translucent Pass",
-                    .color_attachment_count = oit_color_attachments.len,
-                    .color_attachments = &oit_color_attachments,
-                    .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
-                    // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
-                    //       mode where the depth_compare mode can be set by the user (it is written, but unused).
-                };
-
-                const slice_size = self.resolution.height / OITHorizontalSlices;
-                for (0..OITHorizontalSlices) |i| {
-                    const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
-
-                    const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
-                    oit_uniform_mem.slice[0].target_width = self.resolution.width;
-                    oit_uniform_mem.slice[0].start_y = start_y;
-
-                    // Render Translucent Modifier Volumes
-                    if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
-                        const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
-                        const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
-
-                        oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
-
-                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                        const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
-                        const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
-                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                        vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                        vs_uniform_mem.slice[0].max_depth = self.max_depth;
-
-                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
-
+                if (!render_pass.opaque_list_pointer.empty) {
+                    {
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                            .{
+                                .view = target.resized.view,
+                                .load_op = .load,
+                                .store_op = .store,
+                            },
+                            .{
+                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .load_op = .clear,
+                                .store_op = .store,
+                            },
+                        };
                         const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
                             .view = depth_view,
-                            .depth_read_only = .true,
-                            .stencil_read_only = .true,
+                            .depth_load_op = if (render_pass.z_clear) .clear else .load,
+                            .depth_store_op = .store,
+                            .depth_clear_value = DepthClearValue,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .discard,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
                         };
                         const render_pass_info = wgpu.RenderPassDescriptor{
-                            .label = "Translucent Modifier Volumes",
-                            .color_attachment_count = 0,
-                            .color_attachments = null,
+                            .label = "Opaque pass",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
                             .depth_stencil_attachment = &depth_attachment,
                         };
-
-                        {
-                            const pass = encoder.beginRenderPass(render_pass_info);
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                            pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
-                            pass.setPipeline(translucent_modvol_pipeline);
-                            pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
-
-                            // Close volume pass.
-                            var volume_index: u32 = 0;
-                            for (ta_lists.translucent_modifier_volumes.items) |volume| {
-                                if (volume.closed) {
-                                    const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
-                                    oit_fs_uniform_mem.slice[0].volume_index = volume_index;
-                                    pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
-                                    volume_index += 1;
-
-                                    pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
-                                } else {
-                                    renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
-                                    // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
-                                    //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
-                                }
-                            }
-                        }
-
-                        {
-                            const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
-                            defer {
-                                pass.end();
-                                pass.release();
-                            }
-                            const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                            pass.setPipeline(translucent_modvol_merge_pipeline);
-
-                            pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
-                            pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
-                        }
-                    }
-
-                    oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
-
-                    skip: {
-                        const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
-
-                        const pass = encoder.beginRenderPass(oit_render_pass_info);
+                        const pass = encoder.beginRenderPass(render_pass_info);
                         defer {
                             pass.end();
                             pass.release();
@@ -3096,21 +2859,22 @@ pub const Renderer = struct {
                         pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                         pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
 
-                        pass.setPipeline(pipeline);
-
                         pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
-                        pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
-                        var it = self.translucent_pass.pipelines.iterator();
-                        while (it.next()) |entry| {
-                            if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                    if (draw_call.index_count > 0) {
-                                        var clip = self.convert_clipping(draw_call.user_clip);
-                                        const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
-                                        clip.y = @max(clip.y, start_y);
-                                        clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
-                                        if (clip.height > 0 and clip.width > 0) {
+                        // Opaque and PunchThrough geometry
+                        // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
+                        inline for ([2]*const PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
+                            var it = metadata.pipelines.iterator();
+                            while (it.next()) |entry| {
+                                // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
+                                if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                    const pl = try self.get_or_put_opaque_pipeline(entry.key_ptr.*, .Async);
+                                    const pipeline = gctx.lookupResource(pl) orelse continue;
+                                    pass.setPipeline(pipeline);
+
+                                    for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                        if (draw_call.index_count > 0) {
+                                            const clip = self.convert_clipping(draw_call.user_clip);
                                             pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
                                             pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
@@ -3122,21 +2886,356 @@ pub const Renderer = struct {
                         }
                     }
 
-                    // Blend the results of the translucent pass
-                    skip_blend: {
-                        const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
+                    // FIXME: WGPU doesn't support reading from storage textures... This is a bad workaround.
+                    encoder.copyTextureToTexture(
+                        .{ .texture = target.resized.texture },
+                        .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
+                        .{ .width = self.resolution.width, .height = self.resolution.height },
+                    );
+                }
 
-                        const pass = encoder.beginComputePass(null);
+                if (!render_pass.opaque_modifier_volume_pointer.empty and ta_lists.opaque_modifier_volumes.items.len > 0) skip_mv: {
+                    const closed_modifier_volume_pipeline = gctx.lookupResource(self.closed_modifier_volume_pipeline) orelse break :skip_mv;
+                    const shift_stencil_buffer_modifier_volume_pipeline = gctx.lookupResource(self.shift_stencil_buffer_modifier_volume_pipeline) orelse break :skip_mv;
+                    const modifier_volume_apply_pipeline = gctx.lookupResource(self.modifier_volume_apply_pipeline) orelse break :skip_mv;
+                    const open_modifier_volume_pipeline = gctx.lookupResource(self.open_modifier_volume_pipeline) orelse break :skip_mv;
+
+                    // Write to stencil buffer
+                    {
+                        const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                        vs_uniform_mem.slice[0].min_depth = self.min_depth;
+                        vs_uniform_mem.slice[0].max_depth = self.max_depth;
+
+                        const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .load,
+                            .depth_store_op = .store,
+                            .depth_clear_value = DepthClearValue,
+                            .depth_read_only = .false,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .store,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
+                        };
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Modifier Volume Stencil",
+                            .color_attachment_count = 0,
+                            .color_attachments = null,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+
+                        const pass = encoder.beginRenderPass(render_pass_info);
                         defer {
                             pass.end();
                             pass.release();
                         }
-                        const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
-                        pass.setPipeline(pipeline);
 
-                        pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
+                        pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                        pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
 
-                        pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                        // Close volume pass.
+                        // Counts triangles passing the depth test: If odd, the volume intersects the depth buffer.
+                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                            if (volume.closed) {
+                                pass.setStencilReference(0x00);
+                                pass.setPipeline(closed_modifier_volume_pipeline);
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+
+                                pass.setStencilReference(0x01);
+                                pass.setPipeline(shift_stencil_buffer_modifier_volume_pipeline);
+                                // NOTE: We could draw a single fullscreen quad here.
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                            }
+                        }
+                        // Open "volume" pass.
+                        // Triangle passing the depth test immediately set the stencil buffer.
+                        pass.setStencilReference(0x02);
+                        pass.setPipeline(open_modifier_volume_pipeline);
+                        for (ta_lists.opaque_modifier_volumes.items) |volume| {
+                            if (!volume.closed)
+                                pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                        }
+                    }
+                    // Copy 'area 1' colors where the stencil buffer is non-zero.
+                    {
+                        const blit_vb_info = gctx.lookupResourceInfo(self.blit_vertex_buffer).?;
+                        const blit_ib_info = gctx.lookupResourceInfo(self.blit_index_buffer).?;
+                        const mva_bind_group = gctx.lookupResource(self.modifier_volume_apply_bind_group).?;
+                        const dest_view = target.resized.view;
+
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .undef,
+                            .depth_store_op = .undef,
+                            .depth_clear_value = DepthClearValue,
+                            .depth_read_only = .true,
+                            .stencil_load_op = .undef,
+                            .stencil_store_op = .undef,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .true,
+                        };
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                            .view = dest_view,
+                            .load_op = .load,
+                            .store_op = .store,
+                        }};
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Modifier Volume Apply",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+
+                        const pass = encoder.beginRenderPass(render_pass_info);
+                        defer {
+                            pass.end();
+                            pass.release();
+                        }
+
+                        pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
+                        pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
+                        pass.setPipeline(modifier_volume_apply_pipeline);
+                        pass.setBindGroup(0, mva_bind_group, &.{});
+
+                        pass.setStencilReference(0x02);
+                        pass.drawIndexed(4, 1, 0, 0, 0);
+                    }
+
+                    // Copy the result to resized_framebuffer_copy_texture_view too.
+                    encoder.copyTextureToTexture(
+                        .{ .texture = target.resized.texture },
+                        .{ .texture = gctx.lookupResource(self.resized_framebuffer_copy.texture).? },
+                        .{ .width = self.resolution.width, .height = self.resolution.height },
+                    );
+                }
+
+                if (!render_pass.translucent_list_pointer.empty) {
+                    if (render_pass.pre_sort) {
+                        // Disable PT discards for pre-sorted translucent polygons (This uses the same pipelines)
+                        const pre_sort_uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
+                        pre_sort_uniform_mem.slice[0] = uniform_mem.slice[0];
+                        pre_sort_uniform_mem.slice[0].pt_alpha_ref = -1.0;
+
+                        const color_attachments = [_]wgpu.RenderPassColorAttachment{
+                            .{
+                                .view = target.resized.view,
+                                .load_op = .load,
+                                .store_op = .store,
+                            },
+                            .{
+                                .view = gctx.lookupResource(self.resized_framebuffer_area1.view).?,
+                                .load_op = .clear,
+                                .store_op = .store,
+                            },
+                        };
+                        const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                            .view = depth_view,
+                            .depth_load_op = .load,
+                            .depth_store_op = .store,
+                            .stencil_load_op = .clear,
+                            .stencil_store_op = .discard,
+                            .stencil_clear_value = 0,
+                            .stencil_read_only = .false,
+                        };
+                        const render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Presorted Translucent pass",
+                            .color_attachment_count = color_attachments.len,
+                            .color_attachments = &color_attachments,
+                            .depth_stencil_attachment = &depth_attachment,
+                        };
+                        const pass = encoder.beginRenderPass(render_pass_info);
+                        defer {
+                            pass.end();
+                            pass.release();
+                        }
+
+                        pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                        pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                        pass.setBindGroup(0, bind_group, &.{pre_sort_uniform_mem.offset});
+
+                        var current_pipeline: ?PipelineKey = null;
+                        var current_sampler: ?u8 = null;
+                        for (render_pass.pre_sorted_translucent_pass.items) |draw_call| {
+                            if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
+                                const pl = try self.get_or_put_opaque_pipeline(draw_call.pipeline_key, .Async);
+                                const pipeline = gctx.lookupResource(pl) orelse continue;
+                                pass.setPipeline(pipeline);
+                                current_pipeline = draw_call.pipeline_key;
+                            }
+
+                            if (draw_call.index_count > 0) {
+                                const clip = self.convert_clipping(draw_call.user_clip);
+                                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+
+                                if (current_sampler == null or draw_call.sampler != current_sampler.?) {
+                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                    current_sampler = draw_call.sampler;
+                                }
+                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                            }
+                        }
+
+                        // TODO: Support translucent modifier volumes in pre-sorted mode
+
+                    } else {
+                        // Generate all translucent fragments
+                        const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
+                        const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
+
+                        const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
+                            .view = target.resized.view,
+                            .load_op = .load,
+                            .store_op = .store,
+                        }};
+                        const oit_render_pass_info = wgpu.RenderPassDescriptor{
+                            .label = "Translucent Pass",
+                            .color_attachment_count = oit_color_attachments.len,
+                            .color_attachments = &oit_color_attachments,
+                            .depth_stencil_attachment = null, // TODO: Use the depth buffer rather than discarding the fragments manually?
+                            // NOTE: We could need to sample it in the fragment shader to correctly implement "Pre-sort"
+                            //       mode where the depth_compare mode can be set by the user (it is written, but unused).
+                        };
+
+                        const slice_size = self.resolution.height / OITHorizontalSlices;
+                        for (0..OITHorizontalSlices) |i| {
+                            const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
+
+                            const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
+                            oit_uniform_mem.slice[0].target_width = self.resolution.width;
+                            oit_uniform_mem.slice[0].start_y = start_y;
+
+                            // Render Translucent Modifier Volumes
+                            if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
+                                const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
+                                const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
+
+                                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
+
+                                const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
+                                const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
+                                const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
+                                const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                                vs_uniform_mem.slice[0].min_depth = self.min_depth;
+                                vs_uniform_mem.slice[0].max_depth = self.max_depth;
+
+                                const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
+
+                                const depth_attachment = wgpu.RenderPassDepthStencilAttachment{
+                                    .view = depth_view,
+                                    .depth_read_only = .true,
+                                    .stencil_read_only = .true,
+                                };
+                                const render_pass_info = wgpu.RenderPassDescriptor{
+                                    .label = "Translucent Modifier Volumes",
+                                    .color_attachment_count = 0,
+                                    .color_attachments = null,
+                                    .depth_stencil_attachment = &depth_attachment,
+                                };
+
+                                {
+                                    const pass = encoder.beginRenderPass(render_pass_info);
+                                    defer {
+                                        pass.end();
+                                        pass.release();
+                                    }
+                                    pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
+                                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+                                    pass.setPipeline(translucent_modvol_pipeline);
+                                    pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
+
+                                    // Close volume pass.
+                                    var volume_index: u32 = 0;
+                                    for (ta_lists.translucent_modifier_volumes.items) |volume| {
+                                        if (volume.closed) {
+                                            const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
+                                            oit_fs_uniform_mem.slice[0].volume_index = volume_index;
+                                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
+                                            volume_index += 1;
+
+                                            pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
+                                        } else {
+                                            renderer_log.warn(termcolor.yellow("TODO: Unhandled Open Translucent Modifier Volume!"), .{});
+                                            // TODO: Almost the same thing, but the compute shader is really simple: Take the smallest
+                                            //       depth value and add a volume from it to "infinity" (1.0+ depth). Or find a more efficient way :)
+                                        }
+                                    }
+                                }
+
+                                {
+                                    const pass = encoder.beginComputePass(.{ .label = "Merge Modifier Volumes", .timestamp_write_count = 0, .timestamp_writes = null });
+                                    defer {
+                                        pass.end();
+                                        pass.release();
+                                    }
+                                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                    pass.setPipeline(translucent_modvol_merge_pipeline);
+
+                                    pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
+                                    pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                                }
+                            }
+
+                            oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
+
+                            skip: {
+                                const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
+
+                                const pass = encoder.beginRenderPass(oit_render_pass_info);
+                                defer {
+                                    pass.end();
+                                    pass.release();
+                                }
+
+                                pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
+                                pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
+
+                                pass.setPipeline(pipeline);
+
+                                pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
+                                pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
+
+                                var it = render_pass.translucent_pass.pipelines.iterator();
+                                while (it.next()) |entry| {
+                                    if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                            if (draw_call.index_count > 0) {
+                                                var clip = self.convert_clipping(draw_call.user_clip);
+                                                const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
+                                                clip.y = @max(clip.y, start_y);
+                                                clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
+                                                if (clip.height > 0 and clip.width > 0) {
+                                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+
+                                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Blend the results of the translucent pass
+                            skip_blend: {
+                                const pipeline = gctx.lookupResource(self.blend_pipeline) orelse break :skip_blend;
+
+                                const pass = encoder.beginComputePass(null);
+                                defer {
+                                    pass.end();
+                                    pass.release();
+                                }
+                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                pass.setPipeline(pipeline);
+
+                                pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
+
+                                pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
+                            }
+                        }
                     }
                 }
             }
