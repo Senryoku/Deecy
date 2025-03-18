@@ -361,7 +361,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = if (sh4.ExperimentalFullMMUSupport)
+        const physical_pc = if (sh4.FullMMUSupport)
             cpu.translate_intruction_address(cpu.pc)
         else
             cpu.pc & 0x1FFF_FFFF;
@@ -372,7 +372,7 @@ pub const JITContext = struct {
         return .{
             .cpu = cpu,
             .entry_point_address = cpu.pc,
-            .mmu_enabled = sh4.ExperimentalFullMMUSupport and cpu._mmu_enabled,
+            .mmu_enabled = sh4.FullMMUSupport and cpu._mmu_enabled,
             .start_pc = cpu.pc,
             .start_physical_pc = physical_pc,
             .current_pc = cpu.pc,

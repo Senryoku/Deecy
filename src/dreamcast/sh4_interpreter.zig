@@ -1413,7 +1413,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
 
-            if (sh4.ExperimentalFullMMUSupport) {
+            if (sh4.FullMMUSupport) {
                 if (addr & 3 != 0 or (cpu.sr.md == 0 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 1)) {
                     sh4_log.debug("DataAddressErrorRead exception in pref instruction: {X:0>8}", .{addr});
                     return error.DataAddressErrorRead;

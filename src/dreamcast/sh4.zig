@@ -26,11 +26,18 @@ pub const Exception = @import("sh4_exceptions.zig").Exception;
 pub const instructions = @import("sh4_instructions.zig");
 pub const disassembly = @import("sh4_disassembly.zig");
 
-pub const ExperimentalFullMMUSupport = dc_config.mmu;
+// Does have a small impact on performance for non-MMU games (~1%)
+pub const FullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them. (Incompatible with EnableUTLBFastLookup)
 pub const EmulateUTLBMultipleHit = false;
+/// The ITLB is mostly a cache in front of the UTLB, but it can also be accessed directly.
+///   UTLBFastLookup should be faster than the additional layer of cache, but some titles might rely on the exact ITLB behavior.
 pub const EmulateITLB = false;
-pub const EnableUTLBFastLookup = true and ExperimentalFullMMUSupport;
+/// Checks the PR bit of UTLB entries and raise an Access Violation Exception when accessing protected pages in User Mode.
+///   Never seen such exceptions in practice yet, so this is disabled by default.
+pub const EmulateAccessViolation = false;
+/// Uses a virtual memory lookup table to speed up UTLB lookups.
+pub const EnableUTLBFastLookup = true and (FullMMUSupport and !EmulateUTLBMultipleHit);
 const FastLookupType = if (EnableUTLBFastLookup) []u8 else void;
 
 pub const SR = packed struct(u32) {
@@ -988,7 +995,7 @@ pub const SH4 = struct {
             const idx = self._fast_utlb_lookup[key];
             if (idx != 0) {
                 const entry = self.utlb[idx - 1];
-                if (self.sr.md == 0 and entry.pr.privileged())
+                if (EmulateAccessViolation and self.sr.md == 0 and entry.pr.privileged())
                     return error.TLBProtectionViolation;
                 return entry;
             }
@@ -1006,7 +1013,7 @@ pub const SH4 = struct {
         }
 
         if (found_entry) |entry| {
-            if (self.sr.md == 0 and entry.pr.privileged())
+            if (EmulateAccessViolation and self.sr.md == 0 and entry.pr.privileged())
                 return error.TLBProtectionViolation;
             mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, entry.translate(virtual_addr) });
             mmu_log.debug("  Entry: {any}", .{entry});
@@ -1020,7 +1027,7 @@ pub const SH4 = struct {
     pub const AccessType = enum { Read, Write };
 
     pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, DataTLBMultipleHit, InitialPageWrite }!u32 {
-        if (ExperimentalFullMMUSupport and self._mmu_enabled) {
+        if (FullMMUSupport and self._mmu_enabled) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
                 0x7C00_0000...0x7FFF_FFFF,
@@ -1059,7 +1066,7 @@ pub const SH4 = struct {
 
     /// Might cause an exception and jump to its handler.
     pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
-        if (!ExperimentalFullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
+        if (!FullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
 
         if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
             self.report_address_exception(virtual_addr);

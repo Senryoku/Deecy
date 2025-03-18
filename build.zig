@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
     const arm7 = b.dependency("arm7", .{});
     const arm7_module = arm7.module("arm7");
 
-    const mmu = b.option(bool, "mmu", "Enable experimental Full MMU Emulation (default: false)") orelse false;
+    const mmu = b.option(bool, "mmu", "Enable Full MMU Emulation (default: true)") orelse true;
     const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
     const fb_writeback = b.option(bool, "fb_writeback", "Write the rendered frame back to the guest VRAM. Slow, but necessary for some effects (default: false)") orelse false;
 
