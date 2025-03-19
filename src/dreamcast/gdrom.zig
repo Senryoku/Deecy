@@ -654,7 +654,7 @@ fn req_stat(self: *@This()) !void {
     const start_addr = self.packet_command[2];
     const alloc_length = self.packet_command[4];
 
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}"), .{ start_addr, alloc_length });
+    gdrom_log.info("  GDROM PacketCommand ReqStat - {X:0>2} {X:0>2}", .{ start_addr, alloc_length });
     if (start_addr != 0)
         gdrom_log.warn(termcolor.yellow("                      ReqStat - Start Addr isn't 0! ({X:0>2})"), .{start_addr});
     if (alloc_length != 0x0A)

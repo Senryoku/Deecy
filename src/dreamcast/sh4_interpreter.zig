@@ -1263,6 +1263,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
         .tc = ptea.tc,
     };
     cpu.sync_utlb_fast_lookup(urc);
+    cpu.check_mmu_state();
 
     sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
 
@@ -1401,7 +1402,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
         //               The full address also includes the sq bit.
         var ext_addr = (addr & 0x03FFFFE0) | (((cpu.read_p4_register(u32, if (sq_addr.sq == 0) .QACR0 else .QACR1) & 0b11100) << 24));
 
-        if (cpu._mmu_enabled) {
+        switch (cpu._mmu_state) {
             // The SQ area (H'E000 0000 to H'E3FF FFFF) is set in VPN of the UTLB, and the transfer
             // destination external memory address in PPN. The ASID, V, SZ, SH, PR, and D bits have the
             // same meaning as for normal address translation, but the C and WT bits have no meaning
@@ -1412,8 +1413,8 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             // specification. For external memory address bits [9:5], the address prior to address translation
             // is generated in the same way as when the MMU is off. External memory address bits [4:0]
             // are fixed at 0. Transfer from the SQs to external memory is performed to this address.
-
-            if (sh4.FullMMUSupport) {
+            .Full => {
+                std.debug.assert(sh4.FullMMUSupport);
                 if (addr & 3 != 0 or (cpu.sr.md == 0 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 1)) {
                     sh4_log.debug("DataAddressErrorRead exception in pref instruction: {X:0>8}", .{addr});
                     return error.DataAddressErrorRead;
@@ -1430,8 +1431,9 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                 if (!entry.d) return error.InitialPageWrite;
                 ext_addr = entry.translate(addr);
                 ext_addr &= 0xFFFFFFE0;
-            } else {
-                //  This is the simplified version for Ikaruga and other similar games, not a general solution.
+            },
+            .Limited => {
+                // Simplified version for Ikaruga and other similar games. 1MB pages and no exception handling.
                 const vpn: u22 = @truncate(addr >> 10);
                 for (cpu.utlb) |entry| {
                     if (entry.match(false, 0, vpn)) {
@@ -1439,7 +1441,8 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                         break;
                     }
                 }
-            }
+            },
+            .Disabled => {},
         }
         sh4_log.debug("pref @R{d}={X:0>8} : Store queue write back to {X:0>8}", .{ opcode.nmd.n, addr, ext_addr });
 

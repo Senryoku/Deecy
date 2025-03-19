@@ -208,7 +208,9 @@ pub const SH4 = struct {
     _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
-    _mmu_enabled: bool = false, // Cached value of MMUCR.at
+    /// Is the MMU currently enabled?
+    ///   Limited: Translation is only needed for store queue operation (pref instruction).
+    _mmu_state: enum { Disabled, Limited, Full } = .Disabled,
     _fast_utlb_lookup: FastLookupType,
     _last_timer_update: [3]u64 = .{0} ** 3,
 
@@ -358,7 +360,7 @@ pub const SH4 = struct {
             self.utlb[i].v = false;
         self.reset_utlb_fast_lookup();
 
-        self._mmu_enabled = false;
+        self._mmu_state = .Disabled;
     }
 
     pub fn software_reset(self: *@This()) void {
@@ -406,7 +408,7 @@ pub const SH4 = struct {
             self.utlb[i].v = false;
         self.reset_utlb_fast_lookup();
 
-        self._mmu_enabled = false;
+        self._mmu_state = .Disabled;
     }
 
     // Reset state to after bios.
@@ -937,6 +939,34 @@ pub const SH4 = struct {
         self.p4_register(P4.CHCR, c.chcr).*.te = 1;
     }
 
+    pub inline fn check_mmu_state(self: *@This()) void {
+        const previous_state = self._mmu_state;
+
+        const mmucr = self.read_p4_register(mmu.MMUCR, .MMUCR);
+        if (!mmucr.at) {
+            self._mmu_state = .Disabled;
+        } else if (self._mmu_state != .Full) {
+            var full_mmu_emulation_needed = false;
+            for (self.utlb) |entry| {
+                // Basic heuristic to detect games using the MMU only for store queue writes.
+                // 1MB pages (warning: there's a transition period while they're being updated when the sizes don't match yet,
+                // so we can't rely on that sadly) with 0xExx00000 VPN.
+                if (entry.valid() and (entry.vpn & (0xF00F_FFFF >> 10)) != (0xE000_0000 >> 10)) {
+                    sh4_log.debug("Full MMU emulation needed for entry {any}", .{entry});
+                    full_mmu_emulation_needed = true;
+                    break;
+                }
+            }
+            self._mmu_state = if (full_mmu_emulation_needed) .Full else .Limited;
+        }
+
+        if (self._mmu_state != previous_state) {
+            sh4_log.warn("MMU State: {s} => {s}", .{ @tagName(previous_state), @tagName(self._mmu_state) });
+            if (previous_state == .Full or self._mmu_state == .Full)
+                if (self._dc) |dc| dc.sh4_jit.request_reset();
+        }
+    }
+
     fn reset_utlb_fast_lookup(self: *@This()) void {
         if (!EnableUTLBFastLookup) return;
         host_memory.virtual_dealloc(self._fast_utlb_lookup);
@@ -1027,7 +1057,7 @@ pub const SH4 = struct {
     pub const AccessType = enum { Read, Write };
 
     pub inline fn translate_address(self: *@This(), comptime access_type: AccessType, virtual_addr: u32) error{ DataTLBMissRead, DataTLBMissWrite, DataTLBProtectionViolation, DataTLBMultipleHit, InitialPageWrite }!u32 {
-        if (FullMMUSupport and self._mmu_enabled) {
+        if (FullMMUSupport and self._mmu_state == .Full) {
             return switch (virtual_addr) {
                 // Operand Cache RAM Mode
                 0x7C00_0000...0x7FFF_FFFF,
@@ -1066,7 +1096,7 @@ pub const SH4 = struct {
 
     /// Might cause an exception and jump to its handler.
     pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
-        if (!FullMMUSupport or !self._mmu_enabled) return virtual_addr & 0x1FFF_FFFF;
+        if (!FullMMUSupport or self._mmu_state != .Full) return virtual_addr & 0x1FFF_FFFF;
 
         if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
             self.report_address_exception(virtual_addr);
@@ -1531,8 +1561,8 @@ pub const SH4 = struct {
                     if (!std.meta.eql(before, self.utlb[entry])) {
                         self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
-
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.check_mmu_state();
+                        // if (self._dc) |dc| dc.sh4_jit.request_reset();
                     }
                 }
             },
@@ -1558,8 +1588,8 @@ pub const SH4 = struct {
                     if (!std.meta.eql(before, self.utlb[entry])) {
                         self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
-
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        self.check_mmu_state();
+                        // if (self._dc) |dc| dc.sh4_jit.request_reset();
                     }
                 }
             },
@@ -1596,10 +1626,9 @@ pub const SH4 = struct {
                                         entry.v = false;
                                 }
                                 if (val.ti or val.sv != mmucr.sv) self.reset_utlb_fast_lookup();
-                                if (val.at != self._mmu_enabled) if (self._dc) |dc| dc.sh4_jit.request_reset();
-                                self._mmu_enabled = val.at;
                                 val.ti = false; // Always return 0 when read.
                                 mmucr.* = val;
+                                self.check_mmu_state();
                                 return;
                             } else {
                                 sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
@@ -1818,7 +1847,7 @@ pub const SH4 = struct {
                 // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
                 // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
                 // control register area in the physical memory space
-                if (self._mmu_enabled) {
+                if (self._mmu_state != .Disabled) {
                     return self.read_p4(T, addr | 0xE000_0000);
                 } else {
                     sh4_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
@@ -2020,7 +2049,7 @@ pub const SH4 = struct {
                 // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
                 // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
                 // control register area in the physical memory space
-                if (self._mmu_enabled) {
+                if (self._mmu_state != .Disabled) {
                     return self.write_p4(T, addr | 0xE000_0000, value);
                 } else {
                     sh4_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
@@ -2103,8 +2132,8 @@ pub const SH4 = struct {
 
         self.compute_interrupt_priorities();
         self.update_sse_settings();
-        self._mmu_enabled = self.read_p4_register(mmu.MMUCR, .MMUCR).at;
         self.reset_utlb_fast_lookup();
+        self.check_mmu_state();
 
         return bytes;
     }

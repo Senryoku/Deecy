@@ -372,7 +372,7 @@ pub const JITContext = struct {
         return .{
             .cpu = cpu,
             .entry_point_address = cpu.pc,
-            .mmu_enabled = sh4.FullMMUSupport and cpu._mmu_enabled,
+            .mmu_enabled = sh4.FullMMUSupport and cpu._mmu_state == .Full,
             .start_pc = cpu.pc,
             .start_physical_pc = physical_pc,
             .current_pc = cpu.pc,
@@ -1206,7 +1206,7 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
-            std.debug.assert(cpu._mmu_enabled);
+            std.debug.assert(cpu._mmu_state == .Full);
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
             const unauthorized = MMUDataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));

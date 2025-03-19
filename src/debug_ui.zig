@@ -415,6 +415,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const TTB = dc.cpu.read_p4_register(u32, .TTB);
         const TEA = dc.cpu.read_p4_register(u32, .TEA);
         if (MMUCR.at) zgui.textColored(Green, "Enabled", .{}) else zgui.textColored(Red, "Disabled", .{});
+        zgui.sameLine(.{});
+        zgui.text(" (Level: {s})", .{@tagName(dc.cpu._mmu_state)});
         if (MMUCR.sv) zgui.textColored(Green, "Single virtual memory mode", .{}) else zgui.textColored(Red, "Multiple virtual memory mode", .{});
         if (MMUCR.sqmd == 0) zgui.textColored(Green, "Store queue User mode", .{}) else zgui.textColored(Red, "Store queue Privileged mode", .{});
         zgui.text("URC: {X: >2}, URB: {X: >2}, LRUI: {b:0>6}", .{ MMUCR.urc, MMUCR.urb, MMUCR.lrui });

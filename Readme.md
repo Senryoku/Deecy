@@ -51,7 +51,6 @@ sudo apt install libgtk-3-dev
 -   SH4:
     -   MMU:
         -   Windows CE: Test and Debug more games.
-        -   Detect games using only a limited portion of MMU capabilities (Ikaruga...) to revert back to the previous hack.
         -   Optimize.
 -   AICA:
     -   Debug
