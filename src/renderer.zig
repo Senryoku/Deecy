@@ -408,13 +408,14 @@ const PassMetadata = struct {
     }
 
     fn deinit(self: *@This()) void {
-        for (self.pipelines.values()) |*pipeline| {
+        for (self.pipelines.values()) |*pipeline|
             pipeline.deinit();
-        }
         self.pipelines.deinit();
     }
 
     pub fn reset(self: *@This()) void {
+        for (self.pipelines.values()) |*pipeline|
+            pipeline.deinit();
         self.pipelines.clearRetainingCapacity();
     }
 };
@@ -1544,7 +1545,7 @@ pub const Renderer = struct {
             if (region_count < self.render_passes.items.len) {
                 for (region_count..self.render_passes.items.len) |i|
                     self.render_passes.items[i].deinit();
-                self.render_passes.shrinkRetainingCapacity(self.render_passes.items.len);
+                self.render_passes.shrinkRetainingCapacity(region_count);
             }
 
             self.render_start = true;
