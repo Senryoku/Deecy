@@ -2327,6 +2327,15 @@ pub const Holly = struct {
                         pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
                         pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
                     },
+                    .ARGB1555 => {
+                        var addr: u32 = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 2 * @as(u32, @intCast(x));
+                        if (access_32bit) addr = translate_32bit_path_addr(addr);
+                        var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
+                        pixel.argb1555.r = @truncate(pixels[idx + 2] >> 3);
+                        pixel.argb1555.g = @truncate(pixels[idx + 1] >> 3);
+                        pixel.argb1555.b = @truncate(pixels[idx + 0] >> 3);
+                        pixel.argb1555.a = 1;
+                    },
                     .RGB888 => {
                         var addr = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 3 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
