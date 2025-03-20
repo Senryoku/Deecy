@@ -4,7 +4,7 @@
     <div>Deecy</div>
 </h1>
 
-Deecy is a very experimental Dreamcast emulator written in Zig.
+Deecy is an experimental Dreamcast emulator written in Zig.
 
 Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), [Grandia II](https://www.youtube.com/watch?v=YQG3SSVfeis) (July 2024), [DCA3](https://www.youtube.com/watch?v=RAj67PZbVnc) (January 2025)
 
@@ -23,7 +23,7 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 
 ## Build
 
-Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/ when not on a stable release)). 
+Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/) when not on a stable release). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
 ```sh
 zigup 0.14.0-dev.2577+271452d22
