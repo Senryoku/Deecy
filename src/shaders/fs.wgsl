@@ -37,12 +37,16 @@ fn main(
         area1_tex_idx_shading_instr[0],
         area1_tex_idx_shading_instr[1],
         original_z,
-        true
+        Opaque
     );
 
     var output: FragmentOutput;
     output.area0 = final_color.area0;
     output.area1 = final_color.area1;
+    if Opaque {
+        output.area0.a = 1.0;
+        output.area1.a = 1.0;
+    }
 
     return output;
 }

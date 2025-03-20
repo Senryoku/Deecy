@@ -68,6 +68,7 @@ sudo apt install libgtk-3-dev
     -   User Tile Clip, only the simplest version is supported.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Mipmaps for palette textures?
+    -   Punchthrough polygons: They should use the OIT pass like translucent polygons. Is it actually an issue in practice to treat them as opaque? I'm guessing, yes when drawing order matters (equal depth).
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 
 ### Nice to have
