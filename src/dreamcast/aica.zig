@@ -599,7 +599,7 @@ pub const AICA = struct {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
-        self.channel_states = .{.{}} ** 64;
+        self.channel_states = @splat(.{});
 
         self.sample_read_offset = 0;
         self.sample_write_offset = 0;

@@ -52,10 +52,10 @@ pixels: []u8 = undefined,
 
 audio_channels: [64]struct {
     amplitude_envelope: struct { start_time: i64 = 0, xv: std.ArrayList(u32) = undefined, yv: std.ArrayList(u32) = undefined } = .{},
-} = .{.{}} ** 64,
+} = @splat(.{}),
 
-dsp_inputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = .{.{}} ** 16,
-dsp_outputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = .{.{}} ** 16,
+dsp_inputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = @splat(.{}),
+dsp_outputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = @splat(.{}),
 
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,

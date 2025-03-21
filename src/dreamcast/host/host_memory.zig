@@ -38,7 +38,7 @@ pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type 
 }
 
 pub fn virtual_dealloc(memory: anytype) void {
-    if (@typeInfo(@TypeOf(memory)) != .pointer or @typeInfo(@TypeOf(memory)).pointer.size != .Slice) @compileError("virtual_dealloc expects a slice.");
+    if (@typeInfo(@TypeOf(memory)) != .pointer or @typeInfo(@TypeOf(memory)).pointer.size != .slice) @compileError("virtual_dealloc expects a slice.");
 
     switch (builtin.os.tag) {
         .windows => std.os.windows.VirtualFree(memory.ptr, 0, std.os.windows.MEM_RELEASE),

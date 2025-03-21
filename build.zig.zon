@@ -6,8 +6,8 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/zig-gamedev/zgpu#bc10f874cf9c93e347c1298efba87be4f001fc9d",
-            .hash = "zgpu-0.12.0-dev-AAAAABugCAAgoRbhjK2fTqkFymOhUFpH1oD-tu3J6880",
+            .url = "git+https://github.com/Senryoku/zgpu#ad28aff6ed5606b19aacf6af1194bd8a3c1947ce",
+            .hash = "zgpu-0.12.0-dev-4B0R-yGgCACFYGhoHkmGs-LMUvvBfvo2pKlLPu01h5jd",
         },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
@@ -35,8 +35,8 @@
             .lazy = true,
         },
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw.git#3e6db5f38c2978645fa385bf2d619448fe00ee99",
-            .hash = "zglfw-0.10.0-dev-zgVDNMmZIQBBtxbc-E4IQnkKCldJRIlM2cP0lakup_lF",
+            .url = "git+https://github.com/zig-gamedev/zglfw#dcb1dae7d4a90f88b70dbae73300ab9b19fb250c",
+            .hash = "zglfw-0.10.0-dev-zgVDNJmZIQCIiO_94Sp5jqrPtz4Eumk3bDcxS7dSZfIj",
         },
         .zgui = .{
             .url = "git+https://github.com/zig-gamedev/zgui#ce435610d6ba91b62f196ffa9107d8119786ccad",
@@ -49,7 +49,6 @@
         .system_sdk = .{
             .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
             .hash = "system_sdk-0.3.0-dev-alwUNnYaaAJAtIdE2fg4NQfDqEKs7QCXy_qYukAOBfmF",
-            .lazy = true,
         },
         .zpool = .{
             .url = "git+https://github.com/zig-gamedev/zpool#99a4c74ec26b1f327209782565b4adaf1c1d610f",
