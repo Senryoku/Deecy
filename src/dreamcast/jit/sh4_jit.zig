@@ -977,7 +977,7 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 
     const entry = sh4.instructions.Opcodes[instr_index];
     // Is it an FPU instruction which doesn't have a JIT handler?
-    if (@as(u16, @bitCast(instr)) & 0xF000 == 0xF000 and entry.use_fallback()) {
+    if (instr.is_fpu() and entry.use_fallback()) {
         try check_fd_bit(block, ctx);
     }
 

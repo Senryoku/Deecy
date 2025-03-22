@@ -31,7 +31,6 @@ pub fn execute(self: *SH4, max_instructions: u8) u32 {
     if (self.execution_state == .Running or self.execution_state == .ModuleStandby) {
         for (0..max_instructions) |_| {
             fetch_and_execute(self, self.pc);
-            self.pc +%= 2;
         }
 
         const cycles = self._pending_cycles;
@@ -44,7 +43,23 @@ pub fn execute(self: *SH4, max_instructions: u8) u32 {
 
 fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
     const opcode = fetch_instruction(self, virtual_addr);
-    _execute(self, opcode);
+
+    // TODO: Raise a General Illegal Instruction exception if:
+    //   Decoding of an undefined (0xFFFD) instruction.
+    //   Decoding in user mode of a privileged instruction
+    //     Privileged instructions: LDC, STC, RTE, LDTLB, SLEEP, but excluding LDC/STC instructions that access GBR
+
+    _execute(self, opcode) catch |err| {
+        self.jump_to_exception(switch (err) {
+            error.DataTLBMissRead => .DataTLBMissRead,
+            error.DataTLBMissWrite => .DataTLBMissWrite,
+            error.InitialPageWrite => .InitialPageWrite,
+            error.FPUDisabled => .GeneralFPUDisable,
+            else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
+        });
+        return;
+    };
+    self.pc +%= 2;
 }
 
 fn fetch_instruction(self: *SH4, virtual_addr: u32) u16 {
@@ -59,7 +74,7 @@ fn fetch_instruction(self: *SH4, virtual_addr: u32) u16 {
     } else self.read_physical(u16, virtual_addr);
 }
 
-fn _execute(self: *SH4, opcode: u16) void {
+fn _execute(self: *SH4, opcode: u16) !void {
     if (interpreter_handlers.Enable) {
         interpreter_handlers.InstructionHandlers[opcode](self);
     } else {
@@ -69,19 +84,17 @@ fn _execute(self: *SH4, opcode: u16) void {
         if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>8}] {b:0>16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, sh4.disassembly.disassemble(instr, self._allocator), instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
 
-        desc.fn_(self, instr) catch |err| {
-            switch (err) {
-                error.DataTLBMissRead => self.jump_to_exception(.DataAddressErrorRead),
-                error.DataTLBMissWrite => self.jump_to_exception(.DataAddressErrorWrite),
-                else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
-            }
-            self.pc -%= 2; // Compensate for the automatic increment that will follow in execute.
-        };
+        self.add_cycles(desc.issue_cycles);
+
+        // NOTE: Check disabled when MMU is disabled, not because they're actually related, but because AFAIK,
+        //       only WinCE games care about exceptions (and they use the MMU).
+        if (self._mmu_state == .Full and instr.is_fpu() and self.sr.fd)
+            return error.FPUDisabled;
+
+        try desc.fn_(self, instr);
 
         if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
             std.debug.print("[{X:0>8}] {X: >16} {s: <20} R{d: <2}={X:0>8}, R{d: <2}={X:0>8}, T={b:0>1}, Q={b:0>1}, M={b:0>1}\n", .{ self.pc, opcode, "", instr.nmd.n, self.R(instr.nmd.n).*, instr.nmd.m, self.R(instr.nmd.m).*, if (self.sr.t) @as(u1, 1) else 0, if (self.sr.q) @as(u1, 1) else 0, if (self.sr.m) @as(u1, 1) else 0 });
-
-        self.add_cycles(desc.issue_cycles);
     }
 }
 
@@ -1083,15 +1096,39 @@ inline fn d12_label(cpu: *SH4, opcode: Instr) void {
 }
 
 inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
-    // TODO: If the instruction at addr is a branch instruction, raise a Slot illegal instruction exception
-
     // Set PC to the instruction that triggered the delay slot in case an exception is raised inside the delay slot.
     const current_pc = cpu.pc;
     cpu.pc = addr - 2;
-    fetch_and_execute(cpu, addr);
-    // Restore PC, unless an exception occured and PC was overwritten.
-    if (cpu.pc == addr - 2)
-        cpu.pc = current_pc;
+    const opcode = fetch_instruction(cpu, addr);
+
+    // An exception was raised when fetching the instruction. Adjust the PC to compensate for PC advancement in fetch_and_execute and return.
+    if (cpu.pc != addr - 2) {
+        cpu.pc -= 2;
+        return;
+    }
+
+    // TODO: Raise a Slot Illegal Instruction exception if:
+    //   Decoding of an undefined instruction (0xFFFD)
+    //   Decoding of an instruction that modifies PC
+    //     Instructions that modify PC: JMP, JSR, BRA, BRAF, BSR, BSRF, RTS, RTE, BT, BF, BT/S, BF/S, TRAPA, LDC Rm, SR, LDC.L @Rm+, SR
+    //   Decoding in user mode of a privileged instruction
+    //     Privileged instructions: LDC, STC, RTE, LDTLB, SLEEP, but excluding LDC/STC instructions that access GBR
+    //   Decoding of a PC-relative MOV instruction or MOVA instruction
+
+    _execute(cpu, opcode) catch |err| {
+        cpu.jump_to_exception(switch (err) {
+            error.DataTLBMissRead => .DataTLBMissRead,
+            error.DataTLBMissWrite => .DataTLBMissWrite,
+            error.InitialPageWrite => .InitialPageWrite,
+            error.FPUDisabled => .SlotFPUDisable,
+            else => std.debug.panic("Unexpected exception in execute_delay_slot: {s}", .{@errorName(err)}),
+        });
+        cpu.pc -= 2; // Compensate for PC advancement in fetch_and_execute.
+        return;
+    };
+
+    // Restore PC
+    cpu.pc = current_pc;
 }
 
 pub fn bf_label(cpu: *SH4, opcode: Instr) !void {
@@ -1500,11 +1537,10 @@ pub fn rte(cpu: *SH4, _: Instr) !void {
     const opcode = fetch_instruction(cpu, delay_slot);
     cpu.set_sr(@bitCast(cpu.ssr));
     cpu.pc = spc;
-    _execute(cpu, opcode);
-    if (cpu.pc != spc)
-        std.debug.panic("Exception raised in RTE delay slot at PC={X:0>8}", .{cpu.pc});
-
-    cpu.pc -%= 2; // Execute will add 2
+    _execute(cpu, opcode) catch |err| {
+        std.debug.panic("Exception raised in RTE delay slot at PC={X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
+    };
+    cpu.pc -%= 2; // fetch_and_execute will add 2
 }
 
 pub fn sets(cpu: *SH4, _: Instr) !void {

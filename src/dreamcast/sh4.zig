@@ -109,6 +109,26 @@ pub const Instr = packed union {
     nmd: packed struct { d: u4 = undefined, m: u4 = undefined, n: u4 = undefined, _: u4 = undefined },
     nd8: packed struct { d: u8, n: u4 = undefined, _: u4 = undefined },
     d12: packed struct { d: u12, _: u4 = undefined },
+
+    pub fn is_fpu(self: Instr) bool {
+        return self.value & 0xF000 == 0xF000 or
+            // lds Rn,FPSCR
+            self.value & 0xF0FF == 0b0100000001101010 or
+            // lds Rn,FPUL
+            self.value & 0xF0FF == 0b0100000001011010 or
+            // sts FPSCR,Rn
+            self.value & 0xF0FF == 0b0000000001101010 or
+            // sts FPUL,Rn
+            self.value & 0xF0FF == 0b0000000001011010 or
+            // lds.l @Rn+,FPSCR
+            self.value & 0xF0FF == 0b0100000001100110 or
+            // lds.l @Rn+,FPUL
+            self.value & 0xF0FF == 0b0100000001010110 or
+            // sts.l FPSCR,@-Rn
+            self.value & 0xF0FF == 0b0100000001100010 or
+            // sts.l FPUL,@-Rn
+            self.value & 0xF0FF == 0b0100000001010010;
+    }
 };
 
 comptime {
