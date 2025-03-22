@@ -653,6 +653,25 @@ pub fn draw_game_library(self: *@This()) !void {
     defer zgui.end();
     if (zgui.begin("Library", .{ .flags = .{ .no_resize = true, .no_move = true, .no_title_bar = true, .no_docking = true, .no_bring_to_front_on_focus = true } })) {
         zgui.alignTextToFramePadding();
+        const static = struct {
+            var display_game_search: [63:0]u8 = @splat(0);
+            var lowercase_buffer: [64]u8 = @splat(0);
+            var lowercase_game_search: []u8 = lowercase_buffer[0..0];
+        };
+        zgui.setNextItemWidth(128.0);
+        if (zgui.inputTextWithHint("##Search", .{ .hint = "Search file...", .buf = @ptrCast(&static.display_game_search), .flags = .{ .auto_select_all = true } })) {
+            static.lowercase_buffer = @splat(0);
+            for (0..static.display_game_search.len) |i| {
+                if (static.display_game_search[i] == 0) {
+                    static.lowercase_game_search = static.lowercase_buffer[0..i];
+                    break;
+                }
+                static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
+            }
+        }
+        zgui.sameLine(.{});
+        zgui.spacing();
+        zgui.sameLine(.{});
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {
@@ -682,10 +701,16 @@ pub fn draw_game_library(self: *@This()) !void {
                 defer zgui.endChild();
 
                 var truncated_name: [28:0]u8 = undefined;
+                var lowercase_name: [256]u8 = undefined;
                 zgui.pushStyleVar2f(.{ .idx = .frame_padding, .v = .{ 0, 0 } });
                 zgui.pushStyleVar2f(.{ .idx = .item_spacing, .v = .{ 8.0, 8.0 } });
                 defer zgui.popStyleVar(.{ .count = 2 });
+                var displayed_count: usize = 0;
                 for (self.disc_files.items, 0..) |entry, idx| {
+                    lowercase_name = @splat(0);
+                    for (0..@min(entry.name.len, lowercase_name.len)) |i| lowercase_name[i] = std.ascii.toLower(entry.name[i]);
+                    if (static.lowercase_game_search.len > 0 and std.mem.indexOf(u8, &lowercase_name, static.lowercase_game_search) == null) continue;
+
                     var launch = false;
                     {
                         zgui.beginGroup();
@@ -715,7 +740,8 @@ pub fn draw_game_library(self: *@This()) !void {
                     if (launch)
                         try d.load_and_start(entry.path);
 
-                    if (idx % 4 != 3) zgui.sameLine(.{});
+                    if (displayed_count % 4 != 3) zgui.sameLine(.{});
+                    displayed_count += 1;
                 }
             }
         }
