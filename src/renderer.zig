@@ -1382,9 +1382,9 @@ pub const Renderer = struct {
         try renderer.opaque_pipelines.ensureTotalCapacity(2 * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
 
         // Asynchronously create some common pipelines ahead of time
-        _ = try renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, .Async); // Background
-        _ = try renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
-        _ = try renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async); // Punchthrough
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, .Async); // Background
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async); // Punchthrough
 
         renderer.on_inner_resolution_change();
 
@@ -2833,7 +2833,7 @@ pub const Renderer = struct {
                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
 
                 // Draw background
-                const background_pipeline = try self.get_or_put_pipeline(.{
+                const background_pipeline = self.get_or_put_pipeline(.{
                     .translucent = false,
                     .src_blend_factor = .one,
                     .dst_blend_factor = .zero,
@@ -2898,7 +2898,7 @@ pub const Renderer = struct {
                             while (it.next()) |entry| {
                                 // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
                                 if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                    const pl = try self.get_or_put_pipeline(entry.key_ptr.*, .Async);
+                                    const pl = self.get_or_put_pipeline(entry.key_ptr.*, .Async);
                                     const pipeline = gctx.lookupResource(pl) orelse continue;
                                     pass.setPipeline(pipeline);
 
@@ -3091,7 +3091,7 @@ pub const Renderer = struct {
                         var current_sampler: ?u8 = null;
                         for (render_pass.pre_sorted_translucent_pass.items) |draw_call| {
                             if (current_pipeline == null or !std.meta.eql(draw_call.pipeline_key, current_pipeline.?)) {
-                                const pl = try self.get_or_put_pipeline(draw_call.pipeline_key, .Async);
+                                const pl = self.get_or_put_pipeline(draw_call.pipeline_key, .Async);
                                 const pipeline = gctx.lookupResource(pl) orelse continue;
                                 pass.setPipeline(pipeline);
                                 current_pipeline = draw_call.pipeline_key;
@@ -3414,7 +3414,7 @@ pub const Renderer = struct {
         }
     }
 
-    fn get_or_put_pipeline(self: *Renderer, key: PipelineKey, sync: enum { Sync, Async }) !zgpu.RenderPipelineHandle {
+    fn get_or_put_pipeline(self: *Renderer, key: PipelineKey, sync: enum { Sync, Async }) zgpu.RenderPipelineHandle {
         if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
