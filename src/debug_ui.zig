@@ -1110,7 +1110,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Renderer", .{})) {
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
-        zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
         zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
         zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});
         zgui.text("FPU_SHAD_SCALE: {d: >4.2}", .{d.renderer.fpu_shad_scale});
