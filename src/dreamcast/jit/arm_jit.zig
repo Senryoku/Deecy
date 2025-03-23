@@ -666,16 +666,54 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
         return inst.l == 1 and inst.rd == 15;
     }
 
-    inline for (0..2) |i| {
+    if (inst.i == 0) {
+        const offset: u32 = inst.offset;
+        const signed_offset: u32 = if (inst.u == 1) offset else (~offset +% 1);
+        const addr = ReturnRegister;
+        try load_register(block, addr, inst.rn);
+        if (inst.p == 1)
+            try block.add(.{ .reg = addr }, .{ .imm32 = signed_offset });
+
+        const rd = ArgRegisters[0];
+        if (inst.l == 0) {
+            try load_register(block, rd, inst.rd);
+
+            if (inst.rd == 15) try block.add(.{ .reg = rd }, .{ .imm32 = 4 });
+
+            if (inst.b == 1) {
+                try store_mem(block, ctx, u8, .{ .reg = addr }, rd);
+            } else {
+                try store_mem(block, ctx, u32, .{ .reg = addr }, rd);
+            }
+            if (inst.w == 1 or inst.p == 0)
+                try block.add(guest_register(inst.rn), .{ .imm32 = signed_offset });
+        } else {
+            if (inst.w == 1 or inst.p == 0)
+                try block.add(guest_register(inst.rn), .{ .imm32 = signed_offset });
+
+            if (inst.b == 1) {
+                try load_mem(block, ctx, u8, rd, .{ .reg = addr });
+            } else {
+                try load_mem(block, ctx, u32, rd, .{ .reg = addr });
+            }
+            try store_register(block, inst.rd, .{ .reg = rd });
+
+            if (inst.rd == 15) {
+                try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                try block.call(arm7.ARM7.reset_pipeline);
+            }
+        }
+    } else {
+        std.debug.assert(inst.i == 1);
         inline for (0..2) |u| {
             inline for (0..2) |w| {
                 inline for (0..2) |p| {
                     inline for (0..2) |l| {
                         inline for (0..2) |b| {
-                            if (inst.i == i and inst.u == u and inst.w == w and inst.p == p and inst.l == l and inst.b == b) {
+                            if (inst.u == u and inst.w == w and inst.p == p and inst.l == l and inst.b == b) {
                                 try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
                                 try block.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
-                                try block.call(comptime_handle_single_data_transfer(i, u, w, p, l, b).handler);
+                                try block.call(comptime_handle_single_data_transfer(1, u, w, p, l, b).handler);
                             }
                         }
                     }
