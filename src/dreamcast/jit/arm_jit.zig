@@ -568,9 +568,144 @@ fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !
     std.debug.panic("Unimplemented branch and exchange", .{});
 }
 
+fn comptime_handle_block_data_transfer(comptime l: u1, comptime w: u1, comptime s: u1, comptime u: u1, comptime p: u1) type {
+    return struct {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+            const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
+
+            std.debug.assert(builtin.is_test or inst.rn != 15); // "R15 shall not be used as the base register in any LDM or STM instruction."
+
+            const base = cpu.r[inst.rn];
+
+            var addr = base;
+
+            const stride: u32 = @bitCast(if (u == 1) @as(i32, 4) else @as(i32, -4));
+
+            // The lowest-numbered register is stored at the lowest memory address and
+            // the highest-numbered register at the highest memory address.
+            // For simplicity we'll always loop through registers in ascending order,
+            // adjust the address to the base of the range when decrementing.
+            if (u == 0) addr +%= stride *% (@popCount(inst.reg_list) - 1);
+
+            // Pre indexing
+            if (p == 1) addr +%= stride;
+
+            // Change mode for the version that accesses user registers from priviliged modes.
+            const mode = cpu.cpsr.m;
+            const change_mode = mode != .User and s == 1 and (l == 0 or !inst.reg(15));
+            if (change_mode) cpu.change_mode(.User);
+            defer if (change_mode) cpu.change_mode(mode);
+
+            // Writeback
+            // NOTE: A load including rn in the register list will always overwrite this.
+            //       However, a store will store the unchanged value if it is the first register
+            //       in the list, and the updated value otherwise.
+            if (w == 1) {
+                cpu.r[inst.rn] = base +% stride *% @popCount(inst.reg_list);
+                if (inst.rn == 15) cpu.r[inst.rn] += 4;
+            }
+            var first_store = w == 1; // Ignored if no writeback.
+
+            // The address should normally be a word aligned quantity and non-word aligned addresses do not affect the
+            // instruction. However, the bottom 2 bits of the address will appear on A[1:0] and might be interpreted by
+            // the memory system.
+            addr &= 0xFFFFFFFC;
+
+            // LDM (1) / STM (1)
+            if (s == 0) {
+                if (l == 1) {
+                    // Load LDM(1)
+                    inline for (0..15) |i| {
+                        if (inst.reg(i)) {
+                            cpu.r[i] = cpu.read(u32, addr);
+                            addr += 4;
+                        }
+                    }
+                    if (inst.reg(15)) {
+                        const value = cpu.read(u32, addr);
+                        cpu.set_pc(value);
+                        // cpu.cpsr.t = value & 1 == 1; // FIXME: If can't find the source of this anymore...
+                        addr += 4;
+                    }
+                } else {
+                    // Store STM(1)
+                    inline for (0..16) |i| {
+                        if (inst.reg(i)) {
+                            // See Writeback above.
+                            var value = if (first_store and i == inst.rn) base else cpu.r[i];
+                            first_store = false;
+                            if (i == 15) value += 4;
+
+                            cpu.write(u32, addr, value);
+                            addr += 4;
+                        }
+                    }
+                }
+            } else {
+                if (l == 1) {
+                    if (!inst.reg(15)) {
+                        std.debug.assert(change_mode or mode == .User);
+                        // LDM (2) - Loads User mode registers when the processor is in a privileged mode.
+                        inline for (0..15) |i| {
+                            if (inst.reg(i)) {
+                                cpu.r[i] = cpu.read(u32, addr);
+                                addr += 4;
+                            }
+                        }
+                    } else {
+                        // LDM (3) - Loads a subset, or possibly all, of the general-purpose registers and the PC from sequential memory
+                        // locations. Also, the SPSR of the current mode is copied to the CPSR. This is useful for returning from an exception.
+                        inline for (0..15) |i| {
+                            if (inst.reg(i)) {
+                                cpu.r[i] = cpu.read(u32, addr);
+                                addr += 4;
+                            }
+                        }
+                        cpu.restore_cpsr();
+                        cpu.set_pc(cpu.read(u32, addr));
+                    }
+                } else {
+                    std.debug.assert(change_mode or mode == .User);
+                    // STM with s=1 - User bank transfer
+                    // User bank registers are transferred rather than the register bank.
+                    inline for (0..16) |i| {
+                        if (inst.reg(i)) {
+                            // See Writeback above.
+                            var value = if (first_store and i == inst.rn) base else cpu.r[i];
+                            first_store = false;
+                            if (i == 15) value += 4;
+
+                            cpu.write(u32, addr, value);
+                            addr += 4;
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
 fn handle_block_data_transfer(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
-    try interpreter_fallback(b, ctx, instruction);
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+    } else {
+        inline for (0..2) |l| {
+            inline for (0..2) |w| {
+                inline for (0..2) |s| {
+                    inline for (0..2) |u| {
+                        inline for (0..2) |p| {
+                            if (inst.l == l and inst.w == w and inst.s == s and inst.u == u and inst.p == p) {
+                                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                                try b.call(comptime_handle_block_data_transfer(l, w, s, u, p).handler);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     return inst.l == 1 and inst.reg(15);
 }
 
@@ -844,6 +979,183 @@ fn handle_msr(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     return false;
 }
 
+fn comptime_handle_data_processing(comptime opcode: arm7.Opcode, comptime s: u1, comptime i: u1) type {
+    return struct {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+            const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
+
+            // TODO: See "Writing to R15"
+
+            var op1 = cpu.r[inst.rn];
+
+            // The PC value will be the address of the instruction, plus 8 or 12 bytes due to instruction
+            // prefetching. If the shift amount is specified in the instruction, the PC will be 8 bytes
+            // ahead. If a register is used to specify the shift amount the PC will be 12 bytes ahead.
+            const sro: arm7.interpreter.ScaledRegisterOffset = @bitCast(inst.operand2);
+            if (inst.rn == 15 and i == 0 and sro.register_specified == 1)
+                op1 += 4;
+
+            const shifter_result = if (i == 0)
+                arm7.interpreter.offset_from_register(cpu, inst.operand2)
+            else
+                arm7.interpreter.operand_2_immediate(cpu, inst.operand2);
+
+            const op2 = shifter_result.shifter_operand;
+
+            // TODO: Yes, this can and must be refactored.
+            switch (opcode) {
+                .AND => {
+                    cpu.r[inst.rd] = op1 & op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+                .EOR => {
+                    cpu.r[inst.rd] = op1 ^ op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+                .SUB => {
+                    cpu.r[inst.rd] = op1 -% op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = !arm7.interpreter.borrow_from(op1, op2);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_sub(op1, op2);
+                    }
+                },
+                .RSB => {
+                    cpu.r[inst.rd] = op2 -% op1;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = !arm7.interpreter.borrow_from(op2, op1);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_sub(op2, op1);
+                    }
+                },
+                .ADD => {
+                    cpu.r[inst.rd] = op1 +% op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = arm7.interpreter.carry_from(op1, op2);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_add(op1, op2);
+                    }
+                },
+                .ADC => {
+                    const carry: u32 = if (cpu.cpsr.c) 1 else 0;
+                    cpu.r[inst.rd] = op1 +% op2 +% carry;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = arm7.interpreter.carry_from_addc(op1, op2, carry);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_addc(op1, op2, carry);
+                    }
+                },
+                .SBC => {
+                    const carry: u32 = if (cpu.cpsr.c) 0 else 1;
+                    cpu.r[inst.rd] = op1 -% op2 -% carry;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = !arm7.interpreter.borrow_from_subc(op1, op2, carry);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_subc(op1, op2, carry);
+                    }
+                },
+                .RSC => {
+                    const carry: u32 = if (cpu.cpsr.c) 0 else 1;
+                    cpu.r[inst.rd] = op2 -% op1 -% carry;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = !arm7.interpreter.borrow_from_subc(op2, op1, carry);
+                        cpu.cpsr.v = arm7.interpreter.overflow_from_subc(op2, op1, carry);
+                    }
+                },
+                .TST => {
+                    const r = op1 & op2;
+                    cpu.cpsr.n = arm7.interpreter.n_flag(r);
+                    cpu.cpsr.z = r == 0;
+                    cpu.cpsr.c = shifter_result.shifter_carry_out;
+                },
+                .TEQ => {
+                    const r = op1 ^ op2;
+                    cpu.cpsr.n = arm7.interpreter.n_flag(r);
+                    cpu.cpsr.z = r == 0;
+                    cpu.cpsr.c = shifter_result.shifter_carry_out;
+                },
+                .CMP => {
+                    const r = op1 -% op2;
+                    cpu.cpsr.n = arm7.interpreter.n_flag(r);
+                    cpu.cpsr.z = r == 0;
+                    cpu.cpsr.c = !arm7.interpreter.borrow_from(op1, op2);
+                    cpu.cpsr.v = arm7.interpreter.overflow_from_sub(op1, op2);
+                },
+                .CMN => {
+                    const r = op1 +% op2;
+                    cpu.cpsr.n = arm7.interpreter.n_flag(r);
+                    cpu.cpsr.z = r == 0;
+                    cpu.cpsr.c = arm7.interpreter.carry_from(op1, op2);
+                    cpu.cpsr.v = arm7.interpreter.overflow_from_add(op1, op2);
+                },
+                .ORR => {
+                    cpu.r[inst.rd] = op1 | op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+                .MOV => {
+                    cpu.r[inst.rd] = op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+                .BIC => {
+                    cpu.r[inst.rd] = op1 & ~op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+                .MVN => {
+                    cpu.r[inst.rd] = ~op2;
+                    if (s == 1) {
+                        cpu.cpsr.n = arm7.interpreter.n_flag(cpu.r[inst.rd]);
+                        cpu.cpsr.z = cpu.r[inst.rd] == 0;
+                        cpu.cpsr.c = shifter_result.shifter_carry_out;
+                        // V Unaffected
+                    }
+                },
+            }
+            if (inst.rd == 15) {
+                if (s == 1)
+                    cpu.restore_cpsr();
+
+                // If PC as been written to, flush pipeline and refill it.
+                switch (opcode) {
+                    .TST, .TEQ, .CMP, .CMN => {},
+                    else => cpu.reset_pipeline(),
+                }
+            }
+        }
+    };
+}
+
 fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
     if (DebugAlwaysFallbackToInterpreter) {
@@ -1005,7 +1317,17 @@ fn handle_data_processing(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool
             try b.add(guest_register(15), .{ .imm32 = 4 });
         }
     } else {
-        try interpreter_fallback(b, ctx, instruction);
+        inline for (0..0x10) |opcode| {
+            inline for (0..2) |s| {
+                inline for (0..2) |i| {
+                    if (inst.opcode == @as(arm7.Opcode, @enumFromInt(opcode)) and inst.s == s and inst.i == i) {
+                        try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                        try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
+                        try b.call(comptime_handle_data_processing(@enumFromInt(opcode), s, i).handler);
+                    }
+                }
+            }
+        }
     }
     switch (inst.opcode) {
         .TST, .TEQ, .CMP, .CMN => return false,
