@@ -361,10 +361,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = if (sh4.FullMMUSupport)
-            cpu.translate_intruction_address(cpu.pc)
-        else
-            cpu.pc & 0x1FFF_FFFF;
+        const physical_pc = cpu.translate_intruction_address(cpu.pc);
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
             std.debug.panic("Invalid physical PC: {X}", .{physical_pc});

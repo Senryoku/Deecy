@@ -727,6 +727,8 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_C2DLEN).* = 0;
         self.hw_register(u32, .SB_C2DST).* = 0;
 
+        self.sh4_jit.invalidate(dst_addr, dst_addr + len);
+
         self.schedule_interrupt(.{ .EoD_CH2 = 1 }, 200); // FIXME: Arbitrary timing.
     }
 
@@ -757,6 +759,9 @@ pub const Dreamcast = struct {
         self.cpu.p4_register(u32, .DMATCR0).* = len / 32;
 
         self.cpu.start_dmac(0);
+
+        if (dir == 1)
+            self.sh4_jit.invalidate(dst, dst + len);
 
         self.hw_register(u32, .SB_PDST).* = 0;
 
