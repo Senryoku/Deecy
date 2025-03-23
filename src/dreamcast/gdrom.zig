@@ -288,11 +288,12 @@ fn fetch_next_cdda_sector(self: *@This()) bool {
     self.audio_state.current_position = 0;
     self.audio_state.samples_in_buffer = 0;
 
-    const count = self.disc.?.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
-    self.audio_state.samples_in_buffer = count / 2; // 16-bit samples
-    self.audio_state.current_addr += 1;
-
-    return true;
+    if (self.disc) |*disc| {
+        const count = disc.load_sectors(self.audio_state.current_addr, 1, @as([*]u8, @ptrCast(self.audio_state.buffer.ptr))[0..2352]);
+        self.audio_state.samples_in_buffer = count / 2; // 16-bit samples
+        self.audio_state.current_addr += 1;
+        return true;
+    } else return false;
 }
 
 fn schedule_event(self: *@This(), event: ScheduledEvent) void {
@@ -662,9 +663,9 @@ fn req_stat(self: *@This()) !void {
 
     // 0 |  0 0 0 0 STATUS
     // 1 |  Disc Format - Repeat Count
-    // 2 |  Address - Control
-    // 3 |  TNO
-    // 4 |  X
+    // 2 |  Address - Control (Control address byte of subcode Q)
+    // 3 |  TNO (Subcode Q track number)
+    // 4 |  X (Subcode Q index number)
     // 5 |  FAD
     // 6 |  FAD
     // 7 |  FAD
@@ -680,19 +681,31 @@ fn req_stat(self: *@This()) !void {
             .Seeking => self.audio_state.current_addr, // Head position before head travel
             .Scanning => self.audio_state.current_addr, // Head position before head travel, or current head position
             .Retry => self.audio_state.current_addr, // Head position before head travel.
-
         };
 
-        try self.pio_data_queue.writeItem(if (self.disc == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state)); // 0000 | Status
-        try self.pio_data_queue.writeItem((if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | self.audio_state.repetitions); // Disc Format | Repeat Count
-        try self.pio_data_queue.writeItem(0x04); // Address | Control
-        try self.pio_data_queue.writeItem(0x02); // TNO
-        try self.pio_data_queue.writeItem(0x00); // X
-        try self.pio_data_queue.writeItem(@truncate(fad >> 0)); // FAD
-        try self.pio_data_queue.writeItem(@truncate(fad >> 8)); // FAD
-        try self.pio_data_queue.writeItem(@truncate(fad >> 16)); // FAD
-        try self.pio_data_queue.writeItem(0x00); // Max Read Error Retry Times - Indicates how many read retries were necessary. This item is cleared (set to 0) when read.
-        try self.pio_data_queue.writeItem(0x00);
+        var control_addr: u8 = 0x41;
+        var track_number: u8 = 1;
+        if (self.disc) |disc| {
+            for (disc.get_tracks().items) |track| {
+                control_addr = track.adr_ctrl_byte();
+                track_number = @intCast(track.num);
+                if (track.fad > fad)
+                    break;
+            }
+        }
+
+        try self.pio_data_queue.write(&[_]u8{
+            if (self.disc == null) @intFromEnum(GDROMStatus.Empty) else @intFromEnum(self.state), // 0000 | Status
+            (if (self.disc) |d| @as(u8, @intFromEnum(d.get_format())) << 4 else 0) | self.audio_state.repetitions, // Disc Format | Repeat Count
+            control_addr >> 4 | (control_addr & 0x0F) << 4, // Address | Control - Is 'Address' the same thin as 'ADR'? Is it actually reversed? This is only instance where it's reversed in the spec.
+            track_number, // TNO (Subcode Q track number)
+            0x01, // X (Subcode Q index number) - 00: Pause area?
+            @truncate(fad >> 0), // FAD
+            @truncate(fad >> 8), // FAD
+            @truncate(fad >> 16), // FAD
+            0x00, // Max Read Error Retry Times - Indicates how many read retries were necessary. This item is cleared (set to 0) when read.
+            0x00,
+        });
     }
     self.pio_prep_complete();
 }
@@ -1006,30 +1019,64 @@ fn cd_read(self: *@This()) !void {
 fn get_subcode(self: *@This()) !void {
     const data_format = self.packet_command[1] & 0xF;
     const alloc_length = @as(u16, self.packet_command[3]) << 8 | self.packet_command[4];
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
     try self.pio_data_queue.writeItem(0); // Reserved
     try self.pio_data_queue.writeItem(@intFromEnum(self.audio_state.status)); // Audio Status
     switch (data_format) {
-        0 => {
-            // All subcode information is transferred as raw data
-        },
         1 => {
             // Subcode Q data only
+            const fad: u32 = switch (self.state) {
+                .Busy => 0x00, // Undefined
+                .Paused => 0x00, // Subcode value obtained when the head has moved to the head position for pausing <PAUSE> state.
+                .Standby, .Open, .Empty, .Error => 0x96, // Home position
+                .Playing => self.audio_state.current_addr, // Head position before head travel, or the current head position
+                .Seeking => self.audio_state.current_addr, // Head position before head travel
+                .Scanning => self.audio_state.current_addr, // Head position before head travel, or current head position
+                .Retry => self.audio_state.current_addr, // Head position before head travel.
+            };
+
+            var control_adr: u8 = 0x41;
+            var track_number: u8 = 1;
+            var fad_within_track: u32 = fad;
+            if (self.disc) |disc| {
+                for (disc.get_tracks().items) |track| {
+                    control_adr = track.adr_ctrl_byte();
+                    track_number = @intCast(track.num);
+                    fad_within_track = fad - track.fad;
+                    if (track.fad > fad)
+                        break;
+                }
+            }
+
+            std.debug.assert(control_adr & 0xF == 0x01);
+
+            try self.pio_data_queue.write(&[_]u8{
+                0, // Subcode data length MSB
+                14, // Subcode data length LSB
+                control_adr, // Control | ADR
+                track_number, // TNO (Subcode Q track number)
+                0x01, // X (Subcode Q index number) - 00: Pause area?
+                @truncate(fad_within_track >> 0), // Elapsed FAD within track
+                @truncate(fad_within_track >> 8), // Elapsed FAD within track
+                @truncate(fad_within_track >> 16), // Elapsed FAD within track
+                0,
+                @truncate(fad >> 0), // FAD
+                @truncate(fad >> 8), // FAD
+                @truncate(fad >> 16), // FAD
+            });
         },
-        2 => {
-            // Media catalog number (UPC/bar code)
-        },
-        3 => {
-            // International standard recording code (ISRC)
+        0, // All subcode information is transferred as raw data
+        2, // Media catalog number (UPC/bar code)
+        3, // International standard recording code (ISRC)
+        => {
+            gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
+            for (0..alloc_length - 2) |_| {
+                try self.pio_data_queue.writeItem(0);
+            }
         },
         else => {
             // Reserved
+            gdrom_log.err(termcolor.red("  GDROM PacketCommand GetSCD - Format: {X:0>1}, AllocLength: {X:0>4}"), .{ data_format, alloc_length });
         },
-    }
-
-    // TODO
-    for (0..alloc_length - 2) |_| {
-        try self.pio_data_queue.writeItem(0);
     }
 
     // Ended normally/ended abnormally is only reported once
