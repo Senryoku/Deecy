@@ -372,7 +372,7 @@ const PipelineKey = struct {
     depth_write_enabled: bool,
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("PipelineKey{{ .translucent = {any}, ;src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {} }}", .{
+        try writer.print("PipelineKey{{ .translucent = {any}, .src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {} }}", .{
             self.translucent,
             @tagName(self.src_blend_factor),
             @tagName(self.dst_blend_factor),
