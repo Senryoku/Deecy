@@ -877,11 +877,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("FB_W_SOF1: 0x{X:0>8}", .{FB_W_SOF1});
         zgui.text("FB_W_SOF2: 0x{X:0>8}", .{FB_W_SOF2});
         zgui.text("FB_W_LINESTRIDE: 0x{X:0>8}", .{FB_W_LINESTRIDE});
-        zgui.text("FB_CLIP:  X=[{d}, {d}], Y=[{d}, {d}]", .{ FB_X_CLIP.min, FB_X_CLIP.max, FB_Y_CLIP.min, FB_Y_CLIP.max });
         if (zgui.collapsingHeader("FB_R_CTRL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL));
         zgui.text("FB_R_SOF1: 0x{X:0>8}", .{FB_R_SOF1});
         zgui.text("FB_R_SOF2: 0x{X:0>8}", .{FB_R_SOF2});
+        zgui.text("FB_CLIP:  X=[{d}, {d}], Y=[{d}, {d}]", .{ FB_X_CLIP.min, FB_X_CLIP.max, FB_Y_CLIP.min, FB_Y_CLIP.max });
         if (zgui.collapsingHeader("FB_R_SIZE", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.FB_R_SIZE, .FB_R_SIZE));
         if (zgui.collapsingHeader("VO_CONTROL", .{ .default_open = false }))
@@ -890,6 +890,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(dc.gpu.read_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG));
         if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL));
+        if (zgui.collapsingHeader("SCALER_CTL", .{ .default_open = false }))
+            display(dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL));
 
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});

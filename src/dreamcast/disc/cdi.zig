@@ -137,7 +137,8 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         try reader.skipBytes(4, .{});
         session.start_fad = try reader.readInt(u32, .little) + 150;
         log.debug("Session Type: {X}, Last Session Start LBA: {X}", .{ session_type, session.start_fad });
-        std.debug.assert(session.start_fad == self.tracks.items[session.first_track].fad);
+        if (session.start_fad != self.tracks.items[session.first_track].fad)
+            log.warn("Session start fad doesn't match first track: {X} != {X}", .{ session.start_fad, self.tracks.items[session.first_track].fad });
         if (version != .V2) try reader.skipBytes(1, .{});
 
         session.last_track = @intCast(self.tracks.items.len - 1);

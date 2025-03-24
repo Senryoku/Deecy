@@ -1882,7 +1882,8 @@ pub const Renderer = struct {
 
         // Offset into the strip pointed by ISP_BACKGND_T indicated by tag_offset.
         const parameter_volume_mode = gpu.read_register(HollyModule.FPU_SHAD_SCALE, .FPU_SHAD_SCALE).enable and tags.shadow == 1;
-        const skipped_vertex_byte_size: u32 = @as(u32, 4) * (if (parameter_volume_mode) 3 + tags.skip else 3 + 2 * tags.skip);
+        const tag_skip: u32 = tags.skip;
+        const skipped_vertex_byte_size: u32 = 4 * (if (parameter_volume_mode) 3 + tag_skip else 3 + 2 * tag_skip);
         const start = addr + 12 + tags.tag_offset * skipped_vertex_byte_size;
 
         var vertices: [4]Vertex = undefined;
@@ -2081,6 +2082,26 @@ pub const Renderer = struct {
         self.fog_density = @as(f32, @floatFromInt(fog_density_mantissa)) / 128.0 * std.math.pow(f32, 2.0, @floatFromInt(fog_density_exponent));
         for (0..0x80) |i| {
             self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
+        }
+
+        const scaler_ctl = gpu.read_register(HollyModule.SCALER_CTL, .SCALER_CTL);
+        // FIXME: Hack supporting horizontal scaling.
+        //        This is mostly used for SSAA: Frame is rendered at twice the horizontal resolution and scaled back down to native resolution.
+        //        Here I'm scaling the vertices positions instead of the final framebuffer. This is obviously wrong, however:
+        //         - Guest framebuffer size is currently locked at 640x480 (see position_clip.wgsl).
+        //         - This hack has the advantage of working well with the polygons debug view.
+        if (scaler_ctl.horizontal_scaling_enable) {
+            for (self.ta_lists_to_render.items) |*ta_lists| {
+                for (&[_][]HollyModule.VertexParameter{ ta_lists.opaque_list.vertex_parameters.items, ta_lists.translucent_list.vertex_parameters.items, ta_lists.punchthrough_list.vertex_parameters.items }) |vertices| {
+                    for (vertices) |*v|
+                        v.scale_x(0.5);
+                }
+                for (ta_lists.volume_triangles.items) |*t| {
+                    t.ax *= 0.5;
+                    t.bx *= 0.5;
+                    t.cx *= 0.5;
+                }
+            }
         }
 
         const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);

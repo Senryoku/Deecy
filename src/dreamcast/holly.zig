@@ -1238,6 +1238,24 @@ pub const VertexParameter = union(enum) {
         std.debug.assert(self.tag() == .SpriteType0 or self.tag() == .SpriteType1);
         return @bitCast(@as([*]const f32, @alignCast(@ptrCast(self)))[1 .. 1 + 4 * 3].*);
     }
+
+    pub fn scale_x(self: *@This(), factor: f32) void {
+        return switch (self.*) {
+            .SpriteType0 => |*s| {
+                s.ax *= factor;
+                s.bx *= factor;
+                s.cx *= factor;
+                s.dx *= factor;
+            },
+            .SpriteType1 => |*s| {
+                s.ax *= factor;
+                s.bx *= factor;
+                s.cx *= factor;
+                s.dx *= factor;
+            },
+            inline else => |*v| v.x *= factor,
+        };
+    }
 };
 
 fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(VertexParameter) {
