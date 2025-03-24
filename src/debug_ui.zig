@@ -846,7 +846,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Holly", .{})) {
-        if (zgui.collapsingHeader("SPG", .{ .frame_padding = true })) {
+        if (zgui.collapsingHeader("SPG Registers", .{ .frame_padding = true })) {
             zgui.indent(.{});
             zgui.text("SPG_HBLANK_INT: {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_HBLANK_INT).*, dc.gpu._get_register(Holly.SPG_HBLANK_INT, .SPG_HBLANK_INT).* });
             zgui.text("SPG_VBLANK_INT: {X:0>8} - {any}", .{ dc.gpu._get_register(u32, .SPG_VBLANK_INT).*, dc.gpu._get_register(Holly.SPG_VBLANK_INT, .SPG_VBLANK_INT).* });
@@ -888,10 +888,26 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             display(dc.gpu.read_register(Holly.VO_CONTROL, .VO_CONTROL));
         if (zgui.collapsingHeader("FPU_PARAM_CFG", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.FPU_PARAM_CFG, .FPU_PARAM_CFG));
-        if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = false }))
-            display(dc.gpu.read_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL));
         if (zgui.collapsingHeader("SCALER_CTL", .{ .default_open = false }))
             display(dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL));
+        if (zgui.collapsingHeader("TA Registers", .{ .default_open = false })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            zgui.text("TA_OL_BASE:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_OL_BASE)});
+            zgui.text("TA_ISP_BASE:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_ISP_BASE)});
+            zgui.text("TA_OL_LIMIT:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_OL_LIMIT)});
+            zgui.text("TA_ISP_LIMIT:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_ISP_LIMIT)});
+            zgui.text("TA_NEXT_OPB:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_NEXT_OPB)});
+            zgui.text("TA_ITP_CURRENT:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_ITP_CURRENT)});
+            if (zgui.collapsingHeader("TA_ALLOC_CTRL", .{ .default_open = false }))
+                display(dc.gpu.read_register(Holly.TA_ALLOC_CTRL, .TA_ALLOC_CTRL));
+            const ta_glob_tile_clip = dc.gpu.read_register(Holly.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+            zgui.text("TA_GLOB_TILE_CLIP: X={d}, Y={d}", .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
+            zgui.text("TA_YUV_TEX_BASE:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_YUV_TEX_BASE)});
+            zgui.text("TA_YUV_TEX_CNT:  0x{X:0>8}", .{dc.gpu.read_register(u32, .TA_YUV_TEX_CNT)});
+            if (zgui.collapsingHeader("TA_YUV_TEX_CTRL", .{ .default_open = false }))
+                display(dc.gpu.read_register(Holly.TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL));
+        }
 
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});
