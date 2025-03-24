@@ -379,14 +379,16 @@ const PipelineKey = struct {
     dst_blend_factor: wgpu.BlendFactor,
     depth_compare: wgpu.CompareFunction,
     depth_write_enabled: bool,
+    culling_mode: HollyModule.CullingMode,
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("PipelineKey{{ .translucent = {any}, .src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {} }}", .{
+        try writer.print("PipelineKey{{ .translucent = {any}, .src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {}, .culling_mode = {s} }}", .{
             self.translucent,
             @tagName(self.src_blend_factor),
             @tagName(self.dst_blend_factor),
             @tagName(self.depth_compare),
             self.depth_write_enabled,
+            @tagName(self.culling_mode),
         });
     }
 };
@@ -1389,12 +1391,12 @@ pub const Renderer = struct {
         }
 
         // Ensure capacity for pipelines: Async creation needs pointer stability.
-        try renderer.opaque_pipelines.ensureTotalCapacity(2 * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
+        try renderer.opaque_pipelines.ensureTotalCapacity(4 * 2 * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.BlendFactor).len * std.meta.fields(wgpu.CompareFunction).len * 2);
 
         // Asynchronously create some common pipelines ahead of time
-        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false }, .Async); // Background
-        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async);
-        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true }, .Async); // Punchthrough
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .always, .depth_write_enabled = false, .culling_mode = .None }, .Async); // Background
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .one, .dst_blend_factor = .zero, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async);
+        _ = renderer.get_or_put_pipeline(.{ .translucent = false, .src_blend_factor = .src_alpha, .dst_blend_factor = .one_minus_src_alpha, .depth_compare = .greater_equal, .depth_write_enabled = true, .culling_mode = .Small }, .Async); // Punchthrough
 
         renderer.on_inner_resolution_change();
 
@@ -2559,6 +2561,7 @@ pub const Renderer = struct {
                             .dst_blend_factor = translate_dst_blend_factor(tsp_instruction.dst_alpha_instr),
                             .depth_compare = translate_depth_compare_mode(isp_tsp_instruction.depth_compare_mode),
                             .depth_write_enabled = isp_tsp_instruction.z_write_disable == 0,
+                            .culling_mode = isp_tsp_instruction.culling_mode,
                         };
 
                         switch (list_type) {
@@ -2866,6 +2869,7 @@ pub const Renderer = struct {
                     .dst_blend_factor = .zero,
                     .depth_compare = .always,
                     .depth_write_enabled = false,
+                    .culling_mode = .None,
                 }, .Async);
                 const bg_pipeline = gctx.lookupResource(background_pipeline) orelse break :skip_background;
                 pass.setPipeline(bg_pipeline);
@@ -3443,7 +3447,11 @@ pub const Renderer = struct {
         }
     }
 
-    fn get_or_put_pipeline(self: *Renderer, key: PipelineKey, sync: enum { Sync, Async }) zgpu.RenderPipelineHandle {
+    fn get_or_put_pipeline(self: *Renderer, pipeline_key: PipelineKey, sync: enum { Sync, Async }) zgpu.RenderPipelineHandle {
+        var key = pipeline_key;
+        // Deduplicate culling modes None and Small: They resolve to the same pipeline for the renderer.
+        if (key.culling_mode == .Small) key.culling_mode = .None;
+
         if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
@@ -3476,7 +3484,12 @@ pub const Renderer = struct {
             },
             .primitive = wgpu.PrimitiveState{
                 .front_face = .ccw,
-                .cull_mode = .none,
+                .cull_mode = switch (key.culling_mode) {
+                    .None => .none,
+                    .Small => .none,
+                    .Positive => .back,
+                    .Negative => .front,
+                },
                 .topology = .triangle_strip,
                 .strip_index_format = .uint32,
             },

@@ -603,6 +603,17 @@ const ObjectListSet = packed struct(u256) {
 
 // Global Parameter Formats
 
+pub const CullingMode = enum(u2) {
+    /// No culling
+    None = 0,
+    /// Cull if ( |det| < fpu_cull_val )
+    Small = 1,
+    /// Cull if ( |det| < 0 ) or ( |det| < fpu_cull_val )
+    Negative = 2,
+    /// Cull if ( |det| > 0 ) or ( |det| < fpu_cull_val )
+    Positive = 3,
+};
+
 pub const DepthCompareMode = enum(u3) {
     Never = 0,
     Less = 1,
@@ -623,7 +634,7 @@ pub const ISPTSPInstructionWord = packed struct(u32) {
     offset: u1,
     texture: u1,
     z_write_disable: u1,
-    culling_mode: u2,
+    culling_mode: CullingMode,
     depth_compare_mode: DepthCompareMode,
 };
 
