@@ -687,10 +687,10 @@ fn req_stat(self: *@This()) !void {
         var track_number: u8 = 1;
         if (self.disc) |disc| {
             for (disc.get_tracks().items) |track| {
-                control_addr = track.adr_ctrl_byte();
-                track_number = @intCast(track.num);
                 if (track.fad > fad)
                     break;
+                control_addr = track.adr_ctrl_byte();
+                track_number = @intCast(track.num);
             }
         }
 
@@ -1039,11 +1039,11 @@ fn get_subcode(self: *@This()) !void {
             var fad_within_track: u32 = fad;
             if (self.disc) |disc| {
                 for (disc.get_tracks().items) |track| {
+                    if (track.fad > fad)
+                        break;
                     control_adr = track.adr_ctrl_byte();
                     track_number = @intCast(track.num);
                     fad_within_track = fad - track.fad;
-                    if (track.fad > fad)
-                        break;
                 }
             }
 

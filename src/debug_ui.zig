@@ -1257,11 +1257,13 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
                     }
                 },
                 else => {
-                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
-                        const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
-                        const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
-                        const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
-                        draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
+                    if (strip.vertex_parameter_count >= 3) {
+                        for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
+                            const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
+                            const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
+                            const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                            draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
+                        }
                     }
                 },
             }
@@ -1382,7 +1384,7 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
         .Type4 => |v| {
             base_color = fRGBA.from_packed(v.base_color, true);
             offset_color = fRGBA.from_packed(v.offset_color, true);
-            uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
+            uv = .{ v.uv.u_as_f32(), v.uv.v_as_f32() };
         },
         .Type5 => |v| {
             base_color = .{ .r = v.base_color.r, .g = v.base_color.g, .b = v.base_color.b, .a = v.base_color.a };
@@ -1392,12 +1394,17 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
         .Type6 => |v| {
             base_color = .{ .r = v.base_color.r, .g = v.base_color.g, .b = v.base_color.b, .a = v.base_color.a };
             offset_color = .{ .r = v.offset_color.r, .g = v.offset_color.g, .b = v.offset_color.b, .a = v.offset_color.a };
-            uv = .{ @bitCast(@as(u32, v.uv.u) << 16), @bitCast(@as(u32, v.uv.v) << 16) };
+            uv = .{ v.uv.u_as_f32(), v.uv.v_as_f32() };
         },
         .Type7 => |v| {
             base_intensity = v.base_intensity;
             offset_intensity = v.offset_intensity;
             uv = .{ v.u, v.v };
+        },
+        .Type8 => |v| {
+            base_intensity = v.base_intensity;
+            offset_intensity = v.offset_intensity;
+            uv = .{ v.uv.u_as_f32(), v.uv.v_as_f32() };
         },
         else => {},
     }
