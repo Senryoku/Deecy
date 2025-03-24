@@ -861,37 +861,36 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
 
 fn handle_single_data_swap(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     const inst: arm7.SingleDataSwapInstruction = @bitCast(instruction);
-    if (DebugAlwaysFallbackToInterpreter) {
-        try interpreter_fallback(b, ctx, instruction);
-        return inst.rd == 15;
-    }
 
     std.debug.assert(inst.rd != 15);
     std.debug.assert(inst.rn != 15);
     std.debug.assert(inst.rm != 15);
 
+    if (DebugAlwaysFallbackToInterpreter) {
+        try interpreter_fallback(b, ctx, instruction);
+        return false;
+    }
+
     const addr: JIT.Operand = .{ .reg = SavedRegisters[1] };
     const rd = ReturnRegister;
+    const reg = ArgRegisters[2];
     try load_register(b, addr.reg, inst.rn);
+    try load_register(b, reg, inst.rm);
     if (inst.b == 1) {
         // cpu.r[inst.rd] = cpu.read(u8, addr);
         try load_mem(b, ctx, u8, rd, addr);
-        try store_register(b, inst.rd, .{ .reg = rd }); // rd is 0 extended
+        try store_register(b, inst.rd, .{ .reg = rd }); // rd is zero extended
         // cpu.write(u8, addr, @truncate(reg));
-        const reg = ArgRegisters[2];
-        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u8, addr, reg);
     } else {
         // cpu.r[inst.rd] = cpu.read(u32, addr);
         try load_mem(b, ctx, u32, rd, addr);
         try store_register(b, inst.rd, .{ .reg = rd });
         // cpu.write(u32, addr, reg);
-        const reg = ArgRegisters[2];
-        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u32, addr, reg);
     }
 
-    return inst.rd == 15; // Illegal?
+    return false;
 }
 
 fn handle_multiply(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
