@@ -1,6 +1,8 @@
 struct Uniforms {
     depth_min: f32,
     depth_max: f32,
+    framebuffer_width: f32,
+    framebuffer_height: f32,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;

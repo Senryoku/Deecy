@@ -1,6 +1,5 @@
 // Convert vertex positions from the TA to clip positions for WebGPU
 
-const screen_size = vec2<f32>(640.0, 480.0); // TODO: Adjust depending on video mode.
 
 fn to_position_clip(position: vec3<f32>, depth_max: f32) -> vec4<f32> {
     // FIXME: Soul Calibur sends some very high (sometimes infinite) z values, breaking everything.
@@ -14,8 +13,8 @@ fn to_position_clip(position: vec3<f32>, depth_max: f32) -> vec4<f32> {
      // Positions are supplied in screen space (0..640, 0..480)
      // Convert it to wgpu clip space (-1..1, -1..1)
     return vec4<f32>(
-        inv_w * (position.x * 2.0 / screen_size.x - 1.0),
-        inv_w * (position.y * -2.0 / screen_size.y + 1.0),
+        inv_w * (position.x * 2.0 / uniforms.framebuffer_width - 1.0),
+        inv_w * (position.y * -2.0 / uniforms.framebuffer_height + 1.0),
         1.0 / campled_depth_max, // Remap to the [0..1] clip range used by WebGPU
         inv_w
     );

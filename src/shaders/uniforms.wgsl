@@ -1,6 +1,8 @@
 struct Uniforms {
     depth_min: f32,
     depth_max: f32,
+    framebuffer_width: f32,
+    framebuffer_height: f32,
     fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16? 
     pt_alpha_ref: f32,  

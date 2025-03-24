@@ -190,7 +190,7 @@ fn add(a: [2]f32, b: [2]f32) [2]f32 {
 }
 
 fn mul(a: [2]f32, b: [2]f32) [2]f32 {
-    return .{ a[1] * b[0], a[0] * b[1] };
+    return .{ a[0] * b[0], a[1] * b[1] };
 }
 
 fn reset_hover(self: *@This()) void {
@@ -1221,7 +1221,11 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
         @floatFromInt(d.renderer.resolution.width),
         @floatFromInt(d.renderer.resolution.height),
     };
-    const scale = [2]f32{ size[0] / 640.0, size[1] / 480.0 }; // Scale of inner render compared to native DC resolution.
+    const scaler_ctl = d.dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL);
+    const scale = [2]f32{
+        scaler_ctl.get_x_scale_factor() * size[0] / 640.0,
+        scaler_ctl.get_y_scale_factor() * size[1] / 480.0,
+    }; // Scale of inner render compared to native DC resolution.
     const min = [2]f32{
         @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / 2.0 - size[0] / 2.0,
         @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,

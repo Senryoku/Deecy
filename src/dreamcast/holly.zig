@@ -227,6 +227,14 @@ pub const SCALER_CTL = packed struct(u32) {
     /// This register specifies the field that is to be stored in the frame buffer in flicker-free interlace mode type B.
     field_select: u1,
     _reserved: u13,
+
+    pub fn get_x_scale_factor(self: @This()) f32 {
+        return if (self.horizontal_scaling_enable) 0.5 else 1.0;
+    }
+
+    pub fn get_y_scale_factor(self: @This()) f32 {
+        return @as(f32, @floatFromInt(self.vertical_scale_factor)) / 1024.0;
+    }
 };
 
 pub const FB_W_CTRL = packed struct(u32) {

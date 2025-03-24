@@ -206,6 +206,8 @@ const VertexTextureInfo = packed struct(u64) {
 const Uniforms = extern struct {
     depth_min: f32,
     depth_max: f32,
+    framebuffer_width: f32,
+    framebuffer_height: f32,
     fpu_shad_scale: f32,
     fog_density: f32, // Should be a f16?
     pt_alpha_ref: f32,
@@ -745,6 +747,7 @@ pub const Renderer = struct {
     fog_col_vert: fRGBA = .{},
     fog_density: f32 = 0,
     fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
+    guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
 
     vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
@@ -2084,25 +2087,11 @@ pub const Renderer = struct {
             self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
         }
 
-        const scaler_ctl = gpu.read_register(HollyModule.SCALER_CTL, .SCALER_CTL);
-        // FIXME: Hack supporting horizontal scaling.
-        //        This is mostly used for SSAA: Frame is rendered at twice the horizontal resolution and scaled back down to native resolution.
-        //        Here I'm scaling the vertices positions instead of the final framebuffer. This is obviously wrong, however:
-        //         - Guest framebuffer size is currently locked at 640x480 (see position_clip.wgsl).
-        //         - This hack has the advantage of working well with the polygons debug view.
-        if (scaler_ctl.horizontal_scaling_enable) {
-            for (self.ta_lists_to_render.items) |*ta_lists| {
-                for (&[_][]HollyModule.VertexParameter{ ta_lists.opaque_list.vertex_parameters.items, ta_lists.translucent_list.vertex_parameters.items, ta_lists.punchthrough_list.vertex_parameters.items }) |vertices| {
-                    for (vertices) |*v|
-                        v.scale_x(0.5);
-                }
-                for (ta_lists.volume_triangles.items) |*t| {
-                    t.ax *= 0.5;
-                    t.bx *= 0.5;
-                    t.cx *= 0.5;
-                }
-            }
-        }
+        const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+        self.guest_framebuffer_size = .{
+            .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
+            .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
+        };
 
         const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
         const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
@@ -2803,6 +2792,8 @@ pub const Renderer = struct {
             const uniform_mem = gctx.uniformsAllocate(Uniforms, 1);
             uniform_mem.slice[0].depth_min = self.min_depth;
             uniform_mem.slice[0].depth_max = self.max_depth;
+            uniform_mem.slice[0].framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width);
+            uniform_mem.slice[0].framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height);
             uniform_mem.slice[0].pt_alpha_ref = self.pt_alpha_ref;
             uniform_mem.slice[0].fpu_shad_scale = self.fpu_shad_scale;
             uniform_mem.slice[0].fog_col_pal = self.fog_col_pal;
@@ -2954,9 +2945,11 @@ pub const Renderer = struct {
                     // Write to stencil buffer
                     {
                         const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
+                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32, framebuffer_width: f32, framebuffer_height: f32 }, 1);
                         vs_uniform_mem.slice[0].min_depth = self.min_depth;
                         vs_uniform_mem.slice[0].max_depth = self.max_depth;
+                        vs_uniform_mem.slice[0].framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width);
+                        vs_uniform_mem.slice[0].framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height);
 
                         const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
 
