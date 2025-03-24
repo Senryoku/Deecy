@@ -870,11 +870,12 @@ pub const Emitter = struct {
     pub fn mov_reg_mem(self: *@This(), comptime direction: enum { MemToReg, RegToMem }, reg: Operand, mem: MemOperand) !void {
         var reg_64 = mem.size == 64;
 
-        if (direction == .MemToReg and mem.size < 32)
+        if (direction == .MemToReg and mem.size < 32 and reg == .reg)
             reg_64 = true; // Force 64-bit register to be 100% sure all bits are cleared.
 
         const opcode: []const u8 = switch (direction) {
             .MemToReg => switch (reg) {
+                .reg8 => &[_]u8{0x8A},
                 .reg => switch (mem.size) {
                     8 => &[_]u8{ 0x0F, 0xB6 }, // Emit a movzx (zero extend) in this case.
                     16 => &[_]u8{ 0x0F, 0xB7 }, // Emit a movzx (zero extend) in this case.
@@ -945,6 +946,12 @@ pub const Emitter = struct {
                     .freg32 => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .freg64 => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     else => return error.InvalidMovSourceFromMem,
+                }
+            },
+            .reg8 => |_| {
+                switch (src) {
+                    .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
+                    else => return error.InvalidMovSourceFromReg8,
                 }
             },
             .reg => |dst_reg| {

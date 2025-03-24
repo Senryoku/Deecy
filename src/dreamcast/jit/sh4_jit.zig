@@ -731,7 +731,14 @@ pub const SH4JIT = struct {
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
             try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
             try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 66 } } });
+            try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
+
+            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self) });
+            try b.mov(.{ .reg8 = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .displacement = @offsetOf(@This(), "_reset_requested"), .size = 8 } });
+            try b.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
+            try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
+            var reset_requested = try b.jmp(.NotEqual);
 
             try b.mov(Key, sh4_mem("pc"));
             var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
@@ -761,6 +768,7 @@ pub const SH4JIT = struct {
             if (!Optimizations.link_small_blocks.allow_recursion)
                 skip_recursion.patch();
 
+            reset_requested.patch();
             skip.patch();
         } else {
             try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
