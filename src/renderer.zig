@@ -216,6 +216,13 @@ const Uniforms = extern struct {
     fog_lut: [0x80]u32 align(16), // actually 2 * 8bits per entry.
 };
 
+const ModifierVolumeUniforms = extern struct {
+    min_depth: f32,
+    max_depth: f32,
+    framebuffer_width: f32,
+    framebuffer_height: f32,
+};
+
 const Vertex = packed struct {
     x: f32,
     y: f32,
@@ -1158,7 +1165,7 @@ pub const Renderer = struct {
         };
 
         const modifier_volume_bind_group = gctx.createBindGroup(modifier_volume_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = 2 * @sizeOf(f32) },
+            .{ .binding = 0, .buffer_handle = gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(ModifierVolumeUniforms) },
         });
 
         var renderer = try allocator.create(Renderer);
@@ -2104,9 +2111,9 @@ pub const Renderer = struct {
         const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
         const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
         self.global_clip.x.min = x_clip.min;
-        self.global_clip.x.max = x_clip.max;
+        self.global_clip.x.max = x_clip.max + 1;
         self.global_clip.y.min = y_clip.min;
-        self.global_clip.y.max = y_clip.max;
+        self.global_clip.y.max = y_clip.max + 1;
 
         try self.update_background(gpu);
         try self.update_palette(gpu);
@@ -2953,7 +2960,7 @@ pub const Renderer = struct {
                     // Write to stencil buffer
                     {
                         const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
-                        const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32, framebuffer_width: f32, framebuffer_height: f32 }, 1);
+                        const vs_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
                         vs_uniform_mem.slice[0].min_depth = self.min_depth;
                         vs_uniform_mem.slice[0].max_depth = self.max_depth;
                         vs_uniform_mem.slice[0].framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width);
