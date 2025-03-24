@@ -2087,7 +2087,15 @@ pub const Renderer = struct {
             self.fog_lut[i] = gpu.get_fog_table()[i] & 0x0000FFFF;
         }
 
+        // NOTE: The renderer will scale whatever the DC outputs to the host framebuffer size.
+        //       This isn't the correct behaviour, but I expect a limited set of correct configurations:
+        //         ta_glob_tile_clip.tile_x_num = 19 for a 640 pixels wide framebuffer.
+        //         ta_glob_tile_clip.tile_x_num = 39 with 0.5 scaling (see SCALER_CTL) still for a 640 pixels wide framebuffer.
+        //       A varity of combinations for the vertical resolution (depending on interlacing, line doubling...) that I don't
+        //       currently handle, but always resulting in a 480 pixels high framebuffer.
         const ta_glob_tile_clip = gpu.read_register(HollyModule.TA_GLOB_TILE_CLIP, .TA_GLOB_TILE_CLIP);
+        if (ta_glob_tile_clip.tile_x_num != 19 and ta_glob_tile_clip.tile_x_num != 39)
+            renderer_log.warn("Unusual TA_GLOB_TILE_CLIP: tile_x_num={d}, tile_y_num={d}.", .{ ta_glob_tile_clip.tile_x_num, ta_glob_tile_clip.tile_y_num });
         self.guest_framebuffer_size = .{
             .width = 32 * @as(u32, ta_glob_tile_clip.tile_x_num + 1),
             .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),

@@ -306,7 +306,8 @@ pub fn main() !void {
 
         // Framebuffer has been written to by the CPU.
         // Update the host texture and blit it to our render target.
-        if (d.dc.gpu.dirty_framebuffer) {
+        // FIXME: Hackishly forced on for .bin files
+        if (binary_path != null or d.dc.gpu.dirty_framebuffer) {
             d.renderer.update_framebuffer_texture(&d.dc.gpu);
             // FIXME: Yet another framebuffer hack.
             //        Skip the framebuffer blit if we recently used the PVR for rendering.
