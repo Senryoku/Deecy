@@ -762,9 +762,10 @@ pub const Renderer = struct {
     guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
 
-    vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
-    strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
-    modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
+    // Some memory to avoid repeated allocations accross frames.
+    vertices: std.ArrayList(Vertex),
+    strips_metadata: std.ArrayList(StripMetadata),
+    modifier_volume_vertices: std.ArrayList([4]f32),
 
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
@@ -2133,7 +2134,6 @@ pub const Renderer = struct {
 
         for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
             if (self.ta_lists_to_render.items.len <= pass_idx) break;
-
             const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
             render_pass.clearRetainingCapacity();
