@@ -406,31 +406,34 @@ const PipelineMetadata = struct {
     }
 
     fn deinit(self: *@This()) void {
+        for (self.draw_calls.values()) |*draw_call| draw_call.deinit();
         self.draw_calls.deinit();
     }
 };
 
 const PassMetadata = struct {
     pass_type: HollyModule.ListType,
-    pipelines: std.AutoArrayHashMap(PipelineKey, PipelineMetadata),
+    steps: std.ArrayList(std.AutoArrayHashMap(PipelineKey, PipelineMetadata)),
 
     pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
         return .{
             .pass_type = pass_type,
-            .pipelines = .init(allocator),
+            .steps = .init(allocator),
         };
     }
 
     fn deinit(self: *@This()) void {
-        for (self.pipelines.values()) |*pipeline|
-            pipeline.deinit();
-        self.pipelines.deinit();
+        self.reset();
+        self.steps.deinit();
     }
 
     pub fn reset(self: *@This()) void {
-        for (self.pipelines.values()) |*pipeline|
-            pipeline.deinit();
-        self.pipelines.clearRetainingCapacity();
+        for (self.steps.items) |*step| {
+            for (step.values()) |*pipeline|
+                pipeline.deinit();
+            step.deinit();
+        }
+        self.steps.clearRetainingCapacity();
     }
 };
 
@@ -759,9 +762,10 @@ pub const Renderer = struct {
     guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
 
-    vertices: std.ArrayList(Vertex) = undefined, // Just here to avoid repeated allocations.
-    strips_metadata: std.ArrayList(StripMetadata) = undefined, // Just here to avoid repeated allocations.
-    modifier_volume_vertices: std.ArrayList([4]f32) = undefined,
+    // Some memory to avoid repeated allocations accross frames.
+    vertices: std.ArrayList(Vertex),
+    strips_metadata: std.ArrayList(StripMetadata),
+    modifier_volume_vertices: std.ArrayList([4]f32),
 
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
@@ -2130,23 +2134,10 @@ pub const Renderer = struct {
 
         for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
             if (self.ta_lists_to_render.items.len <= pass_idx) break;
-
             const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
-            for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
-                // NOTE/FIXME: We're never purging the draw calls list. Right now we can only have at most one draw call per sampler type (i.e. 3 * 3 * 2 = 18),
-                //             which is okay, I think. However this might become problematic down the line.
-                //             We're saving a lot of allocations this way, but there's probably a better way to do it.
-                var it = pass.pipelines.iterator();
-                while (it.next()) |pipeline| {
-                    for (pipeline.value_ptr.*.draw_calls.values()) |*draw_call| {
-                        draw_call.start_index = 0;
-                        draw_call.index_count = 0;
-                    }
-                }
-            }
+            render_pass.clearRetainingCapacity();
 
-            render_pass.pre_sorted_translucent_pass.clearRetainingCapacity();
             pre_sorted_indices.clearRetainingCapacity();
             var pre_sorted_index_offset: u32 = 0;
 
@@ -2157,6 +2148,16 @@ pub const Renderer = struct {
                 var area1_face_color: fARGB = undefined;
                 var area1_face_offset_color: fARGB = undefined;
                 const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
+
+                var current_depth_compare_function: ?wgpu.CompareFunction = null;
+                var current_step: *std.AutoArrayHashMap(PipelineKey, PipelineMetadata) = undefined;
+
+                const pass = switch (list_type) {
+                    .Opaque => &render_pass.opaque_pass,
+                    .PunchThrough => &render_pass.punchthrough_pass,
+                    .Translucent => &render_pass.translucent_pass,
+                    else => @compileError("Invalid list type"),
+                };
 
                 for (0..display_list.vertex_strips.items.len) |idx| {
                     const strip_first_vertex_index: usize = self.vertices.items.len;
@@ -2584,7 +2585,7 @@ pub const Renderer = struct {
 
                         {
                             if (list_type == .Translucent and render_pass.pre_sort) {
-                                // In this case, we need to preserve the order of the draw calls
+                                // In this case, we need to fully preserve the order of the draw calls. Batching only when they draw calls are stricly following each others.
                                 const prev_draw_call = if (render_pass.pre_sorted_translucent_pass.items.len == 0) null else &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
                                 if (prev_draw_call == null or
                                     !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
@@ -2607,16 +2608,25 @@ pub const Renderer = struct {
                                     try pre_sorted_indices.append(@intCast(FirstVertex + i));
                                 try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
-                                const pass = switch (list_type) {
-                                    .Opaque => &render_pass.opaque_pass,
-                                    .PunchThrough => &render_pass.punchthrough_pass,
-                                    .Translucent => &render_pass.translucent_pass,
-                                    else => @compileError("Invalid list type"),
-                                };
+                                // Draw calls are batched together as much as possible by PipelineKeys (and then by DrawCallKey).
+                                // This works well in most cases and reduces host draw calls by a lot, but it fails in some
+                                // edge cases. To alleviate those, changes in depth compare function are treated as a "barrier",
+                                // guaranteeing correct ordering between draws before and after the change (spliting them into
+                                // two distinct 'steps'). As failure cases I found involved the use of 'always' or 'never' compare
+                                // functions, this seem to be enough, while keeping most of the benefit of batching.
+                                if (current_depth_compare_function == null) { // Initialisation
+                                    current_depth_compare_function = pipeline_key.depth_compare;
+                                    try pass.steps.append(.init(self._allocator));
+                                    current_step = &pass.steps.items[0];
+                                } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
+                                    current_depth_compare_function = pipeline_key.depth_compare;
+                                    try pass.steps.append(.init(self._allocator));
+                                    current_step = &pass.steps.items[pass.steps.items.len - 1];
+                                }
 
-                                var pipeline = pass.pipelines.getPtr(pipeline_key) orelse put: {
-                                    try pass.pipelines.put(pipeline_key, .init(self._allocator));
-                                    break :put pass.pipelines.getPtr(pipeline_key).?;
+                                var pipeline = current_step.getPtr(pipeline_key) orelse put: {
+                                    try current_step.put(pipeline_key, .init(self._allocator));
+                                    break :put current_step.getPtr(pipeline_key).?;
                                 };
 
                                 const draw_call_key = DrawCallKey{ .sampler = sampler, .user_clip = display_list.vertex_strips.items[idx].user_clip };
@@ -2651,15 +2661,17 @@ pub const Renderer = struct {
 
             if (self.vertices.items.len > 0) {
                 for ([3]*PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass, &render_pass.translucent_pass }) |pass| {
-                    var it = pass.pipelines.iterator();
-                    while (it.next()) |entry| {
-                        for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
-                            draw_call.start_index = index_buffer_pointer;
-                            draw_call.index_count = @intCast(draw_call.indices.items.len);
-                            self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, draw_call.indices.items);
-                            index_buffer_pointer += @intCast(draw_call.indices.items.len);
+                    for (pass.steps.items) |*step| {
+                        var it = step.iterator();
+                        while (it.next()) |entry| {
+                            for (entry.value_ptr.*.draw_calls.values()) |*draw_call| {
+                                draw_call.start_index = index_buffer_pointer;
+                                draw_call.index_count = @intCast(draw_call.indices.items.len);
+                                self._gctx.queue.writeBuffer(index_buffer, @sizeOf(u32) * index_buffer_pointer, u32, draw_call.indices.items);
+                                index_buffer_pointer += @intCast(draw_call.indices.items.len);
 
-                            draw_call.indices.clearRetainingCapacity();
+                                draw_call.indices.clearRetainingCapacity();
+                            }
                         }
                     }
                 }
@@ -2925,21 +2937,22 @@ pub const Renderer = struct {
                         // Opaque and PunchThrough geometry
                         // FIXME: PunchThrough should be drawn last? Is there a case where it matters with this setup?
                         inline for ([2]*const PassMetadata{ &render_pass.opaque_pass, &render_pass.punchthrough_pass }) |metadata| {
-                            var it = metadata.pipelines.iterator();
-                            while (it.next()) |entry| {
-                                // FIXME: We should also check if at least one of the draw calls is not empty (we're keeping them around even if they are empty right now).
-                                if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                    const pl = self.get_or_put_pipeline(entry.key_ptr.*, .Async);
-                                    const pipeline = gctx.lookupResource(pl) orelse continue;
-                                    pass.setPipeline(pipeline);
+                            for (metadata.steps.items) |step| {
+                                var it = step.iterator();
+                                while (it.next()) |entry| {
+                                    if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                        const pl = self.get_or_put_pipeline(entry.key_ptr.*, .Async);
+                                        const pipeline = gctx.lookupResource(pl) orelse continue;
+                                        pass.setPipeline(pipeline);
 
-                                    for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                        if (draw_call.index_count > 0) {
-                                            const clip = self.convert_clipping(draw_call.user_clip);
-                                            pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+                                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                            if (draw_call.index_count > 0) {
+                                                const clip = self.convert_clipping(draw_call.user_clip);
+                                                pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
-                                            pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                            pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                            }
                                         }
                                     }
                                 }
@@ -3144,7 +3157,7 @@ pub const Renderer = struct {
 
                         // TODO: Support translucent modifier volumes in pre-sorted mode
 
-                    } else {
+                    } else if (render_pass.translucent_pass.steps.items.len > 0) {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
@@ -3261,20 +3274,22 @@ pub const Renderer = struct {
                                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
                                 pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
 
-                                var it = render_pass.translucent_pass.pipelines.iterator();
-                                while (it.next()) |entry| {
-                                    if (entry.value_ptr.*.draw_calls.count() > 0) {
-                                        for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
-                                            if (draw_call.index_count > 0) {
-                                                var clip = self.convert_clipping(draw_call.user_clip);
-                                                const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
-                                                clip.y = @max(clip.y, start_y);
-                                                clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
-                                                if (clip.height > 0 and clip.width > 0) {
-                                                    pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
+                                for (render_pass.translucent_pass.steps.items) |step| {
+                                    var it = step.iterator();
+                                    while (it.next()) |entry| {
+                                        if (entry.value_ptr.*.draw_calls.count() > 0) {
+                                            for (entry.value_ptr.*.draw_calls.values()) |draw_call| {
+                                                if (draw_call.index_count > 0) {
+                                                    var clip = self.convert_clipping(draw_call.user_clip);
+                                                    const min_max_y = @min(clip.y + clip.height, start_y + slice_size);
+                                                    clip.y = @max(clip.y, start_y);
+                                                    clip.height = if (min_max_y > clip.y) min_max_y - clip.y else 0;
+                                                    if (clip.height > 0 and clip.width > 0) {
+                                                        pass.setScissorRect(clip.x, clip.y, clip.width, clip.height);
 
-                                                    pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
-                                                    pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                        pass.setBindGroup(1, gctx.lookupResource(self.sampler_bind_groups[draw_call.sampler]).?, &.{});
+                                                        pass.drawIndexed(draw_call.index_count, 1, draw_call.start_index, 0, 0);
+                                                    }
                                                 }
                                             }
                                         }
