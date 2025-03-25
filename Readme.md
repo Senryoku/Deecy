@@ -17,6 +17,46 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
  - Copy your bios and flash dumps as `dc_boot.bin` and `dc_flash.bin` to the `data` folder.
  - Launch the Deecy executable and click `Change Directory` to select the folder where you store your DC games.
 
+## Usage 
+
+### Keybindings
+
+Deecy should detect, map and use controllers automatically. Host controllers can be manually assigned to guest controller ports in the Settings.
+
+Keyboard bindings are fixed for controller 1 and intended for testing only:
+| DC Controller | Host Keyboard (AZERTY) |
+| ------------- | ------------- |
+| A, B, X, Y    | A, Z, Q, S |
+| L, R triggers | W, X |
+| Start         | Enter |
+| Left Stick    | Numpad 8, 4, 5, 6 | 
+| Dpad          | Directional Arrows |
+
+### Shortcuts
+
+| Key    | Action |
+| ------ | ------ | 
+| Escape | Show/Hide the UI |
+| F      | Toggle Fullscreen |
+| L      | Toggle unlimited emulation speed |
+| F1-F4  | Save state 1-4 |
+| F5-F8  | Load state 1-4 |
+| D      | Toggle debug UI |
+| N      | Next Frame (Experimental) |
+
+### CLI options
+
+| Option | Action | Argument | Notes |
+| ------ | ------ | -------- | ----- |
+| -g     | Load and Execute a disc file (.gdi/.cdi/.chd) | Path to a disc file |
+| --vmu  | Replace default vmu file | Path to an vmu file | Use with -g |
+| --no-realtime | Starts with unlimited emulation speed |
+| --load-state | Loads a save state on startup | Path to a Deecy save state | Use with -g |
+| --stop | Prevent automatic start of emulation | | Use with -g or -b |
+| --skip-bios | Skip default BIOS. | | Experimental |
+| -b     | Load and Execute a .bin file | Path to a .bin file | Will also skip the BIOS. Experimental |
+| -i     | Replace default IP.BIN file | Path to an IP.BIN file | Use with -b only |
+
 ## Compatibility
 
 [See issue #33](https://github.com/Senryoku/Deecy/issues/33)
@@ -68,7 +108,6 @@ sudo apt install libgtk-3-dev
     -   User Tile Clip, only the simplest version is supported.
     -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
     -   Mipmaps for palette textures?
-    -   Punchthrough polygons: They should use the OIT pass like translucent polygons. Is it actually an issue in practice to treat them as opaque? I'm guessing, yes when drawing order matters (equal depth).
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 
 ### Nice to have
