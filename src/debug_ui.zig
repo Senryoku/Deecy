@@ -43,6 +43,10 @@ selected_strip_pass_idx: usize = 0,
 selected_vertex_focus: bool = false,
 selected_vertex: ?[2]f32 = null,
 
+draw_wireframe: bool = false,
+draw_list_wireframe: [3]bool = .{true} ** 3,
+list_wireframe_colors: [3]u32 = .{ 0xFF4B19E6, 0xFF4BB43C, 0xFFD86343 },
+
 selected_volume_focus: bool = false,
 selected_volume_list: Holly.ListType = .OpaqueModifierVolume,
 selected_volume_index: ?u32 = null,
@@ -943,6 +947,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
 
+        if (zgui.collapsingHeader("Wireframe", .{ .frame_padding = true })) {
+            _ = zgui.checkbox("Draw wireframe", .{ .v = &self.draw_wireframe });
+            {
+                zgui.indent(.{});
+                defer zgui.unindent(.{});
+                _ = zgui.checkbox("Draw Opaque Wireframe", .{ .v = &self.draw_list_wireframe[0] });
+                _ = zgui.checkbox("Draw Translucent Wireframe", .{ .v = &self.draw_list_wireframe[1] });
+                _ = zgui.checkbox("Draw Punchthrough Wireframe", .{ .v = &self.draw_list_wireframe[2] });
+            }
+        }
+
         var buffer: [256]u8 = .{0} ** 256;
 
         // NOTE: We're looking at the last list used during a START_RENDER.
@@ -1215,6 +1230,44 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     self.draw_overlay(d);
 }
 
+fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list: *const Holly.DisplayList, index: u32, color: u32) void {
+    if (index < display_list.vertex_strips.items.len) {
+        const parameters = display_list.vertex_parameters.items;
+        const strip = &display_list.vertex_strips.items[index];
+        switch (strip.polygon) {
+            .Sprite => |_| {
+                for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
+                    const pos = parameters[i].sprite_positions();
+                    draw_list.addTriangle(.{
+                        .p1 = add(mul(scale, pos[0][0..2].*), min),
+                        .p2 = add(mul(scale, pos[3][0..2].*), min),
+                        .p3 = add(mul(scale, pos[1][0..2].*), min),
+                        .col = color,
+                        .thickness = 1.0,
+                    });
+                    draw_list.addTriangle(.{
+                        .p1 = add(mul(scale, pos[3][0..2].*), min),
+                        .p2 = add(mul(scale, pos[2][0..2].*), min),
+                        .p3 = add(mul(scale, pos[1][0..2].*), min),
+                        .col = color,
+                        .thickness = 1.0,
+                    });
+                }
+            },
+            else => {
+                if (strip.vertex_parameter_count >= 3) {
+                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
+                        const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
+                        const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
+                        const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
+                        draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
+                    }
+                }
+            },
+        }
+    }
+}
+
 fn draw_overlay(self: *@This(), d: *Deecy) void {
     const draw_list = zgui.getBackgroundDrawList();
     // TODO: We only support the "Centered" display mode for now.
@@ -1232,43 +1285,21 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
         @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,
     };
 
-    if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
-        const list = d.renderer.ta_lists_to_render.items[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
-        if (self.selected_strip_index < list.vertex_strips.items.len) {
-            const parameters = list.vertex_parameters.items;
-            const strip = &list.vertex_strips.items[self.selected_strip_index];
-            switch (strip.polygon) {
-                .Sprite => |_| {
-                    for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
-                        const pos = parameters[i].sprite_positions();
-                        draw_list.addTriangle(.{
-                            .p1 = add(mul(scale, pos[0][0..2].*), min),
-                            .p2 = add(mul(scale, pos[3][0..2].*), min),
-                            .p3 = add(mul(scale, pos[1][0..2].*), min),
-                            .col = 0xFFFF00FF,
-                            .thickness = 1.0,
-                        });
-                        draw_list.addTriangle(.{
-                            .p1 = add(mul(scale, pos[3][0..2].*), min),
-                            .p2 = add(mul(scale, pos[2][0..2].*), min),
-                            .p3 = add(mul(scale, pos[1][0..2].*), min),
-                            .col = 0xFFFF00FF,
-                            .thickness = 1.0,
-                        });
+    if (self.draw_wireframe) {
+        for (d.renderer.ta_lists_to_render.items) |list| {
+            for ([_]*const Holly.DisplayList{ &list.opaque_list, &list.translucent_list, &list.punchthrough_list }, 0..) |l, idx| {
+                if (self.draw_list_wireframe[idx]) {
+                    for (0..l.vertex_strips.items.len) |strip_idx| {
+                        draw_strip(draw_list, min, scale, l, @intCast(strip_idx), self.list_wireframe_colors[idx]);
                     }
-                },
-                else => {
-                    if (strip.vertex_parameter_count >= 3) {
-                        for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count - 2) |i| {
-                            const p1 = add(mul(scale, parameters[i].position()[0..2].*), min);
-                            const p2 = add(mul(scale, parameters[i + 1].position()[0..2].*), min);
-                            const p3 = add(mul(scale, parameters[i + 2].position()[0..2].*), min);
-                            draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFFFF00FF, .thickness = 1.0 });
-                        }
-                    }
-                },
+                }
             }
         }
+    }
+
+    if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
+        const list = d.renderer.ta_lists_to_render.items[self.selected_strip_pass_idx].get_list(self.selected_strip_list);
+        draw_strip(draw_list, min, scale, list, self.selected_strip_index, 0xFFFF00FF);
     }
     if (self.selected_vertex) |vertex| {
         draw_list.addCircleFilled(.{ .p = add(mul(scale, vertex), min), .r = 5.0, .col = 0xFF4000FF });
