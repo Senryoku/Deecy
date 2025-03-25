@@ -406,6 +406,7 @@ const PipelineMetadata = struct {
     }
 
     fn deinit(self: *@This()) void {
+        for (self.draw_calls.values()) |*draw_call| draw_call.deinit();
         self.draw_calls.deinit();
     }
 };
@@ -430,6 +431,7 @@ const PassMetadata = struct {
         for (self.steps.items) |*step| {
             for (step.values()) |*pipeline|
                 pipeline.deinit();
+            step.deinit();
         }
         self.steps.clearRetainingCapacity();
     }
@@ -2150,6 +2152,13 @@ pub const Renderer = struct {
                 var current_depth_compare_function: ?wgpu.CompareFunction = null;
                 var current_step: *std.AutoArrayHashMap(PipelineKey, PipelineMetadata) = undefined;
 
+                const pass = switch (list_type) {
+                    .Opaque => &render_pass.opaque_pass,
+                    .PunchThrough => &render_pass.punchthrough_pass,
+                    .Translucent => &render_pass.translucent_pass,
+                    else => @compileError("Invalid list type"),
+                };
+
                 for (0..display_list.vertex_strips.items.len) |idx| {
                     const strip_first_vertex_index: usize = self.vertices.items.len;
                     const polygon = display_list.vertex_strips.items[idx].polygon;
@@ -2599,13 +2608,6 @@ pub const Renderer = struct {
                                     try pre_sorted_indices.append(@intCast(FirstVertex + i));
                                 try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
-                                const pass = switch (list_type) {
-                                    .Opaque => &render_pass.opaque_pass,
-                                    .PunchThrough => &render_pass.punchthrough_pass,
-                                    .Translucent => &render_pass.translucent_pass,
-                                    else => @compileError("Invalid list type"),
-                                };
-
                                 if (current_depth_compare_function == null) {
                                     current_depth_compare_function = pipeline_key.depth_compare;
                                     try pass.steps.append(.init(self._allocator));
