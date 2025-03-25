@@ -48,6 +48,12 @@ selected_volume_list: Holly.ListType = .OpaqueModifierVolume,
 selected_volume_index: ?u32 = null,
 selected_volume_pass_idx: usize = 0,
 
+selected_texture: struct {
+    index: i32 = 0,
+    scale: f32 = 512.0 / 8.0,
+    size: i32 = 0,
+} = .{},
+
 pixels: []u8 = undefined,
 
 audio_channels: [64]struct {
@@ -1139,12 +1145,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 zgui.text("Fog {d: >3}: {X:0>4}", .{ i, d.renderer.fog_lut[i] });
             }
         }
-        if (zgui.collapsingHeader("Textures", .{})) {
-            const static = struct {
-                var index: i32 = 0;
-                var scale: f32 = 512.0 / 8.0;
-                var size: i32 = 0;
-            };
+        if (zgui.collapsingHeader("Texture Cache", .{})) {
             if (zgui.button("Clear Texture Cache", .{})) {
                 for (0..d.renderer.texture_metadata.len) |size_index| {
                     for (0..d.renderer.texture_metadata[size_index].len) |i| {
@@ -1153,29 +1154,29 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 }
             }
             if (zgui.inputInt("Size", .{
-                .v = &static.size,
+                .v = &self.selected_texture.size,
                 .step = 1,
             })) {
-                static.size = std.math.clamp(static.size, 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
-                static.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(static.size))));
-                static.index = std.math.clamp(static.index, 0, RendererModule.Renderer.MaxTextures[@intCast(static.size)] - 1);
+                self.selected_texture.size = std.math.clamp(self.selected_texture.size, 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
+                self.selected_texture.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(self.selected_texture.size))));
+                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
             }
             zgui.sameLine(.{});
-            zgui.text("{d: >3}x{d: >3}", .{ @as(u32, 8) << @intCast(static.size), @as(u32, 8) << @intCast(static.size) });
-            if (zgui.inputInt("Index", .{ .v = &static.index, .step = 1 })) {
-                static.index = std.math.clamp(static.index, 0, RendererModule.Renderer.MaxTextures[@intCast(static.size)] - 1);
+            zgui.text("{d: >3}x{d: >3}", .{ @as(u32, 8) << @intCast(self.selected_texture.size), @as(u32, 8) << @intCast(self.selected_texture.size) });
+            if (zgui.inputInt("Index", .{ .v = &self.selected_texture.index, .step = 1 })) {
+                self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
             }
-            if (zgui.dragFloat("Scale", .{ .v = &static.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
-                static.scale = std.math.clamp(static.scale, 1.0, 8.0);
+            if (zgui.dragFloat("Scale", .{ .v = &self.selected_texture.scale, .min = 1.0, .max = 8.0, .speed = 0.1 })) {
+                self.selected_texture.scale = std.math.clamp(self.selected_texture.scale, 1.0, 8.0);
             }
-            const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(static.size)][@intCast(static.index)]).?;
-            zgui.image(tex_id, .{ .w = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))), .h = static.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(static.size))) });
+            const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)]).?;
+            zgui.image(tex_id, .{ .w = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))), .h = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))) });
             if (zgui.collapsingHeader("Parameter Control Word", .{ .default_open = true })) {
-                const control_word = d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].control_word;
+                const control_word = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)].control_word;
                 display(control_word);
             }
             if (zgui.collapsingHeader("TSP Instruction", .{ .default_open = true })) {
-                const tsp_instruction = d.renderer.texture_metadata[@intCast(static.size)][@intCast(static.index)].tsp_instruction;
+                const tsp_instruction = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)].tsp_instruction;
                 display(tsp_instruction);
             }
         }
@@ -1320,13 +1321,19 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
     }
     if (control_word.obj_control.texture == 1) {
         const texture_control_word = strip.polygon.texture_control();
-        zgui.text("Texture Control: {X:0>8}", .{@as(u32, @bitCast(texture_control_word))});
+        if (zgui.collapsingHeader("Texture Control", .{}))
+            display(texture_control_word);
+        zgui.text("Texture size: {d}x{d}", .{ tsp.get_u_size(), tsp.get_v_size() });
         if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
             const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
             zgui.image(view, .{
                 .w = @floatFromInt(tsp.get_u_size()),
                 .h = @floatFromInt(tsp.get_v_size()),
             });
+            if (zgui.isItemClicked(.left)) {
+                self.selected_texture.size = @intCast(texture.size_index);
+                self.selected_texture.index = @intCast(texture.index);
+            }
         }
     }
     if (strip.polygon.area1_texture_control()) |area1_texture_control| {
