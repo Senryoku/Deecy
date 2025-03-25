@@ -2585,7 +2585,7 @@ pub const Renderer = struct {
 
                         {
                             if (list_type == .Translucent and render_pass.pre_sort) {
-                                // In this case, we need to preserve the order of the draw calls
+                                // In this case, we need to fully preserve the order of the draw calls. Batching only when they draw calls are stricly following each others.
                                 const prev_draw_call = if (render_pass.pre_sorted_translucent_pass.items.len == 0) null else &render_pass.pre_sorted_translucent_pass.items[render_pass.pre_sorted_translucent_pass.items.len - 1];
                                 if (prev_draw_call == null or
                                     !std.meta.eql(prev_draw_call.?.pipeline_key, pipeline_key) or
@@ -2608,11 +2608,17 @@ pub const Renderer = struct {
                                     try pre_sorted_indices.append(@intCast(FirstVertex + i));
                                 try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
-                                if (current_depth_compare_function == null) {
+                                // Draw calls are batched together as much as possible by PipelineKeys (and then by DrawCallKey).
+                                // This works well in most cases and reduces host draw calls by a lot, but it fails in some
+                                // edge cases. To alleviate those, changes in depth compare function are treated as a "barrier",
+                                // guaranteeing correct ordering between draws before and after the change (spliting them into
+                                // two distinct 'steps'). As failure cases I found involved the use of 'always' or 'never' compare
+                                // functions, this seem to be enough, while keeping most of the benefit of batching.
+                                if (current_depth_compare_function == null) { // Initialisation
                                     current_depth_compare_function = pipeline_key.depth_compare;
                                     try pass.steps.append(.init(self._allocator));
                                     current_step = &pass.steps.items[0];
-                                } else if (current_depth_compare_function != pipeline_key.depth_compare) {
+                                } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
                                     current_depth_compare_function = pipeline_key.depth_compare;
                                     try pass.steps.append(.init(self._allocator));
                                     current_step = &pass.steps.items[pass.steps.items.len - 1];
