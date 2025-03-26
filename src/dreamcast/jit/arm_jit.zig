@@ -222,8 +222,8 @@ pub const ARM7JIT = struct {
         b.clearRetainingCapacity();
 
         // We'll be using these callee saved registers, push 'em to the stack.
-        try b.push(.{ .reg = SavedRegisters[0] });
-        try b.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
+        try b.push(.{ .reg64 = SavedRegisters[0] });
+        try b.push(.{ .reg64 = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
 
         try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the cpu struct
 
@@ -263,8 +263,8 @@ pub const ARM7JIT = struct {
         }
 
         // Restore callee saved registers.
-        try b.pop(.{ .reg = SavedRegisters[1] });
-        try b.pop(.{ .reg = SavedRegisters[0] });
+        try b.pop(.{ .reg64 = SavedRegisters[1] });
+        try b.pop(.{ .reg64 = SavedRegisters[0] });
 
         for (b.instructions.items, 0..) |instr, idx|
             arm_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });

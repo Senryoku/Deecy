@@ -635,12 +635,12 @@ pub const SH4JIT = struct {
         b.clearRetainingCapacity();
 
         // We'll be using these callee saved registers, push 'em to the stack.
-        try b.push(.{ .reg = SavedRegisters[0] });
+        try b.push(.{ .reg64 = SavedRegisters[0] });
 
         const optional_saved_register_offset = b.instructions.items.len;
         // We'll turn those into NOP if they're not used.
         for (0..ctx.gpr_cache.entries.len) |i| {
-            try b.push(.{ .reg = ctx.gpr_cache.entries[i].host });
+            try b.push(.{ .reg64 = ctx.gpr_cache.entries[i].host });
         }
         const stack_alignment_offset = b.instructions.items.len;
         try b.append(.Nop);
@@ -796,13 +796,13 @@ pub const SH4JIT = struct {
         for (0..ctx.gpr_cache.entries.len) |i| {
             const idx = ctx.gpr_cache.entries.len - 1 - i;
             if (idx <= highest_saved_gpr_used) {
-                try b.pop(.{ .reg = ctx.gpr_cache.entries[idx].host });
+                try b.pop(.{ .reg64 = ctx.gpr_cache.entries[idx].host });
             } else {
                 b.instructions.items[optional_saved_register_offset + idx] = .Nop;
             }
         }
 
-        try b.pop(.{ .reg = SavedRegisters[0] });
+        try b.pop(.{ .reg64 = SavedRegisters[0] });
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
@@ -981,8 +981,8 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
 
             // Same dance as in mmu_translation...
             try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
-            try block.push(.{ .reg = ArgRegisters[0] });
-            try block.push(.{ .reg = ArgRegisters[0] });
+            try block.push(.{ .reg64 = ArgRegisters[0] });
+            try block.push(.{ .reg64 = ArgRegisters[0] });
             if (ctx.in_delay_slot) {
                 try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
             } else {
@@ -1005,8 +1005,8 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         }
 
         if (ctx.mmu_enabled) {
-            try block.pop(.{ .reg = ArgRegisters[0] });
-            try block.pop(.{ .reg = ArgRegisters[0] });
+            try block.pop(.{ .reg64 = ArgRegisters[0] });
+            try block.pop(.{ .reg64 = ArgRegisters[0] });
 
             // Check if an exception was raised.
             try block.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
@@ -1240,7 +1240,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
     // Backup current PC (mostly in case we're in a branch delay slot)
     try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
-    try block.push(.{ .reg = ArgRegisters[0] });
+    try block.push(.{ .reg64 = ArgRegisters[0] });
 
     if (ctx.in_delay_slot) {
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
@@ -1249,9 +1249,9 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
     }
 
     if (register_to_save) |r| {
-        try block.push(.{ .reg = r });
+        try block.push(.{ .reg64 = r });
     } else {
-        try block.push(.{ .reg = ArgRegisters[0] }); // Stack alignemnt
+        try block.push(.{ .reg64 = ArgRegisters[0] }); // Stack alignemnt
     }
 
     try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -1266,11 +1266,11 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
     try block.append(.{ .Cmp = .{ .lhs = .{ .reg64 = ReturnRegister }, .rhs = .{ .reg64 = ArgRegisters[0] } } });
 
     if (register_to_save) |r| {
-        try block.pop(.{ .reg = r });
+        try block.pop(.{ .reg64 = r });
     } else {
-        try block.pop(.{ .reg = ArgRegisters[0] });
+        try block.pop(.{ .reg64 = ArgRegisters[0] });
     }
-    try block.pop(.{ .reg = ArgRegisters[0] });
+    try block.pop(.{ .reg64 = ArgRegisters[0] });
     // Terminate the block immediately if an exception was raised.
     try ctx.add_jump_to_end(try block.jmp(.Above));
 
@@ -2447,14 +2447,14 @@ pub fn macl_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 32);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg = ReturnRegister }); // Sign extend to 64bits
-    try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
-    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
+    try block.push(.{ .reg64 = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 32);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg = ReturnRegister });
 
-    try block.pop(.{ .reg = ReturnRegister });
-    try block.pop(.{ .reg = ReturnRegister });
+    try block.pop(.{ .reg64 = ReturnRegister });
+    try block.pop(.{ .reg64 = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
 
@@ -2475,14 +2475,14 @@ pub fn macw_atRmInc_atRnInc(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.n }, 0, 16);
     try block.movsx(.{ .reg64 = ReturnRegister }, .{ .reg16 = ReturnRegister }); // Sign extend to 64bits
-    try block.push(.{ .reg = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
-    try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
+    try block.push(.{ .reg64 = ReturnRegister }); // load_mem will make some function calls, make sure to save the first fetched operand.
+    try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
 
     try load_mem(block, ctx, ReturnRegister, .{ .Reg = instr.nmd.m }, 0, 16);
     try block.movsx(.{ .reg64 = ArgRegisters[0] }, .{ .reg16 = ReturnRegister });
 
-    try block.pop(.{ .reg = ReturnRegister });
-    try block.pop(.{ .reg = ReturnRegister });
+    try block.pop(.{ .reg64 = ReturnRegister });
+    try block.pop(.{ .reg64 = ReturnRegister });
 
     try block.append(.{ .Mul = .{ .dst = .{ .reg64 = ReturnRegister }, .src = .{ .reg64 = ArgRegisters[0] } } });
 
@@ -2795,8 +2795,8 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
         if (delay_slot) {
             // Delay slot might change the T bit, push it.
             try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-            try block.push(.{ .reg = ReturnRegister });
-            try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
+            try block.push(.{ .reg64 = ReturnRegister });
+            try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
             try ctx.compile_delay_slot(block);
         }
 
@@ -2807,8 +2807,8 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
         try ctx.fpr_cache.commit_and_invalidate_all(block);
 
         if (delay_slot) {
-            try block.pop(.{ .reg = ReturnRegister });
-            try block.pop(.{ .reg = ReturnRegister });
+            try block.pop(.{ .reg64 = ReturnRegister });
+            try block.pop(.{ .reg64 = ReturnRegister });
         } else {
             try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
         }
@@ -2858,8 +2858,8 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
             if (delay_slot) {
                 // Delay slot might change the T bit, push it.
                 try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
-                try block.push(.{ .reg = ReturnRegister });
-                try block.push(.{ .reg = ReturnRegister }); // Twice to stay 16 bytes aligned.
+                try block.push(.{ .reg64 = ReturnRegister });
+                try block.push(.{ .reg64 = ReturnRegister }); // Twice to stay 16 bytes aligned.
                 try ctx.compile_delay_slot(block);
                 ctx.index += 1;
                 ctx.current_pc += 2;
@@ -2872,8 +2872,8 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
             try ctx.fpr_cache.commit_and_invalidate_all(block);
 
             if (delay_slot) {
-                try block.pop(.{ .reg = ReturnRegister });
-                try block.pop(.{ .reg = ReturnRegister });
+                try block.pop(.{ .reg64 = ReturnRegister });
+                try block.pop(.{ .reg64 = ReturnRegister });
             } else {
                 try block.mov(.{ .reg = ReturnRegister }, sh4_mem("sr"));
             }

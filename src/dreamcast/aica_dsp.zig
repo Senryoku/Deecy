@@ -341,9 +341,9 @@ pub fn compile(self: *@This()) !void {
     const MDEC_CT_op: Architecture.Operand = .{ .mem = .{ .base = RegistersBase, .displacement = 4 * MDEC_CT_base, .size = 32 } };
 
     for (0..5) |i| {
-        try b.push(.{ .reg = Architecture.SavedRegisters[i] });
+        try b.push(.{ .reg64 = Architecture.SavedRegisters[i] });
     }
-    try b.push(.{ .reg = Architecture.SavedRegisters[4] }); // Ensure stack alignment
+    try b.push(.{ .reg64 = Architecture.SavedRegisters[4] }); // Ensure stack alignment
 
     try b.mov(.{ .reg = RegistersBase }, .{ .reg = Architecture.ArgRegisters[0] });
 
@@ -549,16 +549,16 @@ pub fn compile(self: *@This()) !void {
                     try b.mov(EAX, SHIFTED);
                     try b.sar(EAX, 8);
                 } else {
-                    try b.push(addr); // Preserve addr and INPUTS through the call
-                    try b.push(INPUTS);
+                    try b.push(.{ .reg64 = addr.reg }); // Preserve addr and INPUTS through the call
+                    try b.push(.{ .reg64 = INPUTS.reg });
 
                     try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, SHIFTED);
                     try b.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
 
                     try b.call(&f16_from_i24);
 
-                    try b.pop(INPUTS);
-                    try b.pop(addr);
+                    try b.pop(.{ .reg64 = INPUTS.reg });
+                    try b.pop(.{ .reg64 = addr.reg });
                 }
                 try b.mov(.{ .reg64 = Architecture.ArgRegisters[0] }, .{ .imm64 = @intFromPtr(self._memory.ptr) });
                 try b.mov(.{ .mem = .{ .base = Architecture.ArgRegisters[0], .index = addr.reg, .size = 16 } }, EAX);
@@ -590,9 +590,9 @@ pub fn compile(self: *@This()) !void {
         }
     }
 
-    try b.pop(.{ .reg = Architecture.SavedRegisters[4] });
+    try b.pop(.{ .reg64 = Architecture.SavedRegisters[4] });
     for (0..5) |i| {
-        try b.pop(.{ .reg = Architecture.SavedRegisters[4 - i] });
+        try b.pop(.{ .reg64 = Architecture.SavedRegisters[4 - i] });
     }
 
     const block_size = try b.emit(self._jit_buffer.?);

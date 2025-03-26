@@ -627,20 +627,20 @@ pub const Emitter = struct {
                 .Movsx => |m| try self.movsx(m.dst, m.src),
                 .Push => |reg_or_imm| {
                     switch (reg_or_imm) {
-                        .reg8, .reg16, .reg, .reg64 => |reg| {
+                        .reg64 => |reg| {
                             try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
                             try self.emit(u8, encode_opcode(0x50, reg));
                         },
                         else => return error.UnimplementedPushImmediate,
                     }
                 },
-                .Pop => |reg_or_imm| {
-                    switch (reg_or_imm) {
-                        .reg8, .reg16, .reg, .reg64 => |reg| {
+                .Pop => |reg_or_mem| {
+                    switch (reg_or_mem) {
+                        .reg64 => |reg| {
                             try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
                             try self.emit(u8, encode_opcode(0x58, reg));
                         },
-                        else => return error.UnimplementedPushImmediate,
+                        else => return error.UnimplementedPopDestination,
                     }
                 },
                 .Add => |a| try self.add(a.dst, a.src),
