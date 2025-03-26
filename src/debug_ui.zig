@@ -1270,19 +1270,37 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
 
 fn draw_overlay(self: *@This(), d: *Deecy) void {
     const draw_list = zgui.getBackgroundDrawList();
-    // TODO: We only support the "Centered" display mode for now.
-    const size = [2]f32{
-        @floatFromInt(d.renderer.resolution.width),
-        @floatFromInt(d.renderer.resolution.height),
+
+    const native_resolution = [2]f32{ 640.0, 480.0 };
+    const aspect_ratio = native_resolution[0] / native_resolution[1];
+    const window_size = [2]f32{ @floatFromInt(self._gctx.swapchain_descriptor.width), @floatFromInt(self._gctx.swapchain_descriptor.height) };
+    const resolution = [2]f32{ @floatFromInt(d.renderer.resolution.width), @floatFromInt(d.renderer.resolution.height) };
+
+    const size = switch (d.renderer.display_mode) {
+        .Center, .Fit => if (d.renderer.display_mode == .Fit or resolution[0] > window_size[0] or resolution[1] > window_size[1])
+            (if (window_size[0] / window_size[1] < aspect_ratio) [2]f32{
+                window_size[0],
+                window_size[0] / aspect_ratio,
+            } else [2]f32{
+                aspect_ratio * window_size[1],
+                window_size[1],
+            })
+        else
+            resolution,
+        .Stretch => window_size,
     };
     const scaler_ctl = d.dc.gpu.read_register(Holly.SCALER_CTL, .SCALER_CTL);
+    // Scale of inner render compared to native DC resolution.
     const scale = [2]f32{
-        scaler_ctl.get_x_scale_factor() * size[0] / 640.0,
-        scaler_ctl.get_y_scale_factor() * size[1] / 480.0,
-    }; // Scale of inner render compared to native DC resolution.
-    const min = [2]f32{
-        @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.width)) / 2.0 - size[0] / 2.0,
-        @as(f32, @floatFromInt(self._gctx.swapchain_descriptor.height)) / 2.0 - size[1] / 2.0,
+        scaler_ctl.get_x_scale_factor() * size[0] / native_resolution[0],
+        scaler_ctl.get_y_scale_factor() * size[1] / native_resolution[1],
+    };
+    const min = switch (d.renderer.display_mode) {
+        .Stretch => [2]f32{ 0, 0 },
+        else => [2]f32{
+            window_size[0] / 2.0 - size[0] / 2.0,
+            window_size[1] / 2.0 - size[1] / 2.0,
+        },
     };
 
     if (self.draw_wireframe) {
