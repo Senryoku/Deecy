@@ -1148,20 +1148,6 @@ pub const Emitter = struct {
         }
     }
 
-    fn reg_dest_imm_src(self: *@This(), reg_opcode: RegOpcode, dst_reg: Register, imm32: u32) !void {
-        // Register is always 32bits
-        try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
-        if (imm32 < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
-            try self.emit(u8, 0x83); // OP r/m32, imm8
-            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
-            try self.emit(u8, @truncate(imm32));
-        } else {
-            try self.emit(u8, 0x81); // OP r/m32, imm32
-            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(reg_opcode), .r_m = encode(dst_reg) });
-            try self.emit(u32, imm32);
-        }
-    }
-
     // FIXME: I don't have a better name.
     pub fn opcode_81_83(self: *@This(), comptime rax_dst_opcode_8: u8, comptime rax_dst_opcode: u8, comptime mr_opcode_8: u8, comptime mr_opcode: u8, comptime rm_opcode_8: u8, comptime rm_opcode: u8, comptime rm_imm_opcode: RegOpcode, dst: Operand, src: Operand) !void {
         switch (dst) {
@@ -1177,7 +1163,7 @@ pub const Emitter = struct {
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
                     },
                     .imm8 => |imm8| {
-                        if (dst_reg == .rax) {
+                        if (dst_reg == .rax) { // OP AL, imm8
                             try self.emit(u8, rax_dst_opcode_8);
                             try self.emit(u8, imm8);
                         } else {
@@ -1187,53 +1173,38 @@ pub const Emitter = struct {
                     else => return error.Unimplemented80,
                 }
             },
-            .reg => |dst_reg| {
+            .reg, .reg64 => |dst_reg| {
+                const b64 = (dst == .reg64);
                 switch (src) {
-                    .reg => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_reg) });
+                    .reg, .reg64 => |src_reg| {
+                        if (dst.tag() != src.tag()) return error.OperandSizeMismatch;
+                        try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, mr_opcode);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
                     },
-                    .imm32 => |imm32| {
-                        if (dst_reg == .rax and imm32 >= 0x80) {
-                            // OP EAX, imm32
+                    .imm8, .imm32 => |imm| {
+                        if (dst_reg == .rax and imm >= 0x80) { // OP EAX, imm32
+                            try self.emit_rex_if_needed(.{ .w = b64 });
                             try self.emit(u8, rax_dst_opcode);
-                            try self.emit(u32, imm32);
-                        } else try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm32);
-                    },
-                    .imm8 => |imm8| {
-                        try reg_dest_imm_src(self, rm_imm_opcode, dst_reg, imm8);
+                            try self.emit(u32, imm);
+                        } else {
+                            try self.emit_rex_if_needed(.{ .w = b64, .b = need_rex(dst_reg) });
+                            if (imm < 0x80) { // We can use the imm8 sign extended version for a shorter encoding.
+                                try self.emit(u8, 0x83); // OP r/m32, imm8
+                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
+                                try self.emit(u8, @truncate(imm));
+                            } else {
+                                try self.emit(u8, 0x81); // OP r/m32, imm32
+                                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
+                                try self.emit(u32, imm);
+                            }
+                        }
                     },
                     .mem => |src_m| {
                         switch (src_m.size) {
                             32, 64 => {
-                                try self.emit_rex_if_needed(.{ .w = src_m.size == 64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
-                                try self.emit(u8, rm_opcode);
-                                try self.emit_mem_addressing(encode(dst_reg), src_m);
-                            },
-                            else => return error.OperandSizeMismatch,
-                        }
-                    },
-                    else => return error.InvalidSource,
-                }
-            },
-            .reg64 => |dst_reg| {
-                switch (src) {
-                    .imm8 => |imm8| {
-                        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
-                        try self.emit(u8, 0x83); // OP r/m32, imm8
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
-                        try self.emit(u8, @truncate(imm8));
-                    },
-                    .reg64 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, mr_opcode);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
-                    },
-                    .mem => |src_m| {
-                        switch (src_m.size) {
-                            64 => {
-                                try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                                if (src_m.size == 64 and !b64) return error.OperandSizeMismatch;
+                                try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
                                 try self.emit(u8, rm_opcode);
                                 try self.emit_mem_addressing(encode(dst_reg), src_m);
                             },
