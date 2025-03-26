@@ -1219,6 +1219,12 @@ pub const Emitter = struct {
             },
             .reg64 => |dst_reg| {
                 switch (src) {
+                    .imm8 => |imm8| {
+                        try self.emit_rex_if_needed(.{ .w = true, .b = need_rex(dst_reg) });
+                        try self.emit(u8, 0x83); // OP r/m32, imm8
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(rm_imm_opcode), .r_m = encode(dst_reg) });
+                        try self.emit(u8, @truncate(imm8));
+                    },
                     .reg64 => |src_reg| {
                         try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
                         try self.emit(u8, mr_opcode);

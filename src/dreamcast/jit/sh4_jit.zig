@@ -636,20 +636,14 @@ pub const SH4JIT = struct {
 
         // We'll be using these callee saved registers, push 'em to the stack.
         try b.push(.{ .reg = SavedRegisters[0] });
-        try b.push(.{ .reg = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes. Used in load_mem().
 
         const optional_saved_register_offset = b.instructions.items.len;
         // We'll turn those into NOP if they're not used.
-        try b.push(.{ .reg = SavedRegisters[2] });
-        try b.push(.{ .reg = SavedRegisters[3] });
-        if (SavedRegisters.len == 5) {
-            // Preserve alignment
-            try b.push(.{ .reg = SavedRegisters[4] });
-            try b.push(.{ .reg = SavedRegisters[4] });
-        } else if (SavedRegisters.len >= 6) {
-            try b.push(.{ .reg = SavedRegisters[4] });
-            try b.push(.{ .reg = SavedRegisters[5] });
+        for (0..ctx.gpr_cache.entries.len) |i| {
+            try b.push(.{ .reg = ctx.gpr_cache.entries[i].host });
         }
+        const stack_alignment_offset = b.instructions.items.len;
+        try b.append(.Nop);
 
         // Save some space for potential callee-saved FP registers
         const optional_saved_fp_register_offset = b.instructions.items.len;
@@ -791,34 +785,23 @@ pub const SH4JIT = struct {
             }
         }
 
-        // Restore callee saved registers.
+        // Ensure stack alignment
         const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (SavedRegisters.len == 5) {
-            if (highest_saved_gpr_used >= 3) {
-                try b.pop(.{ .reg = SavedRegisters[4] });
-                try b.pop(.{ .reg = SavedRegisters[4] });
-            } else {
-                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
-            }
-        } else if (SavedRegisters.len >= 6) {
-            if (highest_saved_gpr_used >= 3) {
-                try b.pop(.{ .reg = SavedRegisters[5] });
-                try b.pop(.{ .reg = SavedRegisters[4] });
-            } else {
-                b.instructions.items[optional_saved_register_offset + 2] = .Nop;
-                b.instructions.items[optional_saved_register_offset + 3] = .Nop;
-            }
-        }
-        if (highest_saved_gpr_used >= 1) {
-            try b.pop(.{ .reg = SavedRegisters[3] });
-            try b.pop(.{ .reg = SavedRegisters[2] });
-        } else {
-            b.instructions.items[optional_saved_register_offset + 0] = .Nop;
-            b.instructions.items[optional_saved_register_offset + 1] = .Nop;
+        if (highest_saved_gpr_used % 2 != 0) {
+            b.instructions.items[stack_alignment_offset] = .{ .Sub = .{ .dst = .{ .reg64 = .rsp }, .src = .{ .imm8 = 8 } } };
+            try b.add(.{ .reg64 = .rsp }, .{ .imm8 = 8 });
         }
 
-        try b.pop(.{ .reg = SavedRegisters[1] });
+        // Restore callee saved registers.
+        for (0..ctx.gpr_cache.entries.len) |i| {
+            const idx = ctx.gpr_cache.entries.len - 1 - i;
+            if (idx <= highest_saved_gpr_used) {
+                try b.pop(.{ .reg = ctx.gpr_cache.entries[idx].host });
+            } else {
+                b.instructions.items[optional_saved_register_offset + idx] = .Nop;
+            }
+        }
+
         try b.pop(.{ .reg = SavedRegisters[0] });
 
         for (b.instructions.items, 0..) |instr, idx|
