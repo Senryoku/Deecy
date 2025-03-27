@@ -295,7 +295,8 @@ fn store_register(b: *IRBlock, arm_reg: u5, value: JIT.Operand) !void {
     try b.mov(guest_register(arm_reg), value);
 }
 
-noinline fn read8(self: *arm7.ARM7, address: u32) u8 {
+// Zero-extended
+noinline fn read8(self: *arm7.ARM7, address: u32) u32 {
     return self.read(u8, address);
 }
 noinline fn read32(self: *arm7.ARM7, address: u32) u32 {
@@ -339,11 +340,13 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
                 try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
                 if (T == u8) {
                     try b.call(read8);
+                    if (dst != ReturnRegister)
+                        try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
                 } else if (T == u32) {
                     try b.call(read32);
+                    if (dst != ReturnRegister)
+                        try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
                 } else @compileError("Unsupported type: " ++ @typeName(T));
-                if (dst != ReturnRegister)
-                    try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
             }
         },
         .reg => |addr_reg| {
@@ -353,11 +356,13 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
             if (T == u8) {
                 try b.call(read8);
+                if (dst != ReturnRegister)
+                    try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
             } else if (T == u32) {
                 try b.call(read32);
+                if (dst != ReturnRegister)
+                    try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
             } else @compileError("Unsupported type: " ++ @typeName(T));
-            if (dst != ReturnRegister)
-                try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
         },
         else => return error.UnsupportedAddrOperand,
     }
