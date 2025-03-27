@@ -2117,9 +2117,9 @@ pub const Renderer = struct {
         const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
         const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
         self.global_clip.x.min = x_clip.min;
-        self.global_clip.x.max = x_clip.max + 1;
+        self.global_clip.x.max = @as(u16, x_clip.max) + 1;
         self.global_clip.y.min = y_clip.min;
-        self.global_clip.y.max = y_clip.max + 1;
+        self.global_clip.y.max = @as(u16, y_clip.max) + 1;
 
         try self.update_background(gpu);
         try self.update_palette(gpu);
