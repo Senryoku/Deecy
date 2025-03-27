@@ -827,7 +827,8 @@ pub const SH4 = struct {
                     tcnt.* -= @intCast(diff);
                 } else {
                     const reset_constant = self.read_p4_register(u32, TimerRegisters[channel].constant);
-                    const mod = (@as(u32, @truncate(diff)) % (reset_constant + 1));
+                    var mod: u32 = @truncate(diff);
+                    if (reset_constant < 0xFFFF_FFFF) mod %= reset_constant + 1;
                     if (tcnt.* >= mod) {
                         tcnt.* -= mod;
                     } else {
