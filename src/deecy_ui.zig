@@ -41,6 +41,21 @@ const GameFile = struct {
     }
 };
 
+// Stupid way of waiting for any key press
+var key_pressed: ?zglfw.Key = null;
+fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.C) void {
+    if (action == .press)
+        key_pressed = key;
+}
+fn wait_for_key(d: *Deecy) zglfw.Key {
+    const prev_callback = d.window.setKeyCallback(wait_for_key_callback);
+    while (key_pressed == null) zglfw.waitEvents();
+    const value = key_pressed;
+    key_pressed = null;
+    _ = d.window.setKeyCallback(prev_callback);
+    return value.?;
+}
+
 last_error: []const u8 = "",
 
 vmu_displays: [4][2]?struct {
@@ -532,7 +547,7 @@ pub fn draw(self: *@This()) !void {
                             "None")
                     else
                         "None";
-                    if (zgui.beginCombo("Device" ++ number, .{ .preview_value = name })) {
+                    if (zgui.beginCombo("Device##" ++ number, .{ .preview_value = name })) {
                         for (available_controllers.items, 0..) |item, index| {
                             if (available_controllers.items[index].id) |id| {
                                 if (zgui.selectable(item.name, .{ .selected = d.controllers[i] != null and d.controllers[i].?.id == id }))
@@ -571,14 +586,37 @@ pub fn draw(self: *@This()) !void {
 
                                 const capabilities: MapleModule.InputCapabilities = @bitCast(MapleModule.Controller.Subcapabilities[0]);
                                 var buf: [64]u8 = undefined;
-                                inline for (0..6) |axis| {
-                                    if (@field(capabilities, ([_][]const u8{ "analogRtrigger", "analogLtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[axis]) == 0) continue;
+                                const width = (zgui.getContentRegionAvail()[0] - 3 * zgui.getStyle().window_padding[0]) / 2.0;
+                                inline for ([_]u8{ 1, 0, 2, 3, 4, 5 }, 0..) |axis, idx| {
+                                    if (@field(capabilities, ([_][]const u8{ "analogLtrigger", "analogRtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) == 0) continue;
                                     const value = controller.axis[axis];
-                                    const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "R", "L", "H", "V", "H2", "V2" }[axis], value });
+                                    const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "L", "R", "H", "V", "H2", "V2" }[idx], value });
                                     _ = zgui.progressBar(.{
                                         .fraction = @as(f32, @floatFromInt(value)) / 255.0,
                                         .overlay = overlay,
+                                        .w = width,
                                     });
+                                    if (idx % 2 == 0) zgui.sameLine(.{});
+                                }
+
+                                if (zgui.collapsingHeader("Keyboard Bindings", .{})) {
+                                    zgui.indent(.{});
+                                    defer zgui.unindent(.{});
+                                    inline for (std.meta.fields(Deecy.KeyboardBindings)) |field| {
+                                        if (zgui.button("Edit##" ++ field.name, .{})) {
+                                            @field(d.config.keyboard_bindings[i], field.name) = wait_for_key(d);
+                                        }
+                                        zgui.sameLine(.{});
+                                        if (zgui.button("Remove##" ++ field.name, .{})) {
+                                            @field(d.config.keyboard_bindings[i], field.name) = null;
+                                        }
+                                        zgui.sameLine(.{});
+                                        if (@field(d.config.keyboard_bindings[i], field.name)) |key| {
+                                            zgui.text("{s}: {s}", .{ field.name, @tagName(key) });
+                                        } else {
+                                            zgui.text("{s}: None", .{field.name});
+                                        }
+                                    }
                                 }
                             },
                             else => {},

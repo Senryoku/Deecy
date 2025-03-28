@@ -138,6 +138,46 @@ fn file_exists(path: []const u8) !bool {
     return true;
 }
 
+pub const KeyboardBindings = struct {
+    a: ?zglfw.Key = null,
+    b: ?zglfw.Key = null,
+    x: ?zglfw.Key = null,
+    y: ?zglfw.Key = null,
+    up: ?zglfw.Key = null,
+    down: ?zglfw.Key = null,
+    left: ?zglfw.Key = null,
+    right: ?zglfw.Key = null,
+    start: ?zglfw.Key = null,
+    left_trigger: ?zglfw.Key = null,
+    right_trigger: ?zglfw.Key = null,
+    left_stick_up: ?zglfw.Key = null,
+    left_stick_down: ?zglfw.Key = null,
+    left_stick_left: ?zglfw.Key = null,
+    left_stick_right: ?zglfw.Key = null,
+    right_stick_up: ?zglfw.Key = null,
+    right_stick_down: ?zglfw.Key = null,
+    right_stick_left: ?zglfw.Key = null,
+    right_stick_right: ?zglfw.Key = null,
+
+    const Default: KeyboardBindings = .{
+        .a = .q,
+        .b = .w,
+        .x = .a,
+        .y = .s,
+        .up = .up,
+        .down = .down,
+        .left = .left,
+        .right = .right,
+        .start = .enter,
+        .left_trigger = .z,
+        .right_trigger = .x,
+        .left_stick_up = .kp_8,
+        .left_stick_down = .kp_5,
+        .left_stick_left = .kp_4,
+        .left_stick_right = .kp_6,
+    };
+};
+
 const ConfigurationJSON = struct {
     per_game_vmu: ?bool = true,
     display_vmus: ?bool = true,
@@ -150,6 +190,8 @@ const ConfigurationJSON = struct {
 
     internal_resolution_factor: ?u32 = 1,
     display_mode: ?Renderer.DisplayMode = .Center,
+
+    keyboard_bindings: ?[4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
 
     audio_volume: ?f32 = 0.3,
     dsp_emulation: ?DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -167,6 +209,8 @@ const Configuration = struct {
 
     internal_resolution_factor: u32 = 2,
     display_mode: Renderer.DisplayMode = .Center,
+
+    keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -253,6 +297,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
 
             conf.internal_resolution_factor = json.value.internal_resolution_factor orelse 2;
             conf.display_mode = json.value.display_mode orelse .Center;
+
+            conf.keyboard_bindings = json.value.keyboard_bindings orelse .{ .Default, .{}, .{}, .{} };
 
             conf.audio_volume = json.value.audio_volume orelse 0.3;
             conf.dsp_emulation = json.value.dsp_emulation orelse .JIT;
@@ -616,37 +662,52 @@ pub fn poll_controllers(self: *@This()) void {
                     c.axis[4] = 128;
                     c.axis[5] = 128;
 
-                    // NOTE: Hackish keyboard input for controller 1.
                     var any_keyboard_key_pressed = false;
-                    if (controller_idx == 0) {
-                        const keybinds: [9]struct { zglfw.Key, DreamcastModule.Maple.ControllerButtons } = .{
-                            .{ .enter, .{ .start = 0 } },
-                            .{ .up, .{ .up = 0 } },
-                            .{ .down, .{ .down = 0 } },
-                            .{ .left, .{ .left = 0 } },
-                            .{ .right, .{ .right = 0 } },
-                            .{ .q, .{ .a = 0 } },
-                            .{ .w, .{ .b = 0 } },
-                            .{ .a, .{ .x = 0 } },
-                            .{ .s, .{ .y = 0 } },
-                        };
-                        for (keybinds) |keybind| {
-                            const key_status = self.window.getKey(keybind[0]);
+                    const keyboard_bindings = self.config.keyboard_bindings[controller_idx];
+                    inline for ([_][]const u8{ "start", "up", "down", "left", "right", "a", "b", "x", "y" }) |button_name| {
+                        if (@field(keyboard_bindings, button_name)) |key| {
+                            const key_status = self.window.getKey(key);
+                            var button: DreamcastModule.Maple.ControllerButtons = .{};
+                            @field(button, button_name) = 0;
                             if (key_status == .press) {
                                 any_keyboard_key_pressed = true;
-                                c.press_buttons(keybind[1]);
+                                c.press_buttons(button);
                             } else if (key_status == .release) {
-                                c.release_buttons(keybind[1]);
+                                c.release_buttons(button);
                             }
                         }
-                        c.axis[0] = if (self.window.getKey(.x) == .press) 255 else 0;
-                        c.axis[1] = if (self.window.getKey(.z) == .press) 255 else 0;
-                        c.axis[2] = if (self.window.getKey(.kp_4) == .press) 0 else if (self.window.getKey(.kp_6) == .press) 255 else 128;
-                        c.axis[3] = if (self.window.getKey(.kp_8) == .press) 0 else if (self.window.getKey(.kp_5) == .press) 255 else 128;
-
-                        if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128)
-                            any_keyboard_key_pressed = true;
                     }
+                    if (keyboard_bindings.right_trigger) |key|
+                        c.axis[0] = if (self.window.getKey(key) == .press) 255 else 0;
+                    if (keyboard_bindings.left_trigger) |key|
+                        c.axis[1] = if (self.window.getKey(key) == .press) 255 else 0;
+                    if (keyboard_bindings.left_stick_left) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[2] = 0;
+                    }
+                    if (keyboard_bindings.left_stick_right) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[2] = 255;
+                    }
+                    if (keyboard_bindings.left_stick_up) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[3] = 0;
+                    }
+                    if (keyboard_bindings.left_stick_down) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[3] = 255;
+                    }
+                    if (keyboard_bindings.right_stick_left) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[4] = 0;
+                    }
+                    if (keyboard_bindings.right_stick_right) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[4] = 255;
+                    }
+                    if (keyboard_bindings.right_stick_up) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[5] = 0;
+                    }
+                    if (keyboard_bindings.right_stick_down) |key| {
+                        if (self.window.getKey(key) == .press) c.axis[5] = 255;
+                    }
+
+                    if (c.axis[0] != 0 or c.axis[1] != 0 or c.axis[2] != 128 or c.axis[3] != 128 or c.axis[4] != 128 or c.axis[5] != 128)
+                        any_keyboard_key_pressed = true;
 
                     if (!any_keyboard_key_pressed) {
                         if (self.controllers[controller_idx]) |host_controller| {
