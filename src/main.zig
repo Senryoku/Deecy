@@ -93,6 +93,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },
+        .{ .scope = .modem, .level = .debug },
     },
 };
 

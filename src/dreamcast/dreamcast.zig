@@ -12,6 +12,7 @@ pub const SH4JITModule = @import("jit/sh4_jit.zig");
 pub const HollyModule = @import("holly.zig");
 pub const AICAModule = @import("aica.zig");
 pub const Maple = @import("maple.zig");
+pub const Modem = @import("modem.zig");
 pub const GDROM = @import("gdrom.zig");
 pub const GDROM_HLE = @import("gdrom_hle.zig");
 
@@ -120,6 +121,7 @@ pub const Dreamcast = struct {
     maple: MapleHost,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
+    modem: Modem,
 
     sh4_jit: SH4JIT,
 
@@ -149,6 +151,7 @@ pub const Dreamcast = struct {
             .maple = try .init(allocator),
             .sh4_jit = try .init(allocator),
             .flash = try .init(allocator),
+            .modem = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_events = .init(allocator, {}),
             ._allocator = allocator,
@@ -213,6 +216,7 @@ pub const Dreamcast = struct {
         self.gpu.deinit();
         self.cpu.deinit();
         self.flash.deinit();
+        self.modem.deinit(self._allocator);
 
         if (!SH4JITModule.FastMem) {
             self._allocator.free(self.aram);
@@ -230,6 +234,7 @@ pub const Dreamcast = struct {
         self.gdrom_hle.reset();
         try self.aica.reset();
         self.flash.reset();
+        self.modem.reset();
         while (self.scheduled_events.removeOrNull() != null) {}
 
         try self.sh4_jit.reset();
