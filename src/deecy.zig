@@ -361,6 +361,8 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
                 .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
                 .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+                .fn_getWaylandDisplay = @ptrCast(&zglfw.getWaylandDisplay),
+                .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
                 .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
                 .present_mode = config.present_mode,
