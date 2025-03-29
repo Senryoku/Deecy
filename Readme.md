@@ -22,8 +22,7 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 ### Keybindings
 
 Deecy should detect, map and use controllers automatically. Host controllers can be manually assigned to guest controller ports in the Settings.
-
-Keyboard bindings are fixed for controller 1 and intended for testing only:
+Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | DC Controller | Host Keyboard (AZERTY) |
 | ------------- | ------------- |
 | A, B, X, Y    | A, Z, Q, S |
