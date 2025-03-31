@@ -75,6 +75,7 @@ const ScheduledEvent = struct {
         HBlankIn,
         VBlankIn,
         VBlankOut,
+        Modem: Modem.Event,
     };
     trigger_cycle: u64,
     interrupt: ?union(enum) {
@@ -121,7 +122,7 @@ pub const Dreamcast = struct {
     maple: MapleHost,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
-    modem: Modem,
+    modem: Modem = undefined, // TODO: Serialize
 
     sh4_jit: SH4JIT,
 
@@ -151,7 +152,6 @@ pub const Dreamcast = struct {
             .maple = try .init(allocator),
             .sh4_jit = try .init(allocator),
             .flash = try .init(allocator),
-            .modem = try .init(allocator, null), // TODO: IRQ Callback
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_events = .init(allocator, {}),
             ._allocator = allocator,
@@ -172,6 +172,7 @@ pub const Dreamcast = struct {
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
+        dc.modem = try .init(allocator, dc);
         dc.aica.setup_arm();
 
         errdefer dc.deinit();
@@ -588,6 +589,7 @@ pub const Dreamcast = struct {
                     .HBlankIn => self.gpu.on_hblank_in(),
                     .VBlankIn => self.gpu.on_vblank_in(),
                     .VBlankOut => self.gpu.on_vblank_out(),
+                    .Modem => |e| self.modem.on_event(e),
                 }
                 _ = self.scheduled_events.remove();
             } else break;
