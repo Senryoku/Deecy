@@ -74,6 +74,7 @@ pub const ScheduledEvent = struct {
         HBlankIn,
         VBlankIn,
         VBlankOut,
+        Modem: Modem.Event,
 
         pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             switch (self) {
@@ -138,7 +139,7 @@ pub const Dreamcast = struct {
     maple: MapleHost = .init,
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
-    modem: Modem,
+    modem: Modem = undefined, // TODO: Serialize
 
     sh4_jit: SH4JIT = undefined,
 
@@ -198,6 +199,7 @@ pub const Dreamcast = struct {
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
+        dc.modem = try .init(allocator, dc);
         dc.aica.setup_arm();
 
         errdefer dc.destroy();
@@ -993,6 +995,7 @@ pub const Dreamcast = struct {
                     .HBlankIn => self.gpu.on_hblank_in(),
                     .VBlankIn => self.gpu.on_vblank_in(),
                     .VBlankOut => self.gpu.on_vblank_out(),
+                    .Modem => |e| self.modem.on_event(e),
                 }
                 _ = self.scheduled_events.pop();
             } else break;
