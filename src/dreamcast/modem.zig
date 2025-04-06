@@ -388,10 +388,16 @@ const Registers = packed struct(u256) {
     rdbie: u1 = 0,
     /// Transmit Data Buffer Empty. When set, status bit TDBE signifies that the MDP has
     /// read TBUFFER (10h) and the host can write new data into TBUFFER
-    tdbe: u1 = undefined,
+    tdbe: u1 = 1,
     _12: u1 = 0,
+    /// Transmit Data Buffer Interrupt Enable. When control bit TDBIE is set (interrupt
+    /// enabled), the MDP will assert IRQ and set the TDBIA bit when TDBE is set by the
+    /// MDP. When TDBIE is reset (interrupt disabled), TDBE has no effect on IRQ or TDBIA.
+    /// (See TDBE and TDBIA.)
     tdbie: u1 = 0,
+    /// Receive Data Buffer Interrupt Active.
     rdbia: u1 = undefined,
+    /// Transmit Data Buffer Interrupt Active
     tdbia: u1 = undefined,
 
     // R1F
@@ -451,6 +457,7 @@ pub fn reset(self: *@This()) void {
     self.modemID0 = .Reserved;
     self.modemID1 = .{};
     self.registers = .{};
+    @memset(self.dsp_ram, 0);
 }
 
 fn soft_reset(self: *@This()) void {
@@ -534,6 +541,11 @@ fn dsp_self_test_end(self: *@This()) void {
     self.registers = .{};
     self.registers.newc = 0;
     self.state = .Normal;
+
+    // FIXME: KallistiOS waits for that.
+    self.registers.tonea = 1;
+    self.registers.toneb = 1;
+    self.registers.tonec = 1;
 }
 
 fn memory_address(self: *@This()) u16 {
@@ -575,10 +587,27 @@ pub fn read(self: *@This(), comptime T: type, addr: u32) T {
     return 0;
 }
 
+fn read_tbuffer(self: *@This()) void {
+    self.registers.tdbe = 1;
+    if (self.registers.tdbie == 1) {
+        self.registers.tdbia = 1;
+        self.assert_irq();
+    }
+}
+
 fn write_register(self: *@This(), addr: u32, value: u8) void {
     std.debug.assert(addr < 0x20);
     log.debug("  Writing register {X} = {X}", .{ addr, value });
     switch (addr) {
+        0x10 => {
+            // TBUFFER
+            self.reg()[0x10] = value;
+            log.debug(" Write to TBUFFER: {X} ({c})", .{ value, value });
+            self.registers.tdbe = 0;
+            // Delay?
+            self.read_tbuffer();
+            return;
+        },
         0x1D => {
             // DSP RAM Write Procedure
             //   1. Set MEMW to inform the DSP that a RAM write will occur when MEACC is set.
@@ -593,8 +622,15 @@ fn write_register(self: *@This(), addr: u32, value: u8) void {
             self.reg()[addr] = value;
             if (self.registers.meacc == 1) {
                 if (self.registers.memw) {
-                    @as(*u16, @alignCast(@ptrCast(&self.dsp_ram[self.memory_address()]))).* = self.memory_access_data();
+                    log.debug("Write to DSP RAM: {X} = {X}", .{ self.memory_address(), self.memory_access_data() });
+                    if (self.memory_address() & 1 == 0) {
+                        @as(*u16, @alignCast(@ptrCast(&self.dsp_ram[self.memory_address()]))).* = self.memory_access_data();
+                    } else {
+                        self.dsp_ram[self.memory_address()] = @truncate(self.memory_access_data());
+                        self.dsp_ram[self.memory_address() + 1] = @truncate(self.memory_access_data() >> 8);
+                    }
                 } else {
+                    log.debug("Read from DSP RAM: {X} = {X}", .{ self.memory_address(), self.memory_access_data() });
                     // DSP RAM Read Procedure
                     //   1. Reset MEMW to inform the DSP that a RAM read will occur when MEACC is set.
                     //   2. Load the RAM address code into the MEADDH and MEADDL registers.
