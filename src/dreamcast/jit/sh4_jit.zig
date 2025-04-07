@@ -361,7 +361,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = cpu.translate_intruction_address(cpu.pc);
+        const physical_pc = cpu.translate_instruction_address(cpu.pc);
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
             std.debug.panic("Invalid physical PC: {X}", .{physical_pc});
@@ -582,7 +582,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
-            const physical_pc = cpu.translate_intruction_address(cpu.pc);
+            const physical_pc = cpu.translate_instruction_address(cpu.pc);
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.

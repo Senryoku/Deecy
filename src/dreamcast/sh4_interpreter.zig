@@ -64,7 +64,7 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
 
 fn fetch_instruction(self: *SH4, virtual_addr: u32) u16 {
     return if (comptime !builtin.is_test) oc: {
-        const physical_addr = self.translate_intruction_address(virtual_addr);
+        const physical_addr = self.translate_instruction_address(virtual_addr);
         if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
             std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
         // Guiding the compiler a bit. Yes, that helps a lot :)

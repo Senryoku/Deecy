@@ -1116,7 +1116,7 @@ pub const SH4 = struct {
     }
 
     /// Might cause an exception and jump to its handler.
-    pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
+    pub fn translate_instruction_address(self: *@This(), virtual_addr: u32) u32 {
         if (!FullMMUSupport or self._mmu_state != .Full) return virtual_addr & 0x1FFF_FFFF;
 
         if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
