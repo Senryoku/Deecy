@@ -4,7 +4,7 @@ const sh4_instructions = sh4.instructions;
 const Instr = sh4.Instr;
 const bit_manip = @import("bit_manip.zig");
 
-var DisassemblyCache: [0x10000]?[]const u8 = .{null} ** 0x10000;
+var DisassemblyCache: [0x10000]?[]const u8 = @splat(null);
 
 pub fn disassemble(opcode: Instr, allocator: std.mem.Allocator) []const u8 {
     if (DisassemblyCache[opcode.value]) |r|

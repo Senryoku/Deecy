@@ -146,8 +146,8 @@ const DeviceInfoPayload = extern struct {
     SubFunctionCodesMasks: [3]u32 align(1),
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
-    DescriptionString: [31]u8 align(1) = .{0} ** 31,
-    ProducerString: [60]u8 align(1) = .{0} ** 60,
+    DescriptionString: [31]u8 align(1) = @splat(0),
+    ProducerString: [60]u8 align(1) = @splat(0),
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
     // Possible extension
@@ -221,7 +221,7 @@ pub const Controller = struct {
     };
 
     buttons: ControllerButtons = .{},
-    axis: [6]u8 = .{0x80} ** 6,
+    axis: [6]u8 = @splat(0x80),
     pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) & @as(u16, @bitCast(buttons)));
     }
@@ -456,7 +456,7 @@ pub const VMU = struct {
             maple_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
             return;
         };
-        var buf: [256]u8 = .{0} ** 256;
+        var buf: [256]u8 = @splat(0);
         const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
             maple_log.err("Failed to format backup filename: {any}", .{err});
             return;
@@ -606,7 +606,7 @@ const Peripheral = union(enum) {
 
 const MaplePort = struct {
     main: ?Peripheral = null,
-    subperipherals: [5]?Peripheral = .{null} ** 5,
+    subperipherals: [5]?Peripheral = @splat(null),
 
     /// Returns the number of 32bytes words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {

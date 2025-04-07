@@ -251,7 +251,7 @@ _dc_thread: ?std.Thread = null, // Used for unlimited frame rate, i.e. when real
 enable_jit: bool = true,
 breakpoints: std.ArrayList(u32),
 
-controllers: [4]?struct { id: zglfw.Joystick, deadzone: f32 = 0.1 } = .{null} ** 4,
+controllers: [4]?struct { id: zglfw.Joystick, deadzone: f32 = 0.1 } = @splat(null),
 
 display_ui: bool = true,
 ui: *UI = undefined,
@@ -1116,7 +1116,7 @@ pub const SaveStateHeader = extern struct {
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,
-    _reserved: [2]u8 = .{0} ** 2, // Could have reserved more here, for a disc ID for example, but I don't care about backward compatibility for now.
+    _reserved: [2]u8 = @splat(0), // Could have reserved more here, for a disc ID for example, but I don't care about backward compatibility for now.
     uncompressed_size: u32, // Allocation optimisation and easy integrity check.
     compressed_size: u32, // Same.
 

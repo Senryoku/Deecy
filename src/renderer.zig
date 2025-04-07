@@ -477,7 +477,7 @@ const RenderPass = struct {
 };
 
 fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
-    var r: [4]Vertex = .{Vertex.undef()} ** 4;
+    var r: [4]Vertex = @splat(Vertex.undef());
 
     // B --- C
     // |  \  |
@@ -669,7 +669,7 @@ pub const Renderer = struct {
     _ta_lists_mutex: std.Thread.Mutex = .{},
 
     // That's too much for the higher texture sizes, but that probably doesn't matter.
-    texture_metadata: [8][512]TextureMetadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8,
+    texture_metadata: [8][512]TextureMetadata = @splat(@splat(.{})),
 
     framebuffer_resize_bind_group: zgpu.BindGroupHandle,
 
@@ -758,7 +758,7 @@ pub const Renderer = struct {
     fog_col_pal: fRGBA = .{},
     fog_col_vert: fRGBA = .{},
     fog_density: f32 = 0,
-    fog_lut: [0x80]u32 = [_]u32{0} ** 0x80,
+    fog_lut: [0x80]u32 = @splat(0),
     guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
 
@@ -1505,7 +1505,7 @@ pub const Renderer = struct {
 
     pub fn reset(self: *@This()) void {
         self.render_start = false;
-        self.texture_metadata = [_][512]TextureMetadata{[_]TextureMetadata{.{}} ** 512} ** 8;
+        self.texture_metadata = @splat(@splat(.{}));
 
         for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
         for (self.ta_lists.items) |*list| list.clearRetainingCapacity();

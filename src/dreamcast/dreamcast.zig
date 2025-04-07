@@ -140,7 +140,7 @@ pub const Dreamcast = struct {
 
     _allocator: std.mem.Allocator,
 
-    _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
+    _dummy: [4]u8 align(32) = @splat(0), // FIXME: Dummy space for non-implemented features
 
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);

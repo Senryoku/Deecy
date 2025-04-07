@@ -1435,7 +1435,7 @@ pub const Holly = struct {
     _dc: *Dreamcast,
 
     _ta_current_pass: u8 = 0,
-    _ta_command_buffer: [16]u32 align(32) = .{0} ** 16,
+    _ta_command_buffer: [16]u32 align(32) = @splat(0),
     _ta_command_buffer_index: u32 = 0,
     _ta_list_type: ?ListType = null,
     _ta_current_polygon: ?Polygon = null,

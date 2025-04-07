@@ -375,7 +375,7 @@ fn decode_map_v5(self: *@This()) !void {
         }
     }
 
-    var bit_histogram: [33]u32 = .{0} ** 33;
+    var bit_histogram: [33]u32 = @splat(0);
     for (&nodes) |*node| {
         if (node.num_bits > MaxBits)
             return error.MapHuffmanError;

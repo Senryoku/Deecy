@@ -199,7 +199,7 @@ pub const PartitionHeader = extern struct {
     magic: [16]u8 = PartitionHeaderMagic,
     partition_number: u8,
     version_number: u8,
-    reserved: [46]u8 = .{0xFF} ** 46,
+    reserved: [46]u8 = @splat(0xFF),
 };
 
 pub const Partition = enum(u8) {
@@ -231,7 +231,7 @@ pub const SystemConfigPayload = extern struct {
     sound: enum(u8) { Stereo = 0x00, Mono = 0x01 } align(1) = .Stereo,
     auto_start: enum(u8) { On = 0x00, Off = 0x01 } align(1) = .On,
     unknown_6: u32 align(1) = 0x61620A7D,
-    unknown_7: [3 * 16]u8 align(1) = .{0xFF} ** (3 * 16),
+    unknown_7: [3 * 16]u8 align(1) = @splat(0xFF),
 };
 
 pub fn get_system_block(self: *@This(), index: usize) *UserBlock(SystemConfigPayload) {

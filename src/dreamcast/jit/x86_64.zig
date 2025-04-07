@@ -543,7 +543,7 @@ const PatchableJump = struct {
 };
 
 const PatchableJumpList = struct {
-    items: [128]PatchableJump = .{PatchableJump{ .size = .r32 }} ** 128,
+    items: [128]PatchableJump = @splat(.{ .size = .r32 }),
 
     pub fn add(self: *@This(), patchable_jump: PatchableJump) !void {
         std.debug.assert(!patchable_jump.invalid());

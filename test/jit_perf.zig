@@ -18,7 +18,7 @@ pub const SaveStateHeader = extern struct {
 
     signature: [Signature.len]u8 = Signature,
     version: u16 = Version,
-    _reserved: [2]u8 = .{0} ** 2,
+    _reserved: [2]u8 = @splat(0),
     uncompressed_size: u32,
     compressed_size: u32,
 

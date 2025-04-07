@@ -537,9 +537,9 @@ pub const AICA = struct {
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.
 
-    channel_states: [64]AICAChannelState = .{.{}} ** 64,
+    channel_states: [64]AICAChannelState = @splat(.{}),
 
-    sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
+    sample_buffer: [2048]i32 = @splat(0),
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
 
@@ -549,7 +549,7 @@ pub const AICA = struct {
 
     _arm_cycles_counter: i32 = 0,
     _timer_cycles_counter: u32 = 0,
-    _timer_counters: [3]u32 = .{0} ** 3,
+    _timer_counters: [3]u32 = @splat(0),
 
     _samples_counter: u32 = 0,
 
@@ -599,7 +599,7 @@ pub const AICA = struct {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
-        self.channel_states = .{.{}} ** 64;
+        self.channel_states = @splat(.{});
 
         self.sample_read_offset = 0;
         self.sample_write_offset = 0;
@@ -608,7 +608,7 @@ pub const AICA = struct {
 
         self._arm_cycles_counter = 0;
         self._timer_cycles_counter = 0;
-        self._timer_counters = .{0} ** 3;
+        self._timer_counters = @splat(0);
 
         self._samples_counter = 0;
 

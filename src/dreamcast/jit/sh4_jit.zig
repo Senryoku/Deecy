@@ -303,7 +303,7 @@ pub const JITContext = struct {
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
     may_have_pending_cycles: bool = false,
-    jumps_to_end: [128]?JIT.PatchableJump = .{null} ** 128,
+    jumps_to_end: [128]?JIT.PatchableJump = @splat(null),
 
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.

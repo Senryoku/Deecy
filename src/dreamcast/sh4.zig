@@ -168,7 +168,7 @@ comptime {
 // DCA3 Hack
 const OperandCacheState = struct {
     addr: [256]u32 = undefined, // Tag (19bits)
-    dirty: [256]bool = .{false} ** 256, // U bit
+    dirty: [256]bool = @splat(false), // U bit
     // V bit not implemented
 
     pub fn serialize(self: *const @This(), writer: anytype) !usize {
@@ -225,14 +225,14 @@ pub const SH4 = struct {
     interrupt_requests: u64 = 0,
     // NOTE: These are not serialized as they can easily be computed from P4 registers IPRA/B/C. See compute_interrupt_priorities.
     _sorted_interrupts: [41]Interrupt = Interrupts.DefaultInterruptPriorities, // Interrupts ordered by their current priority.
-    _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
+    _interrupts_indices: [41]u8 = @splat(0), // Inverse mapping of _sorted_interrupts
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
     /// Is the MMU currently enabled?
     ///   Limited: Translation is only needed for store queue operation (pref instruction).
     _mmu_state: enum { Disabled, Limited, Full } = .Disabled,
     _fast_utlb_lookup: FastLookupType,
-    _last_timer_update: [3]u64 = .{0} ** 3,
+    _last_timer_update: [3]u64 = @splat(0),
 
     execution_state: ExecutionState = .Running,
 
@@ -296,8 +296,8 @@ pub const SH4 = struct {
 
     pub fn reset(self: *@This()) void {
         // NOTE: These should be undefined, but it prevents the bios to run in debug mode, at least since the update to zig 0.13.
-        self.r = .{0} ** 16;
-        self.r_bank = .{0} ** 8;
+        self.r = @splat(0);
+        self.r_bank = @splat(0);
 
         self.R(0xF).* = 0x8C00F400;
         self.set_sr(.{});
@@ -363,7 +363,7 @@ pub const SH4 = struct {
             self.p4_register(u32, timer.counter).* = 0xFFFFFFFF;
             self.p4_register(u16, timer.control).* = 0x0000;
         }
-        self._last_timer_update = .{0} ** 3;
+        self._last_timer_update = @splat(0);
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;

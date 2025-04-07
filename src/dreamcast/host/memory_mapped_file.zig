@@ -26,7 +26,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         self.file = std.os.windows.INVALID_HANDLE_VALUE;
         self.mapping_handle = std.os.windows.INVALID_HANDLE_VALUE;
 
-        var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = .{0} ** (std.fs.max_path_bytes + 1);
+        var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = @splat(0);
         const track_file_abs_path = try std.fs.cwd().realpath(filepath, &track_file_abs_path_buffer);
         const file_path_w = try std.os.windows.sliceToPrefixedFileW(null, track_file_abs_path);
 

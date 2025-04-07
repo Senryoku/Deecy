@@ -62,7 +62,7 @@ vmu_displays: [4][2]?struct {
     texture: zgpu.TextureHandle,
     view: zgpu.TextureViewHandle,
     dirty: bool = false,
-    data: [48 * 32 / 8]u8 = .{255} ** (48 * 32 / 8),
+    data: [48 * 32 / 8]u8 = @splat(255),
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 display_library: bool = false,

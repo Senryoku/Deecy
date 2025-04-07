@@ -630,7 +630,7 @@ pub fn generate_sample(self: *@This()) void {
     // 12-bit whole address
     var ADRS_REG: u12 = 0;
 
-    var temp_word: [4]u16 = .{0} ** 4;
+    var temp_word: [4]u16 = @splat(0);
 
     self.clear_efreg();
 

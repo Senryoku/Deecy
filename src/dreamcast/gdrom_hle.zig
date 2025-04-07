@@ -29,8 +29,8 @@ pub const GDROMCommand = enum(u32) {
 };
 
 command: GDROMCommand = @enumFromInt(0),
-params: [4]u32 = .{0} ** 4,
-result: [4]u32 = .{0} ** 4,
+params: [4]u32 = @splat(0),
+result: [4]u32 = @splat(0),
 
 _next_command_id: u32 = 1,
 _current_command_id: u32 = 0,
