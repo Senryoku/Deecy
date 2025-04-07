@@ -269,7 +269,7 @@ pub const Opcodes = [_]OpcodeDescription{
     .{ .code = 0b0100000000010010, .mask = 0b0000111100000000, .fn_ = interpreter.stcl_Reg_atDecRn("macl"), .name = "sts.l MACL,@-Rn", .jit_emit_fn = sh4_jit.stcl_Reg_atDecRn("macl"), .access = .{ .r = .Rn, .w = .Rn } },
     .{ .code = 0b0100000000100010, .mask = 0b0000111100000000, .fn_ = interpreter.stcl_Reg_atDecRn("pr"), .name = "sts.l PR,@-Rn", .jit_emit_fn = sh4_jit.stcl_Reg_atDecRn("pr"), .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .Rn, .w = .Rn } },
     .{ .code = 0b0100000010000011, .mask = 0b0000111101110000, .fn_ = interpreter.stcl_Rm_BANK_atDecRn, .name = "stc.l Rm_BANK,@-Rn", .jit_emit_fn = sh4_jit.stcl_Rm_BANK_atDecRn, .privileged = true, .issue_cycles = 2, .latency_cycles = 2, .access = .{ .r = .Rn, .w = .Rn } },
-    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = interpreter.trapa_imm, .name = "trapa #imm", .issue_cycles = 7, .latency_cycles = 7, .access = .{ .r = .{}, .w = .{} } },
+    .{ .code = 0b1100001100000000, .mask = 0b0000000011111111, .fn_ = interpreter.trapa_imm, .name = "trapa #imm", .is_branch = true, .issue_cycles = 7, .latency_cycles = 7, .access = .{ .r = .{}, .w = .{} } },
 
     .{ .code = 0b1111000000001100, .mask = 0b0000111111110000, .fn_ = interpreter.fmov_FRm_FRn, .name = "fmov FRm,FRn", .latency_cycles = 0, .jit_emit_fn = sh4_jit.fmov_FRm_FRn, .access = .{ .r = .{}, .w = .{} } },
     .{ .code = 0b1111000000001000, .mask = 0b0000111111110000, .fn_ = interpreter.fmovs_atRm_FRn, .name = "fmov.s @Rm,FRn", .latency_cycles = 2, .jit_emit_fn = sh4_jit.fmovs_atRm_FRn, .access = .{ .r = .Rm, .w = .{} } },

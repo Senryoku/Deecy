@@ -20,7 +20,7 @@ pub const Exception = enum {
     DataTLBProtectionViolationWrite,
     FPU,
     InitialPageWrite,
-    UnconditionalTraprap,
+    UnconditionalTrap,
     UserBreakAfterInstructionExecution,
     NonmaskableInterrupt,
 
@@ -47,7 +47,7 @@ pub const Exception = enum {
             .DataTLBProtectionViolationWrite => 0x0C0,
             .FPU => 0x120,
             .InitialPageWrite => 0x080,
-            .UnconditionalTraprap => 0x160,
+            .UnconditionalTrap => 0x160,
             .UserBreakAfterInstructionExecution => 0x1E0,
             .NonmaskableInterrupt => 0x1C0,
         };

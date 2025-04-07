@@ -1598,9 +1598,17 @@ pub fn stcl_Rm_BANK_atDecRn(cpu: *SH4, opcode: Instr) !void {
 
 pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
     sh4_log.debug("TRAPA #0x{X}\n", .{opcode.nd8.d});
+
     // Hijack this instruction for debugging purposes.
-    if (SH4.EnableTRAPACallback) if (cpu.on_trapa) |c|
-        c.callback(c.userdata);
+    if (SH4.EnableTRAPACallback) {
+        if (cpu.on_trapa) |c|
+            c.callback(c.userdata);
+    } else {
+        cpu.p4_register(u32, .TRA).* = @as(u32, opcode.nd8.d) << 2;
+        // Unconditional: Do it right now instead of returning an error.
+        cpu.jump_to_exception(.UnconditionalTrap);
+        cpu.pc -%= 2; // Compensate for PC advancement in fetch_and_execute.
+    }
 }
 
 pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
