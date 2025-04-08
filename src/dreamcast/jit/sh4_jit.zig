@@ -1094,6 +1094,20 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     return false;
 }
 
+pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
+    if (ctx.mmu_enabled) {
+        const exception: sh4.Exception = if (ctx.in_delay_slot) .SlotIllegalInstruction else .GeneralIllegalInstruction;
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+        try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
+        try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromEnum(exception) });
+        try call(block, ctx, &sh4.SH4.jump_to_exception);
+        return true;
+    } else {
+        return error.UnknownInstruction;
+    }
+}
+
 // NOTE: Ideally we'd use the type system to ensure the return values of the two following functions are
 //       used correctly (i.e. never write to a register returned by load_register), but I think this would
 //       require updating JITBlock and might hinder its genericity? (It's already pretty specific...)

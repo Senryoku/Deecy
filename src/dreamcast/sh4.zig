@@ -656,7 +656,7 @@ pub const SH4 = struct {
         // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
         // pending or accepted according to the setting made by software.
         if (self.sr.bl)
-            std.debug.panic(termcolor.red("{s} exception raised while SR.BL is set."), .{@tagName(exception)});
+            std.debug.panic("[PC={X:0>8}] " ++ termcolor.red("{s} exception raised while SR.BL is set."), .{ self.pc, @tagName(exception) });
         // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
         // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
         // status register (SR).

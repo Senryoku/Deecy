@@ -55,6 +55,8 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
             error.DataTLBMissWrite => .DataTLBMissWrite,
             error.InitialPageWrite => .InitialPageWrite,
             error.FPUDisabled => .GeneralFPUDisable,
+            error.IllegalInstruction => .GeneralIllegalInstruction,
+            error.UnconditionalTrap => .UnconditionalTrap,
             else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
         });
         return;
@@ -99,9 +101,13 @@ fn _execute(self: *SH4, opcode: u16) !void {
 }
 
 pub fn unknown(cpu: *SH4, opcode: Instr) !void {
-    std.debug.print("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
-    std.debug.print("  CPU State: PC={X:0>8}\n", .{cpu.pc});
-    @panic("Unknown opcode");
+    if (cpu._mmu_state == .Full) {
+        return error.IllegalInstruction;
+    } else {
+        sh4_log.err("Unknown opcode: 0x{X:0>4} 0b{b:0>16}\n", .{ opcode.value, opcode.value });
+        sh4_log.err("  CPU State: PC={X:0>8}\n", .{cpu.pc});
+        std.debug.panic("Unknown opcode @{X:0>8}: {X:0>4}\n", .{ cpu.pc, opcode.value });
+    }
 }
 
 pub fn nop(_: *SH4, _: Instr) !void {}
@@ -1121,6 +1127,8 @@ inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
             error.DataTLBMissWrite => .DataTLBMissWrite,
             error.InitialPageWrite => .InitialPageWrite,
             error.FPUDisabled => .SlotFPUDisable,
+            error.IllegalInstruction => .SlotIllegalInstruction,
+            error.UnconditionalTrap => .UnconditionalTrap,
             else => std.debug.panic("Unexpected exception in execute_delay_slot: {s}", .{@errorName(err)}),
         });
         cpu.pc -= 2; // Compensate for PC advancement in fetch_and_execute.
@@ -1605,9 +1613,7 @@ pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
             c.callback(c.userdata);
     } else {
         cpu.p4_register(u32, .TRA).* = @as(u32, opcode.nd8.d) << 2;
-        // Unconditional: Do it right now instead of returning an error.
-        cpu.jump_to_exception(.UnconditionalTrap);
-        cpu.pc -%= 2; // Compensate for PC advancement in fetch_and_execute.
+        return error.UnconditionalTrap;
     }
 }
 
