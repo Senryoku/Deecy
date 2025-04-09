@@ -832,7 +832,7 @@ pub const SH4 = struct {
                     if (tcnt.* >= mod) {
                         tcnt.* -= mod;
                     } else {
-                        tcnt.* = (tcnt.* + reset_constant) - mod;
+                        tcnt.* = (tcnt.* +% reset_constant) -% mod;
                     }
                 }
             } else self._last_timer_update[channel] = dc._global_cycles;
