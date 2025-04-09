@@ -2370,6 +2370,9 @@ pub fn mova_atDispPC_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    // NOTE: Target isn't guaranteed to lie in the same page. Bail to the interpreter if MMU is enabled.
+    if (ctx.mmu_enabled) return interpreter_fallback_cached(block, ctx, instr);
+
     const physical_address = ctx.current_physical_pc;
     // Physical address should be either in Boot ROM, or in RAM.
     std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
@@ -2386,6 +2389,8 @@ pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movl_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    if (ctx.mmu_enabled) return interpreter_fallback_cached(block, ctx, instr);
+
     const physical_address = ctx.current_physical_pc;
     // Physical address should be either in Boot ROM, or in RAM.
     std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
