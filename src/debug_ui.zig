@@ -735,6 +735,20 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
+    if (false) {
+        if (zgui.begin("Scheduler", .{})) {
+            const cycle: i64 = @intCast(d.dc._global_cycles);
+            zgui.text("Global Cycle: {d}", .{cycle});
+            // NOTE: This is not thread safe, and I don't want to introduce synchronization for a debugging view.
+            //       Disabled by default, use it at your own risk :)
+            var it = d.dc.scheduled_events.iterator();
+            while (it.next()) |event| {
+                zgui.text("[{d: >10}] {?} {any}", .{ @as(i64, @intCast(event.trigger_cycle)) - cycle, event.interrupt, event.event });
+            }
+        }
+        zgui.end();
+    }
+
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
         const MaxSamples = 10_000;

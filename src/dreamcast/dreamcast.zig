@@ -74,11 +74,25 @@ const ScheduledEvent = struct {
         HBlankIn,
         VBlankIn,
         VBlankOut,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (self) {
+                .TimerUnderflow => |e| return writer.print("Timer {d} Underflow", .{e.channel}),
+                else => return writer.print("{s}", .{@tagName(self)}),
+            }
+        }
     };
     trigger_cycle: u64,
     interrupt: ?union(enum) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (self) {
+                .Normal => |e| return writer.print("{any}", .{e}),
+                .External => |e| return writer.print("{any}", .{e}),
+            }
+        }
     },
     event: Event = .None,
 

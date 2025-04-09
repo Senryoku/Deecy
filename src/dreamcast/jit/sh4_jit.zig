@@ -1777,11 +1777,11 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
 }
 
 fn fpu_disabled_exception(cpu: *sh4.SH4) void {
-    sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}\n", .{cpu.pc});
+    sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}", .{cpu.pc});
     cpu.jump_to_exception(.GeneralFPUDisable);
 }
 fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
-    sh4_jit_log.debug("SlotFPUDisable: {X:0>8}\n", .{cpu.pc});
+    sh4_jit_log.debug("SlotFPUDisable: {X:0>8}", .{cpu.pc});
     cpu.jump_to_exception(.SlotFPUDisable);
 }
 
