@@ -2370,33 +2370,27 @@ pub fn mova_atDispPC_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    // NOTE: Target isn't guaranteed to lie in the same page. Bail to the interpreter if MMU is enabled.
-    if (ctx.mmu_enabled) return interpreter_fallback_cached(block, ctx, instr);
-
-    const physical_address = ctx.current_physical_pc;
-    // Physical address should be either in Boot ROM, or in RAM.
-    std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
-    // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
-    const addr = physical_address + 4 + d;
+    // NOTE: Target isn't guaranteed to lie in the same page. Bail to the interpreter in this case.
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
+
+    const addr = ctx.current_physical_pc + 4 + d;
+    std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read_physical(u16, addr))) });
     } else { // Load from RAM and sign extend
-        const offset = if (FastMem) 0x0C00_0000 else 0;
+        const offset = if (FastMem) 0x0C00_0000 else 0; // rbp has either the base of the whole virtual address space, or of RAM depending if FastMem is enabled.
         try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
     }
     return false;
 }
 
 pub fn movl_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    if (ctx.mmu_enabled) return interpreter_fallback_cached(block, ctx, instr);
-
-    const physical_address = ctx.current_physical_pc;
-    // Physical address should be either in Boot ROM, or in RAM.
-    std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
-    // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
-    const addr = (physical_address & 0xFFFFFFFC) + 4 + d;
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
+
+    const addr = (ctx.current_physical_pc & 0xFFFFFFFC) + 4 + d;
+    std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read_physical(u32, addr) });
     } else {
@@ -2945,10 +2939,15 @@ pub fn bts_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return conditional_branch(block, ctx, instr, true, true);
 }
 
+/// Returns true if the two addresses are in different pages (assuming the smallest page size of 1kB, so conservatively).
+fn cross_page(lhs: u32, rhs: u32) bool {
+    return (lhs >> 10) != (rhs >> 10);
+}
+
 pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.current_pc, instr);
     // Unconditional branch, and fixed destination, don't treat it like a branch.
-    if (dest > ctx.current_pc) {
+    if (dest > ctx.current_pc and (!ctx.mmu_enabled or !cross_page(ctx.current_pc, dest))) {
         try ctx.compile_delay_slot(block);
         ctx.skip_instructions((dest - ctx.current_pc) / 2 - 1);
         return false;
