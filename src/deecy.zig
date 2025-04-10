@@ -178,6 +178,11 @@ pub const KeyboardBindings = struct {
     };
 };
 
+const ControllerSettings = struct {
+    enabled: bool,
+    subcapabilities: DreamcastModule.Maple.InputCapabilities = DreamcastModule.Maple.DualStickControllerCapabilities,
+};
+
 const ConfigurationJSON = struct {
     per_game_vmu: ?bool = true,
     display_vmus: ?bool = true,
@@ -192,6 +197,7 @@ const ConfigurationJSON = struct {
     display_mode: ?Renderer.DisplayMode = .Center,
 
     keyboard_bindings: ?[4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
+    controllers: ?[4]ControllerSettings = null,
 
     audio_volume: ?f32 = 0.3,
     dsp_emulation: ?DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -211,6 +217,7 @@ const Configuration = struct {
     display_mode: Renderer.DisplayMode = .Center,
 
     keyboard_bindings: [4]KeyboardBindings = .{ .Default, .{}, .{}, .{} },
+    controllers: [4]ControllerSettings = .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } },
 
     audio_volume: f32 = 0.3,
     dsp_emulation: DreamcastModule.AICAModule.DSPEmulation = .JIT,
@@ -299,6 +306,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             conf.display_mode = json.value.display_mode orelse .Center;
 
             conf.keyboard_bindings = json.value.keyboard_bindings orelse .{ .Default, .{}, .{}, .{} };
+            conf.controllers = json.value.controllers orelse .{ .{ .enabled = true }, .{ .enabled = true }, .{ .enabled = false }, .{ .enabled = false } };
 
             conf.audio_volume = json.value.audio_volume orelse 0.3;
             conf.dsp_emulation = json.value.dsp_emulation orelse .JIT;
@@ -422,6 +430,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
             }
             return err;
         };
+        for (self.config.controllers, 0..) |c, idx| {
+            if (c.enabled) self.dc.maple.ports[idx].main = .{ .Controller = .{ .subcapabilities = .{ @bitCast(c.subcapabilities), 0, 0 } } };
+        }
     }
 
     self.renderer = try .create(self._allocator, self.gctx, config.internal_resolution_factor, config.display_mode);

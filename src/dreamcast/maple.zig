@@ -97,6 +97,10 @@ pub const InputCapabilities = packed struct(u32) {
     down: u1 = 0,
     left: u1 = 0,
     right: u1 = 0,
+
+    pub fn as_u32(self: @This()) u32 {
+        return @bitCast(self);
+    }
 };
 
 const FunctionCodesMask = packed struct(u32) {
@@ -175,7 +179,7 @@ pub const ControllerButtons = packed struct(u16) {
     _2: u5 = 0b11111,
 };
 
-const StandardControllerCapabilities: InputCapabilities = .{
+pub const StandardControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
     .start = 1,
@@ -191,7 +195,7 @@ const StandardControllerCapabilities: InputCapabilities = .{
     .analogVertical = 1,
 };
 
-const DualStickControllerCapabilities: InputCapabilities = .{
+pub const DualStickControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
     .start = 1,
@@ -791,25 +795,12 @@ const MaplePort = struct {
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{
-        .{},
-        .{},
-        .{},
-        .{},
-    },
+    ports: [4]MaplePort = @splat(.{}),
 
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !MapleHost {
-        return .{
-            .ports = .{
-                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
-                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
-                .{},
-                .{},
-            },
-            ._allocator = allocator,
-        };
+        return .{ ._allocator = allocator };
     }
 
     pub fn deinit(self: *MapleHost) void {

@@ -537,7 +537,7 @@ pub fn draw(self: *@This()) !void {
                         if (d.dc.maple.ports[i].main != null) {
                             d.dc.maple.ports[i].main = null;
                         } else {
-                            d.dc.maple.ports[i].main = .{ .Controller = .{} };
+                            d.dc.maple.ports[i].main = .{ .Controller = .{ .subcapabilities = .{ d.config.controllers[i].subcapabilities.as_u32(), 0, 0 } } };
                         }
                     }
                     const name = if (d.controllers[i]) |j|
@@ -566,6 +566,20 @@ pub fn draw(self: *@This()) !void {
                     if (d.dc.maple.ports[i].main) |*peripheral| {
                         switch (peripheral.*) {
                             .Controller => |*controller| {
+                                var capabilities: MapleModule.InputCapabilities = @bitCast(controller.subcapabilities[0]);
+                                var has_right_stick = capabilities.analogVertical2 != 0;
+                                if (zgui.checkbox("Right Stick", .{ .v = &has_right_stick })) {
+                                    if (has_right_stick) {
+                                        capabilities.analogVertical2 = 1;
+                                        capabilities.analogHorizontal2 = 1;
+                                    } else {
+                                        capabilities.analogVertical2 = 0;
+                                        capabilities.analogHorizontal2 = 0;
+                                    }
+                                    controller.subcapabilities[0] = @bitCast(capabilities);
+                                    d.config.controllers[i].subcapabilities = capabilities;
+                                }
+
                                 zgui.textColored(if (controller.buttons.a == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[A] ", .{});
                                 zgui.sameLine(.{});
                                 zgui.textColored(if (controller.buttons.b == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[B] ", .{});
@@ -584,18 +598,6 @@ pub fn draw(self: *@This()) !void {
                                 zgui.sameLine(.{});
                                 zgui.textColored(if (controller.buttons.right == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[>] ", .{});
 
-                                var capabilities: MapleModule.InputCapabilities = @bitCast(controller.subcapabilities[0]);
-                                var has_right_stick = capabilities.analogVertical2 != 0;
-                                if (zgui.checkbox("Right Stick", .{ .v = &has_right_stick })) {
-                                    if (has_right_stick) {
-                                        capabilities.analogVertical2 = 1;
-                                        capabilities.analogHorizontal2 = 1;
-                                    } else {
-                                        capabilities.analogVertical2 = 0;
-                                        capabilities.analogHorizontal2 = 0;
-                                    }
-                                    controller.subcapabilities[0] = @bitCast(capabilities);
-                                }
                                 var buf: [64]u8 = undefined;
                                 const width = (zgui.getContentRegionAvail()[0] - 3 * zgui.getStyle().window_padding[0]) / 2.0;
                                 inline for ([_]u8{ 1, 0, 2, 3, 4, 5 }, 0..) |axis, idx| {
