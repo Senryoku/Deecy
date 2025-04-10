@@ -738,21 +738,21 @@ pub fn poll_controllers(self: *@This()) void {
                                     c.axis[0] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.right_trigger)], 0.0, 1.0) * 255));
                                     c.axis[1] = @as(u8, @intFromFloat(std.math.clamp(gamepad_state.axes[@intFromEnum(zglfw.Gamepad.Axis.left_trigger)], 0.0, 1.0) * 255));
 
-                                    const capabilities: DreamcastModule.Maple.InputCapabilities = @bitCast(DreamcastModule.Maple.Controller.Subcapabilities[0]);
+                                    const capabilities: DreamcastModule.Maple.InputCapabilities = @bitCast(c.subcapabilities[0]);
                                     inline for ([_]struct { host: zglfw.Gamepad.Axis, guest: u8 }{
                                         .{ .host = .left_x, .guest = 2 },
                                         .{ .host = .left_y, .guest = 3 },
                                         .{ .host = .right_x, .guest = 4 },
                                         .{ .host = .right_y, .guest = 5 },
                                     }, 0..) |binding, idx| {
-                                        if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) == 0) continue;
-
-                                        var value = gamepad_state.axes[@intFromEnum(binding.host)];
-                                        if (@abs(value) < host_controller.deadzone)
-                                            value = 0.0;
-                                        // TODO: Remap with deadzone?
-                                        value = value * 0.5 + 0.5;
-                                        c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                        if (@field(capabilities, ([_][]const u8{ "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
+                                            var value = gamepad_state.axes[@intFromEnum(binding.host)];
+                                            if (@abs(value) < host_controller.deadzone)
+                                                value = 0.0;
+                                            // TODO: Remap with deadzone?
+                                            value = value * 0.5 + 0.5;
+                                            c.axis[binding.guest] = @as(u8, @intFromFloat(std.math.ceil(value * 255)));
+                                        }
                                     }
                                 }
                             } else {

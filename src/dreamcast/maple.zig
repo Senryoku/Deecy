@@ -211,16 +211,8 @@ const DualStickControllerCapabilities: InputCapabilities = .{
 
 pub const Controller = struct {
     pub const Capabilities: FunctionCodesMask = .{ .controller = 1 };
-    pub const Subcapabilities: [3]u32 = .{ @bitCast(DualStickControllerCapabilities), 0, 0 };
 
-    const Identity: DeviceInfoPayload = .{
-        .FunctionCodesMask = Capabilities,
-        .SubFunctionCodesMasks = Subcapabilities,
-        .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
-        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
-        .StandbyConsumption = 0x01AE,
-        .MaximumConsumption = 0x01F4,
-    };
+    subcapabilities: [3]u32 = .{ @bitCast(DualStickControllerCapabilities), 0, 0 },
 
     buttons: ControllerButtons = .{},
     axis: [6]u8 = @splat(0x80),
@@ -231,8 +223,15 @@ pub const Controller = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
-    pub fn get_identity(_: *const @This()) DeviceInfoPayload {
-        return Identity;
+    pub fn get_identity(self: *const @This()) DeviceInfoPayload {
+        return .{
+            .FunctionCodesMask = Capabilities,
+            .SubFunctionCodesMasks = self.subcapabilities,
+            .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
+            .StandbyConsumption = 0x01AE,
+            .MaximumConsumption = 0x01F4,
+        };
     }
 
     pub fn get_condition(self: *const @This()) [3]u32 {
