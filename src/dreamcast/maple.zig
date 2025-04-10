@@ -122,6 +122,8 @@ const FunctionCodesMask = packed struct(u32) {
 
     const Screen = @This(){ .screen = 1 };
     const Storage = @This(){ .storage = 1 };
+    const Timer = @This(){ .timer = 1 };
+    const Controller = @This(){ .controller = 1 };
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (@popCount(self.as_u32()) == 1) {
@@ -554,6 +556,22 @@ pub const VMU = struct {
         return 0;
     }
 
+    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
+        _ = self;
+        _ = data;
+        switch (function) {
+            FunctionCodesMask.Timer.as_u32() => {
+                // "An alarm is buzzer output produced by a pulse generator that is controlled by the Timer Function's built-in counter.
+                // The Timer Function can support a maximum of two alarm types.
+                // The alarm types that can be used are declared in the function definition block. The volume of the alarms cannot
+                // be adjusted.""
+
+                // data holds the duty cycle of two alarms.
+            },
+            else => maple_log.err("Unimplemented VMU.set_condition for function: {any}", .{function}),
+        }
+    }
+
     pub fn serialize(_: @This(), _: anytype) !usize {
         return 0;
     }
@@ -651,8 +669,9 @@ const MaplePort = struct {
                             return 1 + condition.len;
                         },
                         else => {
-                            maple_log.err(termcolor.red("TODO: GetCondition for {any}"), .{target.tag()});
-                            @panic("Missing GetCondition implementation");
+                            maple_log.err(termcolor.red("Unimplemented GetCondition for target: {any}"), .{target.tag()});
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            return 1;
                         },
                     }
                 },
@@ -714,8 +733,23 @@ const MaplePort = struct {
                     dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     return 1;
                 },
+                .SetCondition => {
+                    switch (target.*) {
+                        .VMU => |*vmu| {
+                            vmu.set_condition(function_type, data[2]);
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            return 1;
+                        },
+                        else => {
+                            maple_log.err(termcolor.red("Unimplemented SetCondition for target: {any}"), .{target.tag()});
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            return 1;
+                        },
+                    }
+                    return 1;
+                },
                 else => {
-                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command) });
+                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2}, {X:0>8})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data[0..4] });
                     dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
                     return 1;
                 },
