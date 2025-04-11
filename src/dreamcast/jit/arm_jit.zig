@@ -20,8 +20,7 @@ const BasicBlock = struct {
     cycles: u32,
 
     pub inline fn execute(self: *const @This(), buffer: []const u8, user_data: *anyopaque) void {
-        @setRuntimeSafety(false);
-        @as(*const fn (*anyopaque) void, @ptrCast(&buffer[self.offset]))(user_data);
+        @as(*const fn (*anyopaque) callconv(.c) void, @ptrCast(&buffer[self.offset]))(user_data);
     }
 
     pub inline fn is_valid(self: *const @This()) bool {
@@ -40,7 +39,7 @@ const DebugAlwaysFallbackToInterpreter = false;
 const BlockCache = struct {
     const BlockEntryCount = 0x200000 >> 2;
 
-    buffer: []align(std.mem.page_size) u8,
+    buffer: []align(std.heap.page_size_min) u8,
     cursor: usize = 0,
     blocks: []BasicBlock = undefined,
 
@@ -195,7 +194,7 @@ pub const ARM7JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) void {
+    pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) callconv(.c) void {
         const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
         arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
         const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
@@ -296,17 +295,21 @@ fn store_register(b: *IRBlock, arm_reg: u5, value: JIT.Operand) !void {
 }
 
 // Zero-extended
-noinline fn read8(self: *arm7.ARM7, address: u32) u32 {
+noinline fn read8(self: *arm7.ARM7, address: u32) callconv(.c) u32 {
     return self.read(u8, address);
 }
-noinline fn read32(self: *arm7.ARM7, address: u32) u32 {
+noinline fn read32(self: *arm7.ARM7, address: u32) callconv(.c) u32 {
     return self.read(u32, address);
 }
-noinline fn write8(self: *arm7.ARM7, address: u32, value: u8) void {
+noinline fn write8(self: *arm7.ARM7, address: u32, value: u8) callconv(.c) void {
     self.write(u8, address, value);
 }
-noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) void {
+noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) callconv(.c) void {
     self.write(u32, address, value);
+}
+
+fn reset_pipeline(cpu: *arm7.ARM7) callconv(.c) void {
+    @call(.always_inline, arm7.ARM7.reset_pipeline, .{cpu});
 }
 
 fn load_wave_memory(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Register, addr: u32) !void {
@@ -575,7 +578,7 @@ fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !
 
 fn comptime_handle_block_data_transfer(comptime l: u1, comptime w: u1, comptime s: u1, comptime u: u1, comptime p: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
             const inst: arm7.BlockDataTransferInstruction = @bitCast(instruction);
 
             std.debug.assert(builtin.is_test or inst.rn != 15); // "R15 shall not be used as the base register in any LDM or STM instruction."
@@ -754,7 +757,7 @@ fn handle_undefined(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 // a wave_memory_read.
 fn comptime_handle_single_data_transfer(comptime i: u1, comptime u: u1, comptime w: u1, comptime p: u1, comptime l: u1, comptime b: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
             const inst: arm7.SingleDataTransferInstruction = @bitCast(instruction);
 
             var offset: u32 = inst.offset;
@@ -840,7 +843,7 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
 
             if (inst.rd == 15) {
                 try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                try block.call(arm7.ARM7.reset_pipeline);
+                try block.call(reset_pipeline);
             }
         }
     } else {
@@ -985,7 +988,7 @@ fn handle_msr(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 
 fn comptime_handle_data_processing(comptime opcode: arm7.Opcode, comptime s: u1, comptime i: u1) type {
     return struct {
-        fn handler(cpu: *arm7.ARM7, instruction: u32) void {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
             const inst: arm7.DataProcessingInstruction = @bitCast(instruction);
 
             // TODO: See "Writing to R15"
@@ -1344,10 +1347,21 @@ fn handle_invalid(_: *IRBlock, _: *JITContext, _: u32) !bool {
     @panic("Invalid instruction");
 }
 
+fn interpreter_handler(comptime idx: u8) *const fn (cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+    return struct {
+        fn handler(cpu: *arm7.ARM7, instruction: u32) callconv(.c) void {
+            @call(.always_inline, arm7.interpreter.InstructionHandlers[idx], .{ cpu, instruction });
+        }
+    }.handler;
+}
+
 fn interpreter_fallback(b: *IRBlock, ctx: *JITContext, instruction: u32) !void {
     try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
     try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = instruction });
-    try b.call(arm7.interpreter.InstructionHandlers[arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]]);
+    switch (arm7.JumpTable[arm7.ARM7.get_instr_tag(instruction)]) {
+        inline 0...arm7.interpreter.InstructionHandlers.len - 1 => |idx| try b.call(interpreter_handler(idx)),
+        else => |idx| std.debug.panic("Invalid index intro InstructionHandlers: {d}", .{idx}),
+    }
 
     ctx.did_fallback = true;
 }

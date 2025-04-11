@@ -11,7 +11,7 @@ const ForceInline = false; // Turn this on for a slight performance boost, stupi
 fn InstructionHandler(comptime idx: usize, comptime instruction: u16) type {
     const instr: sh4.Instr = comptime @bitCast(instruction);
     return struct {
-        fn handler(cpu: *sh4.SH4) void {
+        fn handler(cpu: *sh4.SH4) callconv(.c) void {
             @setRuntimeSafety(false);
             if (comptime ForceInline) {
                 @call(.always_inline, comptime Opcodes[idx].fn_, .{ cpu, comptime instr });

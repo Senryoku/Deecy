@@ -33,7 +33,7 @@ pub const IRBlock = struct {
         };
     }
 
-    pub fn clearRetainingCapacity(self: *@This()) void {
+    pub inline fn clearRetainingCapacity(self: *@This()) void {
         self.instructions.clearRetainingCapacity();
     }
 
