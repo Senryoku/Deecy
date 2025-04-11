@@ -65,7 +65,7 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/) when not on a stable release). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
 ```sh
-zigup 0.14.0-dev.2577+271452d22
+zigup 0.14.0
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh

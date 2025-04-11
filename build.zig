@@ -39,7 +39,7 @@ pub fn build(b: *std.Build) void {
     });
     dc_module.addOptions("dc_config", dc_options);
 
-    const ziglz4 = b.dependency("zig-lz4", .{
+    const ziglz4 = b.dependency("ziglz4", .{
         .target = target,
         .optimize = .ReleaseFast,
     });

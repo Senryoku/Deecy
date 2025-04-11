@@ -58,7 +58,7 @@ const BlockCache = struct {
     // 0x02000000 possible addresses (0x0100_0000 for RAM and... 0x0100_0000 for boot), but 16bit aligned, multiplied by permutations of (sz, pr)
     const BlockEntryCount = (0x0200_0000 >> 1) << 2;
 
-    buffer: []align(std.mem.page_size) u8,
+    buffer: []align(std.heap.page_size_min) u8,
     cursor: usize = 0,
     blocks: []BasicBlock = undefined,
 
@@ -602,7 +602,7 @@ pub const SH4JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) u32 {
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) callconv(.c) u32 {
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
         const block = self.compile(.init(cpu)) catch |err| retry: {
@@ -937,7 +937,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
     const entry = sh4.instructions.Opcodes[instr_index];
     if (mmu_enabled) {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) u8 {
                 entry.fn_(cpu, instr) catch |err| {
                     sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
                     switch (err) {
@@ -953,7 +953,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
         };
     } else {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) void {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) void {
                 entry.fn_(cpu, instr) catch unreachable;
             }
         };
@@ -1094,14 +1094,21 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     return false;
 }
 
+fn general_illegal_instruction_exception(cpu: *sh4.SH4) callconv(.c) void {
+    sh4_jit_log.debug("GeneralIllegalInstruction: {X:0>8}", .{cpu.pc});
+    cpu.jump_to_exception(.GeneralIllegalInstruction);
+}
+fn slot_illegal_instruction_exception(cpu: *sh4.SH4) callconv(.c) void {
+    sh4_jit_log.debug("SlotIllegalInstruction: {X:0>8}", .{cpu.pc});
+    cpu.jump_to_exception(.SlotIllegalInstruction);
+}
+
 pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
     if (ctx.mmu_enabled) {
-        const exception: sh4.Exception = if (ctx.in_delay_slot) .SlotIllegalInstruction else .GeneralIllegalInstruction;
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
         try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-        try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromEnum(exception) });
-        try call(block, ctx, &sh4.SH4.jump_to_exception);
+        try call(block, ctx, if (ctx.in_delay_slot) slot_illegal_instruction_exception else general_illegal_instruction_exception);
         return true;
     } else {
         return error.UnknownInstruction;
@@ -1171,35 +1178,35 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
     try block.mov(sh4_mem("sr"), .{ .reg = ReturnRegister });
 }
 
-pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
+pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u8 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u8, virtual_addr });
 }
-pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
+pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u16 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u16, virtual_addr });
 }
-pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
+pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u32 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u32, virtual_addr });
 }
-pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
+pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u64 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u64, virtual_addr });
 }
-pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
+pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u8, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
+pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u16, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
+pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u32, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
+pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
 }
@@ -1207,7 +1214,7 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
-        fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
+        fn handler(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) packed struct(u64) { address: u32, exception: u32 } {
             std.debug.assert(cpu._mmu_state == .Full);
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
@@ -1776,11 +1783,11 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     return false;
 }
 
-fn fpu_disabled_exception(cpu: *sh4.SH4) void {
+fn fpu_disabled_exception(cpu: *sh4.SH4) callconv(.c) void {
     sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}", .{cpu.pc});
     cpu.jump_to_exception(.GeneralFPUDisable);
 }
-fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
+fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) callconv(.c) void {
     sh4_jit_log.debug("SlotFPUDisable: {X:0>8}", .{cpu.pc});
     cpu.jump_to_exception(.SlotFPUDisable);
 }
@@ -2714,7 +2721,7 @@ pub fn shar_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
-fn shld(n: u32, m: u32) u32 {
+fn shld(n: u32, m: u32) callconv(.c) u32 {
     const sign = m & 0x80000000;
     if (sign == 0) {
         return n << @intCast(m & 0x1F);
