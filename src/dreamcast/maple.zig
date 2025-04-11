@@ -257,7 +257,7 @@ pub const Controller = struct {
     }
 };
 
-const GetMediaInformationResponse = packed struct {
+const GetMediaInformationResponse = packed struct(u192) {
     total_size: u16,
     partition_number: u16,
     system_area_block_number: u16,
@@ -271,8 +271,7 @@ const GetMediaInformationResponse = packed struct {
 
     save_area_block_number: u16,
     number_of_save_area_blocks: u16,
-    _reserved_for_execution_file: u32 = 0x80000000,
-    _reserved2: u16 = 0,
+    _reserved_for_execution_file: u32 = 0x80_0000, // Fixed to 0 *if* execution files cannot be executed.
 };
 
 const StorageFunctionDefinition = packed struct(u32) {
@@ -411,18 +410,18 @@ pub const VMU = struct {
             @memcpy(self.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
             @memset(self.blocks[0xFF][0x38..0x40], 0); // Reserved
 
-            @as(*GetMediaInformationResponse, @alignCast(@ptrCast(&self.blocks[0xFF][0x40]))).* = .{
+            @memcpy(self.blocks[0xFF][0x40 .. 0x40 + 24], std.mem.asBytes(&GetMediaInformationResponse{
                 .total_size = BlockCount - 1,
                 .partition_number = 0x0000,
                 .system_area_block_number = SystemBlock,
-                .fat_area_block_number = 0x00FE,
+                .fat_area_block_number = FATBlock,
                 .number_of_fat_area_blocks = 0x0001,
                 .file_information_block_number = 0x00FD,
                 .number_of_file_information_blocks = 0x000D,
                 .volume_icon = 0,
                 .save_area_block_number = 0x00C8,
                 .number_of_save_area_blocks = 0x00C8,
-            };
+            })[0..24]);
 
             // "Format" the device.
             var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
@@ -495,8 +494,9 @@ pub const VMU = struct {
                     .save_area_block_number = 0x00C8,
                     .number_of_save_area_blocks = 0x00C8,
                 };
-                @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], std.mem.asBytes(&value));
-                return @sizeOf(GetMediaInformationResponse) / 4;
+                // NOTE: @sizeOf(GetMediaInformationResponse) == 32 for some reason.
+                @memcpy(dest[0..24], std.mem.asBytes(&value)[0..24]);
+                return 24 / 4;
             },
             FunctionCodesMask.Screen.as_u32() => {
                 const value: packed struct { x_dots: u8, y_dots: u8, contrast: u4, gradation: u4, reserved: u8 = 2 } = .{
@@ -646,6 +646,7 @@ const MaplePort = struct {
                     sender_address |= @as(u8, 1) << @intCast(i);
             }
         }
+        const recipent_address = command.sender_address;
 
         const maybe_target = switch (command.recipent_address & 0b11111) {
             0 => &self.main, // Equivalent to setting bit 5.
@@ -655,7 +656,7 @@ const MaplePort = struct {
             switch (command.command) {
                 .DeviceInfoRequest => {
                     const identity = target.get_identity();
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
                     const ptr = dc.cpu._get_memory(return_addr + 4);
                     @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                     return 1 + @sizeOf(DeviceInfoPayload) / 4;
@@ -666,14 +667,14 @@ const MaplePort = struct {
                             std.debug.assert(command.payload_length == 1);
                             std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
                             const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                             return 1 + condition.len;
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented GetCondition for target: {any}"), .{target.tag()});
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
                     }
@@ -688,17 +689,17 @@ const MaplePort = struct {
                             const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 1 }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 1 }));
                                 dc.cpu.write_physical(u32, return_addr + 4, function_type);
                                 return 1 + payload_size + 1;
                             } else {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                                 return 1;
                             }
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
                     }
@@ -714,12 +715,12 @@ const MaplePort = struct {
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 2 }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 2 }));
                         dc.cpu.write_physical(u32, return_addr + 4, function_type);
                         dc.cpu.write_physical(u32, return_addr + 8, data[3]); // Header repeating the location.
                         return 1 + payload_size + 2;
                     } else {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                         return 1;
                     }
                 },
@@ -729,23 +730,23 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
                     const words_written = target.block_write(function_type, partition, phase, block_num, write_data);
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1 + words_written;
                 },
                 .GetLastError => {
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1;
                 },
                 .SetCondition => {
                     switch (target.*) {
                         .VMU => |*vmu| {
                             vmu.set_condition(function_type, data[2]);
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented SetCondition for target: {any}"), .{target.tag()});
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
                     }
@@ -753,7 +754,7 @@ const MaplePort = struct {
                 },
                 else => {
                     maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2}, {X:0>8})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data[0..4] });
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1;
                 },
             }
