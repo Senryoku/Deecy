@@ -88,11 +88,6 @@ fn _execute(self: *SH4, opcode: u16) !void {
 
         self.add_cycles(desc.issue_cycles);
 
-        // NOTE: Check disabled when MMU is disabled, not because they're actually related, but because AFAIK,
-        //       only WinCE games care about exceptions (and they use the MMU).
-        if (self._mmu_state == .Full and instr.is_fpu() and self.sr.fd)
-            return error.FPUDisabled;
-
         try desc.fn_(self, instr);
 
         if ((comptime builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and self.debug_trace)
@@ -1342,31 +1337,39 @@ pub fn movcal_R0_atRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn lds_Rn_FPSCR(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.set_fpscr(cpu.R(opcode.nmd.n).*);
 }
 pub fn sts_FPSCR_Rn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.R(opcode.nmd.n).* = @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF;
 }
 pub fn ldsl_atRnInc_FPSCR(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.set_fpscr(try cpu.read(u32, cpu.R(opcode.nmd.n).*));
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn stsl_FPSCR_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     const tmp = cpu.R(opcode.nmd.n).* - 4; // Use a temporary in case of exception.
     try cpu.write(u32, tmp, @as(u32, @bitCast(cpu.fpscr)) & 0x003FFFFF);
     cpu.R(opcode.nmd.n).* = tmp;
 }
 pub fn lds_Rn_FPUL(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.fpul = cpu.R(opcode.nmd.n).*;
 }
 pub fn sts_FPUL_Rn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.R(opcode.nmd.n).* = cpu.fpul;
 }
 pub fn ldsl_atRnInc_FPUL(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.fpul = try cpu.read(u32, cpu.R(opcode.nmd.n).*);
     cpu.R(opcode.nmd.n).* += 4;
 }
 pub fn stsl_FPUL_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     const tmp = cpu.R(opcode.nmd.n).* - 4; // Use a temporary in case of exception.
     try cpu.write(u32, tmp, cpu.fpul);
     cpu.R(opcode.nmd.n).* = tmp;
@@ -1618,6 +1621,7 @@ pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
 }
 
 pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = cpu.FR(opcode.nmd.m).*;
     } else {
@@ -1637,6 +1641,7 @@ pub fn fmov_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.m).*));
     } else {
@@ -1650,6 +1655,7 @@ pub fn fmovs_atRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.sz == 0) {
         try cpu.write(u32, cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
@@ -1663,6 +1669,7 @@ pub fn fmovs_FRm_atRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(try cpu.read(u32, cpu.R(opcode.nmd.m).*));
@@ -1679,6 +1686,7 @@ pub fn fmovs_atRmInc_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // Single-precision
     if (cpu.fpscr.sz == 0) {
         const tmp = cpu.R(opcode.nmd.n).* - 4;
@@ -1697,6 +1705,7 @@ pub fn fmovs_FRm_atDecRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.sz == 0) {
         cpu.FR(opcode.nmd.n).* = @bitCast(try cpu.read(u32, cpu.R(0).* +% cpu.R(opcode.nmd.m).*));
     } else {
@@ -1710,6 +1719,7 @@ pub fn fmovs_atR0Rm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmovs_FRm_atR0Rn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.sz == 0) {
         try cpu.write(u32, cpu.R(0).* +% cpu.R(opcode.nmd.n).*, @bitCast(cpu.FR(opcode.nmd.m).*));
     } else {
@@ -1754,10 +1764,12 @@ pub fn data_type_of(f: f32) FloatType {
 }
 
 pub fn fldi0_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.pr == 1) @panic("Illegal instruction");
     cpu.FR(opcode.nmd.n).* = 0.0;
 }
 pub fn fldi1_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.pr == 1) @panic("Illegal instruction");
     cpu.FR(opcode.nmd.n).* = 1.0;
 }
@@ -1771,24 +1783,29 @@ test "fldi1_FRn" {
 }
 
 pub fn flds_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.fpul = @bitCast(cpu.FR(opcode.nmd.n).*);
 }
 
 pub fn fsts_FPUL_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     cpu.FR(opcode.nmd.n).* = @bitCast(cpu.fpul);
 }
 
 pub fn fabs_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // This instruction operates only on the high part and thus the operation performed for double and single precision setting is the same. It is not necessary to adjust the FPSRC.PR setting before this instruction.
     cpu.FR(opcode.nmd.n).* = @bitCast(@as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)) & @as(u32, 0x7FFFFFFF));
 }
 
 pub fn fneg_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // See fabs FRn
     cpu.FR(opcode.nmd.n).* = @bitCast(@as(u32, @bitCast(cpu.FR(opcode.nmd.n).*)) ^ @as(u32, 0x80000000));
 }
 
 pub fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.pr == 0) {
         // TODO: Handle exceptions
         // if(!cpu.fpscr.dn and (n is denorm or m  is denorm)) ...
@@ -1800,6 +1817,7 @@ pub fn fadd_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* -= cpu.FR(opcode.nmd.m).*;
     } else {
@@ -1809,6 +1827,7 @@ pub fn fsub_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* *= cpu.FR(opcode.nmd.m).*;
@@ -1819,10 +1838,12 @@ pub fn fmul_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fmac_FR0_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 0);
     cpu.FR(opcode.nmd.n).* = @mulAdd(f32, cpu.FR(0).*, cpu.FR(opcode.nmd.m).*, cpu.FR(opcode.nmd.n).*);
 }
 pub fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // FIXME: There's a lot more to do here.
     if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* /= cpu.FR(opcode.nmd.m).*;
@@ -1833,6 +1854,7 @@ pub fn fdiv_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fsqrt_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     if (cpu.fpscr.pr == 0) {
         if (cpu.FR(opcode.nmd.n).* < 0) {
             cpu.FR(opcode.nmd.n).* = std.math.nan(f32);
@@ -1849,6 +1871,7 @@ pub fn fsqrt_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // TODO: Special float values checks?
     if (cpu.fpscr.pr == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* > cpu.FR(opcode.nmd.m).*);
@@ -1859,6 +1882,7 @@ pub fn fcmp_gt_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // TODO: Special float values checks?
     if (cpu.fpscr.pr == 0) {
         cpu.sr.t = (cpu.FR(opcode.nmd.n).* == cpu.FR(opcode.nmd.m).*);
@@ -1869,6 +1893,7 @@ pub fn fcmp_eq_FRm_FRn(cpu: *SH4, opcode: Instr) !void {
     }
 }
 pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // NOTE: Experimentation shows the FPUL is treated as signed, at least here. I don't know if this is ALWAYS the case, or not.
     if (cpu.fpscr.pr == 0) {
         cpu.FR(opcode.nmd.n).* = @floatFromInt(as_i32(cpu.fpul));
@@ -1879,6 +1904,7 @@ pub fn float_FPUL_FRn(cpu: *SH4, opcode: Instr) !void {
 }
 
 pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // Converts the single-precision floating-point number in FRm to a 32-bit integer, and stores the result in FPUL.
     // NOTE: I have no evidence that the conversion should be to a signed integer or not here, however,
     //       it makes sense to be symetrical with float FPUL,FRn, which is signed, I'm pretty sure.
@@ -1934,6 +1960,7 @@ pub fn ftrc_FRn_FPUL(cpu: *SH4, opcode: Instr) !void {
 }
 
 pub fn fipr_FVm_FVn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     // Computes the dot product of FVn and FVm and stores it into pub fn+3.
     const n = opcode.nmd.n & 0b1100;
     const m = (opcode.nmd.n << 2) & 0b1100;
@@ -1984,6 +2011,7 @@ test "fipr" {
 }
 
 pub fn ftrv_XMTRX_FVn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 0);
     // NOTE: Doesn't handle exceptions.
     const n = opcode.nmd.n & 0b1100;
@@ -2057,6 +2085,7 @@ test "ftrv XMTRX_FVn" {
 }
 
 pub fn fsrra_FRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 0);
     if (cpu.FR(opcode.nmd.n).* < 0) {
         cpu.FR(opcode.nmd.n).* = std.math.nan(f32);
@@ -2066,6 +2095,7 @@ pub fn fsrra_FRn(cpu: *SH4, opcode: Instr) !void {
 }
 
 pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 0);
     std.debug.assert(opcode.nmd.n & 1 == 0);
 
@@ -2077,12 +2107,14 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) !void {
 }
 
 pub fn fcnvds_DRn_FPUL(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 1);
     std.debug.assert(opcode.nmd.n & 1 == 0);
     cpu.fpul = @bitCast(@as(f32, @floatCast(cpu.getDR(opcode.nmd.n))));
 }
 
 pub fn fcnvsd_FPUL_DRn(cpu: *SH4, opcode: Instr) !void {
+    if (cpu.sr.fd) return error.FPUDisabled;
     std.debug.assert(cpu.fpscr.pr == 1);
     std.debug.assert(opcode.nmd.n & 1 == 0);
     cpu.setDR(opcode.nmd.n, @floatCast(@as(f32, @bitCast(cpu.fpul))));
