@@ -32,8 +32,6 @@ const windows = @import("../host/windows.zig");
 const BlockBufferSize = 16 * 1024 * 1024;
 const MaxCyclesPerBlock = 32;
 pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
-const MMUDataProtectedCheck = false; // Check for access to protected memory (>= 0x80000000) in user mode.
-const MMUDataAlignmentCheck = false; // Check for unaligned memory access.
 
 // Enable or Disable some optimizations
 const Optimizations = .{
@@ -1218,9 +1216,9 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
             std.debug.assert(cpu._mmu_state == .Full);
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
-            const unauthorized = MMUDataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
+            const unauthorized = sh4.DataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
             // Alignment check
-            const unaligned = MMUDataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
+            const unaligned = sh4.DataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
             if (unaligned or unauthorized) {
                 @branchHint(.unlikely);
                 sh4_jit_log.warn("DataAddressError: {s}({d}) Addr={X:0>8}, SR.MD={d}", .{ @tagName(access_type), access_size, virtual_addr, cpu.sr.md });
