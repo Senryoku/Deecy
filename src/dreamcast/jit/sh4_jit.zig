@@ -963,11 +963,11 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
 inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     const instr_index = sh4.instructions.JumpTable[instr.value];
 
-    const entry = sh4.instructions.Opcodes[instr_index];
-    // Is it an FPU instruction which doesn't have a JIT handler?
-    if (instr.is_fpu() and entry.use_fallback()) {
+    // FPU instructions might throw an FPU Disabled exception. Checking it here allows to only check it once per block,
+    // and to ignore FPU Disabled exceptions in the interpreter handler since they can't be thrown from there if we already
+    // made sure the FPU wasn't disabled.
+    if (instr.is_fpu())
         try check_fd_bit(block, ctx);
-    }
 
     if (sh4_interpreter_handlers.Enable) {
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
