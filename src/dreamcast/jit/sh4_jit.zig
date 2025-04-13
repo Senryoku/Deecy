@@ -1092,13 +1092,13 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     return false;
 }
 
-fn general_illegal_instruction_exception(cpu: *sh4.SH4) callconv(.c) void {
-    sh4_jit_log.debug("GeneralIllegalInstruction: {X:0>8}", .{cpu.pc});
-    cpu.jump_to_exception(.GeneralIllegalInstruction);
-}
-fn slot_illegal_instruction_exception(cpu: *sh4.SH4) callconv(.c) void {
-    sh4_jit_log.debug("SlotIllegalInstruction: {X:0>8}", .{cpu.pc});
-    cpu.jump_to_exception(.SlotIllegalInstruction);
+fn jump_to_exception(comptime exception: sh4.Exception) *const fn (*sh4.SH4) callconv(.c) void {
+    return struct {
+        fn jte(cpu: *sh4.SH4) callconv(.c) void {
+            sh4_jit_log.debug("[{X:0>8}] Exception: {s}", .{ cpu.pc, @tagName(exception) });
+            cpu.jump_to_exception(exception);
+        }
+    }.jte;
 }
 
 pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
@@ -1106,7 +1106,7 @@ pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     if (ctx.mmu_enabled) {
         try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
         try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-        try call(block, ctx, if (ctx.in_delay_slot) slot_illegal_instruction_exception else general_illegal_instruction_exception);
+        try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotIllegalInstruction) else jump_to_exception(.GeneralIllegalInstruction));
         return true;
     } else {
         return error.UnknownInstruction;
@@ -1781,15 +1781,6 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     return false;
 }
 
-fn fpu_disabled_exception(cpu: *sh4.SH4) callconv(.c) void {
-    sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}", .{cpu.pc});
-    cpu.jump_to_exception(.GeneralFPUDisable);
-}
-fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) callconv(.c) void {
-    sh4_jit_log.debug("SlotFPUDisable: {X:0>8}", .{cpu.pc});
-    cpu.jump_to_exception(.SlotFPUDisable);
-}
-
 fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
     if (ctx.mmu_enabled) {
         switch (ctx.sr_fpu_status) {
@@ -1806,11 +1797,7 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
                     try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
                 }
                 try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-                if (ctx.in_delay_slot) {
-                    try call(block, ctx, fpu_disabled_exception_delay_slot);
-                } else {
-                    try call(block, ctx, fpu_disabled_exception);
-                }
+                try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotFPUDisable) else jump_to_exception(.GeneralFPUDisable));
                 try ctx.add_jump_to_end(try block.jmp(.Always));
 
                 skip.patch();
