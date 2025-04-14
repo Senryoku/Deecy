@@ -30,9 +30,10 @@ pub fn build(b: *std.Build) void {
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
     dc_options.addOption(bool, "fast_mem", fast_mem);
-    dc_options.addOption([]const u8, "data_path", data_path);
-    dc_options.addOption([]const u8, "userdata_path", userdata_path);
-    dc_options.addOption(bool, "use_appdata_dir", use_appdata_dir);
+    const path_options = b.addOptions();
+    path_options.addOption(bool, "use_appdata_dir", use_appdata_dir);
+    path_options.addOption([]const u8, "data_path", data_path);
+    path_options.addOption([]const u8, "userdata_path", userdata_path);
 
     const dc_module = b.createModule(.{
         .target = target,
@@ -44,6 +45,7 @@ pub fn build(b: *std.Build) void {
         },
     });
     dc_module.addOptions("dc_config", dc_options);
+    dc_module.addOptions("path_config", path_options);
 
     const ziglz4 = b.dependency("ziglz4", .{
         .target = target,

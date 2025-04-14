@@ -447,11 +447,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc = Dreamcast.create(allocator) catch |err| {
             switch (err) {
                 error.BiosNotFound => {
-                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to '" ++ HostPaths.dc_config.data_path ++ "/dc_boot.bin'.");
+                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file as 'dc_boot.bin' to '{s}'.", .{HostPaths.get_data_path()});
                 },
                 else => {
-                    deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
-                    self.display_unrecoverable_error("Error initializing Dreamcast");
+                    self.display_unrecoverable_error("Error initializing Dreamcast: {s}", .{@errorName(err)});
                 },
             }
             return err;
@@ -1061,7 +1060,7 @@ fn submit_ui(self: *@This()) void {
 }
 
 // Display an error message and wait for the user to close the window.
-fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
+fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: anytype) void {
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -1071,8 +1070,8 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
             zgui.openPopup("Error##Modal", .{});
         }
 
-        if (zgui.beginPopupModal("Error##Modal", .{})) {
-            zgui.text(msg, .{});
+        if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text(fmt, args);
             if (zgui.button("OK", .{})) {
                 zglfw.setWindowShouldClose(self.window, true);
             }
