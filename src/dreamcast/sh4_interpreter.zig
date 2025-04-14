@@ -1616,6 +1616,7 @@ pub fn trapa_imm(cpu: *SH4, opcode: Instr) !void {
             c.callback(c.userdata);
     } else {
         cpu.p4_register(u32, .TRA).* = @as(u32, opcode.nd8.d) << 2;
+        cpu.pc +%= 2; // NOTE: Contrary to all other exceptions, an UnconditionalTrap should set SPC to PC + 2, and not PC.
         return error.UnconditionalTrap;
     }
 }
