@@ -23,10 +23,14 @@ pub fn build(b: *std.Build) void {
     const mmu = b.option(bool, "mmu", "Enable Full MMU Emulation (default: true)") orelse true;
     const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
     const fb_writeback = b.option(bool, "fb_writeback", "Write the rendered frame back to the guest VRAM. Slow, but necessary for some effects (default: false)") orelse false;
+    const data_path = b.option([]const u8, "data_path", "Path to the data directory (Copy your bios and flash files here, default: './data')") orelse "./data";
+    const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
 
     const dc_options = b.addOptions();
     dc_options.addOption(bool, "mmu", mmu);
     dc_options.addOption(bool, "fast_mem", fast_mem);
+    dc_options.addOption([]const u8, "data_path", data_path);
+    dc_options.addOption([]const u8, "userdata_path", userdata_path);
 
     const dc_module = b.createModule(.{
         .target = target,
@@ -50,6 +54,8 @@ pub fn build(b: *std.Build) void {
 
     const deecy_options = b.addOptions();
     deecy_options.addOption(bool, "fb_writeback", fb_writeback);
+    deecy_options.addOption([]const u8, "data_path", data_path);
+    deecy_options.addOption([]const u8, "userdata_path", userdata_path);
 
     const deecy_module = b.createModule(.{
         .target = target,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const dc_config = @import("dc_config");
 
 const termcolor = @import("termcolor");
 
@@ -119,8 +120,6 @@ const ScheduledEvent = struct {
 // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
 
-const user_data_directory = "./userdata/";
-
 pub const Dreamcast = struct {
     pub const BootSize = 0x20_0000;
     pub const RAMSize = 0x100_0000;
@@ -188,9 +187,9 @@ pub const Dreamcast = struct {
         errdefer dc.deinit();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath(user_data_directory);
+        try std.fs.cwd().makePath(dc_config.userdata_path);
 
-        dc.load_bios("./data/dc_boot.bin") catch |err| {
+        dc.load_bios(dc_config.data_path ++ "/dc_boot.bin") catch |err| {
             switch (err) {
                 error.FileNotFound => return error.BiosNotFound,
                 else => return err,
@@ -292,7 +291,7 @@ pub const Dreamcast = struct {
     }
 
     pub fn get_user_flash_path() []const u8 {
-        return user_data_directory ++ "/flash.bin";
+        return dc_config.userdata_path ++ "/flash.bin";
     }
 
     pub fn set_region(self: *@This(), region: Region) !void {
@@ -312,7 +311,7 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This()) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = "./data/dc_flash.bin";
+        const default_flash_path = dc_config.data_path ++ "/dc_flash.bin";
         var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
             return e;
@@ -321,7 +320,6 @@ pub const Dreamcast = struct {
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
         //     if (err == error.FileNotFound) {
         //         dc_log.info("Loading default flash ROM.", .{});
-        //         const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
         //         break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
         //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
         //             return e;

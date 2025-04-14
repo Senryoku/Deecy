@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const comptime_config = @import("config");
 
 const zglfw = @import("zglfw");
 const zgpu = @import("zgpu");
@@ -250,8 +251,8 @@ const Configuration = struct {
     }
 };
 
-pub const TmpDirPath = "./userdata/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
-pub const ConfigPath = "./userdata/config.json";
+pub const TmpDirPath = comptime_config.userdata_path ++ "/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
+pub const ConfigPath = comptime_config.userdata_path ++ "/config.json";
 
 pub const MaxSaveStates = 4;
 
@@ -296,7 +297,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const start_time = std.time.milliTimestamp();
     defer deecy_log.info("Deecy initialized in {d} ms", .{std.time.milliTimestamp() - start_time});
 
-    std.fs.cwd().makeDir("userdata") catch |err| switch (err) {
+    std.fs.cwd().makeDir(comptime_config.userdata_path) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -443,7 +444,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc = Dreamcast.create(allocator) catch |err| {
             switch (err) {
                 error.BiosNotFound => {
-                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to 'data/dc_boot.bin'.");
+                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to '" ++ comptime_config.data_path ++ "/dc_boot.bin'.");
                 },
                 else => {
                     deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
@@ -863,7 +864,7 @@ pub fn get_product_id(self: *@This()) ?[]const u8 {
 fn userdata_game_directory(self: *@This()) ![]const u8 {
     const product_id = self.get_product_id() orelse "default";
     const product_name = self.get_product_name() orelse "default";
-    const path = try std.fmt.allocPrint(self._allocator, "./userdata/{s}[{s}]", .{ product_name, product_id });
+    const path = try std.fmt.allocPrint(self._allocator, comptime_config.userdata_path ++ "/{s}[{s}]", .{ product_name, product_id });
     safe_path(path);
     return path;
 }
