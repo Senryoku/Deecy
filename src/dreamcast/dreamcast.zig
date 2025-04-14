@@ -5,6 +5,7 @@ const dc_config = @import("dc_config");
 const termcolor = @import("termcolor");
 
 const dc_log = std.log.scoped(.dc);
+pub const HostPaths = @import("host_paths.zig");
 
 pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
@@ -187,9 +188,11 @@ pub const Dreamcast = struct {
         errdefer dc.deinit();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath(dc_config.userdata_path);
+        try std.fs.cwd().makePath(HostPaths.get_userdata_path());
 
-        dc.load_bios(dc_config.data_path ++ "/dc_boot.bin") catch |err| {
+        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
+        defer allocator.free(bios_path);
+        dc.load_bios(bios_path) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.BiosNotFound,
                 else => return err,
@@ -202,21 +205,21 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disc
-        if (!@import("builtin").is_test) {
-            const filename = get_user_flash_path();
-            std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
-                dc_log.err("Failed to create user flash directory: {any}", .{err});
-            };
-            if (std.fs.cwd().createFile(filename, .{})) |file| {
-                defer file.close();
-                _ = file.writeAll(self.flash.data) catch |err| {
-                    dc_log.err("Failed to save user flash: {any}", .{err});
-                };
-            } else |err| {
-                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
-            }
-        }
+        // Write flash to disc. FIXME: Unused for now.
+        // if (!@import("builtin").is_test) {
+        //     const filename = get_user_flash_path();
+        //     std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
+        //         dc_log.err("Failed to create user flash directory: {any}", .{err});
+        //     };
+        //     if (std.fs.cwd().createFile(filename, .{})) |file| {
+        //         defer file.close();
+        //         _ = file.writeAll(self.flash.data) catch |err| {
+        //             dc_log.err("Failed to save user flash: {any}", .{err});
+        //         };
+        //     } else |err| {
+        //         dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
+        //     }
+        // }
 
         self.scheduled_events.deinit();
         self.sh4_jit.deinit();
@@ -290,10 +293,6 @@ pub const Dreamcast = struct {
         };
     }
 
-    pub fn get_user_flash_path() []const u8 {
-        return dc_config.userdata_path ++ "/flash.bin";
-    }
-
     pub fn set_region(self: *@This(), region: Region) !void {
         self.region = region;
         try self.load_flash();
@@ -311,7 +310,8 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This()) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = dc_config.data_path ++ "/dc_flash.bin";
+        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
+        defer self._allocator.free(default_flash_path);
         var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
             return e;
