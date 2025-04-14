@@ -23,6 +23,7 @@ const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
+const HostPaths = DreamcastModule.HostPaths;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -251,8 +252,8 @@ const Configuration = struct {
     }
 };
 
-pub const TmpDirPath = comptime_config.userdata_path ++ "/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
-pub const ConfigPath = comptime_config.userdata_path ++ "/config.json";
+pub const TmpDirPath = "/.tmp_deecy"; // Be careful when editing this, it will be deleted on program exit!
+pub const ConfigFile = "/config.json";
 
 pub const MaxSaveStates = 4;
 
@@ -297,7 +298,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     const start_time = std.time.milliTimestamp();
     defer deecy_log.info("Deecy initialized in {d} ms", .{std.time.milliTimestamp() - start_time});
 
-    std.fs.cwd().makeDir(comptime_config.userdata_path) catch |err| switch (err) {
+    std.fs.cwd().makePath(HostPaths.get_userdata_path()) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -305,7 +306,9 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
     // Load user config
     // TODO: Replace by ZON when available.
     const config = config: {
-        if (std.fs.cwd().openFile(ConfigPath, .{})) |file| {
+        const config_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
+        defer allocator.free(config_path);
+        if (std.fs.cwd().openFile(config_path, .{})) |file| {
             defer file.close();
             const conf_str = try file.readToEndAlloc(allocator, 1024 * 1024);
             defer allocator.free(conf_str);
@@ -444,11 +447,10 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         self.dc = Dreamcast.create(allocator) catch |err| {
             switch (err) {
                 error.BiosNotFound => {
-                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file to '" ++ comptime_config.data_path ++ "/dc_boot.bin'.");
+                    self.display_unrecoverable_error("Missing BIOS. Please copy your bios file as 'dc_boot.bin' to '{s}'.", .{HostPaths.get_data_path()});
                 },
                 else => {
-                    deecy_log.err(termcolor.red("Error initializing Dreamcast: {any}"), .{err});
-                    self.display_unrecoverable_error("Error initializing Dreamcast");
+                    self.display_unrecoverable_error("Error initializing Dreamcast: {s}", .{@errorName(err)});
                 },
             }
             return err;
@@ -838,11 +840,10 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
             std.log.err("Could not find GDI file in zip file '{s}'.", .{path});
             return error.GDIFileNotFound;
         }
-        var gdi_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        const tmp_gdi_path = try std.fmt.bufPrint(&gdi_path_buf, TmpDirPath ++ "/{s}", .{gdi_filename});
+        const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), TmpDirPath, gdi_filename });
         std.log.info("Found GDI file: '{s}'.", .{gdi_filename});
-        std.log.info("Extracting zip to '{s}'...", .{TmpDirPath});
-        var tmp_dir = try std.fs.cwd().makeOpenPath(TmpDirPath, .{});
+        std.log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});
+        var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});
         defer tmp_dir.close();
         try std.zip.extract(tmp_dir, stream, .{});
         self.dc.gdrom.disc = try .init(tmp_gdi_path, self._allocator);
@@ -864,8 +865,10 @@ pub fn get_product_id(self: *@This()) ?[]const u8 {
 fn userdata_game_directory(self: *@This()) ![]const u8 {
     const product_id = self.get_product_id() orelse "default";
     const product_name = self.get_product_name() orelse "default";
-    const path = try std.fmt.allocPrint(self._allocator, comptime_config.userdata_path ++ "/{s}[{s}]", .{ product_name, product_id });
-    safe_path(path);
+    const folder_name = try std.fmt.allocPrint(self._allocator, "{s}[{s}]", .{ product_name, product_id });
+    safe_path(folder_name);
+    defer self._allocator.free(folder_name);
+    const path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), folder_name });
     return path;
 }
 
@@ -873,10 +876,8 @@ pub fn on_game_load(self: *@This()) !void {
     if (self.config.per_game_vmu) {
         const game_dir = try self.userdata_game_directory();
         defer self._allocator.free(game_dir);
-        var vmu_path = std.ArrayList(u8).init(self._allocator);
-        defer vmu_path.deinit();
-        try vmu_path.writer().print("{s}/vmu_0.bin", .{game_dir});
-        safe_path(vmu_path.items);
+        const vmu_path = try std.fs.path.join(self._allocator, &[_][]const u8{ game_dir, "vmu_0.bin" });
+        defer self._allocator.free(vmu_path);
 
         if (self.dc.maple.ports[0].subperipherals[0]) |*peripheral| {
             switch (peripheral.*) {
@@ -884,7 +885,7 @@ pub fn on_game_load(self: *@This()) !void {
                 else => {},
             }
         }
-        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path.items) };
+        self.dc.maple.ports[0].subperipherals[0] = .{ .VMU = try .init(self._allocator, vmu_path) };
         self.dc.maple.ports[0].subperipherals[0].?.VMU.on_screen_update = .{ .function = @ptrCast(&UI.update_vmu_screen_0_0), .userdata = self.ui };
     }
     try self.check_save_state_slots();
@@ -911,7 +912,6 @@ fn save_state_path(self: *@This(), index: usize) !std.ArrayList(u8) {
     defer self._allocator.free(game_dir);
     var save_slot_path = std.ArrayList(u8).init(self._allocator);
     try save_slot_path.writer().print("{s}/save_{d}.sav", .{ game_dir, index });
-    safe_path(save_slot_path.items);
     return save_slot_path;
 }
 
@@ -1060,7 +1060,7 @@ fn submit_ui(self: *@This()) void {
 }
 
 // Display an error message and wait for the user to close the window.
-fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
+fn display_unrecoverable_error(self: *@This(), comptime fmt: []const u8, args: anytype) void {
     while (!self.window.shouldClose()) {
         zglfw.pollEvents();
 
@@ -1070,8 +1070,8 @@ fn display_unrecoverable_error(self: *@This(), comptime msg: []const u8) void {
             zgui.openPopup("Error##Modal", .{});
         }
 
-        if (zgui.beginPopupModal("Error##Modal", .{})) {
-            zgui.text(msg, .{});
+        if (zgui.beginPopupModal("Error##Modal", .{ .flags = .{ .always_auto_resize = true } })) {
+            zgui.text(fmt, args);
             if (zgui.button("OK", .{})) {
                 zglfw.setWindowShouldClose(self.window, true);
             }
@@ -1254,7 +1254,9 @@ pub fn load_state(self: *@This(), index: usize) !void {
 }
 
 fn save_config(self: *@This()) !void {
-    var config_file = try std.fs.cwd().createFile(ConfigPath, .{});
+    const config_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), ConfigFile });
+    defer self._allocator.free(config_path);
+    var config_file = try std.fs.cwd().createFile(config_path, .{});
     defer config_file.close();
     try std.json.stringify(self.config, .{}, config_file.writer());
 }
