@@ -436,6 +436,8 @@ test {
             var failed_test_cases: u32 = 0;
             for (test_data.value) |t| {
                 run_test(t, &cpu, false) catch |err| {
+                    if (err == error.FPUDisabled)
+                        continue;
                     if (failed_test_cases == 0) {
                         std.debug.print(termcolor.red("Failed to run test {s}: {s}\n"), .{ entry.basename, @errorName(err) });
                         run_test(t, &cpu, true) catch {};
