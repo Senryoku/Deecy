@@ -956,6 +956,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
                         error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
                         error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
                         error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
+                        error.UnconditionalTrap => cpu.jump_to_exception(.UnconditionalTrap),
                         else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
                     }
                     return 1;
