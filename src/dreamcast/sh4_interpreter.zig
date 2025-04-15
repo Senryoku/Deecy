@@ -65,15 +65,18 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
 }
 
 fn fetch_instruction(self: *SH4, virtual_addr: u32) u16 {
-    return if (comptime !builtin.is_test) oc: {
-        const physical_addr = self.translate_instruction_address(virtual_addr);
-        if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
-            std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
-        // Guiding the compiler a bit. Yes, that helps a lot :)
-        // Instruction should be in Boot ROM, or RAM.
-        std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
-        break :oc @call(.always_inline, SH4.read_physical, .{ self, u16, physical_addr });
-    } else self.read_physical(u16, virtual_addr);
+    if (comptime builtin.is_test) return self.read_physical(u16, virtual_addr);
+
+    const physical_addr = self.translate_instruction_address(virtual_addr) catch |err| pc: {
+        self.handle_instruction_exception(virtual_addr, err);
+        break :pc self.pc & 0x1FFF_FFFF;
+    };
+    // Instruction should be in Boot ROM, or RAM.
+    if (!((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000)))
+        std.debug.print(" ! PC virtual_addr {X:0>8} => physical_addr: {X:0>8}\n", .{ virtual_addr, physical_addr });
+    // Guiding the compiler a bit. Yes, that helps a lot :)
+    std.debug.assert((physical_addr >= 0x00000000 and physical_addr < 0x00020000) or (physical_addr >= 0x0C000000 and physical_addr < 0x10000000));
+    return @call(.always_inline, SH4.read_physical, .{ self, u16, physical_addr });
 }
 
 fn _execute(self: *SH4, opcode: u16) !void {

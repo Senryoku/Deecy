@@ -359,7 +359,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = cpu.translate_instruction_address(cpu.pc);
+        const physical_pc = cpu.get_physical_pc();
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
             std.debug.panic("Invalid physical PC: {X}", .{physical_pc});
@@ -389,7 +389,21 @@ pub const JITContext = struct {
         self.in_delay_slot = true;
         defer self.in_delay_slot = false;
 
-        const instr = self.instructions[self.index + 1];
+        var instr = self.instructions[self.index + 1];
+
+        // If MMU translation is enabled, make sure the delay slot instruction is the one we expect.
+        if (self.mmu_enabled and cross_page(self.current_pc, self.current_pc + 2)) {
+            const expected_physical_pc = self.current_physical_pc + 2;
+            const physical_pc = self.cpu.translate_instruction_address(self.current_pc + 2) catch |err| pc: {
+                sh4_jit_log.err("Address translation raised an exception for delay slot at {X:0>8}: {s}", .{ self.current_pc, @errorName(err) });
+                break :pc expected_physical_pc; // FIXME: Ignore it for now...
+            };
+            if (physical_pc != expected_physical_pc) {
+                sh4_jit_log.warn("Crossing pages in delay slot at PC={X:0>8}. Expected {X:0>8}, got {X:0>8}.\n", .{ self.current_pc, expected_physical_pc, physical_pc });
+                instr = self.cpu.read_physical(u16, physical_pc);
+            }
+        }
+
         const op = instr_lookup(instr);
         if (comptime std.log.logEnabled(.debug, .sh4_jit))
             sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
@@ -580,7 +594,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
-            const physical_pc = cpu.translate_instruction_address(cpu.pc);
+            const physical_pc = cpu.get_physical_pc();
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.

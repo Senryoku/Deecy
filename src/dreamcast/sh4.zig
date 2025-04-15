@@ -579,11 +579,11 @@ pub const SH4 = struct {
         return @constCast(self).p4_register_addr(T, @intFromEnum(r)).*;
     }
 
-    pub inline fn p4_register(self: *@This(), comptime T: type, r: P4Register) *T {
+    pub inline fn p4_register(self: *const @This(), comptime T: type, r: P4Register) *T {
         return self.p4_register_addr(T, @intFromEnum(r));
     }
 
-    pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
+    pub inline fn p4_register_addr(self: *const @This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr & 0xFF000000 == 0xFF000000 or addr & 0xFF000000 == 0x1F000000);
         std.debug.assert(addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0);
 
@@ -1030,7 +1030,7 @@ pub const SH4 = struct {
         @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], value);
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
+    pub fn utlb_lookup(self: *const @This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1118,16 +1118,11 @@ pub const SH4 = struct {
         return virtual_addr;
     }
 
-    /// Might cause an exception and jump to its handler.
-    pub fn translate_instruction_address(self: *@This(), virtual_addr: u32) u32 {
+    pub fn translate_instruction_address(self: *const @This(), virtual_addr: u32) error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }!u32 {
         if (!FullMMUSupport or self._mmu_state != .Full) return virtual_addr & 0x1FFF_FFFF;
 
-        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(.InstructionAddressError);
-            return self.pc & 0x1FFF_FFFF;
-        }
-        if (virtual_addr & 0x8000_0000 != 0) return virtual_addr & 0x1FFF_FFFF;
+        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) return error.InstructionAddressError;
+        if (virtual_addr & 0x8000_0000 != 0 and !(virtual_addr >= 0xC000_0000 and virtual_addr < 0xE000_0000)) return virtual_addr & 0x1FFF_FFFF;
 
         const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
         const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
@@ -1141,11 +1136,7 @@ pub const SH4 = struct {
             for (self.itlb, 0..) |entry, idx| {
                 // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
                 if (entry.match(check_asid, asid, vpn)) {
-                    if (self.sr.md == 0 and entry.pr.privileged()) {
-                        self.report_address_exception(virtual_addr);
-                        self.jump_to_exception(.InstructionTLBProtectionViolation);
-                        return self.pc & 0x1FFF_FFFF;
-                    }
+                    if (self.sr.md == 0 and entry.pr.privileged()) return error.TLBProtectionViolation;
 
                     // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
                     mmucr.lrui &= LRUIMasks[idx];
@@ -1160,15 +1151,7 @@ pub const SH4 = struct {
         }
 
         // Fallback to UTLB
-        const entry = self.utlb_lookup(virtual_addr) catch |err| {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(switch (err) {
-                error.TLBMiss => .InstructionTLBMiss,
-                error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
-                error.TLBMultipleHit => .InstructionTLBMultipleHit,
-            });
-            return self.pc & 0x1FFF_FFFF;
-        };
+        const entry = try self.utlb_lookup(virtual_addr);
 
         if (EmulateITLB) {
             // Update ITLB entry pointed by MMUCR.LRUI
@@ -1190,6 +1173,23 @@ pub const SH4 = struct {
         }
 
         return entry.translate(virtual_addr) & 0x1FFF_FFFF;
+    }
+
+    pub fn get_physical_pc(self: *@This()) u32 {
+        return self.translate_instruction_address(self.pc) catch |err| pc: {
+            self.handle_instruction_exception(self.pc, err);
+            break :pc self.pc & 0x1FFF_FFFF;
+        };
+    }
+
+    pub fn handle_instruction_exception(self: *@This(), virtual_addr: u32, err: error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }) void {
+        self.report_address_exception(virtual_addr);
+        self.jump_to_exception(switch (err) {
+            error.InstructionAddressError => .InstructionAddressError,
+            error.TLBMiss => .InstructionTLBMiss,
+            error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
+            error.TLBMultipleHit => .InstructionTLBMultipleHit,
+        });
     }
 
     // Memory access/mapping functions
