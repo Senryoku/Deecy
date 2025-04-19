@@ -34,28 +34,6 @@ const lz4 = @import("lz4");
 
 const deecy_log = std.log.scoped(.deecy);
 
-// Zig wrappers around native zglfw functions.
-// Workarounds an issue in zglfw which started causing crashes with zig 0.14.0.
-// See https://github.com/zig-gamedev/zglfw/issues/19
-fn getWin32Window(window: *const anyopaque) ?*anyopaque {
-    return zglfw.getWin32Window(@constCast(@ptrCast(window)));
-}
-fn getX11Display() ?*anyopaque {
-    return zglfw.getX11Display();
-}
-fn getX11Window(window: *const anyopaque) u32 {
-    return zglfw.getX11Window(@constCast(@ptrCast(window)));
-}
-fn getWaylandDisplay() ?*anyopaque {
-    return zglfw.getWaylandDisplay();
-}
-fn getWaylandWindow(window: *const anyopaque) ?*anyopaque {
-    return zglfw.getWaylandWindow(@constCast(@ptrCast(window)));
-}
-fn getCocoaWindow(window: *const anyopaque) ?*anyopaque {
-    return zglfw.getCocoaWindow(@constCast(@ptrCast(window)));
-}
-
 fn glfw_key_callback(
     window: *zglfw.Window,
     key: zglfw.Key,
@@ -392,12 +370,12 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                 .window = self.window,
                 .fn_getTime = @ptrCast(&zglfw.getTime),
                 .fn_getFramebufferSize = @ptrCast(&zglfw.Window.getFramebufferSize),
-                .fn_getWin32Window = getWin32Window,
-                .fn_getX11Display = getX11Display,
-                .fn_getX11Window = getX11Window,
-                .fn_getWaylandDisplay = getWaylandDisplay,
-                .fn_getWaylandSurface = getWaylandWindow,
-                .fn_getCocoaWindow = getCocoaWindow,
+                .fn_getWin32Window = @ptrCast(&zglfw.getWin32Window),
+                .fn_getX11Display = @ptrCast(&zglfw.getX11Display),
+                .fn_getX11Window = @ptrCast(&zglfw.getX11Window),
+                .fn_getWaylandDisplay = @ptrCast(&zglfw.getWaylandDisplay),
+                .fn_getWaylandSurface = @ptrCast(&zglfw.getWaylandWindow),
+                .fn_getCocoaWindow = @ptrCast(&zglfw.getCocoaWindow),
             }, .{
                 .present_mode = config.present_mode,
                 .required_features = &[_]zgpu.wgpu.FeatureName{ .bgra8_unorm_storage, .depth32_float_stencil8 },
