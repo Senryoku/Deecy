@@ -574,13 +574,13 @@ fn read_register(self: *@This(), addr: u32) u8 {
     return self.reg()[addr];
 }
 
-pub fn read(self: *@This(), comptime T: type, addr: u32) T {
+pub fn read(self: *const @This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x00600000 and addr <= 0x006007FF);
     log.debug("Read({any}): {X}", .{ T, addr });
     switch (addr & 0x7FF) {
         0x000 => return @intFromEnum(self.modemID0),
         0x004 => return @as(u8, @bitCast(self.modemID1)),
-        0x400...0x47F => return self.read_register((addr & 0x7F) >> 2),
+        0x400...0x47F => return @constCast(self).read_register((addr & 0x7F) >> 2),
         0x480 => return 0,
         else => log.err("Invalid Read({any}): @{X}", .{ T, addr }),
     }

@@ -44,7 +44,7 @@ selected_vertex_focus: bool = false,
 selected_vertex: ?[2]f32 = null,
 
 draw_wireframe: bool = false,
-draw_list_wireframe: [3]bool = .{true} ** 3,
+draw_list_wireframe: [3]bool = @splat(true),
 list_wireframe_colors: [3]u32 = .{ 0xFF4B19E6, 0xFF4BB43C, 0xFFD86343 },
 
 selected_volume_focus: bool = false,
@@ -62,10 +62,10 @@ pixels: []u8 = undefined,
 
 audio_channels: [64]struct {
     amplitude_envelope: struct { start_time: i64 = 0, xv: std.ArrayList(u32) = undefined, yv: std.ArrayList(u32) = undefined } = .{},
-} = .{.{}} ** 64,
+} = @splat(.{}),
 
-dsp_inputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = .{.{}} ** 16,
-dsp_outputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = .{.{}} ** 16,
+dsp_inputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = @splat(.{}),
+dsp_outputs: [16]struct { start_time: i64 = 0, xv: std.ArrayList(i32) = undefined, yv: std.ArrayList(i32) = undefined } = @splat(.{}),
 
 _allocator: std.mem.Allocator,
 _gctx: *zgpu.GraphicsContext,
@@ -457,7 +457,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const max = 50;
             const static = struct {
                 var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
-                var sorted: [max]usize = .{0} ** max;
+                var sorted: [max]usize = @splat(0);
                 var initialized: bool = false;
             };
             zgui.beginDisabled(.{ .disabled = d.running });
@@ -628,7 +628,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
             // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
             zgui.plot.setupFinish();
-            zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
+            zgui.plot.plotLineValues("samples", i32, .{ .v = dc.aica.sample_buffer });
             zgui.plot.plotLine("sample_read_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_read_offset), @intCast(dc.aica.sample_read_offset) }, .yv = &[_]i32{ 0, std.math.maxInt(i16) } });
             zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
             zgui.plot.endPlot();
@@ -734,6 +734,20 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
     }
     zgui.end();
+
+    if (false) {
+        if (zgui.begin("Scheduler", .{})) {
+            const cycle: i64 = @intCast(d.dc._global_cycles);
+            zgui.text("Global Cycle: {d}", .{cycle});
+            // NOTE: This is not thread safe, and I don't want to introduce synchronization for a debugging view.
+            //       Disabled by default, use it at your own risk :)
+            var it = d.dc.scheduled_events.iterator();
+            while (it.next()) |event| {
+                zgui.text("[{d: >10}] {?} {any}", .{ @as(i64, @intCast(event.trigger_cycle)) - cycle, event.interrupt, event.event });
+            }
+        }
+        zgui.end();
+    }
 
     if (zgui.begin("AICA - DSP", .{})) {
         const time = std.time.milliTimestamp();
@@ -958,7 +972,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
         }
 
-        var buffer: [256]u8 = .{0} ** 256;
+        var buffer: [256]u8 = @splat(0);
 
         // NOTE: We're looking at the last list used during a START_RENDER.
         for (d.renderer.render_passes.items, 0..) |render_pass, pass_idx| {

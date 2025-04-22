@@ -62,7 +62,7 @@ vmu_displays: [4][2]?struct {
     texture: zgpu.TextureHandle,
     view: zgpu.TextureViewHandle,
     dirty: bool = false,
-    data: [48 * 32 / 8]u8 = .{255} ** (48 * 32 / 8),
+    data: [48 * 32 / 8]u8 = @splat(255),
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 display_library: bool = false,
@@ -537,7 +537,7 @@ pub fn draw(self: *@This()) !void {
                         if (d.dc.maple.ports[i].main != null) {
                             d.dc.maple.ports[i].main = null;
                         } else {
-                            d.dc.maple.ports[i].main = .{ .Controller = .{} };
+                            d.dc.maple.ports[i].main = .{ .Controller = .{ .subcapabilities = .{ d.config.controllers[i].subcapabilities.as_u32(), 0, 0 } } };
                         }
                     }
                     const name = if (d.controllers[i]) |j|
@@ -563,9 +563,23 @@ pub fn draw(self: *@This()) !void {
                         _ = zgui.sliderFloat("Deadzone##" ++ number, .{ .v = &j.deadzone, .min = 0.0, .max = 1.0, .flags = .{} });
                     }
 
-                    if (d.dc.maple.ports[i].main) |peripheral| {
-                        switch (peripheral) {
-                            .Controller => |controller| {
+                    if (d.dc.maple.ports[i].main) |*peripheral| {
+                        switch (peripheral.*) {
+                            .Controller => |*controller| {
+                                var capabilities: MapleModule.InputCapabilities = @bitCast(controller.subcapabilities[0]);
+                                var has_right_stick = capabilities.analogVertical2 != 0;
+                                if (zgui.checkbox("Right Stick", .{ .v = &has_right_stick })) {
+                                    if (has_right_stick) {
+                                        capabilities.analogVertical2 = 1;
+                                        capabilities.analogHorizontal2 = 1;
+                                    } else {
+                                        capabilities.analogVertical2 = 0;
+                                        capabilities.analogHorizontal2 = 0;
+                                    }
+                                    controller.subcapabilities[0] = @bitCast(capabilities);
+                                    d.config.controllers[i].subcapabilities = capabilities;
+                                }
+
                                 zgui.textColored(if (controller.buttons.a == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[A] ", .{});
                                 zgui.sameLine(.{});
                                 zgui.textColored(if (controller.buttons.b == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[B] ", .{});
@@ -584,19 +598,19 @@ pub fn draw(self: *@This()) !void {
                                 zgui.sameLine(.{});
                                 zgui.textColored(if (controller.buttons.right == 0) .{ 1.0, 1.0, 1.0, 1.0 } else .{ 1.0, 1.0, 1.0, 0.5 }, "[>] ", .{});
 
-                                const capabilities: MapleModule.InputCapabilities = @bitCast(MapleModule.Controller.Subcapabilities[0]);
                                 var buf: [64]u8 = undefined;
                                 const width = (zgui.getContentRegionAvail()[0] - 3 * zgui.getStyle().window_padding[0]) / 2.0;
                                 inline for ([_]u8{ 1, 0, 2, 3, 4, 5 }, 0..) |axis, idx| {
-                                    if (@field(capabilities, ([_][]const u8{ "analogLtrigger", "analogRtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) == 0) continue;
-                                    const value = controller.axis[axis];
-                                    const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "L", "R", "H", "V", "H2", "V2" }[idx], value });
-                                    _ = zgui.progressBar(.{
-                                        .fraction = @as(f32, @floatFromInt(value)) / 255.0,
-                                        .overlay = overlay,
-                                        .w = width,
-                                    });
-                                    if (idx % 2 == 0) zgui.sameLine(.{});
+                                    if (@field(capabilities, ([_][]const u8{ "analogLtrigger", "analogRtrigger", "analogHorizontal", "analogVertical", "analogHorizontal2", "analogVertical2" })[idx]) != 0) {
+                                        const value = controller.axis[axis];
+                                        const overlay = try std.fmt.bufPrintZ(&buf, "{s} {d}/255", .{ .{ "L", "R", "H", "V", "H2", "V2" }[idx], value });
+                                        _ = zgui.progressBar(.{
+                                            .fraction = @as(f32, @floatFromInt(value)) / 255.0,
+                                            .overlay = overlay,
+                                            .w = width,
+                                        });
+                                        if (idx % 2 == 0) zgui.sameLine(.{});
+                                    }
                                 }
 
                                 if (zgui.collapsingHeader("Keyboard Bindings", .{})) {

@@ -26,6 +26,9 @@ pub const Exception = @import("sh4_exceptions.zig").Exception;
 pub const instructions = @import("sh4_instructions.zig");
 pub const disassembly = @import("sh4_disassembly.zig");
 
+pub const DataProtectedCheck = false; // Check for access to protected memory (>= 0x80000000) in user mode.
+pub const DataAlignmentCheck = false; // Check for unaligned memory access.
+
 // Does have a small impact on performance for non-MMU games (~1%)
 pub const FullMMUSupport = dc_config.mmu;
 // NOTE: UTLB Multiple hits are fatal exceptions anyway, I think we can safely ignore them. (Incompatible with EnableUTLBFastLookup)
@@ -168,7 +171,7 @@ comptime {
 // DCA3 Hack
 const OperandCacheState = struct {
     addr: [256]u32 = undefined, // Tag (19bits)
-    dirty: [256]bool = .{false} ** 256, // U bit
+    dirty: [256]bool = @splat(false), // U bit
     // V bit not implemented
 
     pub fn serialize(self: *const @This(), writer: anytype) !usize {
@@ -225,14 +228,14 @@ pub const SH4 = struct {
     interrupt_requests: u64 = 0,
     // NOTE: These are not serialized as they can easily be computed from P4 registers IPRA/B/C. See compute_interrupt_priorities.
     _sorted_interrupts: [41]Interrupt = Interrupts.DefaultInterruptPriorities, // Interrupts ordered by their current priority.
-    _interrupts_indices: [41]u8 = .{0} ** 41, // Inverse mapping of _sorted_interrupts
+    _interrupts_indices: [41]u8 = @splat(0), // Inverse mapping of _sorted_interrupts
     _interrupt_levels: [41]u32 = Interrupts.DefaultInterruptLevels,
 
     /// Is the MMU currently enabled?
     ///   Limited: Translation is only needed for store queue operation (pref instruction).
     _mmu_state: enum { Disabled, Limited, Full } = .Disabled,
     _fast_utlb_lookup: FastLookupType,
-    _last_timer_update: [3]u64 = .{0} ** 3,
+    _last_timer_update: [3]u64 = @splat(0),
 
     execution_state: ExecutionState = .Running,
 
@@ -296,8 +299,8 @@ pub const SH4 = struct {
 
     pub fn reset(self: *@This()) void {
         // NOTE: These should be undefined, but it prevents the bios to run in debug mode, at least since the update to zig 0.13.
-        self.r = .{0} ** 16;
-        self.r_bank = .{0} ** 8;
+        self.r = @splat(0);
+        self.r_bank = @splat(0);
 
         self.R(0xF).* = 0x8C00F400;
         self.set_sr(.{});
@@ -363,7 +366,7 @@ pub const SH4 = struct {
             self.p4_register(u32, timer.counter).* = 0xFFFFFFFF;
             self.p4_register(u16, timer.control).* = 0x0000;
         }
-        self._last_timer_update = .{0} ** 3;
+        self._last_timer_update = @splat(0);
 
         self.p4_register(u8, .SCBRR2).* = 0xFF;
         self.p4_register(u16, .SCSCR2).* = 0x0000;
@@ -474,7 +477,7 @@ pub const SH4 = struct {
         self.pc = 0xAC008300; // Start address of IP.bin Licence screen
     }
 
-    pub fn set_sr(self: *@This(), value: SR) void {
+    pub fn set_sr(self: *@This(), value: SR) callconv(.c) void {
         const prev_rb = if (self.sr.md == 1) self.sr.rb else 0;
         const new_rb = if (value.md == 1) value.rb else 0;
         if (new_rb != prev_rb) {
@@ -502,7 +505,7 @@ pub const SH4 = struct {
         );
     }
 
-    pub fn set_fpscr(self: *@This(), value: u32) void {
+    pub fn set_fpscr(self: *@This(), value: u32) callconv(.c) void {
         const new_value: FPSCR = @bitCast(value & 0x003FFFFF);
         if (new_value.fr != self.fpscr.fr) {
             std.mem.swap(@TypeOf(self.fp_banks[0]), &self.fp_banks[0], &self.fp_banks[1]);
@@ -576,11 +579,11 @@ pub const SH4 = struct {
         return @constCast(self).p4_register_addr(T, @intFromEnum(r)).*;
     }
 
-    pub inline fn p4_register(self: *@This(), comptime T: type, r: P4Register) *T {
+    pub inline fn p4_register(self: *const @This(), comptime T: type, r: P4Register) *T {
         return self.p4_register_addr(T, @intFromEnum(r));
     }
 
-    pub inline fn p4_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
+    pub inline fn p4_register_addr(self: *const @This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr & 0xFF000000 == 0xFF000000 or addr & 0xFF000000 == 0x1F000000);
         std.debug.assert(addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0);
 
@@ -656,7 +659,7 @@ pub const SH4 = struct {
         // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
         // pending or accepted according to the setting made by software.
         if (self.sr.bl)
-            std.debug.panic(termcolor.red("{s} exception raised while SR.BL is set."), .{@tagName(exception)});
+            std.debug.panic("[PC={X:0>8}] " ++ termcolor.red("{s} exception raised while SR.BL is set."), .{ self.pc, @tagName(exception) });
         // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
         // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
         // status register (SR).
@@ -832,7 +835,7 @@ pub const SH4 = struct {
                     if (tcnt.* >= mod) {
                         tcnt.* -= mod;
                     } else {
-                        tcnt.* = (tcnt.* + reset_constant) - mod;
+                        tcnt.* = (tcnt.* +% reset_constant) -% mod;
                     }
                 }
             } else self._last_timer_update[channel] = dc._global_cycles;
@@ -899,12 +902,12 @@ pub const SH4 = struct {
             switch (dst_addr) {
                 // Polygon Path
                 0x10000000...0x10800000 - 1, 0x12000000...0x12800000 - 1 => {
-                    var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                    var src: [*]u32 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
                     self._dc.?.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * len]);
                 },
                 // YUV Converter Path
                 0x10800000...0x11000000 - 1, 0x12800000...0x13000000 - 1 => {
-                    var src: [*]u8 = @alignCast(@ptrCast(self._get_memory(src_addr)));
+                    var src: [*]u8 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
                     self._dc.?.gpu.write_ta_fifo_yuv_converter_path(src[0..byte_len]);
                 },
                 // Direct Texture Path
@@ -920,7 +923,7 @@ pub const SH4 = struct {
                             curr_src += 4 * src_stride;
                         }
                     } else {
-                        self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._get_memory(src_addr)))[0..byte_len]);
+                        self._dc.?.gpu.write_ta_fifo_direct_texture_path(dst_addr, @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)))[0..byte_len]);
                     }
                 },
                 else => unreachable,
@@ -928,8 +931,8 @@ pub const SH4 = struct {
         } else if (is_memcpy_safe) {
             std.debug.assert(dst_stride == src_stride);
             // FIXME: When can we safely memcpy?
-            const src = @as([*]u8, @ptrCast(self._get_memory(src_addr)));
-            const dst = @as([*]u8, @ptrCast(self._get_memory(dst_addr)));
+            const src = @as([*]u8, @ptrCast(self._dc.?._get_memory(src_addr)));
+            const dst = @as([*]u8, @ptrCast(self._dc.?._get_memory(dst_addr)));
             @memcpy(dst[0..byte_len], src[0..byte_len]);
         } else {
             var curr_dst: i32 = @intCast(dst_addr);
@@ -1027,7 +1030,7 @@ pub const SH4 = struct {
         @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], value);
     }
 
-    pub fn utlb_lookup(self: *@This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
+    pub fn utlb_lookup(self: *const @This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1115,16 +1118,11 @@ pub const SH4 = struct {
         return virtual_addr;
     }
 
-    /// Might cause an exception and jump to its handler.
-    pub fn translate_intruction_address(self: *@This(), virtual_addr: u32) u32 {
+    pub fn translate_instruction_address(self: *const @This(), virtual_addr: u32) error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }!u32 {
         if (!FullMMUSupport or self._mmu_state != .Full) return virtual_addr & 0x1FFF_FFFF;
 
-        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(.InstructionAddressError);
-            return self.pc & 0x1FFF_FFFF;
-        }
-        if (virtual_addr & 0x8000_0000 != 0) return virtual_addr & 0x1FFF_FFFF;
+        if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) return error.InstructionAddressError;
+        if (virtual_addr & 0x8000_0000 != 0 and !(virtual_addr >= 0xC000_0000 and virtual_addr < 0xE000_0000)) return virtual_addr & 0x1FFF_FFFF;
 
         const LRUIMasks = [4]u6{ 0b000111, 0b011001, 0b101010, 0b110100 };
         const LRUIValues = [4]u6{ 0b000000, 0b100000, 0b010100, 0b001011 };
@@ -1138,11 +1136,7 @@ pub const SH4 = struct {
             for (self.itlb, 0..) |entry, idx| {
                 // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
                 if (entry.match(check_asid, asid, vpn)) {
-                    if (self.sr.md == 0 and entry.pr.privileged()) {
-                        self.report_address_exception(virtual_addr);
-                        self.jump_to_exception(.InstructionTLBProtectionViolation);
-                        return self.pc & 0x1FFF_FFFF;
-                    }
+                    if (self.sr.md == 0 and entry.pr.privileged()) return error.TLBProtectionViolation;
 
                     // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
                     mmucr.lrui &= LRUIMasks[idx];
@@ -1157,15 +1151,7 @@ pub const SH4 = struct {
         }
 
         // Fallback to UTLB
-        const entry = self.utlb_lookup(virtual_addr) catch |err| {
-            self.report_address_exception(virtual_addr);
-            self.jump_to_exception(switch (err) {
-                error.TLBMiss => .InstructionTLBMiss,
-                error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
-                error.TLBMultipleHit => .InstructionTLBMultipleHit,
-            });
-            return self.pc & 0x1FFF_FFFF;
-        };
+        const entry = try self.utlb_lookup(virtual_addr);
 
         if (EmulateITLB) {
             // Update ITLB entry pointed by MMUCR.LRUI
@@ -1189,118 +1175,25 @@ pub const SH4 = struct {
         return entry.translate(virtual_addr) & 0x1FFF_FFFF;
     }
 
-    // Memory access/mapping functions
-    // NOTE: These would make a lot more sense in the Dreamcast struct, however since this is
-    //       by far the hostest part, it looks like avoiding the extra indirection helps a lot
-    //       with performance. I don't really understand it since it will end up doing it anyway
-    //       most of the time.
-    //       I tried having some small functions just for the P4 registers that will delegate to
-    //       the proper functions, but it was also worse performance wise (although a little less
-    //       that calling directly to DC).
-
-    fn panic_debug(self: *const @This(), comptime fmt: []const u8, args: anytype) noreturn {
-        std.debug.print("panic_debug: PC: {X:0>8}\n", .{self.pc});
-        std.debug.panic(fmt ++ "\n", args);
+    pub fn get_physical_pc(self: *@This()) u32 {
+        return self.translate_instruction_address(self.pc) catch |err| pc: {
+            self.handle_instruction_exception(self.pc, err);
+            break :pc self.pc & 0x1FFF_FFFF;
+        };
     }
 
-    pub inline fn _get_memory(self: *@This(), addr: u32) *u8 {
-        std.debug.assert(addr <= 0x1FFFFFFF);
-        const dc = self._dc.?;
-
-        // NOTE: These cases are out of order as an optimization.
-        //       Empirically tested on interpreter_perf (i.e. 200_000_000 first 'ticks' of Sonic Adventure and the Boot ROM).
-        //       The compiler seems to like really having equal length ranges (and also easily maskable, I guess)!
-        switch (addr) {
-            // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times.
-            0x0C000000...0x0FFFFFFF => return &dc.ram[addr & 0x00FFFFFF],
-            // Area 1 - 64bit path
-            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => return &dc.gpu.vram[addr & (Dreamcast.VRAMSize - 1)],
-            0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
-                const area_0_addr = addr & 0x01FFFFFF;
-                switch (area_0_addr) {
-                    0x00000000...0x001FFFFF => return &dc.boot[area_0_addr],
-                    0x00200000...0x0021FFFF => return &dc.flash.data[area_0_addr & 0x1FFFF],
-                    0x005F6800...0x005F6FFF => return dc.hw_register_addr(u8, area_0_addr),
-                    0x005F7000...0x005F709C => @panic("_get_memory to GDROM Register. This should be handled in read/write functions."),
-                    0x005F709D...0x005F7FFF => return dc.hw_register_addr(u8, area_0_addr),
-                    0x005F8000...0x005F9FFF => return dc.gpu._get_register_from_addr(u8, area_0_addr),
-                    0x005FA000...0x005FFFFF => return dc.hw_register_addr(u8, area_0_addr),
-                    0x00600000...0x006007FF => {
-                        const static = struct {
-                            var once = false;
-                        };
-                        if (!static.once) {
-                            static.once = true;
-                            sh4_log.err(termcolor.red("  Invalid _get_memory to MODEM: {X:0>8}. It should be handled in read/write accessors (This will only be reported once)"), .{addr});
-                        }
-                        dc._dummy = .{ 0, 0, 0, 0 };
-                        return @ptrCast(&dc._dummy);
-                    },
-                    // G2 AICA Register
-                    0x00700000...0x00707FFF => @panic("_get_memory to AICA Register. This should be handled in read/write functions."),
-                    // G2 AICA RTC Registers
-                    0x00710000...0x00710008 => @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions."),
-                    0x00800000...0x009FFFFF, 0x02800000...0x029FFFFF => { // G2 Wave Memory and Mirror
-                        sh4_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
-                        return @ptrCast(&dc.aica.wave_memory[area_0_addr & (dc.aica.wave_memory.len - 1)]);
-                    },
-                    0x01000000...0x01FFFFFF => { // Expansion Devices
-                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
-
-                        // FIXME: TEMP DEBUG: Crazy Taxi accesses 030100C0 (010100C0) and 030100A0 (010100A0)
-                        //        And 0101003C to 0101007C, and 01010014, and 01010008
-                        // self.on_trapa.?();
-
-                        // FIXME: I have no idea why Crazy Taxi seem to expect to find 0x80 at 01010008, but this lets it go further.
-                        dc._dummy = .{ 0x80, 0, 0, 0 };
-
-                        return @ptrCast(&dc._dummy);
-                    },
-                    else => {
-                        sh4_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
-
-                        dc._dummy = .{ 0, 0, 0, 0 };
-                        return @ptrCast(&dc._dummy);
-                    },
-                }
-            },
-            // Area 2 - Nothing
-            0x08000000...0x0BFFFFFF => self.panic_debug("Invalid _get_memory to Area 2 @{X:0>8}", .{addr}),
-            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
-                // self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
-                // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
-                sh4_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.pc, addr });
-                dc._dummy = .{ 0, 0, 0, 0 };
-                return @ptrCast(&dc._dummy);
-            },
-            0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
-                sh4_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
-                dc._dummy = .{ 0, 0, 0, 0 };
-                return @ptrCast(&dc._dummy);
-            },
-            // Area 6 - Nothing
-            0x18000000...0x1BFFFFFF => self.panic_debug("Invalid _get_memory to Area 6 @{X:0>8}", .{addr}),
-            // Area 7 - Internal I/O registers (same as P4)
-            0x1F000000...0x1FFFFFFF => {
-                std.debug.assert(self.sr.md == 1);
-                return self.p4_register_addr(u8, addr);
-            },
-            else => {
-                // FIXME: This space should be Unassigned/Reserved.
-                //        Returns a dummy value instead of panicking.
-                //        Metropolis Street Racer and Legacy of the Kain - Soul Reaver write to 0xBCXXXXXX,
-                //        and I have no idea if this is an issue with the emulator... See #51.
-                //        Ignoring the writes allow these games to progress a bit, but this might become an issue.
-                sh4_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
-                return @ptrCast(&dc._dummy);
-            },
-        }
+    pub fn handle_instruction_exception(self: *@This(), virtual_addr: u32, err: error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }) void {
+        self.report_address_exception(virtual_addr);
+        self.jump_to_exception(switch (err) {
+            error.InstructionAddressError => .InstructionAddressError,
+            error.TLBMiss => .InstructionTLBMiss,
+            error.TLBProtectionViolation => .InstructionTLBProtectionViolation,
+            error.TLBMultipleHit => .InstructionTLBMultipleHit,
+        });
     }
 
     inline fn check_type(comptime Valid: []const type, comptime T: type, comptime fmt: []const u8, param: anytype) void {
-        inline for (Valid) |V| {
-            if (T == V) return;
-        }
+        inline for (Valid) |V| if (T == V) return;
         std.debug.print(fmt, param);
         unreachable;
     }
@@ -1762,7 +1655,11 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
+    pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataAddressErrorRead, DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
+        const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
+        const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
+        if (unauthorized or unaligned)
+            return error.DataAddressErrorRead;
         const physical_address = self.translate_address(.Read, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {
@@ -1789,102 +1686,14 @@ pub const SH4 = struct {
 
         if (physical_addr >= 0xE0000000) return self.read_p4(T, physical_addr);
 
-        const addr = physical_addr & 0x1FFFFFFF;
-
-        switch (addr) {
-            // Area 0
-            0x00000000...0x01FFFFFF, 0x02000000...0x02FFFFFF => {
-                switch (addr) {
-                    0x005F6800...0x005F7FFF => {
-                        switch (addr) {
-                            0x005F7000...0x005F709C => {
-                                check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
-                                return self._dc.?.gdrom.read_register(T, addr);
-                            },
-                            else => {
-                                // Too spammy even for debugging.
-                                if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
-                                    sh4_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
-                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(@constCast(self)._get_memory(addr)))).*,
-                                    });
-                                return self._dc.?.hw_register_addr(T, addr).*;
-                            },
-                        }
-                    },
-                    0x005F8000...0x005F9FFF => {
-                        if (T == u32) {
-                            return self._dc.?.gpu.read_register(T, @enumFromInt(addr));
-                        } else {
-                            // NOTE: Some some reason I thought this was forbidden, but Windows CE does it?
-                            const val = self._dc.?.gpu._get_register_from_addr(T, addr).*;
-                            sh4_log.warn(termcolor.yellow("Read({any}) to Holly register @{X:0>8} = {X}"), .{ T, addr, val });
-                            return val;
-                        }
-                    },
-                    0x00600000...0x006007FF => return self._dc.?.modem.read(T, addr),
-                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
-                    0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
-                        check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                        return self._dc.?.aica.read_register(T, addr & 0x00FFFFFF);
-                    },
-                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                        check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
-                        return @truncate(self._dc.?.aica.read_rtc_register(addr & 0x00FFFFFF));
-                    },
-                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
-                        return self._dc.?.aica.read_mem(T, addr & 0x00FFFFFF);
-                    },
-                    else => {},
-                }
-            },
-            // Area 1 - 64bit access
-            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
-                return @as(*T, @alignCast(@ptrCast(&self._dc.?.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
-            },
-            // Area 1 - 32bit access
-            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64) {
-                    sh4_log.debug("Read(64) from 0x{X:0>8}", .{physical_addr});
-                    return @as(u64, self.read_physical(u32, physical_addr + 4)) << 32 | self.read_physical(u32, physical_addr);
-                }
-                return self._dc.?.gpu.read_vram(T, addr);
-            },
-            // Area 4 - Tile accelerator command input
-            0x10000000...0x13FFFFFF => {
-                // DCA3 Hack
-                if (physical_addr & (@as(u32, 1) << 25) != 0) {
-                    const index: u32 = (addr / 32) & 255;
-                    const offset: u32 = addr & 31;
-
-                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
-
-                    if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
-                        sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-
-                    return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
-                }
-            },
-            // Area 7
-            0x1C000000...0x1FFFFFFF => {
-                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
-                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
-                // control register area in the physical memory space
-                if (self._mmu_state != .Disabled) {
-                    return self.read_p4(T, addr | 0xE000_0000);
-                } else {
-                    sh4_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
-                    return 0;
-                }
-            },
-            else => {},
-        }
-
-        return @as(*const T, @alignCast(@ptrCast(
-            @constCast(self)._get_memory(addr),
-        ))).*;
+        return self._dc.?.read(T, physical_addr & 0x1FFFFFFF);
     }
 
-    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
+    pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataAddressErrorWrite, DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
+        const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
+        const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
+        if (unauthorized or unaligned)
+            return error.DataAddressErrorWrite;
         const physical_address = self.translate_address(.Write, virtual_addr) catch |err| {
             self.report_address_exception(virtual_addr);
             switch (err) {
@@ -1910,181 +1719,28 @@ pub const SH4 = struct {
             return self.write_operand_cache(T, physical_addr, value);
 
         if (physical_addr >= 0xE0000000)
-            return write_p4(self, T, physical_addr, value);
+            return self.write_p4(T, physical_addr, value);
 
-        // const addr = self.translate_address(virtual_addr); // We don't want that in JIT mode
-        const addr = physical_addr & 0x1FFFFFFF;
+        self._dc.?.write(T, physical_addr & 0x1FFFFFFF, value);
+    }
 
-        switch (addr) {
-            // Area 0, and mirrors
-            0x00000000...0x01FFFFFF, 0x02000000...0x03FFFFFF => {
-                switch (addr) {
-                    0x00200000...0x0021FFFF => {
-                        check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
-                        self._dc.?.flash.write(addr & 0x1FFFF, value);
-                        return;
-                    },
-                    0x005F6800...0x005F7FFF => {
-                        const reg: HardwareRegister = @enumFromInt(addr);
-                        if (addr >= 0x005F7000 and addr <= 0x005F709C) {
-                            check_type(&[_]type{ u8, u16 }, T, "Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
-                            return self._dc.?.gdrom.write_register(T, addr, value);
-                        }
-                        // Hardware registers
-                        switch (reg) {
-                            .SB_SFRES => { // Software Reset
-                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
-                                if (value == 0x00007611)
-                                    self.software_reset();
-                            },
-                            .SB_PDST => if (value == 1) self._dc.?.start_pvr_dma(),
-                            .SB_SDST => if (value == 1) self._dc.?.start_sort_dma(),
-                            .SB_E1ST, .SB_E2ST, .SB_DDST => {
-                                if (value == 1)
-                                    sh4_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
-                            },
-                            .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
-                                if ((value & 1) == 1)
-                                    sh4_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
-                            },
-                            .SB_ADST => {
-                                if (value == 1) self._dc.?.aica.start_dma(self._dc.?);
-                                return;
-                            },
-                            .SB_GDEN => {
-                                sh4_log.info("Write to SB_GDEN: {X}", .{value});
-                                if (value == 0) self._dc.?.abort_gd_dma();
-                                self._dc.?.hw_register_addr(T, addr).* = value;
-                            },
-                            .SB_GDST => {
-                                if (value == 1) {
-                                    sh4_log.info("SB_GDST DMA (ch0-DMA) initiation!", .{});
-                                    self._dc.?.start_gd_dma();
-                                } else {
-                                    sh4_log.warn("Unexpected write to SB_GDST: {X}", .{value});
-                                }
-                            },
-                            .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
-                                sh4_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
-                            },
-                            .SB_MDAPRO => {
-                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
-                                // This register specifies the address range for Maple-DMA involving the system (work) memory.
-                                // Check "Security code"
-                                if (value & 0xFFFF0000 != 0x61550000) return;
-                                self._dc.?.hw_register_addr(T, addr).* = value;
-                            },
-                            .SB_MDST => {
-                                if (value == 1) self._dc.?.start_maple_dma();
-                            },
-                            .SB_ISTNRM => {
-                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
-                                // Interrupt can be cleared by writing "1" to the corresponding bit.
-                                self._dc.?.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
-                            },
-                            .SB_ISTERR => {
-                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
-                                // Interrupt can be cleared by writing "1" to the corresponding bit.
-                                self._dc.?.hw_register(u32, .SB_ISTERR).* &= ~value;
-                            },
-                            .SB_C2DSTAT => {
-                                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
-                                self._dc.?.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
-                            },
-                            .SB_C2DST => {
-                                if (value == 1) {
-                                    self._dc.?.start_ch2_dma();
-                                } else {
-                                    self._dc.?.end_ch2_dma();
-                                }
-                            },
-                            else => {
-                                sh4_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
-                                self._dc.?.hw_register_addr(T, addr).* = value;
-                            },
-                        }
-                        return;
-                    },
-                    0x005F8000...0x005F9FFF => {
-                        if (T == u64) {
-                            // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
-                            if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
-                                sh4_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
-                                self._dc.?.gpu._get_register_from_addr(u64, addr).* = value;
-                                return;
-                            }
-                        }
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
-                        return self._dc.?.gpu.write_register(addr, value);
-                    },
-                    0x00600000...0x006007FF => return self._dc.?.modem.write(T, addr, value),
-                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
-                    0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
-                        check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
-                        return self._dc.?.aica.write_register(T, addr & 0x00FFFFFF, value);
-                    },
-                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
-                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
-                        return self._dc.?.aica.write_rtc_register(addr & 0x00FFFFFF, value);
-                    },
-                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => return self._dc.?.aica.write_mem(T, addr & 0x00FFFFFF, value),
-                    else => {},
-                }
-            },
-            // Area 1 - 64bit access
-            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
-                @as(*T, @alignCast(@ptrCast(&self._dc.?.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
-                return;
-            },
-            // Area 1 - 32bit access
-            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64) {
-                    sh4_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
-                    self.write_physical(u32, addr, @truncate(value));
-                    self.write_physical(u32, addr + 4, @truncate(value >> 32));
-                    return;
-                }
-                return self._dc.?.gpu.write_vram(T, addr, value);
-            },
-            // Area 4
-            0x10000000...0x13FFFFFF => {
-                // DCA3 Hack
-                if (physical_addr & (@as(u32, 1) << 25) != 0) {
-                    const index: u32 = (addr / 32) & 255;
-                    const offset: u32 = addr & 31;
-
-                    sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
-
-                    if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
-                        sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-                    self._operand_cache_state.dirty[index] = true;
-
-                    @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
-                    return;
-                }
-                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
-                const LMMode = self._dc.?.read_hw_register(u32, if (addr >= 0x11000000 and addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
-                const access_32bit = LMMode != 0;
-                return self._dc.?.gpu.write_ta(addr, &[1]u32{value}, if (access_32bit) .b32 else .b64);
-            },
-            // Area 7
-            0x1C000000...0x1FFFFFFF => {
-                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
-                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
-                // control register area in the physical memory space
-                if (self._mmu_state != .Disabled) {
-                    return self.write_p4(T, addr | 0xE000_0000, value);
-                } else {
-                    sh4_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
-                    return;
-                }
-            },
-            else => {},
-        }
-
-        @as(*T, @alignCast(@ptrCast(
-            self._get_memory(addr),
-        ))).* = value;
+    // DCA3 Hack
+    pub fn operand_cache_read(self: *const @This(), comptime T: type, addr: u32) T {
+        const index: u32 = (addr / 32) & 255;
+        const offset: u32 = addr & 31;
+        sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+        if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+            sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+        return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
+    }
+    pub fn operand_cache_write(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        const index: u32 = (addr / 32) & 255;
+        const offset: u32 = addr & 31;
+        sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+        if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+            sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+        self._operand_cache_state.dirty[index] = true;
+        @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
     }
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {

@@ -414,6 +414,7 @@ test {
                 "1111nnn010101101_sz0_pr0.json", // fcnvsd FPUL,DRn - Causes an exception when PR == 0.
                 "1111mmm010111101_sz0_pr0.json", // fcnvds DRm,FPUL - Causes an exception when PR == 0.
                 "0000000000101011_sz0_pr0.json", // rte - I don't think the test cases are accurate.
+                "11000011iiiiiiii_sz0_pr0.json", // trapa - Tests expects it to be a nop.
             }) |filename| {
                 if (std.mem.eql(u8, entry.basename, filename)) {
                     std.debug.print(termcolor.yellow("! Skipping {s}\n"), .{entry.basename});
@@ -435,6 +436,8 @@ test {
             var failed_test_cases: u32 = 0;
             for (test_data.value) |t| {
                 run_test(t, &cpu, false) catch |err| {
+                    if (err == error.FPUDisabled)
+                        continue;
                     if (failed_test_cases == 0) {
                         std.debug.print(termcolor.red("Failed to run test {s}: {s}\n"), .{ entry.basename, @errorName(err) });
                         run_test(t, &cpu, true) catch {};

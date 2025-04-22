@@ -32,8 +32,6 @@ const windows = @import("../host/windows.zig");
 const BlockBufferSize = 16 * 1024 * 1024;
 const MaxCyclesPerBlock = 32;
 pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
-const MMUDataProtectedCheck = false; // Check for access to protected memory (>= 0x80000000) in user mode.
-const MMUDataAlignmentCheck = false; // Check for unaligned memory access.
 
 // Enable or Disable some optimizations
 const Optimizations = .{
@@ -58,7 +56,7 @@ const BlockCache = struct {
     // 0x02000000 possible addresses (0x0100_0000 for RAM and... 0x0100_0000 for boot), but 16bit aligned, multiplied by permutations of (sz, pr)
     const BlockEntryCount = (0x0200_0000 >> 1) << 2;
 
-    buffer: []align(std.mem.page_size) u8,
+    buffer: []align(std.heap.page_size_min) u8,
     cursor: usize = 0,
     blocks: []BasicBlock = undefined,
 
@@ -303,7 +301,7 @@ pub const JITContext = struct {
     // Jitted branches do not need to increment the PC manually.
     outdated_pc: bool = true,
     may_have_pending_cycles: bool = false,
-    jumps_to_end: [128]?JIT.PatchableJump = .{null} ** 128,
+    jumps_to_end: [128]?JIT.PatchableJump = @splat(null),
 
     mmu_enabled: bool,
     start_pc: u32, // Address of the first instruction in the instructions array.
@@ -361,7 +359,7 @@ pub const JITContext = struct {
     },
 
     pub fn init(cpu: *sh4.SH4) @This() {
-        const physical_pc = cpu.translate_intruction_address(cpu.pc);
+        const physical_pc = cpu.get_physical_pc();
 
         if (!((physical_pc >= 0x00000000 and physical_pc < 0x00020000) or (physical_pc >= 0x0C000000 and physical_pc < 0x10000000)))
             std.debug.panic("Invalid physical PC: {X}", .{physical_pc});
@@ -374,7 +372,7 @@ pub const JITContext = struct {
             .start_physical_pc = physical_pc,
             .current_pc = cpu.pc,
             .current_physical_pc = physical_pc,
-            .instructions = @alignCast(@ptrCast(cpu._get_memory(physical_pc))),
+            .instructions = @alignCast(@ptrCast(cpu._dc.?._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
         };
@@ -391,7 +389,21 @@ pub const JITContext = struct {
         self.in_delay_slot = true;
         defer self.in_delay_slot = false;
 
-        const instr = self.instructions[self.index + 1];
+        var instr = self.instructions[self.index + 1];
+
+        // If MMU translation is enabled, make sure the delay slot instruction is the one we expect.
+        if (self.mmu_enabled and cross_page(self.current_pc, self.current_pc + 2)) {
+            const expected_physical_pc = self.current_physical_pc + 2;
+            const physical_pc = self.cpu.translate_instruction_address(self.current_pc + 2) catch |err| pc: {
+                sh4_jit_log.err("Address translation raised an exception for delay slot at {X:0>8}: {s}", .{ self.current_pc, @errorName(err) });
+                break :pc expected_physical_pc; // FIXME: Ignore it for now...
+            };
+            if (physical_pc != expected_physical_pc) {
+                sh4_jit_log.warn("Crossing pages in delay slot at PC={X:0>8}. Expected {X:0>8}, got {X:0>8}.\n", .{ self.current_pc, expected_physical_pc, physical_pc });
+                instr = self.cpu.read_physical(u16, physical_pc);
+            }
+        }
+
         const op = instr_lookup(instr);
         if (comptime std.log.logEnabled(.debug, .sh4_jit))
             sh4_jit_log.debug("[{X:0>8}] {s} \\ {s}", .{
@@ -582,7 +594,7 @@ pub const SH4JIT = struct {
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
             @branchHint(.likely);
             std.debug.assert((cpu.pc & 0xFC00_0000) != 0x7C00_0000);
-            const physical_pc = cpu.translate_intruction_address(cpu.pc);
+            const physical_pc = cpu.get_physical_pc();
             var block = self.block_cache.get(physical_pc, cpu.fpscr.sz, cpu.fpscr.pr);
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
@@ -602,7 +614,7 @@ pub const SH4JIT = struct {
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) u32 {
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) callconv(.c) u32 {
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
         const block = self.compile(.init(cpu)) catch |err| retry: {
@@ -937,13 +949,14 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
     const entry = sh4.instructions.Opcodes[instr_index];
     if (mmu_enabled) {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) u8 {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) u8 {
                 entry.fn_(cpu, instr) catch |err| {
                     sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
                     switch (err) {
                         error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
                         error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
                         error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
+                        error.UnconditionalTrap => cpu.jump_to_exception(.UnconditionalTrap),
                         else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
                     }
                     return 1;
@@ -953,7 +966,7 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
         };
     } else {
         return struct {
-            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) void {
+            pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) void {
                 entry.fn_(cpu, instr) catch unreachable;
             }
         };
@@ -963,11 +976,11 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
 inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !void {
     const instr_index = sh4.instructions.JumpTable[instr.value];
 
-    const entry = sh4.instructions.Opcodes[instr_index];
-    // Is it an FPU instruction which doesn't have a JIT handler?
-    if (instr.is_fpu() and entry.use_fallback()) {
+    // FPU instructions might throw an FPU Disabled exception. Checking it here allows to only check it once per block,
+    // and to ignore FPU Disabled exceptions in the interpreter handler since they can't be thrown from there if we already
+    // made sure the FPU wasn't disabled.
+    if (instr.is_fpu())
         try check_fd_bit(block, ctx);
-    }
 
     if (sh4_interpreter_handlers.Enable) {
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -1094,6 +1107,27 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
     return false;
 }
 
+fn jump_to_exception(comptime exception: sh4.Exception) *const fn (*sh4.SH4) callconv(.c) void {
+    return struct {
+        fn jte(cpu: *sh4.SH4) callconv(.c) void {
+            sh4_jit_log.debug("[{X:0>8}] Exception: {s}", .{ cpu.pc, @tagName(exception) });
+            cpu.jump_to_exception(exception);
+        }
+    }.jte;
+}
+
+pub fn unknown(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
+    sh4_jit_log.info("Unknown instruction: {X}", .{@as(u16, @bitCast(instr))});
+    if (ctx.mmu_enabled) {
+        try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
+        try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
+        try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotIllegalInstruction) else jump_to_exception(.GeneralIllegalInstruction));
+        return true;
+    } else {
+        return error.UnknownInstruction;
+    }
+}
+
 // NOTE: Ideally we'd use the type system to ensure the return values of the two following functions are
 //       used correctly (i.e. never write to a register returned by load_register), but I think this would
 //       require updating JITBlock and might hinder its genericity? (It's already pretty specific...)
@@ -1157,35 +1191,35 @@ fn set_t(block: *IRBlock, _: *JITContext, condition: JIT.Condition) !void {
     try block.mov(sh4_mem("sr"), .{ .reg = ReturnRegister });
 }
 
-pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) u8 {
+pub noinline fn _out_of_line_read8(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u8 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000); // We can't garantee this won't be called with a RAM address in FastMem mode (even if it is highly unlikely)
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u8, virtual_addr });
 }
-pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) u16 {
+pub noinline fn _out_of_line_read16(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u16 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u16, virtual_addr });
 }
-pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) u32 {
+pub noinline fn _out_of_line_read32(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u32 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u32, virtual_addr });
 }
-pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) u64 {
+pub noinline fn _out_of_line_read64(cpu: *const sh4.SH4, virtual_addr: u32) callconv(.c) u64 {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.read_physical, .{ cpu, u64, virtual_addr });
 }
-pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) void {
+pub noinline fn _out_of_line_write8(cpu: *sh4.SH4, virtual_addr: u32, value: u8) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u8, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) void {
+pub noinline fn _out_of_line_write16(cpu: *sh4.SH4, virtual_addr: u32, value: u16) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u16, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) void {
+pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u32) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u32, virtual_addr, value });
 }
-pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) void {
+pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
 }
@@ -1193,13 +1227,13 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
-        fn handler(cpu: *sh4.SH4, virtual_addr: u32) packed struct(u64) { address: u32, exception: u32 } {
+        fn handler(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) packed struct(u64) { address: u32, exception: u32 } {
             std.debug.assert(cpu._mmu_state == .Full);
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
-            const unauthorized = MMUDataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
+            const unauthorized = sh4.DataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
             // Alignment check
-            const unaligned = MMUDataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
+            const unaligned = sh4.DataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
             if (unaligned or unauthorized) {
                 @branchHint(.unlikely);
                 sh4_jit_log.warn("DataAddressError: {s}({d}) Addr={X:0>8}, SR.MD={d}", .{ @tagName(access_type), access_size, virtual_addr, cpu.sr.md });
@@ -1762,15 +1796,6 @@ pub fn stcl_Rm_BANK_atDecRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr)
     return false;
 }
 
-fn fpu_disabled_exception(cpu: *sh4.SH4) void {
-    sh4_jit_log.debug("GeneralFPUDisable: {X:0>8}\n", .{cpu.pc});
-    cpu.jump_to_exception(.GeneralFPUDisable);
-}
-fn fpu_disabled_exception_delay_slot(cpu: *sh4.SH4) void {
-    sh4_jit_log.debug("SlotFPUDisable: {X:0>8}\n", .{cpu.pc});
-    cpu.jump_to_exception(.SlotFPUDisable);
-}
-
 fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
     if (ctx.mmu_enabled) {
         switch (ctx.sr_fpu_status) {
@@ -1787,11 +1812,7 @@ fn check_fd_bit(block: *IRBlock, ctx: *JITContext) !void {
                     try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
                 }
                 try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-                if (ctx.in_delay_slot) {
-                    try call(block, ctx, fpu_disabled_exception_delay_slot);
-                } else {
-                    try call(block, ctx, fpu_disabled_exception);
-                }
+                try call(block, ctx, if (ctx.in_delay_slot) jump_to_exception(.SlotFPUDisable) else jump_to_exception(.GeneralFPUDisable));
                 try ctx.add_jump_to_end(try block.jmp(.Always));
 
                 skip.patch();
@@ -2356,28 +2377,27 @@ pub fn mova_atDispPC_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
 }
 
 pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const physical_address = ctx.current_physical_pc;
-    // Physical address should be either in Boot ROM, or in RAM.
-    std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
-    // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
-    const addr = physical_address + 4 + d;
+    // NOTE: Target isn't guaranteed to lie in the same page. Bail to the interpreter in this case.
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
+
+    const addr = ctx.current_physical_pc + 4 + d;
+    std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read_physical(u16, addr))) });
     } else { // Load from RAM and sign extend
-        const offset = if (FastMem) 0x0C00_0000 else 0;
+        const offset = if (FastMem) 0x0C00_0000 else 0; // rbp has either the base of the whole virtual address space, or of RAM depending if FastMem is enabled.
         try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
     }
     return false;
 }
 
 pub fn movl_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
-    const physical_address = ctx.current_physical_pc;
-    // Physical address should be either in Boot ROM, or in RAM.
-    std.debug.assert(physical_address < 0x00200000 or (physical_address >= 0x0C000000 and physical_address < 0x10000000));
-    // @(d8,PC) is fixed, compute its real absolute address
     const d = bit_manip.zero_extend(instr.nd8.d) << 2;
-    const addr = (physical_address & 0xFFFFFFFC) + 4 + d;
+    if (ctx.mmu_enabled and cross_page(ctx.current_pc, ctx.current_pc + 4 + d)) return interpreter_fallback_cached(block, ctx, instr);
+
+    const addr = (ctx.current_physical_pc & 0xFFFFFFFC) + 4 + d;
+    std.debug.assert(addr < 0x00200000 or (addr >= 0x0C000000 and addr < 0x10000000));
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read_physical(u32, addr) });
     } else {
@@ -2701,7 +2721,7 @@ pub fn shar_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return false;
 }
 
-fn shld(n: u32, m: u32) u32 {
+fn shld(n: u32, m: u32) callconv(.c) u32 {
     const sign = m & 0x80000000;
     if (sign == 0) {
         return n << @intCast(m & 0x1F);
@@ -2926,10 +2946,15 @@ pub fn bts_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     return conditional_branch(block, ctx, instr, true, true);
 }
 
+/// Returns true if the two addresses are in different pages (assuming the smallest page size of 1kB, so conservatively).
+fn cross_page(lhs: u32, rhs: u32) bool {
+    return (lhs >> 10) != (rhs >> 10);
+}
+
 pub fn bra_label(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const dest = sh4_interpreter.d12_disp(ctx.current_pc, instr);
     // Unconditional branch, and fixed destination, don't treat it like a branch.
-    if (dest > ctx.current_pc) {
+    if (dest > ctx.current_pc and (!ctx.mmu_enabled or !cross_page(ctx.current_pc, dest))) {
         try ctx.compile_delay_slot(block);
         ctx.skip_instructions((dest - ctx.current_pc) / 2 - 1);
         return false;

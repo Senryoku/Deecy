@@ -1,9 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const dc_config = @import("dc_config");
 
 const termcolor = @import("termcolor");
 
 const dc_log = std.log.scoped(.dc);
+pub const HostPaths = @import("host_paths.zig");
 
 pub const HardwareRegisters = @import("hardware_registers.zig");
 pub const SH4Module = @import("sh4.zig");
@@ -76,11 +78,25 @@ const ScheduledEvent = struct {
         VBlankIn,
         VBlankOut,
         Modem: Modem.Event,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (self) {
+                .TimerUnderflow => |e| return writer.print("Timer {d} Underflow", .{e.channel}),
+                else => return writer.print("{s}", .{@tagName(self)}),
+            }
+        }
     };
     trigger_cycle: u64,
     interrupt: ?union(enum) {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            switch (self) {
+                .Normal => |e| return writer.print("{any}", .{e}),
+                .External => |e| return writer.print("{any}", .{e}),
+            }
+        }
     },
     event: Event = .None,
 
@@ -88,6 +104,12 @@ const ScheduledEvent = struct {
         return std.math.order(a.trigger_cycle, b.trigger_cycle);
     }
 };
+
+inline fn check_type(comptime Valid: []const type, comptime T: type, comptime fmt: []const u8, param: anytype) void {
+    inline for (Valid) |V| if (T == V) return;
+    std.debug.print(fmt, param);
+    unreachable;
+}
 
 // Area 0:
 // 0x00000000 - 0x001FFFFF Boot ROM
@@ -106,8 +128,6 @@ const ScheduledEvent = struct {
 // 0x01000000 - 0x01FFFFFF G2 External Device #1
 // 0x02700000 - 0x02FFFFE0 G2 AICA (Image area)
 // 0x03000000 - 0x03FFFFE0 G2 External Device #2
-
-const user_data_directory = "./userdata/";
 
 pub const Dreamcast = struct {
     pub const BootSize = 0x20_0000;
@@ -143,7 +163,7 @@ pub const Dreamcast = struct {
 
     _allocator: std.mem.Allocator,
 
-    _dummy: [4]u8 align(32) = .{0} ** 4, // FIXME: Dummy space for non-implemented features
+    _dummy: [4]u8 align(32) = @splat(0), // FIXME: Dummy space for non-implemented features
 
     pub fn create(allocator: std.mem.Allocator) !*Dreamcast {
         const dc = try allocator.create(Dreamcast);
@@ -178,9 +198,11 @@ pub const Dreamcast = struct {
         errdefer dc.deinit();
 
         // Create 'userdata' folder if it doesn't exist
-        try std.fs.cwd().makePath(user_data_directory);
+        try std.fs.cwd().makePath(HostPaths.get_userdata_path());
 
-        dc.load_bios("./data/dc_boot.bin") catch |err| {
+        const bios_path = try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_boot.bin" });
+        defer allocator.free(bios_path);
+        dc.load_bios(bios_path) catch |err| {
             switch (err) {
                 error.FileNotFound => return error.BiosNotFound,
                 else => return err,
@@ -193,21 +215,21 @@ pub const Dreamcast = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        // Write flash to disc
-        if (!@import("builtin").is_test) {
-            const filename = get_user_flash_path();
-            std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
-                dc_log.err("Failed to create user flash directory: {any}", .{err});
-            };
-            if (std.fs.cwd().createFile(filename, .{})) |file| {
-                defer file.close();
-                _ = file.writeAll(self.flash.data) catch |err| {
-                    dc_log.err("Failed to save user flash: {any}", .{err});
-                };
-            } else |err| {
-                dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
-            }
-        }
+        // Write flash to disc. FIXME: Unused for now.
+        // if (!@import("builtin").is_test) {
+        //     const filename = get_user_flash_path();
+        //     std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
+        //         dc_log.err("Failed to create user flash directory: {any}", .{err});
+        //     };
+        //     if (std.fs.cwd().createFile(filename, .{})) |file| {
+        //         defer file.close();
+        //         _ = file.writeAll(self.flash.data) catch |err| {
+        //             dc_log.err("Failed to save user flash: {any}", .{err});
+        //         };
+        //     } else |err| {
+        //         dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
+        //     }
+        // }
 
         self.scheduled_events.deinit();
         self.sh4_jit.deinit();
@@ -283,10 +305,6 @@ pub const Dreamcast = struct {
         };
     }
 
-    pub fn get_user_flash_path() []const u8 {
-        return user_data_directory ++ "/flash.bin";
-    }
-
     pub fn set_region(self: *@This(), region: Region) !void {
         self.region = region;
         try self.load_flash();
@@ -304,7 +322,8 @@ pub const Dreamcast = struct {
 
     pub fn load_flash(self: *@This()) !void {
         // FIXME: User flash is sometimes corrupted. Always load default until I understand what's going on.
-        const default_flash_path = "./data/dc_flash.bin";
+        const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
+        defer self._allocator.free(default_flash_path);
         var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
             return e;
@@ -313,7 +332,6 @@ pub const Dreamcast = struct {
         // var flash_file = std.fs.cwd().openFile(get_user_flash_path(), .{}) catch |err| f: {
         //     if (err == error.FileNotFound) {
         //         dc_log.info("Loading default flash ROM.", .{});
-        //         const default_flash_path = try std.fmt.bufPrint(&buf, "./data/{s}/dc_flash.bin", .{self.region_subdir()});
         //         break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
         //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
         //             return e;
@@ -481,15 +499,334 @@ pub const Dreamcast = struct {
         self.flash[0x1A0A4] = @as(u8, '0') + @intFromEnum(video_mode);
     }
 
-    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
-        return @constCast(self).hw_register_addr(T, @intFromEnum(r)).*;
-    }
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
     pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
+    }
+    pub inline fn read_hw_register_addr(self: *const @This(), comptime T: type, addr: u32) T {
+        std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
+        return @as(*const T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800]))).*;
+    }
+    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
+        return self.read_hw_register_addr(T, @intFromEnum(r));
+    }
+    pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        const reg: HardwareRegister = @enumFromInt(addr);
+        if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+            if (T != u8 and T != u16) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
+            return self.gdrom.write_register(T, addr, value);
+        }
+        // Hardware registers
+        switch (reg) {
+            .SB_SFRES => { // Software Reset
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
+                if (value == 0x00007611)
+                    self.cpu.software_reset();
+            },
+            .SB_PDST => if (value == 1) self.start_pvr_dma(),
+            .SB_SDST => if (value == 1) self.start_sort_dma(),
+            .SB_E1ST, .SB_E2ST, .SB_DDST => {
+                if (value == 1)
+                    dc_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
+            },
+            .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
+                if ((value & 1) == 1)
+                    dc_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+            },
+            .SB_ADST => {
+                if (value == 1) self.aica.start_dma(self);
+            },
+            .SB_GDEN => {
+                dc_log.debug("Write to SB_GDEN: {X}", .{value});
+                if (value == 0) self.abort_gd_dma();
+                self.hw_register(T, .SB_GDEN).* = value;
+            },
+            .SB_GDST => if (value == 1) self.start_gd_dma(),
+            .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
+                dc_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
+            },
+            .SB_MDAPRO => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
+                // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                // Check "Security code"
+                if (value & 0xFFFF0000 != 0x61550000) return;
+                self.hw_register(T, .SB_MDAPRO).* = value;
+            },
+            .SB_MDST => if (value == 1) self.start_maple_dma(),
+            .SB_ISTNRM => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
+                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                self.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+            },
+            .SB_ISTERR => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
+                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                self.hw_register(u32, .SB_ISTERR).* &= ~value;
+            },
+            .SB_C2DSTAT => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
+                self.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+            },
+            .SB_C2DST => if (value == 1) self.start_ch2_dma() else self.end_ch2_dma(),
+            else => {
+                dc_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
+                self.hw_register_addr(T, addr).* = value;
+            },
+        }
+    }
+
+    pub inline fn _get_memory(self: *@This(), addr: u32) *u8 {
+        std.debug.assert(addr <= 0x1FFFFFFF);
+
+        switch (addr) {
+            // Area 3 - System RAM (16MB) - 0x0C000000 to 0x0FFFFFFF, mirrored 4 times.
+            0x0C000000...0x0FFFFFFF => return &self.ram[addr & 0x00FFFFFF],
+            // Area 1 - 64bit path
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => return &self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)],
+            0x00000000...0x03FFFFFF => { // Area 0 - Boot ROM, Flash ROM, Hardware Registers
+                const area_0_addr = addr & 0x01FFFFFF;
+                switch (area_0_addr) {
+                    0x00000000...0x001FFFFF => return &self.boot[area_0_addr],
+                    0x00200000...0x0021FFFF => return &self.flash.data[area_0_addr & 0x1FFFF],
+                    0x005F6800...0x005F6FFF => return self.hw_register_addr(u8, area_0_addr),
+                    0x005F7000...0x005F709C => @panic("_get_memory to GDROM Register. This should be handled in read/write functions."),
+                    0x005F709D...0x005F7FFF => return self.hw_register_addr(u8, area_0_addr),
+                    0x005F8000...0x005F9FFF => return self.gpu._get_register_from_addr(u8, area_0_addr),
+                    0x005FA000...0x005FFFFF => return self.hw_register_addr(u8, area_0_addr),
+                    0x00600000...0x006007FF => {
+                        const static = struct {
+                            var once = false;
+                        };
+                        if (!static.once) {
+                            static.once = true;
+                            dc_log.err(termcolor.red(" Invalid _get_memory to MODEM: {X:0>8}. It should be handled in read/write accessors (This will only be reported once)"), .{addr});
+                        }
+                        self._dummy = .{ 0, 0, 0, 0 };
+                        return @ptrCast(&self._dummy);
+                    },
+                    // G2 AICA Register
+                    0x00700000...0x00707FFF => @panic("_get_memory to AICA Register. This should be handled in read/write functions."),
+                    // G2 AICA RTC Registers
+                    0x00710000...0x00710008 => @panic("_get_memory to AICA RTC Register. This should be handled in read/write functions."),
+                    0x00800000...0x009FFFFF, 0x02800000...0x029FFFFF => { // G2 Wave Memory and Mirror
+                        dc_log.debug("NOTE: _get_memory to AICA Wave Memory @{X:0>8} ({X:0>8}). This should be handled in read/write functions, except for DMA. Get rid of this warning when the ARM core is stable enough! (Direct access to wave memory specifically should be fine.)", .{ addr, area_0_addr });
+                        return @ptrCast(&self.aica.wave_memory[area_0_addr & (self.aica.wave_memory.len - 1)]);
+                    },
+                    0x01000000...0x01FFFFFF => { // Expansion Devices
+                        dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to Expansion Devices: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+
+                        // FIXME: TEMP DEBUG: Crazy Taxi accesses 030100C0 (010100C0) and 030100A0 (010100A0)
+                        //        And 0101003C to 0101007C, and 01010014, and 01010008
+
+                        // FIXME: I have no idea why Crazy Taxi seem to expect to find 0x80 at 01010008, but this lets it go further.
+                        self._dummy = .{ 0x80, 0, 0, 0 };
+
+                        return @ptrCast(&self._dummy);
+                    },
+                    else => {
+                        dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to Area 0: {X:0>8} ({X:0>8})"), .{ addr, area_0_addr });
+                        self._dummy = .{ 0, 0, 0, 0 };
+                        return @ptrCast(&self._dummy);
+                    },
+                }
+            },
+            // Area 2 - Nothing
+            0x08000000...0x0BFFFFFF => std.debug.panic("Invalid _get_memory to Area 2 @{X:0>8}", .{addr}),
+            0x10000000...0x13FFFFFF => { // Area 4 - Tile accelerator command input
+                // self.panic_debug("Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA.", .{addr});
+                // NOTE: Marvel vs. Capcom 2 reads from here (Addr:103464A0 PC:8C031D3C). Ignoring it doesn't seem to hurt, so... Doing that instead of panicking for now.
+                dc_log.err(termcolor.red("[PC: 0x{X:0>8}] Unexpected _get_memory to Area 4 @{X:0>8} - This should only be accessible via write32 or DMA."), .{ self.cpu.pc, addr });
+                self._dummy = .{ 0, 0, 0, 0 };
+                return @ptrCast(&self._dummy);
+            },
+            0x14000000...0x17FFFFFF => { // Area 5 - G2 Expansion Devices
+                dc_log.warn(termcolor.yellow("Unimplemented _get_memory to Area 5 (G2 Expansion Devices): {X:0>8}"), .{addr});
+                self._dummy = .{ 0, 0, 0, 0 };
+                return @ptrCast(&self._dummy);
+            },
+            // Area 6 - Nothing
+            0x18000000...0x1BFFFFFF => std.debug.panic("Invalid _get_memory to Area 6 @{X:0>8}", .{addr}),
+            // Area 7 - Internal I/O registers (same as P4)
+            0x1F000000...0x1FFFFFFF => {
+                std.debug.assert(self.cpu.sr.md == 1);
+                return self.cpu.p4_register_addr(u8, addr);
+            },
+            else => {
+                // FIXME: This space should be Unassigned/Reserved.
+                //        Returns a dummy value instead of panicking.
+                //        Metropolis Street Racer and Legacy of the Kain - Soul Reaver write to 0xBCXXXXXX,
+                //        and I have no idea if this is an issue with the emulator... See #51.
+                //        Ignoring the writes allow these games to progress a bit, but this might become an issue.
+                dc_log.err(termcolor.red("Invalid _get_memory @{X:0>8}"), .{addr});
+                return @ptrCast(&self._dummy);
+            },
+        }
+    }
+
+    pub inline fn read(self: *const @This(), comptime T: type, addr: u32) T {
+        switch (addr) {
+            // Area 0
+            0x00000000...0x01FFFFFF, 0x02000000...0x02FFFFFF => {
+                switch (addr) {
+                    0x005F6800...0x005F7FFF => {
+                        switch (addr) {
+                            0x005F7000...0x005F709C => {
+                                check_type(&[_]type{ u8, u16 }, T, "Invalid Read({any}) to GDRom Register 0x{X:0>8}\n", .{ T, addr });
+                                return @constCast(self).gdrom.read_register(T, addr);
+                            },
+                            else => {
+                                // Too spammy even for debugging.
+                                if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
+                                    dc_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
+                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(@constCast(self)._get_memory(addr)))).*,
+                                    });
+                                return self.read_hw_register_addr(T, addr);
+                            },
+                        }
+                    },
+                    0x005F8000...0x005F9FFF => {
+                        return self.gpu.read_register(T, @enumFromInt(addr));
+                    },
+                    0x00600000...0x006007FF => return self.modem.read(T, addr),
+                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+                    0x00700000...0x00707FE0, 0x02700000...0x02707FE0 => {
+                        check_type(&[_]type{ u8, u32 }, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        return self.aica.read_register(T, addr & 0x00FFFFFF);
+                    },
+                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
+                        check_type(&[_]type{u32}, T, "Invalid Read({any}) to 0x{X:0>8}\n", .{ T, addr });
+                        return @truncate(self.aica.read_rtc_register(addr & 0x00FFFFFF));
+                    },
+                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => {
+                        return self.aica.read_mem(T, addr & 0x00FFFFFF);
+                    },
+                    else => {},
+                }
+            },
+            // Area 1 - 64bit access
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
+                return @as(*T, @alignCast(@ptrCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
+            },
+            // Area 1 - 32bit access
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                if (T == u64) {
+                    dc_log.debug("Read(64) from 0x{X:0>8}", .{addr});
+                    return @as(u64, self.read(u32, addr + 4)) << 32 | self.read(u32, addr);
+                }
+                return self.gpu.read_vram(T, addr);
+            },
+            // Area 4 - Tile accelerator command input
+            0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (addr & (@as(u32, 1) << 25) != 0)
+                    return self.cpu.operand_cache_read(T, addr);
+            },
+            // Area 7
+            0x1C000000...0x1FFFFFFF => {
+                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
+                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
+                // control register area in the physical memory space
+                if (addr >= 0x1F000000) {
+                    if (self.cpu._mmu_state != .Disabled) {
+                        return self.cpu.read_p4(T, addr | 0xE000_0000);
+                    } else {
+                        dc_log.err(termcolor.red("Read({any}) to Area 7 without using virtual memory space: {X:0>8}"), .{ T, addr });
+                        return 0;
+                    }
+                }
+            },
+            else => {},
+        }
+
+        return @as(*const T, @alignCast(@ptrCast(
+            @constCast(self)._get_memory(addr),
+        ))).*;
+    }
+
+    pub inline fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        switch (addr) {
+            // Area 0, and mirrors
+            0x00000000...0x01FFFFFF, 0x02000000...0x03FFFFFF => {
+                switch (addr) {
+                    0x00200000...0x0021FFFF => {
+                        check_type(&[_]type{u8}, T, "Invalid Write({any}) to 0x{X:0>8} (Flash) = 0x{X}\n", .{ T, addr, value });
+                        return self.flash.write(addr & 0x1FFFF, value);
+                    },
+                    0x005F6800...0x005F7FFF => return self.write_hw_register(T, addr, value),
+                    0x005F8000...0x005F9FFF => {
+                        if (T == u64) {
+                            // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
+                            if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
+                                dc_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
+                                self.gpu._get_register_from_addr(u64, addr).* = value;
+                                return;
+                            }
+                        }
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self.gpu.write_register(addr, value);
+                    },
+                    0x00600000...0x006007FF => return self.modem.write(T, addr, value),
+                    // NOTE: 0x00700000...0x00FFFFFF mirrors to 0x02700000...0x02FFFFFF
+                    0x00700000...0x0070FFFF, 0x02700000...0x0270FFFF => {
+                        check_type(&[_]type{ u8, u32 }, T, "Invalid Write({any}) to 0x{X:0>8} (AICA Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self.aica.write_register(T, addr & 0x00FFFFFF, value);
+                    },
+                    0x00710000...0x00710008, 0x02710000...0x02710008 => {
+                        check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (AICA RTC Registers) = 0x{X}\n", .{ T, addr, value });
+                        return self.aica.write_rtc_register(addr & 0x00FFFFFF, value);
+                    },
+                    0x00800000...0x00FFFFFF, 0x02800000...0x02FFFFFF => return self.aica.write_mem(T, addr & 0x00FFFFFF, value),
+                    else => {},
+                }
+            },
+            // Area 1 - 64bit access
+            0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
+                @as(*T, @alignCast(@ptrCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
+                return;
+            },
+            // Area 1 - 32bit access
+            0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
+                if (T == u64) {
+                    dc_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
+                    self.write(u32, addr, @truncate(value));
+                    self.write(u32, addr + 4, @truncate(value >> 32));
+                    return;
+                }
+                return self.gpu.write_vram(T, addr, value);
+            },
+            // Area 4
+            0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (addr & (@as(u32, 1) << 25) != 0)
+                    return self.cpu.operand_cache_write(T, addr, value);
+                check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
+                const LMMode = self.read_hw_register(u32, if (addr >= 0x11000000 and addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
+                const access_32bit = LMMode != 0;
+                return self.gpu.write_ta(addr, &[1]u32{value}, if (access_32bit) .b32 else .b64);
+            },
+            // Area 7
+            0x1C000000...0x1FFFFFFF => {
+                // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
+                // to H'1FFF FFFF of area 7 are not designated as a reserved area, but are equivalent to the P4 area
+                // control register area in the physical memory space
+                if (addr >= 0x1F000000) {
+                    if (self.cpu._mmu_state != .Disabled) {
+                        return self.cpu.write_p4(T, addr | 0xE000_0000, value);
+                    } else {
+                        dc_log.err(termcolor.red("Write({any}) to Area 7 without using virtual memory space: {X:0>8} = {X}"), .{ T, addr, value });
+                        return;
+                    }
+                }
+            },
+            else => {},
+        }
+
+        @as(*T, @alignCast(@ptrCast(
+            self._get_memory(addr),
+        ))).* = value;
     }
 
     pub fn tick(self: *@This(), max_instructions: u8) !u32 {
@@ -663,12 +1000,12 @@ pub const Dreamcast = struct {
 
             // NOTE: This should use ch0-DMA, but the SH4 DMAC implementation can't handle this case (yet?).
             //       Unless we copy u16 by u16 from the data register, but, mmh, yeah.
-            const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[0..len]);
+            const copied = self.gdrom.dma_data_queue.read(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[0..len]);
 
             if (copied < len) {
                 dc_log.warn(termcolor.yellow("  GD DMA: {X:0>8} bytes copied out of {X:0>8} expected."), .{ copied, len });
                 // Pad with zeroes in this case.
-                @memset(@as([*]u8, @ptrCast(self.cpu._get_memory(dst_addr)))[copied..len], 0);
+                @memset(@as([*]u8, @ptrCast(self._get_memory(dst_addr)))[copied..len], 0);
             }
 
             // Simulate using ch0
@@ -839,7 +1176,7 @@ pub const Dreamcast = struct {
 
                 const block_count = if (current_data_size == 0) 0x100 else current_data_size;
                 const bytes = block_count * 8 * 4;
-                var src: [*]u32 = @alignCast(@ptrCast(self.cpu._get_memory(link_address)));
+                var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(link_address)));
                 self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
                 bytes_transfered += bytes;
 

@@ -152,7 +152,7 @@ pub fn syscall_gdrom(dc: *Dreamcast) void {
             // Returns: a request id (>=0) if successful, negative error code if failed
             syscall_log.info("  GDROM_SEND_COMMAND R4={d} R5={X:0>8}", .{ dc.cpu.R(4).*, dc.cpu.R(5).* });
 
-            var params: [4]u32 = .{0} ** 4;
+            var params: [4]u32 = @splat(0);
             const params_addr = dc.cpu.R(5).*;
             if (params_addr != 0) {
                 for (0..4) |i| {

@@ -29,8 +29,8 @@ pub const GDROMCommand = enum(u32) {
 };
 
 command: GDROMCommand = @enumFromInt(0),
-params: [4]u32 = .{0} ** 4,
-result: [4]u32 = .{0} ** 4,
+params: [4]u32 = @splat(0),
+result: [4]u32 = @splat(0),
 
 _next_command_id: u32 = 1,
 _current_command_id: u32 = 0,
@@ -73,7 +73,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             const dest = dc.gdrom_hle.params[2] & 0x1FFFFFFF;
 
             gdrom_hle_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(dc.gdrom_hle.command), lba, size, dest });
-            const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc.cpu._get_memory(dest)))[0 .. 2352 * size]);
+            const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * size]);
 
             dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 100_000 * size);
             dc.schedule_external_interrupt(.{ .GDRom = 1 }, 100_000 * size);
@@ -116,7 +116,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             for (0..dc.gdrom_hle.params.len) |i|
                 gdrom_hle_log.debug("      {d}  {X:0>8}", .{ i, dc.gdrom_hle.params[i] });
 
-            const dest_slice = @as([*]u8, @ptrCast(dc.*.cpu._get_memory(dest & 0x1FFFFFFF)))[0..408];
+            const dest_slice = @as([*]u8, @ptrCast(dc._get_memory(dest & 0x1FFFFFFF)))[0..408];
             const bytes_written = dc.gdrom.write_toc(dest_slice, if (area == 1) .DoubleDensity else .SingleDensity);
             dc.gdrom_hle.result = .{ 0, 0, bytes_written, 0 };
 

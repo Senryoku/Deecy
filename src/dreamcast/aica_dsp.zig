@@ -62,7 +62,7 @@ _memory: []u8,
 _ring_buffer: *const AICAModule.RingBufferAddress,
 
 _dirty_mpro: bool = true,
-_jit_buffer: ?[]align(std.mem.page_size) u8 = null,
+_jit_buffer: ?[]align(std.heap.page_size_min) u8 = null,
 _allocator: std.mem.Allocator,
 
 pub fn init(ring_buffer: *const AICAModule.RingBufferAddress, registers: []u32, memory: []u8, allocator: std.mem.Allocator) @This() {
@@ -78,7 +78,7 @@ pub fn deinit(self: *@This()) void {
     if (self._jit_buffer) |buffer| self._allocator.free(buffer);
 }
 
-pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
+pub inline fn read_register(self: *const @This(), comptime T: type, local_addr: u32) T {
     if (local_addr >= 4 * MDEC_CT_base)
         log.warn("Read to DSP register {X:0>4}: We use it for internal operations!", .{local_addr});
 
@@ -555,7 +555,7 @@ pub fn compile(self: *@This()) !void {
                     try b.mov(.{ .reg = Architecture.ArgRegisters[0] }, SHIFTED);
                     try b.append(.{ .And = .{ .dst = .{ .reg = Architecture.ArgRegisters[0] }, .src = .{ .imm32 = 0xFFF } } });
 
-                    try b.call(&f16_from_i24);
+                    try b.call(&f16_from_i32);
 
                     try b.pop(.{ .reg64 = INPUTS.reg });
                     try b.pop(.{ .reg64 = addr.reg });
@@ -613,7 +613,7 @@ pub fn generate_sample_jit(self: *@This()) !void {
         self._regs[MDEC_CT_base] = @intCast(self._ring_buffer.size_in_samples() - 1);
 
     if (self._jit_buffer) |buffer|
-        @as(*const fn ([*]u32) void, @ptrCast(&buffer[0]))(self._regs.ptr);
+        @as(*const fn ([*]u32) callconv(.c) void, @ptrCast(&buffer[0]))(self._regs.ptr);
 
     self._regs[MDEC_CT_base] -= 1;
 
@@ -630,7 +630,7 @@ pub fn generate_sample(self: *@This()) void {
     // 12-bit whole address
     var ADRS_REG: u12 = 0;
 
-    var temp_word: [4]u16 = .{0} ** 4;
+    var temp_word: [4]u16 = @splat(0);
 
     self.clear_efreg();
 
@@ -835,7 +835,7 @@ fn i24_from_f16(value: u16) i24 {
     return @as(i24, @bitCast(val)) >> exponent;
 }
 
-fn i32_from_f16(value: u16) i32 {
+fn i32_from_f16(value: u16) callconv(.c) i32 {
     return i24_from_f16(value);
 }
 
@@ -857,6 +857,10 @@ fn f16_from_i24(value: i24) u16 {
     r |= @as(u16, exponent) << 11;
     r |= @as(u16, sign_bit) << 15;
     return r;
+}
+
+fn f16_from_i32(value: i32) callconv(.c) u16 {
+    return f16_from_i24(@intCast(value));
 }
 
 test {

@@ -233,6 +233,17 @@ pub const SB_ISTNRM = packed struct(u32) {
 
     ExtStatus: u1 = 0,
     ErrorStatus: u1 = 0,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const as_u32: u32 = @bitCast(self);
+        if (@popCount(as_u32) == 1) {
+            inline for (@typeInfo(@This()).@"struct".fields) |field| {
+                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            }
+        } else {
+            try writer.print("{X}", .{as_u32});
+        }
+    }
 };
 
 pub const SB_ISTEXT = packed struct(u32) {
@@ -241,6 +252,17 @@ pub const SB_ISTEXT = packed struct(u32) {
     Modem: u1 = 0,
     ExternalDevice: u1 = 0,
     _: u28 = 0,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const as_u32: u32 = @bitCast(self);
+        if (@popCount(as_u32) == 1) {
+            inline for (@typeInfo(@This()).@"struct".fields) |field| {
+                if (@field(self, field.name) == 1) try writer.writeAll(field.name);
+            }
+        } else {
+            try writer.print("{X}", .{as_u32});
+        }
+    }
 };
 
 pub const SCFSR2 = packed struct(u16) {

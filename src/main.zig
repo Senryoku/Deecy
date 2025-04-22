@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const config = @import("config");
 
 const termcolor = @import("termcolor");
 
@@ -142,7 +143,8 @@ pub fn main() !void {
     var default_vmu = true;
     var vmu_path = std.ArrayList(u8).init(allocator);
     defer vmu_path.deinit();
-    try vmu_path.appendSlice("./userdata/vmu_default.bin");
+    try vmu_path.appendSlice(DreamcastModule.HostPaths.get_userdata_path());
+    try vmu_path.appendSlice("/vmu_default.bin");
 
     var skip_bios = false;
     var start_immediately = false;

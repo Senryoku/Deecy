@@ -5,7 +5,7 @@ const windows = @import("windows.zig");
 
 const log = std.log.scoped(.memory_mapped_file);
 
-const View = if (builtin.os.tag == .windows) std.os.windows.HANDLE else []align(std.mem.page_size) const u8;
+const View = if (builtin.os.tag == .windows) std.os.windows.HANDLE else []align(std.heap.page_size_min) const u8;
 
 file: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.fs.File,
 mapping_handle: if (builtin.os.tag == .windows) std.os.windows.HANDLE else void,
@@ -26,7 +26,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         self.file = std.os.windows.INVALID_HANDLE_VALUE;
         self.mapping_handle = std.os.windows.INVALID_HANDLE_VALUE;
 
-        var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = .{0} ** (std.fs.max_path_bytes + 1);
+        var track_file_abs_path_buffer: [std.fs.max_path_bytes + 1]u8 = @splat(0);
         const track_file_abs_path = try std.fs.cwd().realpath(filepath, &track_file_abs_path_buffer);
         const file_path_w = try std.os.windows.sliceToPrefixedFileW(null, track_file_abs_path);
 
@@ -65,7 +65,7 @@ pub fn create_full_view(self: *@This()) ![]u8 {
 
 pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
     if (builtin.os.tag != .windows) {
-        const alignment = std.mem.page_size;
+        const alignment = std.heap.page_size_min;
         const aligned_offset = std.mem.alignBackward(u64, offset, alignment);
         const adjustment = offset - aligned_offset;
         const adjusted_size = size + adjustment;

@@ -159,7 +159,7 @@ pio_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
 dma_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
 
 packet_command_idx: u8 = 0,
-packet_command: [12]u8 = [_]u8{0} ** 12,
+packet_command: [12]u8 = @splat(0),
 
 audio_state: struct {
     mutex: std.Thread.Mutex = .{}, // NOTE: Should not be needed anymore.

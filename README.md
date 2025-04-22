@@ -22,8 +22,7 @@ Videos: [Soul Calibur](https://www.youtube.com/watch?v=IuY1Qi1YygM) (May 2024), 
 ### Keybindings
 
 Deecy should detect, map and use controllers automatically. Host controllers can be manually assigned to guest controller ports in the Settings.
-
-Keyboard bindings are fixed for controller 1 and intended for testing only:
+Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | DC Controller | Host Keyboard (AZERTY) |
 | ------------- | ------------- |
 | A, B, X, Y    | A, Z, Q, S |
@@ -66,7 +65,7 @@ Keyboard bindings are fixed for controller 1 and intended for testing only:
 Install the correct zig version (see `.zigversion`, I try to keep up with [Mach nominated version](https://machengine.org/docs/nominated-zig/) when not on a stable release). 
 You can use [zigup](https://github.com/marler8997/zigup) to manage your installed zig versions, or get it from https://machengine.org/docs/nominated-zig/.
 ```sh
-zigup 0.14.0-dev.2577+271452d22
+zigup 0.14.0
 ```
 Clone and build. Zig will fetch all dependencies automatically.
 ```sh

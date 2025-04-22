@@ -537,9 +537,9 @@ pub const AICA = struct {
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.
 
-    channel_states: [64]AICAChannelState = .{.{}} ** 64,
+    channel_states: []AICAChannelState,
 
-    sample_buffer: [2048]i32 = [_]i32{0} ** 2048,
+    sample_buffer: []i32,
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
 
@@ -549,7 +549,7 @@ pub const AICA = struct {
 
     _arm_cycles_counter: i32 = 0,
     _timer_cycles_counter: u32 = 0,
-    _timer_counters: [3]u32 = .{0} ** 3,
+    _timer_counters: [3]u32 = @splat(0),
 
     _samples_counter: u32 = 0,
 
@@ -560,6 +560,8 @@ pub const AICA = struct {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
+            .channel_states = try allocator.alloc(AICAChannelState, 64),
+            .sample_buffer = try allocator.alloc(i32, 2048),
             ._allocator = allocator,
         };
         r.arm7 = .init(r.wave_memory, 0x1FFFFF, 0x800000);
@@ -592,6 +594,8 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self.dsp.deinit();
         self.arm_jit.deinit();
+        self._allocator.free(self.channel_states);
+        self._allocator.free(self.sample_buffer);
         self._allocator.free(self.regs);
     }
 
@@ -599,8 +603,9 @@ pub const AICA = struct {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
-        self.channel_states = .{.{}} ** 64;
+        @memset(self.channel_states, .{});
 
+        @memset(self.sample_buffer, 0);
         self.sample_read_offset = 0;
         self.sample_write_offset = 0;
 
@@ -608,7 +613,7 @@ pub const AICA = struct {
 
         self._arm_cycles_counter = 0;
         self._timer_cycles_counter = 0;
-        self._timer_counters = .{0} ** 3;
+        self._timer_counters = @splat(0);
 
         self._samples_counter = 0;
 
@@ -641,24 +646,24 @@ pub const AICA = struct {
         @as(*T, @alignCast(@ptrCast(&self.wave_memory[(local_addr) % self.wave_memory.len]))).* = value;
     }
 
-    pub fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
+    pub inline fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
         std.debug.assert(number < 64);
         return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
 
-    pub fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
+    pub inline fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
-    pub fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
+    pub inline fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
         return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
     }
 
-    pub fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
+    pub inline fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4]))).*;
     }
 
-    pub fn read_register(self: *AICA, comptime T: type, addr: u32) T {
+    pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
         aica_log.debug("Read({any}) to AICA Register at 0x{X:0>8}", .{ T, addr });
 
         const local_addr = addr & 0x0000FFFF;
@@ -1374,7 +1379,7 @@ pub const AICA = struct {
 
     pub fn available_samples(self: *const @This()) u64 {
         var available: i64 = @as(i64, @intCast(self.sample_write_offset)) - @as(i64, @intCast(self.sample_read_offset));
-        if (available < 0) available += self.sample_buffer.len;
+        if (available < 0) available += @intCast(self.sample_buffer.len);
         return @intCast(available);
     }
 
@@ -1424,7 +1429,7 @@ pub const AICA = struct {
             return;
         }
 
-        const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
+        const physical_root_addr = dc._get_memory(root_bus_addr);
         const physical_aica_addr = &self.wave_memory[aica_addr - 0x00800000];
 
         const len_in_u32 = len_in_bytes / 4;
@@ -1487,8 +1492,8 @@ pub const AICA = struct {
         var bytes: usize = 0;
         bytes += try self.arm7.serialize(writer);
         bytes += try self.dsp.serialize(writer);
-        bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.regs));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states));
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
@@ -1514,8 +1519,8 @@ pub const AICA = struct {
 
         bytes += try self.arm7.deserialize(reader);
         bytes += try self.dsp.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.regs));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states));
         bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));

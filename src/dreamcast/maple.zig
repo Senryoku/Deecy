@@ -97,6 +97,10 @@ pub const InputCapabilities = packed struct(u32) {
     down: u1 = 0,
     left: u1 = 0,
     right: u1 = 0,
+
+    pub fn as_u32(self: @This()) u32 {
+        return @bitCast(self);
+    }
 };
 
 const FunctionCodesMask = packed struct(u32) {
@@ -122,6 +126,8 @@ const FunctionCodesMask = packed struct(u32) {
 
     const Screen = @This(){ .screen = 1 };
     const Storage = @This(){ .storage = 1 };
+    const Timer = @This(){ .timer = 1 };
+    const Controller = @This(){ .controller = 1 };
 
     pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (@popCount(self.as_u32()) == 1) {
@@ -146,8 +152,8 @@ const DeviceInfoPayload = extern struct {
     SubFunctionCodesMasks: [3]u32 align(1),
     RegionCode: u8 align(1) = 0xFF,
     ConnectionDirectionCode: u8 align(1) = 0,
-    DescriptionString: [31]u8 align(1) = .{0} ** 31,
-    ProducerString: [60]u8 align(1) = .{0} ** 60,
+    DescriptionString: [31]u8 align(1) = @splat(0),
+    ProducerString: [60]u8 align(1) = @splat(0),
     StandbyConsumption: u16 align(1) = 0,
     MaximumConsumption: u16 align(1) = 0,
     // Possible extension
@@ -173,7 +179,7 @@ pub const ControllerButtons = packed struct(u16) {
     _2: u5 = 0b11111,
 };
 
-const StandardControllerCapabilities: InputCapabilities = .{
+pub const StandardControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
     .start = 1,
@@ -189,7 +195,7 @@ const StandardControllerCapabilities: InputCapabilities = .{
     .analogVertical = 1,
 };
 
-const DualStickControllerCapabilities: InputCapabilities = .{
+pub const DualStickControllerCapabilities: InputCapabilities = .{
     .b = 1,
     .a = 1,
     .start = 1,
@@ -209,19 +215,11 @@ const DualStickControllerCapabilities: InputCapabilities = .{
 
 pub const Controller = struct {
     pub const Capabilities: FunctionCodesMask = .{ .controller = 1 };
-    pub const Subcapabilities: [3]u32 = .{ @bitCast(DualStickControllerCapabilities), 0, 0 };
 
-    const Identity: DeviceInfoPayload = .{
-        .FunctionCodesMask = Capabilities,
-        .SubFunctionCodesMasks = Subcapabilities,
-        .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
-        .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
-        .StandbyConsumption = 0x01AE,
-        .MaximumConsumption = 0x01F4,
-    };
+    subcapabilities: [3]u32 = .{ @bitCast(DualStickControllerCapabilities), 0, 0 },
 
     buttons: ControllerButtons = .{},
-    axis: [6]u8 = .{0x80} ** 6,
+    axis: [6]u8 = @splat(0x80),
     pub fn press_buttons(self: *@This(), buttons: ControllerButtons) void {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) & @as(u16, @bitCast(buttons)));
     }
@@ -229,8 +227,15 @@ pub const Controller = struct {
         self.buttons = @bitCast(@as(u16, @bitCast(self.buttons)) | ~@as(u16, @bitCast(buttons)));
     }
 
-    pub fn get_identity(_: *const @This()) DeviceInfoPayload {
-        return Identity;
+    pub fn get_identity(self: *const @This()) DeviceInfoPayload {
+        return .{
+            .FunctionCodesMask = Capabilities,
+            .SubFunctionCodesMasks = self.subcapabilities,
+            .DescriptionString = "Dreamcast Controller           ".*, // NOTE: dc-arm7wrestler checks for this, maybe some games do too?
+            .ProducerString = "Produced By or Under License From SEGA ENTERPRISES,LTD.     ".*,
+            .StandbyConsumption = 0x01AE,
+            .MaximumConsumption = 0x01F4,
+        };
     }
 
     pub fn get_condition(self: *const @This()) [3]u32 {
@@ -252,7 +257,7 @@ pub const Controller = struct {
     }
 };
 
-const GetMediaInformationResponse = packed struct {
+const GetMediaInformationResponse = packed struct(u192) {
     total_size: u16,
     partition_number: u16,
     system_area_block_number: u16,
@@ -266,8 +271,7 @@ const GetMediaInformationResponse = packed struct {
 
     save_area_block_number: u16,
     number_of_save_area_blocks: u16,
-    _reserved_for_execution_file: u32 = 0x80000000,
-    _reserved2: u16 = 0,
+    _reserved_for_execution_file: u32 = 0x80_0000, // Fixed to 0 *if* execution files cannot be executed.
 };
 
 const StorageFunctionDefinition = packed struct(u32) {
@@ -406,18 +410,18 @@ pub const VMU = struct {
             @memcpy(self.blocks[0xFF][0x30..0x38], &[_]u8{ 19, 99, 12, 31, 23, 59, 0, 0 }); // Date and time created
             @memset(self.blocks[0xFF][0x38..0x40], 0); // Reserved
 
-            @as(*GetMediaInformationResponse, @alignCast(@ptrCast(&self.blocks[0xFF][0x40]))).* = .{
+            @memcpy(self.blocks[0xFF][0x40 .. 0x40 + 24], std.mem.asBytes(&GetMediaInformationResponse{
                 .total_size = BlockCount - 1,
                 .partition_number = 0x0000,
                 .system_area_block_number = SystemBlock,
-                .fat_area_block_number = 0x00FE,
+                .fat_area_block_number = FATBlock,
                 .number_of_fat_area_blocks = 0x0001,
                 .file_information_block_number = 0x00FD,
                 .number_of_file_information_blocks = 0x000D,
                 .volume_icon = 0,
                 .save_area_block_number = 0x00C8,
                 .number_of_save_area_blocks = 0x00C8,
-            };
+            })[0..24]);
 
             // "Format" the device.
             var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
@@ -456,7 +460,7 @@ pub const VMU = struct {
             maple_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
             return;
         };
-        var buf: [256]u8 = .{0} ** 256;
+        var buf: [256]u8 = @splat(0);
         const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
             maple_log.err("Failed to format backup filename: {any}", .{err});
             return;
@@ -490,8 +494,9 @@ pub const VMU = struct {
                     .save_area_block_number = 0x00C8,
                     .number_of_save_area_blocks = 0x00C8,
                 };
-                @memcpy(dest[0..@sizeOf(GetMediaInformationResponse)], std.mem.asBytes(&value));
-                return @sizeOf(GetMediaInformationResponse) / 4;
+                // NOTE: @sizeOf(GetMediaInformationResponse) == 32 for some reason.
+                @memcpy(dest[0..24], std.mem.asBytes(&value)[0..24]);
+                return 24 / 4;
             },
             FunctionCodesMask.Screen.as_u32() => {
                 const value: packed struct { x_dots: u8, y_dots: u8, contrast: u4, gradation: u4, reserved: u8 = 2 } = .{
@@ -554,6 +559,22 @@ pub const VMU = struct {
         return 0;
     }
 
+    pub fn set_condition(self: *@This(), function: u32, data: u32) void {
+        _ = self;
+        _ = data;
+        switch (function) {
+            FunctionCodesMask.Timer.as_u32() => {
+                // "An alarm is buzzer output produced by a pulse generator that is controlled by the Timer Function's built-in counter.
+                // The Timer Function can support a maximum of two alarm types.
+                // The alarm types that can be used are declared in the function definition block. The volume of the alarms cannot
+                // be adjusted.""
+
+                // data holds the duty cycle of two alarms.
+            },
+            else => maple_log.err("Unimplemented VMU.set_condition for function: {any}", .{function}),
+        }
+    }
+
     pub fn serialize(_: @This(), _: anytype) !usize {
         return 0;
     }
@@ -606,7 +627,7 @@ const Peripheral = union(enum) {
 
 const MaplePort = struct {
     main: ?Peripheral = null,
-    subperipherals: [5]?Peripheral = .{null} ** 5,
+    subperipherals: [5]?Peripheral = @splat(null),
 
     /// Returns the number of 32bytes words transferred to the host.
     pub fn handle_command(self: *@This(), dc: *Dreamcast, data: [*]u32) u32 {
@@ -625,6 +646,7 @@ const MaplePort = struct {
                     sender_address |= @as(u8, 1) << @intCast(i);
             }
         }
+        const recipent_address = command.sender_address;
 
         const maybe_target = switch (command.recipent_address & 0b11111) {
             0 => &self.main, // Equivalent to setting bit 5.
@@ -634,8 +656,8 @@ const MaplePort = struct {
             switch (command.command) {
                 .DeviceInfoRequest => {
                     const identity = target.get_identity();
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
-                    const ptr = dc.cpu._get_memory(return_addr + 4);
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
+                    const ptr = dc._get_memory(return_addr + 4);
                     @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                     return 1 + @sizeOf(DeviceInfoPayload) / 4;
                 },
@@ -645,14 +667,15 @@ const MaplePort = struct {
                             std.debug.assert(command.payload_length == 1);
                             std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = @intCast(condition.len) }));
-                            const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
+                            const ptr: [*]u32 = @alignCast(@ptrCast(dc._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                             return 1 + condition.len;
                         },
                         else => {
-                            maple_log.err(termcolor.red("TODO: GetCondition for {any}"), .{target.tag()});
-                            @panic("Missing GetCondition implementation");
+                            maple_log.err(termcolor.red("Unimplemented GetCondition for target: {any}"), .{target.tag()});
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                            return 1;
                         },
                     }
                 },
@@ -663,20 +686,20 @@ const MaplePort = struct {
 
                     switch (target.*) {
                         .VMU => |*v| {
-                            const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
+                            const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 1 }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 1 }));
                                 dc.cpu.write_physical(u32, return_addr + 4, function_type);
                                 return 1 + payload_size + 1;
                             } else {
-                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                                dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                                 return 1;
                             }
                         },
                         else => {
                             maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
-                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
                     }
@@ -688,16 +711,16 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
-                    const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
+                    const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 12)))[0..];
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = payload_size + 2 }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 2 }));
                         dc.cpu.write_physical(u32, return_addr + 4, function_type);
                         dc.cpu.write_physical(u32, return_addr + 8, data[3]); // Header repeating the location.
                         return 1 + payload_size + 2;
                     } else {
-                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                        dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FileError, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                         return 1;
                     }
                 },
@@ -707,16 +730,31 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     const write_data = data[4 .. 4 + command.payload_length - 2];
                     const words_written = target.block_write(function_type, partition, phase, block_num, write_data);
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1 + words_written;
                 },
                 .GetLastError => {
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                    return 1;
+                },
+                .SetCondition => {
+                    switch (target.*) {
+                        .VMU => |*vmu| {
+                            vmu.set_condition(function_type, data[2]);
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .Acknowledge, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                            return 1;
+                        },
+                        else => {
+                            maple_log.err(termcolor.red("Unimplemented SetCondition for target: {any}"), .{target.tag()});
+                            dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
+                            return 1;
+                        },
+                    }
                     return 1;
                 },
                 else => {
-                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command) });
-                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = command.sender_address, .payload_length = 0 }));
+                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X:0>2}, {X:0>8})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data[0..4] });
+                    dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1;
                 },
             }
@@ -758,25 +796,12 @@ const MaplePort = struct {
 };
 
 pub const MapleHost = struct {
-    ports: [4]MaplePort = .{
-        .{},
-        .{},
-        .{},
-        .{},
-    },
+    ports: [4]MaplePort = @splat(.{}),
 
     _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !MapleHost {
-        return .{
-            .ports = .{
-                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
-                .{ .main = .{ .Controller = .{} }, .subperipherals = .{ null, null, null, null, null } },
-                .{},
-                .{},
-            },
-            ._allocator = allocator,
-        };
+        return .{ ._allocator = allocator };
     }
 
     pub fn deinit(self: *MapleHost) void {
