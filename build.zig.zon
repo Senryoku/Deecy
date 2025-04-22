@@ -35,16 +35,16 @@
             .lazy = true,
         },
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw#30b29eee8047852708e79aadf0425494e6d7c5b5",
-            .hash = "zglfw-0.10.0-dev-zgVDNG2cIQAiAC_gLYmbML-NQklPW5B_AELV_fAQc2Jg",
+            .url = "git+https://github.com/zig-gamedev/zglfw#fa12b57541976561358c850337af8d08647879d6",
+            .hash = "zglfw-0.10.0-dev-zgVDNJKcIQDR2-i-qz-FlR6uUdODN0DNPQA9X1G034qr",
         },
         .zgui = .{
-            .url = "git+https://github.com/zig-gamedev/zgui#0f2e9c7b50b2b5f36243ac8028f38adfe289303b",
-            .hash = "zgui-0.6.0-dev--L6sZJWZaAAJXsX2Alyo89zyb0El4LV37XxEhPz1H9ql",
+            .url = "git+https://github.com/zig-gamedev/zgui#7ac0630658ee2d285893603aca3945461d181beb",
+            .hash = "zgui-0.6.0-dev--L6sZG-baABjJ9Gcf2XU_VpTLmn4nNwq7alHKDRT_BW9",
         },
         .zaudio = .{
-            .url = "git+https://github.com/zig-gamedev/zaudio#fda144641276dd54ddabe2b77f5807fff7eda036",
-            .hash = "zaudio-0.11.0-dev-_M-91iBkPwDaOhCWkRhekq9IxJ_hM70TWQRru1vCitlC",
+            .url = "git+https://github.com/zig-gamedev/zaudio#029a91b002a576befdef70d81859e90c5ab98583",
+            .hash = "zaudio-0.11.0-dev-_M-91kJkPwC30uVRr6Oe8Z6_TEZQdkE9zt2cnM8JtEgA",
         },
         .system_sdk = .{
             .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
