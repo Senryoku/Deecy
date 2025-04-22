@@ -1686,20 +1686,7 @@ pub const SH4 = struct {
 
         if (physical_addr >= 0xE0000000) return self.read_p4(T, physical_addr);
 
-        const addr = physical_addr & 0x1FFFFFFF;
-
-        // DCA3 Hack
-        if (physical_addr & (@as(u32, 1) << 25) != 0 and addr >= 0x10000000 and addr <= 0x13FFFFFF) {
-            @branchHint(.unlikely);
-            const index: u32 = (addr / 32) & 255;
-            const offset: u32 = addr & 31;
-            sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
-            if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
-                sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-            return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
-        }
-
-        return self._dc.?.read(T, addr);
+        return self._dc.?.read(T, physical_addr & 0x1FFFFFFF);
     }
 
     pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataAddressErrorWrite, DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
@@ -1734,25 +1721,26 @@ pub const SH4 = struct {
         if (physical_addr >= 0xE0000000)
             return self.write_p4(T, physical_addr, value);
 
-        const addr = physical_addr & 0x1FFFFFFF;
+        self._dc.?.write(T, physical_addr & 0x1FFFFFFF, value);
+    }
 
-        // DCA3 Hack
-        if (physical_addr & (@as(u32, 1) << 25) != 0 and addr >= 0x10000000 and addr <= 0x13FFFFFF) {
-            @branchHint(.unlikely);
-            const index: u32 = (addr / 32) & 255;
-            const offset: u32 = addr & 31;
-
-            sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
-
-            if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
-                sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-            self._operand_cache_state.dirty[index] = true;
-
-            @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
-            return;
-        }
-
-        self._dc.?.write(T, addr, value);
+    // DCA3 Hack
+    pub fn operand_cache_read(self: *const @This(), comptime T: type, addr: u32) T {
+        const index: u32 = (addr / 32) & 255;
+        const offset: u32 = addr & 31;
+        sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+        if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+            sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+        return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
+    }
+    pub fn operand_cache_write(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        const index: u32 = (addr / 32) & 255;
+        const offset: u32 = addr & 31;
+        sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})\n", .{ addr, index, offset, self._operand_cache_state.addr[index] });
+        if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
+            sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
+        self._operand_cache_state.dirty[index] = true;
+        @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
     }
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {

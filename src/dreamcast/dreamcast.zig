@@ -712,7 +712,11 @@ pub const Dreamcast = struct {
                 return self.gpu.read_vram(T, addr);
             },
             // Area 4 - Tile accelerator command input
-            0x10000000...0x13FFFFFF => {},
+            0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (addr & (@as(u32, 1) << 25) != 0)
+                    return self.cpu.operand_cache_read(T, addr);
+            },
             // Area 7
             0x1C000000...0x1FFFFFFF => {
                 // Only when area 7 in external memory space is accessed using virtual memory space, addresses H'1F00 0000
@@ -787,6 +791,9 @@ pub const Dreamcast = struct {
             },
             // Area 4
             0x10000000...0x13FFFFFF => {
+                // DCA3 Hack
+                if (addr & (@as(u32, 1) << 25) != 0)
+                    return self.cpu.operand_cache_write(T, addr, value);
                 check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (TA Registers) = 0x{X}\n", .{ T, addr, value });
                 const LMMode = self.read_hw_register(u32, if (addr >= 0x11000000 and addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
                 const access_32bit = LMMode != 0;
