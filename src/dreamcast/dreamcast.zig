@@ -487,15 +487,81 @@ pub const Dreamcast = struct {
         self.flash[0x1A0A4] = @as(u8, '0') + @intFromEnum(video_mode);
     }
 
-    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
-        return @constCast(self).hw_register_addr(T, @intFromEnum(r)).*;
-    }
     pub inline fn hw_register(self: *@This(), comptime T: type, r: HardwareRegister) *T {
         return self.hw_register_addr(T, @intFromEnum(r));
     }
     pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
         return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
+    }
+    pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
+        const addr = @intFromEnum(r);
+        std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
+        return @as(*const T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800]))).*;
+    }
+    pub fn write_hw_register(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        const reg: HardwareRegister = @enumFromInt(addr);
+        if (addr >= 0x005F7000 and addr <= 0x005F709C) {
+            if (T != u8 and T != u16) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (GDROM)\n", .{ T, addr });
+            return self.gdrom.write_register(T, addr, value);
+        }
+        // Hardware registers
+        switch (reg) {
+            .SB_SFRES => { // Software Reset
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_SFRES)\n", .{ T, addr });
+                if (value == 0x00007611)
+                    self.cpu.software_reset();
+            },
+            .SB_PDST => if (value == 1) self.start_pvr_dma(),
+            .SB_SDST => if (value == 1) self.start_sort_dma(),
+            .SB_E1ST, .SB_E2ST, .SB_DDST => {
+                if (value == 1)
+                    dc_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
+            },
+            .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
+                if ((value & 1) == 1)
+                    dc_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+            },
+            .SB_ADST => {
+                if (value == 1) self.aica.start_dma(self);
+            },
+            .SB_GDEN => {
+                dc_log.debug("Write to SB_GDEN: {X}", .{value});
+                if (value == 0) self.abort_gd_dma();
+                self.hw_register(T, .SB_GDEN).* = value;
+            },
+            .SB_GDST => if (value == 1) self.start_gd_dma(),
+            .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
+                dc_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
+            },
+            .SB_MDAPRO => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
+                // This register specifies the address range for Maple-DMA involving the system (work) memory.
+                // Check "Security code"
+                if (value & 0xFFFF0000 != 0x61550000) return;
+                self.hw_register(T, .SB_MDAPRO).* = value;
+            },
+            .SB_MDST => if (value == 1) self.start_maple_dma(),
+            .SB_ISTNRM => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTNRM)\n", .{ T, addr });
+                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                self.hw_register(u32, .SB_ISTNRM).* &= ~(value & 0x3FFFFF);
+            },
+            .SB_ISTERR => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_ISTERR)\n", .{ T, addr });
+                // Interrupt can be cleared by writing "1" to the corresponding bit.
+                self.hw_register(u32, .SB_ISTERR).* &= ~value;
+            },
+            .SB_C2DSTAT => {
+                if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_C2DSTAT)\n", .{ T, addr });
+                self.hw_register(u32, .SB_C2DSTAT).* = 0x10000000 | (0x03FFFFFF & value);
+            },
+            .SB_C2DST => if (value == 1) self.start_ch2_dma() else self.end_ch2_dma(),
+            else => {
+                dc_log.debug("  Write32 to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{ addr, HardwareRegisters.getRegisterName(addr), value });
+                self.hw_register_addr(T, addr).* = value;
+            },
+        }
     }
 
     pub fn tick(self: *@This(), max_instructions: u8) !u32 {
