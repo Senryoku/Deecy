@@ -537,9 +537,9 @@ pub const AICA = struct {
     regs: []u32, // All registers are 32-bit afaik
     wave_memory: []u8 align(4), // Not owned.
 
-    channel_states: [64]AICAChannelState = @splat(.{}),
+    channel_states: []AICAChannelState,
 
-    sample_buffer: [2048]i32 = @splat(0),
+    sample_buffer: []i32,
     sample_read_offset: usize = 0,
     sample_write_offset: usize = 0,
 
@@ -560,6 +560,8 @@ pub const AICA = struct {
         var r = AICA{
             .regs = try allocator.alloc(u32, 0x8000 / 4),
             .wave_memory = memory,
+            .channel_states = try allocator.alloc(AICAChannelState, 64),
+            .sample_buffer = try allocator.alloc(i32, 2048),
             ._allocator = allocator,
         };
         r.arm7 = .init(r.wave_memory, 0x1FFFFF, 0x800000);
@@ -592,6 +594,8 @@ pub const AICA = struct {
     pub fn deinit(self: *AICA) void {
         self.dsp.deinit();
         self.arm_jit.deinit();
+        self._allocator.free(self.channel_states);
+        self._allocator.free(self.sample_buffer);
         self._allocator.free(self.regs);
     }
 
@@ -599,8 +603,9 @@ pub const AICA = struct {
         @memset(self.regs, 0);
         @memset(self.wave_memory, 0);
 
-        self.channel_states = @splat(.{});
+        @memset(self.channel_states, .{});
 
+        @memset(self.sample_buffer, 0);
         self.sample_read_offset = 0;
         self.sample_write_offset = 0;
 
@@ -687,7 +692,7 @@ pub const AICA = struct {
             },
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                var chan = &@constCast(self).channel_states[req.monitor_select];
+                var chan = &self.channel_states[req.monitor_select];
                 var status: PlayStatus = .{
                     .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
                     .env_state = chan.amp_env_state,
@@ -1374,7 +1379,7 @@ pub const AICA = struct {
 
     pub fn available_samples(self: *const @This()) u64 {
         var available: i64 = @as(i64, @intCast(self.sample_write_offset)) - @as(i64, @intCast(self.sample_read_offset));
-        if (available < 0) available += self.sample_buffer.len;
+        if (available < 0) available += @intCast(self.sample_buffer.len);
         return @intCast(available);
     }
 
@@ -1487,8 +1492,8 @@ pub const AICA = struct {
         var bytes: usize = 0;
         bytes += try self.arm7.serialize(writer);
         bytes += try self.dsp.serialize(writer);
-        bytes += try writer.write(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.regs));
+        bytes += try writer.write(std.mem.sliceAsBytes(self.channel_states));
         bytes += try writer.write(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try writer.write(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try writer.write(std.mem.asBytes(&self._timer_cycles_counter));
@@ -1514,8 +1519,8 @@ pub const AICA = struct {
 
         bytes += try self.arm7.deserialize(reader);
         bytes += try self.dsp.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.regs[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states[0..]));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.regs));
+        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states));
         bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));
         bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));
         bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));

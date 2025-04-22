@@ -628,7 +628,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             // zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
             // zgui.plot.setupLegend(.{ .south = false, .west = false }, .{});
             zgui.plot.setupFinish();
-            zgui.plot.plotLineValues("samples", i32, .{ .v = &dc.aica.sample_buffer });
+            zgui.plot.plotLineValues("samples", i32, .{ .v = dc.aica.sample_buffer });
             zgui.plot.plotLine("sample_read_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_read_offset), @intCast(dc.aica.sample_read_offset) }, .yv = &[_]i32{ 0, std.math.maxInt(i16) } });
             zgui.plot.plotLine("sample_write_offset", i32, .{ .xv = &[_]i32{ @intCast(dc.aica.sample_write_offset), @intCast(dc.aica.sample_write_offset) }, .yv = &[_]i32{ 0, -std.math.maxInt(i16) } });
             zgui.plot.endPlot();
