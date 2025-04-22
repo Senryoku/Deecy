@@ -657,7 +657,7 @@ const MaplePort = struct {
                 .DeviceInfoRequest => {
                     const identity = target.get_identity();
                     dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DeviceInfo, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(@sizeOf(DeviceInfoPayload) / 4) }));
-                    const ptr = dc.cpu._get_memory(return_addr + 4);
+                    const ptr = dc._get_memory(return_addr + 4);
                     @memcpy(@as([*]u8, @ptrCast(ptr))[0..@sizeOf(DeviceInfoPayload)], std.mem.asBytes(&identity));
                     return 1 + @sizeOf(DeviceInfoPayload) / 4;
                 },
@@ -668,7 +668,7 @@ const MaplePort = struct {
                             std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
-                            const ptr: [*]u32 = @alignCast(@ptrCast(dc.cpu._get_memory(return_addr + 4)));
+                            const ptr: [*]u32 = @alignCast(@ptrCast(dc._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                             return 1 + condition.len;
                         },
@@ -686,7 +686,7 @@ const MaplePort = struct {
 
                     switch (target.*) {
                         .VMU => |*v| {
-                            const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 8)))[0..];
+                            const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 8)))[0..];
                             const payload_size = v.get_media_info(dest, function_type, partition_number);
                             if (payload_size > 0) {
                                 dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = payload_size + 1 }));
@@ -711,7 +711,7 @@ const MaplePort = struct {
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
                     maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
-                    const dest = @as([*]u8, @ptrCast(dc.cpu._get_memory(return_addr + 12)))[0..];
+                    const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 12)))[0..];
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
 
                     if (payload_size > 0) {

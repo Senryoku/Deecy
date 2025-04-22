@@ -372,7 +372,7 @@ pub const JITContext = struct {
             .start_physical_pc = physical_pc,
             .current_pc = cpu.pc,
             .current_physical_pc = physical_pc,
-            .instructions = @alignCast(@ptrCast(cpu._get_memory(physical_pc))),
+            .instructions = @alignCast(@ptrCast(cpu._dc.?._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
         };

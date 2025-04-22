@@ -78,7 +78,7 @@ pub fn deinit(self: *@This()) void {
     if (self._jit_buffer) |buffer| self._allocator.free(buffer);
 }
 
-pub inline fn read_register(self: *@This(), comptime T: type, local_addr: u32) T {
+pub inline fn read_register(self: *const @This(), comptime T: type, local_addr: u32) T {
     if (local_addr >= 4 * MDEC_CT_base)
         log.warn("Read to DSP register {X:0>4}: We use it for internal operations!", .{local_addr});
 

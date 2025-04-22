@@ -641,24 +641,24 @@ pub const AICA = struct {
         @as(*T, @alignCast(@ptrCast(&self.wave_memory[(local_addr) % self.wave_memory.len]))).* = value;
     }
 
-    pub fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
+    pub inline fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
         std.debug.assert(number < 64);
         return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
 
-    pub fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
+    pub inline fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
-    pub fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
+    pub inline fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
         return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
     }
 
-    pub fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
+    pub inline fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
         return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4]))).*;
     }
 
-    pub fn read_register(self: *AICA, comptime T: type, addr: u32) T {
+    pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
         aica_log.debug("Read({any}) to AICA Register at 0x{X:0>8}", .{ T, addr });
 
         const local_addr = addr & 0x0000FFFF;
@@ -687,7 +687,7 @@ pub const AICA = struct {
             },
             .PlayStatus => {
                 const req = self.get_reg(ChannelInfoReq, .ChannelInfoReq);
-                var chan = &self.channel_states[req.monitor_select];
+                var chan = &@constCast(self).channel_states[req.monitor_select];
                 var status: PlayStatus = .{
                     .env_level = @truncate(if (req.amplitude_or_filter_select == 0) chan.amp_env_level else chan.filter_env_level),
                     .env_state = chan.amp_env_state,
@@ -1424,7 +1424,7 @@ pub const AICA = struct {
             return;
         }
 
-        const physical_root_addr = dc.cpu._get_memory(root_bus_addr);
+        const physical_root_addr = dc._get_memory(root_bus_addr);
         const physical_aica_addr = &self.wave_memory[aica_addr - 0x00800000];
 
         const len_in_u32 = len_in_bytes / 4;
