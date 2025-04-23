@@ -931,6 +931,9 @@ pub fn start(self: *@This()) void {
                 return;
             };
         } else {
+            var bw = std.io.bufferedWriter(std.io.getStdErr().writer());
+            bw.flush() catch {}; // FIXME: There's an issue with running binary files on startup (on Windows) that this flush magically solves. I can't make sense of it.
+
             if (self.dc.aica.available_samples() <= 32)
                 self.run_for(AICA.SH4CyclesPerSample * 16); // Preemptively accumulate some samples
 
