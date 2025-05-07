@@ -678,12 +678,13 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn handle_interrupts(self: *@This()) void {
+    pub inline fn handle_interrupts(self: *@This()) void {
         // When the BL bit in SR is 0, exceptions and interrupts are accepted.
 
         // See h14th002d2.pdf page 665 (or 651)
         if (!self.sr.bl or self.execution_state != .Running) {
             if (self.interrupt_requests != 0) {
+                @branchHint(.unlikely);
                 const int_index = @ctz(self.interrupt_requests);
                 const interrupt = self._sorted_interrupts[int_index];
                 // Check it against the cpu interrupt mask

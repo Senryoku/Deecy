@@ -722,20 +722,19 @@ pub const Emitter = struct {
     }
 
     pub fn emit_block_prologue(self: *@This()) !void {
-        // FIXME: Don't hardcode this? Please?
-
-        // push rbp
-        try self.emit(u8, 0x55);
-        // mov    rbp,rsp
-        try self.emit(u8, 0x48);
-        try self.emit(u8, 0x89);
-        try self.emit(u8, 0xE5);
+        try self.emit_slice(u8, &[_]u8{
+            // push rbp
+            0x55,
+            // mov rbp,rsp
+            0x48,
+            0x89,
+            0xE5,
+        });
     }
 
     pub fn emit_block_epilogue(self: *@This()) !void {
-        // pop    rbp
+        // pop rbp
         try self.emit(u8, 0x5D);
-        // ret
         try self.ret();
     }
 
