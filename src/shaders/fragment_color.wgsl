@@ -31,40 +31,22 @@ fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2
         if extractBits(palette_instructions, 1, 1) == 1 {
             // with Bilinear filtering
             let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv;
-
-            if true { // Fallback while the textureGather version is not working.
-                let palette_indices = vec4<u32>(
-                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 0.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
-                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(0.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
-                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(1.0, 0.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
-                    pack4x8unorm(textureSampleLevel(tex_array, image_sampler, (texel_coord + vec2<f32>(1.0, 1.0)) / vec2<f32>(textureDimensions(tex_array)), index, 0).zyxw),
-                );
-                return bilinear_interpolation(
-                    unpack4x8unorm(palette[palette_selector + palette_indices[0] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[1] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[2] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[3] ]),
-                    fract(texel_coord),
-                ).zyxw;
-            } else {
-                // FIXME: This should be more efficient, but doesn't work as expected. (For a failure example: Soul Calibur characted selection uses filtered palette textures for the background and "New" text) 
-                // Palette data is 4 or 8bits, we don't need every components.
-                let z = textureGather(2, tex_array, image_sampler, uv, index);
-                let palette_indices = vec4<u32>(
-                    pack4x8unorm(vec4<f32>(z.x, 0, 0, 0)), // Umin, Vmax (per WebGPU spec)
-                    pack4x8unorm(vec4<f32>(z.y, 0, 0, 0)), // Umax, Vmax
-                    pack4x8unorm(vec4<f32>(z.z, 0, 0, 0)), // Umax, Vmin
-                    pack4x8unorm(vec4<f32>(z.w, 0, 0, 0)), // Umin, Vmin
-                );
-                // FIXME: The error looks like these parameters aren't in order, but I think I tried every permutation at this point...
-                return bilinear_interpolation(
-                    unpack4x8unorm(palette[palette_selector + palette_indices[3] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[0] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[2] ]),
-                    unpack4x8unorm(palette[palette_selector + palette_indices[1] ]),
-                    fract(texel_coord),
-                ).zyxw;
-            }
+            
+            // Palette data is only 4 or 8bits, we only have to recover the lower bits from the red channel.
+            let z = textureGather(2, tex_array, image_sampler, uv + vec2<f32>(0.5, 0.5) / vec2<f32>(textureDimensions(tex_array)), index);
+            let palette_indices = vec4<u32>(
+                pack4x8unorm(vec4<f32>(z.x, 0, 0, 0)), // Umin, Vmax (per WebGPU spec)
+                pack4x8unorm(vec4<f32>(z.y, 0, 0, 0)), // Umax, Vmax
+                pack4x8unorm(vec4<f32>(z.z, 0, 0, 0)), // Umax, Vmin
+                pack4x8unorm(vec4<f32>(z.w, 0, 0, 0)), // Umin, Vmin
+            );
+            return bilinear_interpolation(
+                unpack4x8unorm(palette[palette_selector + palette_indices[3] ]),
+                unpack4x8unorm(palette[palette_selector + palette_indices[0] ]),
+                unpack4x8unorm(palette[palette_selector + palette_indices[2] ]),
+                unpack4x8unorm(palette[palette_selector + palette_indices[1] ]),
+                fract(texel_coord),
+            ).zyxw;
         } else {
             var sample = textureSampleLevel(tex_array, image_sampler, uv, index, 0);
             let palette_index = pack4x8unorm(sample.zyxw);
@@ -94,17 +76,7 @@ fn tex_sample(uv: vec2<f32>, duvdx: vec2<f32>, duvdy: vec2<f32>, palette_instruc
 }
 
 fn tex_size(idx: u32) -> f32 {
-    switch(idx & 7)  {
-        case 0u: { return 8.0; }
-        case 1u: { return 16.0; }
-        case 2u: { return 32.0; }
-        case 3u: { return 64.0; }
-        case 4u: { return 128.0; }
-        case 5u: { return 256.0; }
-        case 6u: { return 512.0; }
-        case 7u: { return 1024.0; }
-        default: { return 8.0; }
-    }
+    return f32(8 << (idx & 7));
 }
 
 fn fog_alpha_lut(z: f32) -> f32 {
