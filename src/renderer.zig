@@ -727,6 +727,8 @@ pub const Renderer = struct {
 
     display_mode: DisplayMode,
     resolution: Resolution,
+    /// Experimental
+    bypass_guest_vram_copy: bool = false,
 
     /// Intermediate texture to upload framebuffer from VRAM at native resolution
     framebuffer: TextureAndView,
@@ -2796,7 +2798,6 @@ pub const Renderer = struct {
                 return;
             }
         }
-        const ExperimentalRenderToHostVRAM = true;
 
         const Target = struct { native: struct { texture: wgpu.Texture, view: wgpu.TextureView }, resized: struct { texture: wgpu.Texture, view: wgpu.TextureView } };
         const target = if (render_to_texture) Target{
@@ -3360,7 +3361,7 @@ pub const Renderer = struct {
             }
 
             if (ExperimentalFramebufferWriteBack or render_to_texture) {
-                if (ExperimentalRenderToHostVRAM) {
+                if (self.bypass_guest_vram_copy) {
                     const scaler_ctl = holly.read_register(HollyModule.SCALER_CTL, .SCALER_CTL);
                     const interlaced = scaler_ctl.interlace;
                     const field = if (interlaced) scaler_ctl.field_select else 0;
@@ -3483,7 +3484,7 @@ pub const Renderer = struct {
         // TODO: Here, when rendering to a texture, if the game actually uses it only as a texture and
         //       doesn't directly reads it from VRAM, we could copy it our texture cache and update its entry
         //       rather than writing it back to guest VRAM. Find a game that uses it in this way.
-        if ((ExperimentalFramebufferWriteBack or render_to_texture) and !ExperimentalRenderToHostVRAM) {
+        if ((ExperimentalFramebufferWriteBack or render_to_texture) and !self.bypass_guest_vram_copy) {
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
             copy_buffer.mapAsync(
                 .{ .read = true },

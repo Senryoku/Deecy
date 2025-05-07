@@ -507,6 +507,7 @@ pub fn draw(self: *@This()) !void {
                 }
                 zgui.separator();
                 _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
+                _ = zgui.checkbox("(Experimental) Bypass Guest VRAM Copy", .{ .v = &d.renderer.bypass_guest_vram_copy });
                 zgui.endTabItem();
             }
 
