@@ -3306,7 +3306,7 @@ pub const Renderer = struct {
                                     pass.end();
                                     pass.release();
                                 }
-                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 4) };
                                 pass.setPipeline(pipeline);
 
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});

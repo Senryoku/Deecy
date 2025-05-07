@@ -67,9 +67,6 @@ fn main(
     // If we run out of space to store the fragments, we just lose them
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
-        linked_list.data[frag_index].depth = position_clip.z;
-        linked_list.data[frag_index].color_area0 = pack4x8unorm(final_color.area0);
-        linked_list.data[frag_index].color_area1 = pack4x8unorm(final_color.area1);
         let blend_modes_area0 = extractBits(tex_idx_shading_instr[1], 10, 6);
         var blend_modes_area1 = blend_modes_area0;
         // Shading instruction for Area1 are only valid if both shadow and volume bits are set.
@@ -78,6 +75,9 @@ fn main(
         if shadow_bit && volume_bit {
             blend_modes_area1 = extractBits(area1_tex_idx_shading_instr[1], 10, 6);
         }
+        linked_list.data[frag_index].depth = position_clip.z;
+        linked_list.data[frag_index].color_area0 = pack4x8unorm(final_color.area0);
+        linked_list.data[frag_index].color_area1 = pack4x8unorm(final_color.area1);
         linked_list.data[frag_index].index_and_blend_modes = (index << (2 * 6)) | (blend_modes_area1 << 6) | blend_modes_area0;
         linked_list.data[frag_index].next = last_head;
     }
