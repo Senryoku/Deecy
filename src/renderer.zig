@@ -1621,6 +1621,32 @@ pub const Renderer = struct {
         return @as([*][4]u8, @ptrCast(self._scratch_pad.ptr));
     }
 
+    fn find_unused_texture_slot(self: *Renderer, size_index: u3) !TextureIndex {
+        // Search for an available texture index.
+        var texture_index: TextureIndex = InvalidTextureIndex;
+        for (0..Renderer.MaxTextures[size_index]) |i| {
+            // Prefer slots that have never been used to keep textures in the cache for as long as possible.
+            if (self.texture_metadata[size_index][i].status == .Invalid) {
+                texture_index = @as(TextureIndex, @intCast(i));
+                break;
+            }
+        }
+        if (texture_index == InvalidTextureIndex) {
+            // Search for the last recently used texture, preferring an outdated one.
+            for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+                if (entry.status == .Outdated and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].status == .Unused or (self.texture_metadata[size_index][texture_index].status == .Outdated and self.texture_metadata[size_index][texture_index].age < entry.age))) {
+                    texture_index = @as(TextureIndex, @intCast(idx));
+                } else if (entry.status == .Unused and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].age < entry.age)) {
+                    texture_index = @as(TextureIndex, @intCast(idx));
+                }
+            }
+        }
+
+        if (texture_index == InvalidTextureIndex)
+            return error.OutOfTextureSlot;
+        return texture_index;
+    }
+
     fn upload_texture(self: *Renderer, gpu: *const HollyModule.Holly, tsp_instruction: HollyModule.TSPInstructionWord, texture_control_word: HollyModule.TextureControlWord) TextureIndex {
         renderer_log.debug("[Upload] tsp_instruction: {any}", .{tsp_instruction});
         renderer_log.debug("[Upload] texture_control_word: {any}", .{texture_control_word});
@@ -1677,29 +1703,10 @@ pub const Renderer = struct {
         }
 
         // Search for an available texture index.
-        var texture_index: TextureIndex = InvalidTextureIndex;
-        for (0..Renderer.MaxTextures[size_index]) |i| {
-            // Prefer slots that have never been used to keep textures in the cache for as long as possible.
-            if (self.texture_metadata[size_index][i].status == .Invalid) {
-                texture_index = @as(TextureIndex, @intCast(i));
-                break;
-            }
-        }
-        if (texture_index == InvalidTextureIndex) {
-            // Search for the last recently used texture, preferring an outdated one.
-            for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
-                if (entry.status == .Outdated and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].status == .Unused or (self.texture_metadata[size_index][texture_index].status == .Outdated and self.texture_metadata[size_index][texture_index].age < entry.age))) {
-                    texture_index = @as(TextureIndex, @intCast(idx));
-                } else if (entry.status == .Unused and (texture_index == InvalidTextureIndex or self.texture_metadata[size_index][texture_index].age < entry.age)) {
-                    texture_index = @as(TextureIndex, @intCast(idx));
-                }
-            }
-        }
-
-        if (texture_index == InvalidTextureIndex) {
+        const texture_index = self.find_unused_texture_slot(size_index) catch {
             renderer_log.err(termcolor.red("Out of textures slot (size index: {d}, {d}x{d})"), .{ size_index, u_size, v_size });
             return 0;
-        }
+        };
 
         const end_address = if (texture_control_word.vq_compressed == 1)
             vq_index_addr + u_size * v_size / 4
@@ -2783,13 +2790,13 @@ pub const Renderer = struct {
 
         const render_to_texture = holly.render_to_texture();
         if (render_to_texture) {
-            renderer_log.info("Rendering to texture!", .{});
-            renderer_log.info("Global Clip: {any}", .{self.global_clip});
+            renderer_log.info("Rendering to texture! ([{d}, {d}] to [{d}, {d}])", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
             if (!ExperimentalRenderToTexture) {
                 renderer_log.warn("ExperimentalRenderToTexture is disabled.", .{});
                 return;
             }
         }
+        const ExperimentalRenderToHostVRAM = true;
 
         const Target = struct { native: struct { texture: wgpu.Texture, view: wgpu.TextureView }, resized: struct { texture: wgpu.Texture, view: wgpu.TextureView } };
         const target = if (render_to_texture) Target{
@@ -3353,27 +3360,118 @@ pub const Renderer = struct {
             }
 
             if (ExperimentalFramebufferWriteBack or render_to_texture) {
-                encoder.copyTextureToBuffer(
-                    .{
-                        .texture = target.native.texture,
-                        .mip_level = 0,
-                        .origin = .{},
-                        .aspect = .all,
-                    },
-                    .{
-                        .layout = .{
-                            .offset = 0,
-                            .bytes_per_row = 4 * NativeResolution.width,
-                            .rows_per_image = NativeResolution.height,
+                if (ExperimentalRenderToHostVRAM) {
+                    const scaler_ctl = holly.read_register(HollyModule.SCALER_CTL, .SCALER_CTL);
+                    const interlaced = scaler_ctl.interlace;
+                    const field = if (interlaced) scaler_ctl.field_select else 0;
+                    const addr = holly.read_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2) & HollyModule.Holly.VRAMMask;
+                    const w_ctrl = holly.read_register(HollyModule.FB_W_CTRL, .FB_W_CTRL);
+
+                    const texture_control_word = HollyModule.TextureControlWord{
+                        .address = @intCast(addr / 8),
+                        .stride_select = 1,
+                        .scan_order = 1,
+                        .pixel_format = switch (w_ctrl.fb_packmode) {
+                            .RGB565 => HollyModule.TexturePixelFormat.RGB565,
+                            .ARGB1555 => HollyModule.TexturePixelFormat.ARGB1555,
+                            .ARGB4444 => HollyModule.TexturePixelFormat.ARGB4444,
+                            else => default: {
+                                renderer_log.err("Unhandled fb_packmode: {any}", .{w_ctrl.fb_packmode});
+                                break :default HollyModule.TexturePixelFormat.RGB565;
+                            },
                         },
-                        .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
-                    },
-                    .{
-                        .width = NativeResolution.width,
-                        .height = NativeResolution.height,
-                        .depth_or_array_layers = 1,
-                    },
-                );
+                        .vq_compressed = 0,
+                        .mip_mapped = 0,
+                    };
+                    const tsp_instruction = HollyModule.TSPInstructionWord{
+                        .texture_v_size = 6, // FIXME: Adjust with actual target resolution
+                        .texture_u_size = 7,
+                        .texture_shading_instruction = .ModulateAlpha,
+                        .mipmap_d_adjust = 0,
+                        .supersample_texture = 0,
+                        .filter_mode = .Point,
+                        .clamp_uv = 0,
+                        .flip_uv = 0,
+                        .ignore_texture_alpha = 0,
+                        .use_alpha = 1,
+                        .color_clamp = 0,
+                        .fog_control = .LookUpTable,
+                        .dst_select = 0,
+                        .src_select = 0,
+                        .dst_alpha_instr = .InverseSourceAlpha,
+                        .src_alpha_instr = .SourceAlpha,
+                    };
+                    const size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                    const texture_index: TextureIndex = tidx: {
+                        // Check if an entry already corresponds to this texture
+                        for (self.texture_metadata[size_index][0..Renderer.MaxTextures[size_index]], 0..) |*entry, idx| {
+                            if (entry.status != .Invalid and entry.match(texture_control_word))
+                                break :tidx @intCast(idx);
+                        }
+                        // Otherwise get the first free one.
+                        break :tidx self.find_unused_texture_slot(size_index) catch {
+                            renderer_log.warn("Failed to find free texture slot", .{});
+                            return;
+                        };
+                    };
+                    //const FB_W_LINESTRIDE = 8 * (holly.read_register(u32, .FB_W_LINESTRIDE) & 0x1FF);
+                    //const line_stride: u32 = if (interlaced) 2 else 1;
+                    //const height = NativeResolution.height / line_stride;
+                    const end_address = addr; //addr + FB_W_LINESTRIDE * height;
+
+                    self.texture_metadata[size_index][texture_index] = .{
+                        .status = .Used,
+                        .control_word = texture_control_word,
+                        .tsp_instruction = tsp_instruction,
+                        .index = texture_index,
+                        .usage = 0,
+                        .size = .{ @as(u16, 8) << tsp_instruction.texture_u_size, @as(u16, 8) << tsp_instruction.texture_v_size },
+                        .start_address = addr,
+                        .end_address = end_address,
+                        .hash = texture_hash(holly, addr, end_address),
+                    };
+                    encoder.copyTextureToTexture(
+                        .{
+                            .texture = target.native.texture,
+                            .mip_level = 0,
+                            .origin = .{},
+                            .aspect = .all,
+                        },
+                        .{
+                            .texture = gctx.lookupResource(self.texture_arrays[size_index].texture).?,
+                            .mip_level = 0,
+                            .origin = .{ .z = texture_index },
+                            .aspect = .all,
+                        },
+                        .{
+                            .width = NativeResolution.width,
+                            .height = NativeResolution.height,
+                            .depth_or_array_layers = 1,
+                        },
+                    );
+                } else {
+                    encoder.copyTextureToBuffer(
+                        .{
+                            .texture = target.native.texture,
+                            .mip_level = 0,
+                            .origin = .{},
+                            .aspect = .all,
+                        },
+                        .{
+                            .layout = .{
+                                .offset = 0,
+                                .bytes_per_row = 4 * NativeResolution.width,
+                                .rows_per_image = NativeResolution.height,
+                            },
+                            .buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?,
+                        },
+                        .{
+                            .width = NativeResolution.width,
+                            .height = NativeResolution.height,
+                            .depth_or_array_layers = 1,
+                        },
+                    );
+                }
             }
 
             break :commands encoder.finish(null);
@@ -3385,7 +3483,7 @@ pub const Renderer = struct {
         // TODO: Here, when rendering to a texture, if the game actually uses it only as a texture and
         //       doesn't directly reads it from VRAM, we could copy it our texture cache and update its entry
         //       rather than writing it back to guest VRAM. Find a game that uses it in this way.
-        if (ExperimentalFramebufferWriteBack or render_to_texture) {
+        if ((ExperimentalFramebufferWriteBack or render_to_texture) and !ExperimentalRenderToHostVRAM) {
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
             copy_buffer.mapAsync(
                 .{ .read = true },
