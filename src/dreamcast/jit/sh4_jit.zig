@@ -879,7 +879,7 @@ pub const SH4JIT = struct {
         }
     }
 
-    fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
+    inline fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
         if (!self.idle_skip_enabled) return;
 
         const AddedCycles = 512;
@@ -889,7 +889,7 @@ pub const SH4JIT = struct {
             //   mov.l @R5, R2
             //   tst R4, R2
             //   bt -4
-            &[_]u16{ 0x6252, 0x2248, 0x89FC },
+            // &[_]u16{ 0x6252, 0x2248, 0x89FC },
             // Boot ROM (Same instructions as Soul Calibur, but using other addresses/registers)
             &[_]u16{
                 0xD223, 0x6322, 0x430B, 0x5421,
@@ -906,8 +906,6 @@ pub const SH4JIT = struct {
                 0x3326, 0x8B01, 0xA004, 0x6CE3,
                 0xD318, 0x6232, 0x2228, 0x8BEB,
             },
-            // Rayman 2
-            // &[_]u16{ 0xD346, 0x6232, 0x2248, 0x8BFB },
         };
 
         for (Blocks) |block| next_block: {
@@ -925,7 +923,7 @@ pub const SH4JIT = struct {
 
         if (self.idle_skip_cycles <= ctx.cycles) return;
 
-        // Generic idle loop detection. Searches for < 4 instructions blocks ending with a conditional branch instruction, at least a read and no writes to memory.
+        // Generic idle loop detection. Searches small blocks ending with a conditional branch instruction, at least a memory read and a small list of authorized instructions.
         // Real world examples of what we're actually after:
         //    mov.l @R5,R3
         //    tst R4,R3
@@ -936,33 +934,32 @@ pub const SH4JIT = struct {
         //    cmp/eq R1,R4
         //    bt -6
         // FIXME: This doesn't currently check for the presence of a test/compare instruction.
-        //        This might lead to false positives, so I'm printing them out by default for monitoring.
-        const last_instruction = instr_lookup(ctx.instructions[ctx.index - 1]);
-        if (ctx.index > 1 and ctx.index < 5 and last_instruction.jit_emit_fn == bf_label or last_instruction.jit_emit_fn == bfs_label or last_instruction.jit_emit_fn == bt_label or last_instruction.jit_emit_fn == bts_label) {
-            const dest = sh4_interpreter.d8_disp(ctx.current_pc - 2, @bitCast(ctx.instructions[ctx.index - 1]));
-
-            if (dest == ctx.entry_point_address and ctx.cycles < MaxCyclesPerBlock) {
-                const delay_slot = last_instruction.jit_emit_fn == bfs_label or last_instruction.jit_emit_fn == bts_label;
-                var reads_mem = false;
-                var writes_mem = false;
-                for (0..ctx.index - 1) |i| {
-                    const inst = instr_lookup(ctx.instructions[i]);
-                    reads_mem = reads_mem or inst.access.r.mem;
-                    if (inst.access.w.mem) {
-                        writes_mem = true;
-                        break;
+        //        This might lead to false positives, so I'm printing them out by default for monitoring
+        if (ctx.index > 0 and ctx.index < 5) {
+            const last_instruction = ctx.instructions[ctx.index - 1];
+            // bf, bfs, bt or bts
+            if ((last_instruction & 0b1111100100000000) == 0b1000100100000000) {
+                const dest = sh4_interpreter.d8_disp(ctx.current_pc - 2, @bitCast(ctx.instructions[ctx.index - 1]));
+                if (dest == ctx.entry_point_address) {
+                    // bfs or bts
+                    const delay_slot = (last_instruction & 0b0000010000000000) == 0b0000010000000000;
+                    var reads_mem = false;
+                    for (0..ctx.index - 1) |i| {
+                        const inst = instr_lookup(ctx.instructions[i]);
+                        if (!inst.idle) return;
+                        reads_mem = reads_mem or inst.access.r.mem;
                     }
-                }
-                if (delay_slot) writes_mem = writes_mem or instr_lookup(ctx.instructions[ctx.index]).access.w.mem;
-                if (reads_mem and !writes_mem) {
-                    if (comptime std.log.logEnabled(.warn, .sh4_jit)) {
-                        sh4_jit_log.warn("Detected Idle Loop at 0x{X:0>8}", .{ctx.entry_point_address});
-                        for (0..ctx.index) |i|
-                            sh4_jit_log.warn("  {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[i]), ctx.cpu._allocator)});
-                        if (delay_slot)
-                            sh4_jit_log.warn("  > {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[ctx.index]), ctx.cpu._allocator)});
+                    if (delay_slot and !instr_lookup(ctx.instructions[ctx.index]).idle) return;
+                    if (reads_mem) {
+                        if (comptime std.log.logEnabled(.warn, .sh4_jit)) {
+                            sh4_jit_log.warn("Detected Idle Loop at 0x{X:0>8}", .{ctx.entry_point_address});
+                            for (0..ctx.index) |i|
+                                sh4_jit_log.warn("  {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[i]), ctx.cpu._allocator)});
+                            if (delay_slot)
+                                sh4_jit_log.warn("  > {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[ctx.index]), ctx.cpu._allocator)});
+                        }
+                        ctx.cycles = ctx.cycles * (1 + self.idle_skip_cycles / ctx.cycles);
                     }
-                    ctx.cycles = ctx.cycles * (1 + self.idle_skip_cycles / ctx.cycles);
                 }
             }
         }
