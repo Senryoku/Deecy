@@ -452,6 +452,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("CPU JIT", .{})) {
+        _ = zgui.checkbox("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
+        var idle_skip_cycles: i32 = @intCast(d.dc.sh4_jit.idle_skip_cycles);
+        if (zgui.inputInt("Idle Skip Cycles", .{ .v = &idle_skip_cycles })) d.dc.sh4_jit.idle_skip_cycles = @intCast(idle_skip_cycles);
         zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
         zgui.text("Block statistics", .{});
         if (BasicBlock.EnableInstrumentation) {

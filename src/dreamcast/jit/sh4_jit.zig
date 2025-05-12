@@ -39,7 +39,6 @@ const Optimizations = .{
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
     .link_small_blocks = .{ .enabled = true and !BasicBlock.EnableInstrumentation, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
-    .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
 
@@ -528,6 +527,9 @@ pub const JITContext = struct {
 };
 
 pub const SH4JIT = struct {
+    idle_skip_enabled: bool = true,
+    idle_skip_cycles: u32 = 66,
+
     block_cache: BlockCache,
 
     virtual_address_space: VirtualAddressSpace = undefined,
@@ -878,12 +880,10 @@ pub const SH4JIT = struct {
     }
 
     fn idle_speedup(self: *@This(), ctx: *JITContext) !void {
-        if (!Optimizations.idle_speedup) return;
+        if (!self.idle_skip_enabled) return;
 
         const AddedCycles = 512;
-
-        _ = self;
-
+        // Very specific patterns.
         const Blocks = [_][]const u16{
             // Boot ROM (Waiting on VSync by hammering SPG_STATUS)
             //   mov.l @R5, R2
@@ -906,6 +906,8 @@ pub const SH4JIT = struct {
                 0x3326, 0x8B01, 0xA004, 0x6CE3,
                 0xD318, 0x6232, 0x2228, 0x8BEB,
             },
+            // Rayman 2
+            // &[_]u16{ 0xD346, 0x6232, 0x2248, 0x8BFB },
         };
 
         for (Blocks) |block| next_block: {
@@ -917,8 +919,52 @@ pub const SH4JIT = struct {
                 i += 1;
             }
             sh4_jit_log.debug("Detected Idle Block at 0x{X:0>8}", .{ctx.current_pc});
-            ctx.cycles += AddedCycles; // Add an arbritrary number of cycles.
+            ctx.cycles += AddedCycles;
             return;
+        }
+
+        if (self.idle_skip_cycles <= ctx.cycles) return;
+
+        // Generic idle loop detection. Searches for < 4 instructions blocks ending with a conditional branch instruction, at least a read and no writes to memory.
+        // Real world examples of what we're actually after:
+        //    mov.l @R5,R3
+        //    tst R4,R3
+        //    bf -4
+        // or
+        //    mov.l @(32,PC),R2
+        //    mov.l @R2,R1
+        //    cmp/eq R1,R4
+        //    bt -6
+        // FIXME: This doesn't currently check for the presence of a test/compare instruction.
+        //        This might lead to false positives, so I'm printing them out by default for monitoring.
+        const last_instruction = instr_lookup(ctx.instructions[ctx.index - 1]);
+        if (ctx.index > 1 and ctx.index < 5 and last_instruction.jit_emit_fn == bf_label or last_instruction.jit_emit_fn == bfs_label or last_instruction.jit_emit_fn == bt_label or last_instruction.jit_emit_fn == bts_label) {
+            const dest = sh4_interpreter.d8_disp(ctx.current_pc - 2, @bitCast(ctx.instructions[ctx.index - 1]));
+
+            if (dest == ctx.entry_point_address and ctx.cycles < MaxCyclesPerBlock) {
+                const delay_slot = last_instruction.jit_emit_fn == bfs_label or last_instruction.jit_emit_fn == bts_label;
+                var reads_mem = false;
+                var writes_mem = false;
+                for (0..ctx.index - 1) |i| {
+                    const inst = instr_lookup(ctx.instructions[i]);
+                    reads_mem = reads_mem or inst.access.r.mem;
+                    if (inst.access.w.mem) {
+                        writes_mem = true;
+                        break;
+                    }
+                }
+                if (delay_slot) writes_mem = writes_mem or instr_lookup(ctx.instructions[ctx.index]).access.w.mem;
+                if (reads_mem and !writes_mem) {
+                    if (comptime std.log.logEnabled(.warn, .sh4_jit)) {
+                        sh4_jit_log.warn("Detected Idle Loop at 0x{X:0>8}", .{ctx.entry_point_address});
+                        for (0..ctx.index) |i|
+                            sh4_jit_log.warn("  {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[i]), ctx.cpu._allocator)});
+                        if (delay_slot)
+                            sh4_jit_log.warn("  > {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[ctx.index]), ctx.cpu._allocator)});
+                    }
+                    ctx.cycles = ctx.cycles * (1 + self.idle_skip_cycles / ctx.cycles);
+                }
+            }
         }
     }
 };

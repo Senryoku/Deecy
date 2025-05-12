@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
+const dc_config = @import("dc_config");
 
-pub const EnableInstrumentation = false and builtin.mode != .ReleaseFast;
+pub const EnableInstrumentation = dc_config.jit_instrumentation;
 
 offset: u32,
 
