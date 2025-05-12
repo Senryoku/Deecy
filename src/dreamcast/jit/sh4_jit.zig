@@ -38,7 +38,7 @@ const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
-    .link_small_blocks = .{ .enabled = true, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
+    .link_small_blocks = .{ .enabled = true and !BasicBlock.EnableInstrumentation, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
     .idle_speedup = true, // Stupid hack: Search for known idle block patterns and add fake cpu cycles to them.
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };

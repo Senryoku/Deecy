@@ -452,6 +452,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("CPU JIT", .{})) {
+        zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
         zgui.text("Block statistics", .{});
         if (BasicBlock.EnableInstrumentation) {
             const max = 50;
@@ -485,7 +486,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             if (zgui.button("Reset", .{})) {
                 const was_running = d.running;
                 if (was_running)
-                    d.stop();
+                    try d.stop();
                 try dc.sh4_jit.reset();
                 if (was_running)
                     d.start();
