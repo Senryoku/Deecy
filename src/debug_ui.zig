@@ -276,18 +276,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     self.reset_hover();
 
-    if (zgui.begin("CPU State", .{})) {
-        _ = zgui.checkbox("JIT", .{ .v = &d.enable_jit });
-        zgui.sameLine(.{});
-        if (zgui.button("Clear Cache", .{})) {
-            const was_running = d.running;
-            if (was_running)
-                d.pause();
-            try dc.sh4_jit.reset();
-            if (was_running)
-                d.start();
-        }
-        zgui.sameLine(.{});
+    if (zgui.begin("SH4", .{})) {
         if (zgui.button("Dump DC State", .{})) {
             const was_running = d.running;
             if (was_running)
@@ -414,6 +403,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         zgui.text("IPRC: {X:0>4}", .{dc.cpu.read_p4_register(u16, .IPRC)});
         display(dc.cpu.read_p4_register(SH4Module.P4.IPRC, .IPRC));
         zgui.endGroup();
+
+        zgui.separator();
+
+        for (0..2) |sq| {
+            for (0..8) |i| {
+                zgui.text("[SQ{d:0>1}] {X:0>8}", .{
+                    sq,
+                    dc.cpu.store_queues[sq][i],
+                });
+            }
+        }
     }
     zgui.end();
 
@@ -451,69 +451,82 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
-    if (zgui.begin("CPU JIT", .{})) {
+    if (zgui.begin("SH4 JIT", .{})) {
+        _ = zgui.checkbox("Enable", .{ .v = &d.enable_jit });
+        zgui.sameLine(.{});
+        if (zgui.button("Clear Cache", .{})) {
+            const was_running = d.running;
+            if (was_running)
+                d.pause();
+            try dc.sh4_jit.reset();
+            if (was_running)
+                d.start();
+        }
         _ = zgui.checkbox("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
         var idle_skip_cycles: i32 = @intCast(d.dc.sh4_jit.idle_skip_cycles);
         if (zgui.inputInt("Idle Skip Cycles", .{ .v = &idle_skip_cycles })) d.dc.sh4_jit.idle_skip_cycles = @intCast(idle_skip_cycles);
         zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
-        zgui.text("Block statistics", .{});
+        zgui.separator();
         if (BasicBlock.EnableInstrumentation) {
-            const max = 50;
-            const static = struct {
-                var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
-                var sorted: [max]usize = @splat(0);
-                var initialized: bool = false;
-            };
-            zgui.beginDisabled(.{ .disabled = d.running });
-            if (zgui.button("Refresh", .{})) {
-                if (!static.initialized) {
-                    static.top = .init(dc._allocator, {});
-                    static.initialized = true;
-                } else {
-                    while (static.top.count() > 0) _ = static.top.remove();
-                }
-                for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
-                    if (dc.sh4_jit.block_cache.blocks[i].offset > 0) {
-                        const block = dc.sh4_jit.block_cache.blocks[i];
-                        if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
-                            try static.top.add(block);
-                        }
-                        if (static.top.count() > max) {
-                            _ = static.top.remove();
+            if (zgui.collapsingHeader("Block statistics", .{ .default_open = true })) {
+                const max = 50;
+                const static = struct {
+                    var top: std.PriorityQueue(BasicBlock, void, compare_blocks) = undefined;
+                    var sorted: [max]usize = @splat(0);
+                    var initialized: bool = false;
+                };
+                zgui.beginDisabled(.{ .disabled = d.running });
+                if (zgui.button("Refresh", .{})) {
+                    if (!static.initialized) {
+                        static.top = .init(dc._allocator, {});
+                        static.initialized = true;
+                    } else {
+                        while (static.top.count() > 0) _ = static.top.remove();
+                    }
+                    for (0..dc.sh4_jit.block_cache.blocks.len) |i| {
+                        if (dc.sh4_jit.block_cache.blocks[i].offset > 0) {
+                            const block = dc.sh4_jit.block_cache.blocks[i];
+                            if (block.call_count > 0 and (static.top.count() < max or static.top.peek().?.time_spent < block.time_spent)) {
+                                try static.top.add(block);
+                            }
+                            if (static.top.count() > max) {
+                                _ = static.top.remove();
+                            }
                         }
                     }
+                    std.mem.sort(BasicBlock, static.top.items, {}, comptime compare_blocks_desc);
                 }
-                std.mem.sort(BasicBlock, static.top.items, {}, comptime compare_blocks_desc);
-            }
-            zgui.sameLine(.{});
-            if (zgui.button("Reset", .{})) {
-                const was_running = d.running;
-                if (was_running)
-                    try d.stop();
-                try dc.sh4_jit.reset();
-                if (was_running)
-                    d.start();
-            }
-            zgui.endDisabled();
+                zgui.sameLine(.{});
+                if (zgui.button("Reset", .{})) {
+                    const was_running = d.running;
+                    if (was_running)
+                        try d.stop();
+                    try dc.sh4_jit.reset();
+                    if (was_running)
+                        d.start();
+                }
+                zgui.endDisabled();
 
-            for (static.top.items) |block| {
-                zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
-                    block.start_addr,
-                    block.len,
-                    block.cycles,
-                    @divTrunc(block.time_spent, 1_000_000),
-                    @divTrunc(block.time_spent, block.call_count),
-                    block.call_count,
-                });
-                for (0..block.len) |i| {
-                    const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
-                    const instr = dc.cpu.read_physical(u16, addr);
-                    const op = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[instr]];
-                    zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
+                for (static.top.items) |block| {
+                    zgui.text("Block {X:0>6} ({d}, {d}): {d}ms - {d}ns ({d})", .{
+                        block.start_addr,
+                        block.len,
+                        block.cycles,
+                        @divTrunc(block.time_spent, 1_000_000),
+                        @divTrunc(block.time_spent, block.call_count),
+                        block.call_count,
+                    });
+                    for (0..block.len) |i| {
+                        const addr: u32 = block.start_addr + @as(u32, @intCast(2 * i));
+                        const instr = dc.cpu.read_physical(u16, addr);
+                        const op = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[instr]];
+                        zgui.text("{s} {X:0>6}: {s}", .{ if (op.use_fallback()) "!" else " ", addr, sh4_disassembly.disassemble(@bitCast(instr), dc._allocator) });
+                    }
                 }
             }
         } else {
-            zgui.text("JIT Instrumentation was disabled for this build.", .{});
+            zgui.textColored(Grey, "JIT instrumentation disabled in this build.", .{});
+            zgui.textColored(Grey, "Compile with '-Djit_instrumentation=true' to enable (slow).", .{});
         }
     }
     zgui.end();
@@ -826,16 +839,17 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     }
     zgui.end();
 
-    if (zgui.begin("Memory", .{})) {
+    if (zgui.begin("RAM", .{})) {
+        const Range = 128;
         const static = struct {
-            var start_addr: i32 = 0;
-            var edit_addr: i32 = 0;
+            var start_addr: u32 = 0x0C000000;
+            var edit_addr: i32 = 0x0C000000;
         };
         if (zgui.inputInt("Start", .{ .v = &static.edit_addr, .step = 8, .flags = .{ .chars_hexadecimal = true } })) {
-            static.start_addr = static.edit_addr;
+            static.start_addr = @intCast(@max(0x0C000000, @min(static.edit_addr & 0x1FFFFFF8, 0x0D000000 - Range)));
         }
-        var addr = @max(0, @as(u32, @intCast(static.start_addr & 0x1FFFFFFF)));
-        const end_addr = addr + 128;
+        var addr = static.start_addr;
+        const end_addr = addr + Range;
         zgui.textColored(.{ 0.5, 0.5, 0.5, 1 }, "           00 01 02 03 04 05 06 07", .{});
         while (addr < end_addr) {
             zgui.text("[{X:0>8}] {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2} {X:0>2}  {c}{c}{c}{c}{c}{c}{c}{c}", .{
@@ -858,17 +872,6 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 printable_ascii(dc.cpu.read_physical(u8, @intCast(addr + 7))),
             });
             addr += 8;
-        }
-
-        zgui.separator();
-
-        for (0..2) |sq| {
-            for (0..8) |i| {
-                zgui.text("[SQ{d:0>1}] {X:0>8}", .{
-                    sq,
-                    dc.cpu.store_queues[sq][i],
-                });
-            }
         }
     }
     zgui.end();
