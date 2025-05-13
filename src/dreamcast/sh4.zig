@@ -988,7 +988,7 @@ pub const SH4 = struct {
         if (self._mmu_state != previous_state) {
             sh4_log.warn("MMU State: {s} => {s}", .{ @tagName(previous_state), @tagName(self._mmu_state) });
             if (previous_state == .Full or self._mmu_state == .Full)
-                if (self._dc) |dc| dc.sh4_jit.request_reset();
+                if (self._dc) |dc| dc.sh4_jit.safe_reset();
         }
     }
 
@@ -1399,7 +1399,7 @@ pub const SH4 = struct {
                     self.itlb[entry].vpn = val.vpn;
 
                     if (!std.meta.eql(before, self.itlb[entry]))
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        if (self._dc) |dc| dc.sh4_jit.safe_reset();
                 }
             },
             0xF3000000...0xF37FFFFF => {
@@ -1422,7 +1422,7 @@ pub const SH4 = struct {
                     self.itlb[entry].set_ppn(val.ppn);
 
                     if (!std.meta.eql(before, self.itlb[entry]))
-                        if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        if (self._dc) |dc| dc.sh4_jit.safe_reset();
                 }
             },
             0xF3800000...0xF3FFFFFF => {
@@ -1477,7 +1477,7 @@ pub const SH4 = struct {
                         self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
                         self.check_mmu_state();
-                        // if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
                     }
                 }
             },
@@ -1504,7 +1504,7 @@ pub const SH4 = struct {
                         self.invalidate_utlb_fast_lookup(before);
                         self.sync_utlb_fast_lookup(entry);
                         self.check_mmu_state();
-                        // if (self._dc) |dc| dc.sh4_jit.request_reset();
+                        // if (self._dc) |dc| dc.sh4_jit.safe_reset();
                     }
                 }
             },
@@ -1605,7 +1605,7 @@ pub const SH4 = struct {
                             if (ccr.ici == 1 or ccr.oci == 1) {
                                 // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
                                 sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
-                                if (self._dc) |dc| dc.sh4_jit.request_reset();
+                                if (self._dc) |dc| dc.sh4_jit.safe_reset();
                             }
                             if (ccr.oci == 1)
                                 @memset(&self._operand_cache_state.dirty, false);

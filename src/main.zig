@@ -286,8 +286,10 @@ pub fn main() !void {
 
     dc.cpu.set_trapa_callback(trapa_handler, d);
 
-    if (!force_stop and start_immediately)
+    if (!force_stop and start_immediately) {
+        d.wait_async_jobs();
         d.start();
+    }
 
     while (!d.window.shouldClose()) {
         zglfw.pollEvents();

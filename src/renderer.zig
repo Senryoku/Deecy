@@ -2783,8 +2783,7 @@ pub const Renderer = struct {
 
         const render_to_texture = holly.render_to_texture();
         if (render_to_texture) {
-            renderer_log.info("Rendering to texture!", .{});
-            renderer_log.info("Global Clip: {any}", .{self.global_clip});
+            renderer_log.info("Rendering to texture! [{d},{d}] to [{d}x{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
             if (!ExperimentalRenderToTexture) {
                 renderer_log.warn("ExperimentalRenderToTexture is disabled.", .{});
                 return;

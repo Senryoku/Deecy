@@ -95,8 +95,23 @@ const BlockCache = struct {
         self.min_address = 0xFFFFFFFF;
         self.max_address = 0;
 
-        self.deallocate_blocks();
-        try self.allocate_blocks();
+        try self.reset_blocks();
+    }
+
+    pub fn reset_blocks(self: *@This()) !void {
+        if (builtin.os.tag == .windows) {
+            std.os.windows.VirtualFree(self.blocks.ptr, self.blocks.len * @sizeOf(BasicBlock), std.os.windows.MEM_DECOMMIT);
+            std.debug.assert(try std.os.windows.VirtualAlloc(
+                self.blocks.ptr,
+                self.blocks.len * @sizeOf(BasicBlock),
+                std.os.windows.MEM_COMMIT,
+                std.os.windows.PAGE_READWRITE,
+            ) == @as(*anyopaque, @ptrCast(self.blocks.ptr)));
+        } else {
+            // TODO
+            self.deallocate_blocks();
+            try self.allocate_blocks();
+        }
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
@@ -534,9 +549,6 @@ pub const SH4JIT = struct {
 
     virtual_address_space: VirtualAddressSpace = undefined,
 
-    /// Used to delay reset AFTER the current block is done excecuting.
-    _reset_requested: bool = false,
-
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
 
@@ -573,9 +585,12 @@ pub const SH4JIT = struct {
         self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
     }
 
-    pub fn request_reset(self: *@This()) void {
+    /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
+    pub fn safe_reset(self: *@This()) void {
         sh4_jit_log.debug("Reset requested.", .{});
-        self._reset_requested = true;
+        self.block_cache.reset_blocks() catch {
+            std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
+        };
     }
 
     pub fn reset(self: *@This()) !void {
@@ -584,13 +599,6 @@ pub const SH4JIT = struct {
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
-        if (self._reset_requested) {
-            @branchHint(.cold);
-            self._reset_requested = false;
-            sh4_jit_log.debug("Executing requested reset.", .{});
-            try self.reset();
-        }
-
         cpu.handle_interrupts();
 
         if (cpu.execution_state == .Running or cpu.execution_state == .ModuleStandby) {
@@ -742,12 +750,6 @@ pub const SH4JIT = struct {
             try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
-            try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self) });
-            try b.mov(.{ .reg8 = ReturnRegister }, .{ .mem = .{ .base = ReturnRegister, .displacement = @offsetOf(@This(), "_reset_requested"), .size = 8 } });
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
-            try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
-            var reset_requested = try b.jmp(.NotEqual);
-
             try b.mov(Key, sh4_mem("pc"));
             var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
                 try b.append(.{ .Cmp = .{ .lhs = Key, .rhs = .{ .imm32 = ctx.start_pc } } }); // Forbid recursive calls.
@@ -776,7 +778,6 @@ pub const SH4JIT = struct {
             if (!Optimizations.link_small_blocks.allow_recursion)
                 skip_recursion.patch();
 
-            reset_requested.patch();
             skip.patch();
         } else {
             try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
@@ -2418,6 +2419,10 @@ pub fn mova_atDispPC_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     try store_register(block, ctx, 0, .{ .imm32 = addr });
     return false;
 }
+
+// NOTE: The overwhelming majority of PC-relative loads are constant, even in RAM. Exploiting that could gain a bit of performance.
+//       However the current JIT code invalidation isn't enough to catch the cases where it isn't.
+//       I wonder if I could mark the host memory page as read only when JITing code from it and use the generated exceptions to invalidate the cache?
 
 pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const d = bit_manip.zero_extend(instr.nd8.d) << 1;
