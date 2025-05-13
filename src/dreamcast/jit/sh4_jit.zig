@@ -736,12 +736,12 @@ pub const SH4JIT = struct {
 
         if (Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
             ctx.may_have_pending_cycles = true;
-            const const_key = BlockCache.Key{
+            const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
                 .pr = if (ctx.fpscr_pr == .Single) 0 else 1,
                 .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
-            };
+            });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
             try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
             try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
@@ -763,7 +763,8 @@ pub const SH4JIT = struct {
             try b.shr(Key, 1);
             try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x7F_FFFF } } });
             try b.append(.{ .Or = .{ .dst = Key, .src = .{ .reg = ReturnRegister } } });
-            try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = @bitCast(const_key) } } });
+            if (const_key != 0)
+                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = const_key } } });
             // Retrieve offset
             if (@sizeOf(BasicBlock) != 4)
                 @compileError("TODO: Implement with instrumentation enabled (or disable the optimisation)");
