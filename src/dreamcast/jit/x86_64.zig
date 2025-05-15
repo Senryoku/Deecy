@@ -326,6 +326,7 @@ pub const Instruction = union(enum) {
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
     Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
+    JmpRax: void, // FIXME: Temp Test
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
@@ -625,24 +626,8 @@ pub const Emitter = struct {
                 .Mov => |m| try self.mov(m.dst, m.src, m.preserve_flags),
                 .Cmov => |m| try self.cmov(m.condition, m.dst, m.src),
                 .Movsx => |m| try self.movsx(m.dst, m.src),
-                .Push => |reg_or_imm| {
-                    switch (reg_or_imm) {
-                        .reg64 => |reg| {
-                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
-                            try self.emit(u8, encode_opcode(0x50, reg));
-                        },
-                        else => return error.UnimplementedPushImmediate,
-                    }
-                },
-                .Pop => |reg_or_mem| {
-                    switch (reg_or_mem) {
-                        .reg64 => |reg| {
-                            try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
-                            try self.emit(u8, encode_opcode(0x58, reg));
-                        },
-                        else => return error.UnimplementedPopDestination,
-                    }
-                },
+                .Push => |reg_or_imm| try self.push(reg_or_imm),
+                .Pop => |reg| try self.pop(reg),
                 .Add => |a| try self.add(a.dst, a.src),
                 .Adc => |a| try self.adc(a.dst, a.src),
                 .Sub => |a| try self.sub(a.dst, a.src),
@@ -675,12 +660,33 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
+                .JmpRax => try self.emit_slice(u8, &[_]u8{ 0xFF, 0xE0 }),
                 // else => return error.UnsupportedInstruction,
             }
         }
         if (self.forward_jumps_to_patch.count() > 0) {
             std.debug.print("Jumps left to patch: {}\n", .{self.forward_jumps_to_patch.count()});
             @panic("Error: Unpatched jumps!");
+        }
+    }
+
+    pub fn push(self: *@This(), reg_or_imm: Operand) !void {
+        switch (reg_or_imm) {
+            .reg8, .reg16, .reg, .reg64 => |reg| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(reg) });
+                try self.emit(u8, encode_opcode(0x50, reg));
+            },
+            else => return error.UnimplementedPushImmediate,
+        }
+    }
+
+    pub fn pop(self: *@This(), reg: Operand) !void {
+        switch (reg) {
+            .reg8, .reg16, .reg, .reg64 => |r| {
+                try self.emit_rex_if_needed(.{ .b = need_rex(r) });
+                try self.emit(u8, encode_opcode(0x58, r));
+            },
+            else => return error.InvalidPopOperand,
         }
     }
 

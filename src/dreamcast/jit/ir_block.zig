@@ -149,4 +149,10 @@ pub const IRBlock = struct {
 
         return self._emitter.block_size;
     }
+
+    pub fn emit_naked(self: *@This(), buffer: []u8) !u32 {
+        self._emitter.set_buffer(buffer);
+        try self._emitter.emit_instructions(self.instructions.items);
+        return self._emitter.block_size;
+    }
 };
