@@ -769,7 +769,7 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
-        if (ctx.cycles <= 66 and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz) {
+        if (ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -782,15 +782,12 @@ pub const SH4JIT = struct {
             try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
-            try b.mov(Key, sh4_mem("pc"));
-
             if (ctx.mmu_enabled) {
-                if (Key.reg != ArgRegisters[1])
-                    try b.mov(.{ .reg = ArgRegisters[1] }, Key);
-                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
                 try call(b, &ctx, &runtime_instruction_mmu_translation);
                 if (Key.reg != ReturnRegister)
                     try b.mov(Key, .{ .reg = ReturnRegister });
+            } else {
+                try b.mov(Key, sh4_mem("pc"));
             }
 
             // Compute block key
@@ -1276,13 +1273,18 @@ pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u6
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
 }
 
-fn runtime_instruction_mmu_translation(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) u32 {
-    std.debug.assert(cpu._mmu_state == .Full);
-    const physical = cpu.translate_instruction_address(virtual_addr) catch |err| {
-        cpu.handle_instruction_exception(virtual_addr, err);
-        return cpu.pc & 0x1FFF_FFFF;
+fn runtime_instruction_mmu_translation() callconv(.c) u32 {
+    const cpu: *sh4.SH4 = switch (SavedRegisters[0]) {
+        .rbx => asm volatile (""
+            : [rbx] "={rbx}" (-> *sh4.SH4),
+        ),
+        else => @compileError("Unhandled CPU register."),
     };
-    return physical;
+    std.debug.assert(cpu._mmu_state == .Full);
+    return cpu.translate_instruction_address(cpu.pc) catch |err| pc: {
+        cpu.handle_instruction_exception(cpu.pc, err);
+        break :pc cpu.pc & 0x1FFF_FFFF;
+    };
 }
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
