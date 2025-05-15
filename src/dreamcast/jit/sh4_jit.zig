@@ -769,8 +769,7 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
-        if (ctx.cycles <= MaxCyclesPerBlock and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
-            //ctx.may_have_pending_cycles = true;
+        if (ctx.cycles <= 66 and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -778,14 +777,21 @@ pub const SH4JIT = struct {
                 .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
-            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
-            try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 66 } } });
-            // try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
+
+            try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
+            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             try b.mov(Key, sh4_mem("pc"));
+
+            if (ctx.mmu_enabled) {
+                if (Key.reg != ArgRegisters[1])
+                    try b.mov(.{ .reg = ArgRegisters[1] }, Key);
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+                try call(b, &ctx, &runtime_instruction_mmu_translation);
+                if (Key.reg != ReturnRegister)
+                    try b.mov(Key, .{ .reg = ReturnRegister });
+            }
 
             // Compute block key
             // NOTE: The following could be replaced by a pext instruction (replace ecx by ArgRegisters[0]):
@@ -1268,6 +1274,15 @@ pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u3
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
+}
+
+fn runtime_instruction_mmu_translation(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) u32 {
+    std.debug.assert(cpu._mmu_state == .Full);
+    const physical = cpu.translate_instruction_address(virtual_addr) catch |err| {
+        cpu.handle_instruction_exception(virtual_addr, err);
+        return cpu.pc & 0x1FFF_FFFF;
+    };
+    return physical;
 }
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
