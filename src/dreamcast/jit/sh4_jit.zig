@@ -37,8 +37,7 @@ pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning Fast
 const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
-    .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
-    .link_small_blocks = .{ .enabled = true and !BasicBlock.EnableInstrumentation, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
+    .inline_jumps_to_start_of_block = false,
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
 
@@ -769,6 +768,8 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
+        try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
+        // Jump to the next block
         if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
@@ -778,14 +779,26 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
-            try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
             try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
             if (ctx.mmu_enabled) {
+                // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
+                //       This could be used to completely skip MMU translation and further optimize this.
+                try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
+                // Compute the physical PC assuming we're still on the same 1K page (and the TLB did not change).
+                try b.mov(Key, .{ .reg = ReturnRegister });
+                try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x0000_03FF } } });
+                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & 0xFFFF_FC00 } } });
+                // Compare next virtual page with the current one (conservately assuming a 1K page)
+                try b.shr(.{ .reg = ReturnRegister }, 10);
+                try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = ctx.start_pc >> 10 } } });
+                const same_page = try b.jmp(.Equal);
+                // Might cross a page boundary: Fallback to MMU translation
                 try call(b, &ctx, &runtime_instruction_mmu_translation);
                 if (Key.reg != ReturnRegister)
                     try b.mov(Key, .{ .reg = ReturnRegister });
+                same_page.patch();
             } else {
                 try b.mov(Key, sh4_mem("pc"));
             }
@@ -817,10 +830,9 @@ pub const SH4JIT = struct {
             // ReturnRegister holds the cycle count
 
             skip.patch();
-        } else {
-            try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         }
 
+        // Enough cycles have passed, back to JIT entry point to restore host state.
         try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(&self.block_cache.buffer[self.return_offset]) });
         try b.append(.JmpRax);
 
