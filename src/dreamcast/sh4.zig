@@ -1011,7 +1011,8 @@ pub const SH4 = struct {
         if (!EnableUTLBFastLookup) return;
         self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
     }
-    fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {
+
+    inline fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {
         const mmucr = self.read_p4_register(mmu.MMUCR, .MMUCR);
         // Single Virtual Memory Mode: ASID does not matter and all checks will use 0.
         if (mmucr.sv) {
@@ -1026,12 +1027,13 @@ pub const SH4 = struct {
             }
         }
     }
-    fn set_utlb_fast_lookup(self: *@This(), asid: u8, entry: mmu.TLBEntry, value: u8) void {
+
+    inline fn set_utlb_fast_lookup(self: *@This(), asid: u8, entry: mmu.TLBEntry, value: u8) void {
         const key: u32 = @as(u32, asid) << 22 | (entry.vpn & (~((entry.size() - 1) >> 10)));
         @memset(self._fast_utlb_lookup[key..][0 .. entry.size() >> 10], value);
     }
 
-    pub fn utlb_lookup(self: *const @This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
+    pub inline fn utlb_lookup(self: *const @This(), virtual_addr: u32) error{ TLBMiss, TLBProtectionViolation, TLBMultipleHit }!mmu.TLBEntry {
         const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
         std.debug.assert(mmucr.at);
 
@@ -1119,7 +1121,7 @@ pub const SH4 = struct {
         return virtual_addr;
     }
 
-    pub fn translate_instruction_address(self: *const @This(), virtual_addr: u32) error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }!u32 {
+    pub inline fn translate_instruction_address(self: *const @This(), virtual_addr: u32) error{ InstructionAddressError, TLBMiss, TLBProtectionViolation, TLBMultipleHit }!u32 {
         if (!FullMMUSupport or self._mmu_state != .Full) return virtual_addr & 0x1FFF_FFFF;
 
         if (virtual_addr & 1 != 0 or (virtual_addr & 0x8000_0000 != 0 and self.sr.md == 0)) return error.InstructionAddressError;

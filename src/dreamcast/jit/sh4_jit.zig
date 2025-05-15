@@ -769,7 +769,7 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
-        if (ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown) {
+        if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
