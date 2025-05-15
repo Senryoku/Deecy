@@ -3,11 +3,7 @@ const builtin = @import("builtin");
 
 pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
     const r = try allocator.alignedAlloc(u8, std.heap.page_size_min, size);
-    if (builtin.os.tag == .linux) {
-        try std.posix.mprotect(r, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
-    } else {
-        try std.posix.mprotect(r, 0b111); // 0b111 => std.os.windows.PAGE_EXECUTE_READWRITE
-    }
+    try std.posix.mprotect(r, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
     return r;
 }
 
