@@ -757,12 +757,18 @@ pub const SH4JIT = struct {
             } else {};
 
             // Compute block key
+            // NOTE: The following could be replaced by a pext instruction (replace ecx by ArgRegisters[0]):
+            //   mov  eax,0x4FFFFFE
+            //   pext ecx,ecx,eax
+            // However this is extremely slow on my specific CPU (a Zen 2). Might be worth on Intel/newer CPUs, but I can't
+            // measure that, and we'd have to check the CPU model for fast BMI2 support, and opt out otherwise (it is really that bad on Zen 2).
             try b.mov(.{ .reg = ReturnRegister }, Key);
             try b.shr(.{ .reg = ReturnRegister }, 3);
             try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x80_0000 } } });
             try b.shr(Key, 1);
             try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x7F_FFFF } } });
             try b.append(.{ .Or = .{ .dst = Key, .src = .{ .reg = ReturnRegister } } });
+
             if (const_key != 0)
                 try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = const_key } } });
             // Retrieve offset
