@@ -678,7 +678,7 @@ pub const SH4JIT = struct {
             return cycles;
         } else {
             @branchHint(.cold);
-            return 8;
+            return MaxCyclesPerBlock;
         }
     }
 
