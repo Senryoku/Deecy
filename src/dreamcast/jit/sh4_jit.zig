@@ -547,6 +547,7 @@ pub const SH4JIT = struct {
     block_cache: BlockCache,
 
     virtual_address_space: VirtualAddressSpace = undefined,
+    ram_base: [*]u8,
 
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
@@ -554,9 +555,10 @@ pub const SH4JIT = struct {
     enter_block_offset: usize = 0,
     return_offset: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
+    pub fn init(allocator: std.mem.Allocator, ram_base: [*]u8) !@This() {
         var r: @This() = .{
             .block_cache = try .init(allocator),
+            .ram_base = ram_base,
             ._working_block = try .init(allocator),
             ._allocator = allocator,
         };
@@ -611,9 +613,8 @@ pub const SH4JIT = struct {
                 const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
                 try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }, false); // Provide a pointer to the base of the virtual address space
             } else {
-                @compileError("TODO");
-                // const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr); // FIXME
-                // try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
+                const ram_addr: u64 = @intFromPtr(self.ram_base);
+                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }, false); // Provide a pointer to the SH4's RAM
             }
             try e.mov(.{ .reg64 = SavedRegisters[0] }, .{ .reg64 = ArgRegisters[0] }, false); // Save the pointer to the SH4
 
@@ -769,8 +770,8 @@ pub const SH4JIT = struct {
             if (jmp) |j| j.patch();
 
         try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
-        // Jump to the next block
-        if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown) {
+        // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
+        if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -790,7 +791,7 @@ pub const SH4JIT = struct {
                 try b.mov(Key, .{ .reg = ReturnRegister });
                 try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x0000_03FF } } });
                 try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & 0xFFFF_FC00 } } });
-                // Compare next virtual page with the current one (conservately assuming a 1K page)
+                // Compare next virtual page with the current one (conservatively assuming a 1K page)
                 try b.shr(.{ .reg = ReturnRegister }, 10);
                 try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = ctx.start_pc >> 10 } } });
                 const same_page = try b.jmp(.Equal);

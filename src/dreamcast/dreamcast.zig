@@ -141,7 +141,7 @@ pub const Dreamcast = struct {
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
 
-    sh4_jit: SH4JIT,
+    sh4_jit: SH4JIT = undefined,
 
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
@@ -167,7 +167,6 @@ pub const Dreamcast = struct {
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
             .maple = try .init(allocator),
-            .sh4_jit = try .init(allocator),
             .flash = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_events = .init(allocator, {}),
@@ -186,6 +185,7 @@ pub const Dreamcast = struct {
             dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
         }
 
+        dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
