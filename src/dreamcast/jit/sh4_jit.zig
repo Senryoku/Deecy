@@ -37,8 +37,7 @@ pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning Fast
 const Optimizations = .{
     .div1_simplification = true,
     .inline_small_forward_jumps = true,
-    .inline_jumps_to_start_of_block = false, // This seems worse than 'link_small_blocks' (and even counter productive if 'allow_recursion' is enabled, which make sense)
-    .link_small_blocks = .{ .enabled = true and !BasicBlock.EnableInstrumentation, .max_cycles = 16, .allow_recursion = true }, // Experimental. Call the next block directly in the current one is small (typically, a single ret)
+    .inline_jumps_to_start_of_block = false,
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
 };
 
@@ -548,18 +547,26 @@ pub const SH4JIT = struct {
     block_cache: BlockCache,
 
     virtual_address_space: VirtualAddressSpace = undefined,
+    ram_base: [*]u8 = undefined,
 
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) !@This() {
+    enter_block_offset: usize = 0,
+    return_offset: usize = 0,
+
+    pub fn init(allocator: std.mem.Allocator, ram_base: ?[*]u8) !@This() {
         var r: @This() = .{
             .block_cache = try .init(allocator),
             ._working_block = try .init(allocator),
             ._allocator = allocator,
         };
-        if (FastMem)
+        if (FastMem) {
             r.virtual_address_space = try .init(allocator);
+            r.ram_base = @as([*]u8, @ptrFromInt(@intFromPtr(r.virtual_address_space.base_addr()) + 0x0C00_0000));
+        } else {
+            r.ram_base = ram_base.?;
+        }
         try r.init_compile_and_run_handler();
         return r;
     }
@@ -577,12 +584,61 @@ pub const SH4JIT = struct {
 
     fn init_compile_and_run_handler(self: *@This()) !void {
         std.debug.assert(self.block_cache.cursor == 0);
-        var b = &self._working_block;
-        b.clearRetainingCapacity();
-        try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
-        try b.call(compile_and_run);
-        const block_size = try b.emit(self.block_cache.buffer[0..]);
-        self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
+        {
+            var b = &self._working_block;
+            b.clearRetainingCapacity();
+
+            try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
+            try b.call(compile_and_run);
+            try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+            const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
+            self.block_cache.cursor += block_size;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
+        {
+            self._working_block.clearRetainingCapacity();
+
+            const e = &self._working_block._emitter;
+            e.set_buffer(self.block_cache.buffer[self.block_cache.cursor..]);
+
+            self.enter_block_offset = self.block_cache.cursor;
+
+            try e.emit_block_prologue();
+
+            if (Architecture.JITABI == .Win64)
+                try e.save_fp_registers(10);
+            for (0..SavedRegisters.len) |idx|
+                try e.push(.{ .reg = SavedRegisters[idx] });
+
+            if (SavedRegisters.len % 2 != 0) try e.push(.{ .reg = .rbp });
+
+            if (FastMem) {
+                const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
+                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }, false); // Provide a pointer to the base of the virtual address space
+            } else {
+                const ram_addr: u64 = @intFromPtr(self.ram_base);
+                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }, false); // Provide a pointer to the SH4's RAM
+            }
+            try e.mov(.{ .reg64 = SavedRegisters[0] }, .{ .reg64 = ArgRegisters[0] }, false); // Save the pointer to the SH4
+
+            try e.mov(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[2] }, false); // Move address of the first block
+            try e.emit(u8, 0xFF); // jmp rax
+            try e.emit(u8, 0xE0);
+
+            self.return_offset = self.block_cache.cursor + e.block_size;
+
+            if (SavedRegisters.len % 2 != 0) try e.pop(.{ .reg = .rbp });
+
+            for (0..SavedRegisters.len) |idx|
+                try e.pop(.{ .reg = SavedRegisters[SavedRegisters.len - idx - 1] });
+            if (Architecture.JITABI == .Win64)
+                try e.restore_fp_registers(10);
+
+            try e.emit_block_epilogue();
+
+            self.block_cache.cursor += e.block_size;
+            self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
+        }
     }
 
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
@@ -609,7 +665,13 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            const cycles = block.execute(self.block_cache.buffer, cpu);
+            @as(*const fn (*sh4.SH4, *@This(), *anyopaque) callconv(.c) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
+                cpu,
+                self,
+                self.block_cache.buffer[block.offset..].ptr,
+            );
+            const cycles = cpu._pending_cycles;
+            cpu._pending_cycles = 0;
 
             if (BasicBlock.EnableInstrumentation and block.offset > 0) { // Might have been invalidated.
                 block.time_spent += std.time.nanoTimestamp() - start;
@@ -619,12 +681,12 @@ pub const SH4JIT = struct {
             return cycles;
         } else {
             @branchHint(.cold);
-            return 8;
+            return MaxCyclesPerBlock;
         }
     }
 
     // Default handler sitting the offset 0 of our executable buffer
-    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) callconv(.c) u32 {
+    pub noinline fn compile_and_run(cpu: *sh4.SH4, self: *@This()) callconv(.c) [*]u8 {
         sh4_jit_log.info("(Cache Miss) Compiling {X:0>8} (SZ={d}, PR={d})...", .{ cpu.pc, cpu.fpscr.sz, cpu.fpscr.pr });
 
         const block = self.compile(.init(cpu)) catch |err| retry: {
@@ -640,7 +702,7 @@ pub const SH4JIT = struct {
             sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
             std.process.exit(1);
         };
-        return block.execute(self.block_cache.buffer, cpu);
+        return self.block_cache.buffer[block.offset..].ptr;
     }
 
     pub noinline fn compile(self: *@This(), start_ctx: JITContext) !*BasicBlock {
@@ -655,30 +717,6 @@ pub const SH4JIT = struct {
         var b = &self._working_block;
 
         b.clearRetainingCapacity();
-
-        // We'll be using these callee saved registers, push 'em to the stack.
-        try b.push(.{ .reg64 = SavedRegisters[0] });
-
-        const optional_saved_register_offset = b.instructions.items.len;
-        // We'll turn those into NOP if they're not used.
-        for (0..ctx.gpr_cache.entries.len) |i| {
-            try b.push(.{ .reg64 = ctx.gpr_cache.entries[i].host });
-        }
-        const stack_alignment_offset = b.instructions.items.len;
-        try b.append(.Nop);
-
-        // Save some space for potential callee-saved FP registers
-        const optional_saved_fp_register_offset = b.instructions.items.len;
-        try b.append(.Nop);
-
-        if (FastMem) {
-            const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
-            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }); // Provide a pointer to the base of the virtual address space
-        } else {
-            const ram_addr: u64 = @intFromPtr(ctx.cpu._dc.?.ram.ptr);
-            try b.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }); // Provide a pointer to the SH4's RAM
-        }
-        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the SH4
 
         ctx.start_index = @intCast(b.instructions.items.len);
 
@@ -734,8 +772,9 @@ pub const SH4JIT = struct {
         for (ctx.jumps_to_end) |jmp|
             if (jmp) |j| j.patch();
 
-        if (Optimizations.link_small_blocks.enabled and ctx.cycles <= Optimizations.link_small_blocks.max_cycles and ctx.fpscr_pr == start_ctx.fpscr_pr and ctx.fpscr_sz == start_ctx.fpscr_sz and !ctx.mmu_enabled) {
-            ctx.may_have_pending_cycles = true;
+        try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
+        // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
+        if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -743,18 +782,30 @@ pub const SH4JIT = struct {
                 .sz = if (ctx.fpscr_sz == .Single) 0 else 1,
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
-            try b.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-            try b.add(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
-            try b.mov(sh4_mem("_pending_cycles"), .{ .reg = ReturnRegister });
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 66 } } });
-            try b.append(.{ .Mov = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0 }, .preserve_flags = true } });
+
+            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = 66 } } });
             var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
 
-            try b.mov(Key, sh4_mem("pc"));
-            var skip_recursion = if (!Optimizations.link_small_blocks.allow_recursion) s: {
-                try b.append(.{ .Cmp = .{ .lhs = Key, .rhs = .{ .imm32 = ctx.start_pc } } }); // Forbid recursive calls.
-                break :s try b.jmp(.Equal);
-            } else {};
+            if (ctx.mmu_enabled) {
+                // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
+                //       This could be used to completely skip MMU translation and further optimize this.
+                try b.mov(.{ .reg = ReturnRegister }, sh4_mem("pc"));
+                // Compute the physical PC assuming we're still on the same 1K page (and the TLB did not change).
+                try b.mov(Key, .{ .reg = ReturnRegister });
+                try b.append(.{ .And = .{ .dst = Key, .src = .{ .imm32 = 0x0000_03FF } } });
+                try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & 0xFFFF_FC00 } } });
+                // Compare next virtual page with the current one (conservatively assuming a 1K page)
+                try b.shr(.{ .reg = ReturnRegister }, 10);
+                try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = ctx.start_pc >> 10 } } });
+                const same_page = try b.jmp(.Equal);
+                // Might cross a page boundary: Fallback to MMU translation
+                try call(b, &ctx, &runtime_instruction_mmu_translation);
+                if (Key.reg != ReturnRegister)
+                    try b.mov(Key, .{ .reg = ReturnRegister });
+                same_page.patch();
+            } else {
+                try b.mov(Key, sh4_mem("pc"));
+            }
 
             // Compute block key
             // NOTE: The following could be replaced by a pext instruction (replace ecx by ArgRegisters[0]):
@@ -779,57 +830,20 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
             try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-            try b.call(null);
+            try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
             // ReturnRegister holds the cycle count
 
-            if (!Optimizations.link_small_blocks.allow_recursion)
-                skip_recursion.patch();
-
             skip.patch();
-        } else {
-            try b.mov(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.cycles });
         }
 
-        if (ctx.may_have_pending_cycles) {
-            try b.add(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-            try b.append(.{ .Mov = .{ .dst = sh4_mem("_pending_cycles"), .src = .{ .imm32 = 0 }, .preserve_flags = false } });
-        }
-
-        if (Architecture.JITABI == .Win64) {
-            // Save and restore XMM registers as needed (they're all 16 bytes, so no need to worry about alignment).
-            if (ctx.fpr_cache.highest_saved_register_used) |highest_saved_register_used| {
-                b.instructions.items[optional_saved_fp_register_offset] = .{ .SaveFPRegisters = .{
-                    .count = @intCast(highest_saved_register_used + 1),
-                } };
-                try b.append(.{ .RestoreFPRegisters = .{
-                    .count = @intCast(highest_saved_register_used + 1),
-                } });
-            }
-        }
-
-        // Ensure stack alignment
-        const highest_saved_gpr_used = ctx.gpr_cache.highest_saved_register_used.?;
-        if (highest_saved_gpr_used % 2 != 0) {
-            b.instructions.items[stack_alignment_offset] = .{ .Sub = .{ .dst = .{ .reg64 = .rsp }, .src = .{ .imm8 = 8 } } };
-            try b.add(.{ .reg64 = .rsp }, .{ .imm8 = 8 });
-        }
-
-        // Restore callee saved registers.
-        for (0..ctx.gpr_cache.entries.len) |i| {
-            const idx = ctx.gpr_cache.entries.len - 1 - i;
-            if (idx <= highest_saved_gpr_used) {
-                try b.pop(.{ .reg64 = ctx.gpr_cache.entries[idx].host });
-            } else {
-                b.instructions.items[optional_saved_register_offset + idx] = .Nop;
-            }
-        }
-
-        try b.pop(.{ .reg64 = SavedRegisters[0] });
+        // Enough cycles have passed, back to JIT entry point to restore host state.
+        try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(&self.block_cache.buffer[self.return_offset]) });
+        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
 
-        const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
+        const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
         var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
         if (BasicBlock.EnableInstrumentation) {
             block.cycles = ctx.cycles;
@@ -1273,6 +1287,20 @@ pub noinline fn _out_of_line_write32(cpu: *sh4.SH4, virtual_addr: u32, value: u3
 pub noinline fn _out_of_line_write64(cpu: *sh4.SH4, virtual_addr: u32, value: u64) callconv(.c) void {
     if (!FastMem) std.debug.assert(virtual_addr < 0x0C000000 or virtual_addr >= 0x10000000);
     return @call(.always_inline, sh4.SH4.write_physical, .{ cpu, u64, virtual_addr, value });
+}
+
+fn runtime_instruction_mmu_translation() callconv(.c) u32 {
+    const cpu: *sh4.SH4 = switch (SavedRegisters[0]) {
+        .rbx => asm volatile (""
+            : [rbx] "={rbx}" (-> *sh4.SH4),
+        ),
+        else => @compileError("Unhandled CPU register."),
+    };
+    std.debug.assert(cpu._mmu_state == .Full);
+    return cpu.translate_instruction_address(cpu.pc) catch |err| pc: {
+        cpu.handle_instruction_exception(cpu.pc, err);
+        break :pc cpu.pc & 0x1FFF_FFFF;
+    };
 }
 
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.

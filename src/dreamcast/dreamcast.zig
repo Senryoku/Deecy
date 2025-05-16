@@ -141,7 +141,7 @@ pub const Dreamcast = struct {
     gdrom: GDROM = undefined,
     gdrom_hle: GDROM_HLE = .{}, // NOTE: Currently not serialized in save states. It is now less compatible than the LLE implementation.
 
-    sh4_jit: SH4JIT,
+    sh4_jit: SH4JIT = undefined,
 
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
@@ -167,7 +167,6 @@ pub const Dreamcast = struct {
         dc.* = Dreamcast{
             .cpu = try .init(allocator, dc),
             .maple = try .init(allocator),
-            .sh4_jit = try .init(allocator),
             .flash = try .init(allocator),
             .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
             .scheduled_events = .init(allocator, {}),
@@ -175,6 +174,7 @@ pub const Dreamcast = struct {
         };
 
         if (SH4JITModule.FastMem) {
+            dc.sh4_jit = try .init(allocator, null);
             dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
@@ -184,6 +184,7 @@ pub const Dreamcast = struct {
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
             dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
             dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
+            dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         }
 
         dc.gpu = try .init(allocator, dc);
