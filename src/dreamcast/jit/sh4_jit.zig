@@ -547,7 +547,7 @@ pub const SH4JIT = struct {
     block_cache: BlockCache,
 
     virtual_address_space: VirtualAddressSpace = undefined,
-    ram_base: [*]u8,
+    ram_base: [*]u8 = undefined,
 
     _working_block: IRBlock,
     _allocator: std.mem.Allocator,
@@ -555,15 +555,18 @@ pub const SH4JIT = struct {
     enter_block_offset: usize = 0,
     return_offset: usize = 0,
 
-    pub fn init(allocator: std.mem.Allocator, ram_base: [*]u8) !@This() {
+    pub fn init(allocator: std.mem.Allocator, ram_base: ?[*]u8) !@This() {
         var r: @This() = .{
             .block_cache = try .init(allocator),
-            .ram_base = ram_base,
             ._working_block = try .init(allocator),
             ._allocator = allocator,
         };
-        if (FastMem)
+        if (FastMem) {
             r.virtual_address_space = try .init(allocator);
+            r.ram_base = @as([*]u8, @ptrFromInt(@intFromPtr(r.virtual_address_space.base_addr()) + 0x0C00_0000));
+        } else {
+            r.ram_base = ram_base.?;
+        }
         try r.init_compile_and_run_handler();
         return r;
     }
@@ -587,7 +590,7 @@ pub const SH4JIT = struct {
 
             try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
             try b.call(compile_and_run);
-            try b.append(.JmpRax);
+            try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
             const block_size = try b.emit_naked(self.block_cache.buffer[0..]);
             self.block_cache.cursor += block_size;
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
@@ -827,7 +830,7 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
             try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
-            try b.append(.JmpRax);
+            try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
             // ReturnRegister holds the cycle count
 
             skip.patch();
@@ -835,7 +838,7 @@ pub const SH4JIT = struct {
 
         // Enough cycles have passed, back to JIT entry point to restore host state.
         try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(&self.block_cache.buffer[self.return_offset]) });
-        try b.append(.JmpRax);
+        try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
 
         for (b.instructions.items, 0..) |instr, idx|
             sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });

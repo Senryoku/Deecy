@@ -325,8 +325,7 @@ pub const Instruction = union(enum) {
     Shl: struct { dst: Operand, amount: Operand },
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
-    Jmp: struct { condition: Condition, dst: struct { rel: i32 } },
-    JmpRax: void, // FIXME: Temp Test
+    Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand } },
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
     // FIXME: This only exists because I haven't added a way to specify the size the GPRs.
@@ -643,7 +642,7 @@ pub const Emitter = struct {
                 .Xor => |a| try self.xor_(a.dst, a.src),
                 .Cmp => |a| try self.cmp(a.lhs, a.rhs),
                 .SetByteCondition => |a| try self.set_byte_condition(a.condition, a.dst),
-                .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst.rel),
+                .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst),
                 .BlockEpilogue => try self.emit_block_epilogue(),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
@@ -660,7 +659,6 @@ pub const Emitter = struct {
 
                 .SaveFPRegisters => |s| try self.save_fp_registers(s.count),
                 .RestoreFPRegisters => |s| try self.restore_fp_registers(s.count),
-                .JmpRax => try self.emit_slice(u8, &[_]u8{ 0xFF, 0xE0 }),
                 // else => return error.UnsupportedInstruction,
             }
         }
@@ -1606,61 +1604,75 @@ pub const Emitter = struct {
         try self.emit(i8, rel);
     }
 
-    pub fn jmp(self: *@This(), condition: Condition, current_idx: u32, rel: i32) !void {
-        // TODO: Support more destination than just immediate relative.
-        //       Support different sizes of rel (rel8 in particular).
-        //         We don't know the size of the jump yet, and we have to reserve enough space
-        //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
+    pub fn jmp(self: *@This(), condition: Condition, current_idx: u32, dst: anytype) !void {
+        switch (dst) {
+            .rel => |rel| {
+                // TODO: Support more destination than just immediate relative.
+                //       Support different sizes of rel (rel8 in particular).
+                //         We don't know the size of the jump yet, and we have to reserve enough space
+                //         for the operand. Not sure what's the best way to handle this, or this is even worth it.
 
-        const target_idx: u32 = @intCast(@as(i32, @intCast(current_idx)) + rel);
-        if (rel < 0 and @as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2)) > -128) {
-            try self.emit_jmp_rel8(condition, @intCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2))));
-            return;
-        }
+                const target_idx: u32 = @intCast(@as(i32, @intCast(current_idx)) + rel);
+                if (rel < 0 and @as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2)) > -128) {
+                    try self.emit_jmp_rel8(condition, @intCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(self.block_size + 2))));
+                    return;
+                }
 
-        // Try to emit a rel8 jump. Our instruction can map to multiple x86 instructions of up to 15 bytes each, so I'm being really conservative here.
-        // The important thing is to include forward jumps due to skipped fallback memory access with FastMem, which are extremely common and should be 3 "instructions" at most.
-        if (rel > 0 and rel <= 4) {
-            const address_to_patch = self.block_size + 1;
-            try self.emit_jmp_rel8(condition, 0);
-            const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
-            if (!jumps.found_existing)
-                jumps.value_ptr.* = .{};
+                // Try to emit a rel8 jump. Our instruction can map to multiple x86 instructions of up to 15 bytes each, so I'm being really conservative here.
+                // The important thing is to include forward jumps due to skipped fallback memory access with FastMem, which are extremely common and should be 3 "instructions" at most.
+                if (rel > 0 and rel <= 4) {
+                    const address_to_patch = self.block_size + 1;
+                    try self.emit_jmp_rel8(condition, 0);
+                    const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
+                    if (!jumps.found_existing)
+                        jumps.value_ptr.* = .{};
 
-            try jumps.value_ptr.*.add(.{
-                .size = .r8,
-                .source = self.block_size,
-                .address_to_patch = address_to_patch,
-            });
-            return;
-        }
+                    try jumps.value_ptr.*.add(.{
+                        .size = .r8,
+                        .source = self.block_size,
+                        .address_to_patch = address_to_patch,
+                    });
+                    return;
+                }
 
-        if (condition != .Always)
-            try self.emit(u8, 0x0F);
+                if (condition != .Always)
+                    try self.emit(u8, 0x0F);
 
-        try self.emit(u8, switch (condition) {
-            .Always => 0xE9,
-            else => |c| 0x80 | c.nibble(),
-        });
+                try self.emit(u8, switch (condition) {
+                    .Always => 0xE9,
+                    else => |c| 0x80 | c.nibble(),
+                });
 
-        const address_to_patch = self.block_size;
-        std.debug.assert(rel != 0);
-        if (rel < 0) {
-            const next_instr_address = address_to_patch + 4;
-            std.debug.assert(target_idx >= 0);
-            try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(next_instr_address))));
-        } else {
-            try self.emit(u32, 0xA0C0FFEE);
+                const address_to_patch = self.block_size;
+                std.debug.assert(rel != 0);
+                if (rel < 0) {
+                    const next_instr_address = address_to_patch + 4;
+                    std.debug.assert(target_idx >= 0);
+                    try self.emit(u32, @bitCast(@as(i32, @intCast(self._instruction_offsets[target_idx])) - @as(i32, @intCast(next_instr_address))));
+                } else {
+                    try self.emit(u32, 0xA0C0FFEE);
 
-            const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
-            if (!jumps.found_existing)
-                jumps.value_ptr.* = .{};
+                    const jumps = try self.forward_jumps_to_patch.getOrPut(target_idx);
+                    if (!jumps.found_existing)
+                        jumps.value_ptr.* = .{};
 
-            try jumps.value_ptr.*.add(.{
-                .size = .r32,
-                .source = self.block_size,
-                .address_to_patch = address_to_patch,
-            });
+                    try jumps.value_ptr.*.add(.{
+                        .size = .r32,
+                        .source = self.block_size,
+                        .address_to_patch = address_to_patch,
+                    });
+                }
+            },
+            .abs_indirect => |op| {
+                if (condition != .Always) std.debug.panic("Unsupported indirect jump condition: {s}", .{@tagName(condition)});
+                switch (op) {
+                    .reg64 => |reg| {
+                        try self.emit(u8, 0xFF);
+                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
+                    },
+                    else => std.debug.panic("Unsupported indirect jump destination: {any}", .{op}),
+                }
+            },
         }
     }
 

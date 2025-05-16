@@ -174,6 +174,7 @@ pub const Dreamcast = struct {
         };
 
         if (SH4JITModule.FastMem) {
+            dc.sh4_jit = try .init(allocator, null);
             dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
@@ -183,9 +184,9 @@ pub const Dreamcast = struct {
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
             dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
             dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
+            dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         }
 
-        dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         dc.gpu = try .init(allocator, dc);
         dc.aica = try .init(allocator, dc.aram);
         dc.gdrom = try .init(allocator, dc);
