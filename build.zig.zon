@@ -6,8 +6,8 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/zig-gamedev/zgpu#3ae4a71af16df3a7dfa95023bba1a1e6a0bfb80d",
-            .hash = "zgpu-0.12.0-dev-nqFT5BCgCADqzg95ZvomJREp6oIl3NTubfyiUNHc18Pr",
+            .url = "git+https://github.com/zig-gamedev/zgpu.git#d860e2b4a333cacffb168fab49a233c5d2f1bca2",
+            .hash = "zgpu-0.12.0-dev-nqFT5EKgCADkhwAf97_pfSOmPWEguKmljSECs9ihpFS7",
         },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
@@ -35,24 +35,24 @@
             .lazy = true,
         },
         .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw#fa12b57541976561358c850337af8d08647879d6",
-            .hash = "zglfw-0.10.0-dev-zgVDNJKcIQDR2-i-qz-FlR6uUdODN0DNPQA9X1G034qr",
+            .url = "git+https://github.com/zig-gamedev/zglfw.git#c337cb3d3f984468ea7a386335937a5d555fc024",
+            .hash = "zglfw-0.10.0-dev-zgVDNMacIQA-k7kNSfwUc9Lfzx-bb_wklVm25K-p8Tr7",
         },
         .zgui = .{
-            .url = "git+https://github.com/zig-gamedev/zgui#7ac0630658ee2d285893603aca3945461d181beb",
-            .hash = "zgui-0.6.0-dev--L6sZG-baABjJ9Gcf2XU_VpTLmn4nNwq7alHKDRT_BW9",
+            .url = "git+https://github.com/zig-gamedev/zgui.git#21dcc288ac5ee70b1fca789d53a06d5c49d51e5e",
+            .hash = "zgui-0.6.0-dev--L6sZKTBaADLHp09LtUUifdfFpsczwbnyH7r2ajfVPuJ",
         },
         .zaudio = .{
-            .url = "git+https://github.com/zig-gamedev/zaudio#029a91b002a576befdef70d81859e90c5ab98583",
-            .hash = "zaudio-0.11.0-dev-_M-91kJkPwC30uVRr6Oe8Z6_TEZQdkE9zt2cnM8JtEgA",
+            .url = "git+https://github.com/zig-gamedev/zaudio.git#1012b105627e28827f558b79e533575ef65a4965",
+            .hash = "zaudio-0.11.0-dev-_M-91mJkPwB7NWGKgDvdpl3xyjkk301Tp6ubbsleUvVK",
         },
         .system_sdk = .{
             .url = "git+https://github.com/zig-gamedev/system_sdk#c0dbf11cdc17da5904ea8a17eadc54dee26567ec",
             .hash = "system_sdk-0.3.0-dev-alwUNnYaaAJAtIdE2fg4NQfDqEKs7QCXy_qYukAOBfmF",
         },
         .zpool = .{
-            .url = "git+https://github.com/zig-gamedev/zpool#99a4c74ec26b1f327209782565b4adaf1c1d610f",
-            .hash = "zpool-0.11.0-dev-bG692eY7AQDLTkjTbgnbg_-qgjmxUCg8hNpN1kZRrIlW",
+            .url = "git+https://github.com/zig-gamedev/zpool.git#4c850e222e1ba507b45d7bab8cac83bdd74cacd6",
+            .hash = "zpool-0.11.0-dev-bG692aVDAQBCKslGROl47fqnnp7HFYV8fI-8z3wY06xx",
         },
         .nfd = .{
             .url = "https://github.com/Senryoku/nfd-zig/archive/ad81729d33da30d5f4fd23718debec48245121ca.tar.gz",
