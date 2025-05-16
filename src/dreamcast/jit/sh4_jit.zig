@@ -973,12 +973,12 @@ pub const SH4JIT = struct {
                     }
                     if (delay_slot and !instr_lookup(ctx.instructions[ctx.index]).idle) return;
                     if (reads_mem) {
-                        if (comptime std.log.logEnabled(.warn, .sh4_jit)) {
-                            sh4_jit_log.warn("Detected Idle Loop at 0x{X:0>8}", .{ctx.entry_point_address});
+                        if (comptime std.log.logEnabled(.info, .sh4_jit)) {
+                            sh4_jit_log.info("Detected Idle Loop at 0x{X:0>8}", .{ctx.entry_point_address});
                             for (0..ctx.index) |i|
-                                sh4_jit_log.warn("  {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[i]), ctx.cpu._allocator)});
+                                sh4_jit_log.info("  {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[i]), ctx.cpu._allocator)});
                             if (delay_slot)
-                                sh4_jit_log.warn("  > {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[ctx.index]), ctx.cpu._allocator)});
+                                sh4_jit_log.info("  > {s}", .{sh4.disassembly.disassemble(@bitCast(ctx.instructions[ctx.index]), ctx.cpu._allocator)});
                         }
                         ctx.cycles = ctx.cycles * (1 + self.idle_skip_cycles / ctx.cycles);
                     }
