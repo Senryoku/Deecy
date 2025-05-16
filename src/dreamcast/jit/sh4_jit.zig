@@ -956,7 +956,7 @@ pub const SH4JIT = struct {
         //    cmp/eq R1,R4
         //    bt -6
         // FIXME: This doesn't currently check for the presence of a test/compare instruction.
-        //        This might lead to false positives, so I'm printing them out by default for monitoring
+        //        This might lead to false positives.
         if (ctx.index > 0 and ctx.index < 5) {
             const last_instruction = ctx.instructions[ctx.index - 1];
             // bf, bfs, bt or bts
