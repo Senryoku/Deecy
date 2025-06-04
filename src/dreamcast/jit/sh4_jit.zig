@@ -31,6 +31,7 @@ const windows = @import("../host/windows.zig");
 
 const BlockBufferSize = 16 * 1024 * 1024;
 const MaxCyclesPerBlock = 32;
+const MaxCyclesPerExecution = 66; // Max cycles spent chaining jitted blocks.
 pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
 
 // Enable or Disable some optimizations
@@ -542,7 +543,7 @@ pub const JITContext = struct {
 
 pub const SH4JIT = struct {
     idle_skip_enabled: bool = true,
-    idle_skip_cycles: u32 = 66,
+    idle_skip_cycles: u32 = MaxCyclesPerExecution,
 
     block_cache: BlockCache,
 
@@ -774,7 +775,10 @@ pub const SH4JIT = struct {
 
         try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
-        if (ctx.cycles < 66 and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
+        if (ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
+            try b.append(.{ .Cmp = .{ .lhs = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .rhs = .{ .imm8 = 0 } } });
+            var handle_interrupt = try b.jmp(.NotEqual);
+
             const const_key: u32 = @bitCast(BlockCache.Key{
                 .addr = 0,
                 .ram = 0,
@@ -783,8 +787,8 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
-            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = 66 } } });
-            var skip = try b.jmp(.AboveEqual); // Avoid cycles of small blocks
+            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = MaxCyclesPerExecution } } });
+            var skip = try b.jmp(.AboveEqual);
 
             if (ctx.mmu_enabled) {
                 // NOTE: In some cases we could easily convince ourselves that the PC cannot possibly cross a page boundary here.
@@ -834,6 +838,7 @@ pub const SH4JIT = struct {
             // ReturnRegister holds the cycle count
 
             skip.patch();
+            handle_interrupt.patch();
         }
 
         // Enough cycles have passed, back to JIT entry point to restore host state.

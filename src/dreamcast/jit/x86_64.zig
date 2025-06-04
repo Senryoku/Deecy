@@ -1240,10 +1240,21 @@ pub const Emitter = struct {
                         }
                     },
                     .imm8 => |imm| {
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
-                        try self.emit(u8, 0x80);
-                        try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
-                        try self.emit(u8, imm);
+                        switch (dst_m.size) {
+                            8 => {
+                                try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+                                try self.emit(u8, 0x80);
+                                try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
+                                try self.emit(u8, imm);
+                            },
+                            else => {
+                                if (dst_m.size == 16) try self.emit(u8, 0x66);
+                                try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .b = need_rex(dst_m.base) });
+                                try self.emit(u8, 0x83);
+                                try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
+                                try self.emit(u8, imm);
+                            },
+                        }
                     },
                     .imm32 => |imm| try mem_dest_imm_src(self, rm_imm_opcode, dst_m, u32, imm),
                     else => return error.InvalidSource,
