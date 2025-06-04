@@ -1248,6 +1248,11 @@ pub const Emitter = struct {
                                 try self.emit(u8, imm);
                             },
                             else => {
+                                // NOTE: The immediate value might be sign-extended (arithmetic instructions for example).
+                                //       There are obviously legitimate use cases for this, but since this is not reflected in the JIT API,
+                                //       and because I don't currently have a use for it, this is here to alert of potential misuse.
+                                std.debug.assert(imm < 0x80);
+
                                 if (dst_m.size == 16) try self.emit(u8, 0x66);
                                 try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .b = need_rex(dst_m.base) });
                                 try self.emit(u8, 0x83);

@@ -787,7 +787,7 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
-            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm32 = MaxCyclesPerExecution } } });
+            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm8 = MaxCyclesPerExecution } } });
             var skip = try b.jmp(.AboveEqual);
 
             if (ctx.mmu_enabled) {
@@ -1821,14 +1821,14 @@ pub fn cmphi_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn cmppl_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
     try set_t(block, ctx, .Greater);
     return false;
 }
 
 pub fn cmppz_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
     try set_t(block, ctx, .GreaterEqual);
     return false;
 }
@@ -2692,7 +2692,7 @@ pub fn tst_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // sr.t = (Rm & Rn) == 0
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register(block, ctx, instr.nmd.n);
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
         try set_t(block, ctx, .Equal);
     } else {
         const rn = try load_register(block, ctx, instr.nmd.n);
@@ -2708,7 +2708,7 @@ pub fn tst_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = r0 });
     try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0 } } });
+    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
     try set_t(block, ctx, .Zero);
     return false;
 }
@@ -2763,7 +2763,7 @@ pub fn shad_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const amount: JIT.Operand = .{ .reg = .rcx };
 
     try block.mov(amount, .{ .reg = rm });
-    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm32 = 0 } } });
+    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm8 = 0 } } });
     var neg = try block.jmp(.Less);
 
     try block.shl(.{ .reg = rn }, amount);
@@ -2781,7 +2781,7 @@ pub fn shad_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Right shift by zero special case.
     rm_neg_zero.patch();
     {
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm32 = 0 } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
         var rn_neg = try block.jmp(.Less);
         try block.mov(.{ .reg = rn }, .{ .imm32 = 0 });
         var end_3 = try block.jmp(.Always);
@@ -2925,7 +2925,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
 
         // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
         try block.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = MaxCyclesPerBlock } } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm8 = MaxCyclesPerExecution } } });
         var break_loop = try block.jmp(.Greater);
 
         // Count cycles spent into one traversal of the loop.
