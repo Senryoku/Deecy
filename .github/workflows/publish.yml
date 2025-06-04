@@ -19,7 +19,7 @@ jobs:
             $version = Get-Content -Path .zigversion -Raw
             "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         - name: Setup zig
-          uses: mlugg/setup-zig@v1
+          uses: mlugg/setup-zig@v2
           with:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy
@@ -48,7 +48,7 @@ jobs:
           id: zigversion
           run: echo "version=$(cat .zigversion)" >> $GITHUB_OUTPUT
         - name: Setup zig
-          uses: mlugg/setup-zig@v1
+          uses: mlugg/setup-zig@v2
           with:
             version: ${{ steps.zigversion.outputs.version }}
         - name: Compile Deecy
