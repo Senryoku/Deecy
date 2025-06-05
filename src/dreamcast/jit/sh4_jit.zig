@@ -587,9 +587,11 @@ pub const SH4JIT = struct {
     fn init_compile_and_run_handler(self: *@This()) !void {
         std.debug.assert(self.block_cache.cursor == 0);
         {
+            // Default handler at the base of the executable buffer. Expects a pointer to the CPU in SavedRegisters[0] and will compile and run the block pointed by PC.
             var b = &self._working_block;
             b.clearRetainingCapacity();
 
+            try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
             try b.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @intFromPtr(self) });
             try b.call(compile_and_run);
             try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
@@ -598,6 +600,9 @@ pub const SH4JIT = struct {
             self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
         }
         {
+            // JIT entry point. Arguments:
+            //   - Pointer to the SH4 structure.
+            //   - Handler address of the first block to execute.
             self._working_block.clearRetainingCapacity();
 
             const e = &self._working_block._emitter;
@@ -622,8 +627,7 @@ pub const SH4JIT = struct {
                 try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }, false); // Provide a pointer to the SH4's RAM
             }
             try e.mov(.{ .reg64 = SavedRegisters[0] }, .{ .reg64 = ArgRegisters[0] }, false); // Save the pointer to the SH4
-
-            try e.mov(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[2] }, false); // Move address of the first block
+            try e.mov(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[1] }, false); // Move address of the first block
             try e.emit(u8, 0xFF); // jmp rax
             try e.emit(u8, 0xE0);
 
@@ -671,9 +675,8 @@ pub const SH4JIT = struct {
 
             const start = if (BasicBlock.EnableInstrumentation) std.time.nanoTimestamp() else {}; // Make sure this isn't called when instrumentation is disabled.
 
-            @as(*const fn (*sh4.SH4, *@This(), *anyopaque) callconv(.c) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
+            @as(*const fn (*sh4.SH4, *anyopaque) callconv(.c) void, @ptrCast(&self.block_cache.buffer[self.enter_block_offset]))(
                 cpu,
-                self,
                 self.block_cache.buffer[block.offset..].ptr,
             );
             const cycles = cpu._pending_cycles;
@@ -838,9 +841,7 @@ pub const SH4JIT = struct {
             try b.mov(.{ .reg = ArgRegisters[0] }, .{ .mem = .{ .base = ReturnRegister, .index = Key.reg, .scale = ._4, .size = 32 } });
             try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
             try b.add(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
-            try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = SavedRegisters[0] });
             try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-            // ReturnRegister holds the cycle count
 
             skip.patch();
             handle_interrupt.patch();
