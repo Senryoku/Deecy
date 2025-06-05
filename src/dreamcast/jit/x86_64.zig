@@ -364,7 +364,10 @@ pub const Instruction = union(enum) {
             .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
             .SetByteCondition => |set| writer.print("set{any} {any}", .{ set.condition, set.dst }),
             .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
-            .Jmp => |jmp| writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+            .Jmp => |jmp| switch (jmp.dst) {
+                .rel => writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
+                .abs_indirect => writer.print("jmp {any} {any}", .{ jmp.condition, jmp.dst.abs_indirect }),
+            },
             .BlockEpilogue => writer.print("block_epilogue", .{}),
             .Rol => |rol| writer.print("rol {any}, {any}", .{ rol.dst, rol.amount }),
             .Ror => |ror| writer.print("ror {any}, {any}", .{ ror.dst, ror.amount }),

@@ -40,6 +40,7 @@ const Optimizations = .{
     .inline_small_forward_jumps = true,
     .inline_jumps_to_start_of_block = false,
     .inline_backwards_bra = true, // Inlining of backward inconditional branches, before current block entry point. This isn't correctly supported and implementation is very hackish.
+    .mmu_translation_cache = true, // EXPERIMENTAL: Check virtual addresses against the last successful translation for a possible fast path.
 };
 
 const VirtualAddressSpace = if (FastMem) switch (builtin.os.tag) {
@@ -644,6 +645,8 @@ pub const SH4JIT = struct {
 
     /// Resets block offsets without resetting the block cache immediately. Intended to be used from JITed code.
     pub fn safe_reset(self: *@This()) void {
+        MMUCache.reset();
+
         sh4_jit_log.debug("Reset requested.", .{});
         self.block_cache.reset_blocks() catch {
             std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
@@ -651,6 +654,8 @@ pub const SH4JIT = struct {
     }
 
     pub fn reset(self: *@This()) !void {
+        MMUCache.reset();
+
         try self.block_cache.reset();
         try self.init_compile_and_run_handler();
     }
@@ -1308,11 +1313,25 @@ fn runtime_instruction_mmu_translation() callconv(.c) u32 {
     };
 }
 
+const MMUCache = struct {
+    var vpn: u32 = 0xDEADBEEF;
+    var ppn: u32 = 0;
+
+    pub fn reset() void {
+        MMUCache.vpn = 0xDEADBEEF;
+        MMUCache.ppn = 0;
+    }
+};
+
 /// A call to the handler will return the physical address in the lower 32bits, and a non-zero value in the upper 32bits if an exception occurred.
 fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32) type {
     return struct {
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) packed struct(u64) { address: u32, exception: u32 } {
             std.debug.assert(cpu._mmu_state == .Full);
+
+            //if (virtual_addr >> 10 == CachedVPN) {
+            //    return .{ .address = CachedPPN | (virtual_addr & 0x3FF), .exception = 0 };
+            //}
 
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
             const unauthorized = sh4.DataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
@@ -1344,6 +1363,8 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
                 cpu.jump_to_exception(exception);
                 return .{ .address = 0, .exception = 1 };
             };
+            MMUCache.vpn = virtual_addr >> 10;
+            MMUCache.ppn = physical & ~@as(u32, 0x3FF);
             return .{ .address = physical, .exception = 0 };
         }
     };
@@ -1351,8 +1372,40 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
 
 /// Attempts an address translation and return the translated address to addr. Exits the current block if an exception is raised.
 fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_size: u32, block: *IRBlock, ctx: *JITContext, addr: JIT.Register, register_to_save: ?JIT.Register) !void {
-    try ctx.gpr_cache.commit_all(block);
-    try ctx.fpr_cache.commit_all(block);
+    var vpn_match: ?JIT.PatchableJump = null;
+    if (Optimizations.mmu_translation_cache) {
+        // Check if the last translation was for the same VPN (assuming a 1k page) and use that as a possible fast path.
+        // NOTE: With some rip-relative addressing, we could have a cache per instruction/memory access. Not sure how much better it would be
+        //       (I suspect the cache hit rate would be significantly higher, but code size would increase a lot). The "backend" also doesn't
+        //       support rip-relative addressing for now (although I suspect it wouldn't be too hard to add using a pattern similar to jumps).
+        std.debug.assert(addr != ArgRegisters[0]);
+        std.debug.assert(addr != ArgRegisters[2]);
+        std.debug.assert(addr != ArgRegisters[3]);
+        std.debug.assert(register_to_save != ArgRegisters[2]);
+        std.debug.assert(register_to_save != ArgRegisters[3]);
+        // Compute possible physical address from cached PPN
+        const CandidatePhysicalAddress = ArgRegisters[3];
+        try block.mov(.{ .reg64 = CandidatePhysicalAddress }, .{ .imm64 = @intFromPtr(&MMUCache.ppn) });
+        try block.mov(.{ .reg = CandidatePhysicalAddress }, .{ .mem = .{ .base = CandidatePhysicalAddress, .size = 32 } });
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
+        try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[0] }, .src = .{ .imm32 = 0x3FF } } });
+        try block.append(.{ .Or = .{ .dst = .{ .reg = CandidatePhysicalAddress }, .src = .{ .reg = ArgRegisters[0] } } });
+        // Compute VPN
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr });
+        try block.shr(.{ .reg = ArgRegisters[0] }, 10);
+        // Load Cached VPN
+        try block.mov(.{ .reg64 = ArgRegisters[2] }, .{ .imm64 = @intFromPtr(&MMUCache.vpn) });
+        try block.mov(.{ .reg = ArgRegisters[2] }, .{ .mem = .{ .base = ArgRegisters[2], .size = 32 } });
+        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[0] }, .rhs = .{ .reg = ArgRegisters[2] } } });
+        try block.cmov(.Equal, .{ .reg = addr }, .{ .reg = CandidatePhysicalAddress });
+        vpn_match = try block.jmp(.Equal);
+
+        try ctx.gpr_cache.commit_all_speculatively(block);
+        try ctx.fpr_cache.commit_all_speculatively(block);
+    } else {
+        try ctx.gpr_cache.commit_all(block);
+        try ctx.fpr_cache.commit_all(block);
+    }
 
     std.debug.assert(register_to_save != ArgRegisters[0]);
 
@@ -1393,6 +1446,8 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
     try ctx.add_jump_to_end(try block.jmp(.Above));
 
     try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
+
+    if (vpn_match) |j| j.patch();
 }
 
 // Load a u<size> from memory into a host register, with a fast path if the address lies in RAM.
