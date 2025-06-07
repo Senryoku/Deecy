@@ -1426,7 +1426,7 @@ pub const Holly = struct {
     pub const VRAMMask: u32 = VRAMSize - 1;
     pub const RegistersSize = 0x2000;
 
-    vram: []align(32) u8, // Not owned.
+    vram: []align(64) u8, // Not owned.
     registers: []u8,
 
     dirty_framebuffer: bool = false,
@@ -1830,12 +1830,7 @@ pub const Holly = struct {
 
     pub fn write_ta_direct_texture_path(self: *@This(), addr: u32, access_type: enum(u32) { b64 = 0, b32 = 1 }, v: @Vector(8, u32)) void {
         switch (access_type) {
-            // FIXME: Alignement issue? Why? Even with a more strictly aligned addr.
-            // .b64 => @as(*@Vector(8, u32), @alignCast(@ptrCast(&self.vram[addr & VRAMMask]))).* = v,
-            .b64 => {
-                for (0..8) |idx|
-                    @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = v[idx];
-            },
+            .b64 => @as(*@Vector(8, u32), @alignCast(@ptrCast(&self.vram[addr & VRAMMask]))).* = v,
             .b32 => {
                 for (0..8) |idx|
                     self.write_vram(u32, @intCast(addr + 4 * idx), v[idx]);

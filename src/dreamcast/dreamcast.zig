@@ -146,11 +146,11 @@ pub const Dreamcast = struct {
     cable_type: CableType = .VGA, // Plugged in video cable reported to the CPU.
     region: Region = .Unknown,
 
-    boot: []align(4) u8 = undefined,
+    boot: []align(64) u8 = undefined,
     flash: Flash,
-    ram: []align(4) u8 = undefined,
-    vram: []align(32) u8 = undefined,
-    aram: []align(4) u8 = undefined,
+    ram: []align(64) u8 = undefined,
+    vram: []align(64) u8 = undefined,
+    aram: []align(64) u8 = undefined,
     hardware_registers: []align(4) u8,
 
     scheduled_events: std.PriorityQueue(ScheduledEvent, void, ScheduledEvent.compare),
@@ -175,10 +175,10 @@ pub const Dreamcast = struct {
 
         if (SH4JITModule.FastMem) {
             dc.sh4_jit = try .init(allocator, null);
-            dc.boot = @as([*]align(4) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
-            dc.ram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
-            dc.vram = @as([*]align(32) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
-            dc.aram = @as([*]align(4) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
+            dc.boot = @as([*]align(64) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
+            dc.ram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
+            dc.vram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
+            dc.aram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {
             dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
             dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);

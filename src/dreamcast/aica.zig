@@ -535,7 +535,7 @@ pub const AICA = struct {
     dsp_emulation: DSPEmulation = .JIT,
 
     regs: []u32, // All registers are 32-bit afaik
-    wave_memory: []u8 align(4), // Not owned.
+    wave_memory: []u8 align(64), // Not owned.
 
     channel_states: []AICAChannelState,
 
