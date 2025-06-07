@@ -2019,10 +2019,10 @@ pub const Holly = struct {
                 const user_tile_clip = @as(*const UserTileClip, @ptrCast(&self._ta_command_buffer)).*;
                 self._ta_user_tile_clip = .{
                     .usage = .Disable,
-                    .x = 32 * user_tile_clip.user_clip_x_min,
-                    .y = 32 * user_tile_clip.user_clip_y_min,
-                    .width = 32 * (1 + user_tile_clip.user_clip_x_max - user_tile_clip.user_clip_x_min),
-                    .height = 32 * (1 + user_tile_clip.user_clip_y_max - user_tile_clip.user_clip_y_min),
+                    .x = 32 *| user_tile_clip.user_clip_x_min,
+                    .y = 32 *| user_tile_clip.user_clip_y_min,
+                    .width = 32 *| (1 +| user_tile_clip.user_clip_x_max -| user_tile_clip.user_clip_x_min),
+                    .height = 32 *| (1 +| user_tile_clip.user_clip_y_max -| user_tile_clip.user_clip_y_min),
                 };
             },
             .ObjectListSet => holly_log.err(termcolor.red("Unhandled ObjectListSet"), .{}),

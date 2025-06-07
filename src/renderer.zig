@@ -2713,10 +2713,10 @@ pub const Renderer = struct {
             if (uc.usage == .InsideEnabled) {
                 return .{
                     .usage = .InsideEnabled,
-                    .x = @max(factor * uc.x, x),
-                    .y = @max(factor * uc.y, y),
-                    .width = @min(factor * uc.width, width),
-                    .height = @min(factor * uc.height, height),
+                    .x = @max(factor *| uc.x, x),
+                    .y = @max(factor *| uc.y, y),
+                    .width = @min(factor *| uc.width, width),
+                    .height = @min(factor *| uc.height, height),
                 };
             }
         }
