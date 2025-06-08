@@ -408,22 +408,22 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
     }
 }
 
-fn cpsr_mask(comptime flags: []const []const u8) u32 {
+fn cpsr_mask(comptime flags: []const u8) u32 {
     var mask: u32 = 0;
     inline for (flags) |flag| {
-        mask |= @as(u32, 1 << @bitOffsetOf(arm7.CPSR, flag));
+        mask |= @as(u32, 1 << @bitOffsetOf(arm7.CPSR, @as([*]const u8, @ptrCast(&flag))[0..1]));
     }
     return mask;
 }
 
-fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const []const u8) !void {
+fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const u8) !void {
     try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
     try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
 }
 
-fn test_cpsr_flags(b: *IRBlock, comptime flags: []const []const u8, comptime expected_flags: []const []const u8) !JIT.PatchableJump {
+fn test_cpsr_flags(b: *IRBlock, comptime flags: []const u8, comptime expected_flags: []const u8) !JIT.PatchableJump {
     try extract_cpsr_flags(b, flags);
-    try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(expected_flags) } } });
+    try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask(expected_flags) });
     return b.jmp(.NotEqual);
 }
 
@@ -432,42 +432,15 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
     _ = ctx;
     const condition = arm7.ARM7.get_instr_condition(instruction);
     switch (condition) {
-        .EQ => {
-            // return cpu.cpsr.z
-            return try test_cpsr_flags(b, &[_][]const u8{"z"}, &[_][]const u8{"z"});
-        },
-        .NE => {
-            // return !cpu.cpsr.z
-            return try test_cpsr_flags(b, &[_][]const u8{"z"}, &[_][]const u8{});
-        },
-        .CS => {
-            // return cpu.cpsr.c
-            return try test_cpsr_flags(b, &[_][]const u8{"c"}, &[_][]const u8{"c"});
-        },
-        .CC => {
-            // return !cpu.cpsr.c
-            return try test_cpsr_flags(b, &[_][]const u8{"c"}, &[_][]const u8{});
-        },
-        .MI => {
-            // return cpu.cpsr.n
-            return try test_cpsr_flags(b, &[_][]const u8{"n"}, &[_][]const u8{"n"});
-        },
-        .PL => {
-            // return !cpu.cpsr.n
-            return try test_cpsr_flags(b, &[_][]const u8{"n"}, &[_][]const u8{});
-        },
-        .VS => {
-            // return cpu.cpsr.v
-            return try test_cpsr_flags(b, &[_][]const u8{"v"}, &[_][]const u8{"v"});
-        },
-        .VC => {
-            // return !cpu.cpsr.v
-            return try test_cpsr_flags(b, &[_][]const u8{"v"}, &[_][]const u8{});
-        },
-        .HI => {
-            // return cpu.cpsr.c and !cpu.cpsr.z
-            return try test_cpsr_flags(b, &[_][]const u8{ "c", "z" }, &[_][]const u8{"c"});
-        },
+        .EQ => return try test_cpsr_flags(b, "z", "z"), // z
+        .NE => return try test_cpsr_flags(b, "z", ""), // !z
+        .CS => return try test_cpsr_flags(b, "c", "c"), // c
+        .CC => return try test_cpsr_flags(b, "c", ""), // !c
+        .MI => return try test_cpsr_flags(b, "n", "n"), // n
+        .PL => return try test_cpsr_flags(b, "n", ""), // !n
+        .VS => return try test_cpsr_flags(b, "v", "v"), // v
+        .VC => return try test_cpsr_flags(b, "v", ""), // !v
+        .HI => return try test_cpsr_flags(b, "cz", "c"), // c and !z
         .LS => {
             // return !cpu.cpsr.c or cpu.cpsr.z
             std.debug.assert(@bitOffsetOf(arm7.CPSR, "c") < @bitOffsetOf(arm7.CPSR, "z"));
@@ -482,36 +455,36 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
         },
         .GE => {
             // return cpu.cpsr.n == cpu.cpsr.v
-            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            try extract_cpsr_flags(b, "nv");
             // v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("vn") });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("") });
             const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
             return skip_label;
         },
         .LT => {
             // return cpu.cpsr.n != cpu.cpsr.v
-            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            try extract_cpsr_flags(b, "nv");
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("v") });
             var do_label_0 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("n") });
             const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
             return skip_label;
         },
         .GT => {
             // return !cpu.cpsr.z and (cpu.cpsr.n == cpu.cpsr.v)
-            try extract_cpsr_flags(b, &[_][]const u8{ "z", "n", "v" });
+            try extract_cpsr_flags(b, "znv");
             // z == 0 and v == 1 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{ "v", "n" }) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("vn") });
             var do_label_0 = try b.jmp(.Equal);
             // z == 0 and v == 0 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("") });
             const skip_label = try b.jmp(.NotEqual);
             do_label_0.patch();
             return skip_label;
@@ -522,12 +495,12 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
-            try extract_cpsr_flags(b, &[_][]const u8{ "n", "v" });
+            try extract_cpsr_flags(b, "nv");
             // v == 1 and n == 0
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"v"}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("v") });
             var do_label_1 = try b.jmp(.Equal);
             // v == 0 and n == 1
-            try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = cpsr_mask(&[_][]const u8{"n"}) } } });
+            try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("n") });
             const skip_label = try b.jmp(.NotEqual);
 
             do_label_0.patch();

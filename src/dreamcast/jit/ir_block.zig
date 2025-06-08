@@ -63,6 +63,10 @@ pub const IRBlock = struct {
         try self.instructions.append(.{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
     }
 
+    pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
+        try self.instructions.append(.{ .Cmp = .{ .lhs = lhs, .rhs = rhs } });
+    }
+
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
         try self.instructions.append(.{ .Movsx = .{ .dst = dst, .src = src } });
     }

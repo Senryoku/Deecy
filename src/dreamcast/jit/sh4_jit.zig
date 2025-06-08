@@ -784,7 +784,7 @@ pub const SH4JIT = struct {
         try b.add(sh4_mem("_pending_cycles"), .{ .imm32 = ctx.cycles });
         // Jump to the next block (Disabled when instrumentation is on, otherwise it would be a hassle to measure individual blocks)
         if (ctx.cycles < MaxCyclesPerExecution and ctx.fpscr_pr != .Unknown and ctx.fpscr_sz != .Unknown and !BasicBlock.EnableInstrumentation) {
-            try b.append(.{ .Cmp = .{ .lhs = .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .rhs = .{ .imm8 = 0 } } });
+            try b.cmp(.{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(sh4.SH4, "interrupt_requests"), .size = 64 } }, .{ .imm8 = 0 });
             var handle_interrupt = try b.jmp(.NotEqual);
 
             const const_key: u32 = @bitCast(BlockCache.Key{
@@ -795,7 +795,7 @@ pub const SH4JIT = struct {
             });
             const Key: JIT.Operand = .{ .reg = ArgRegisters[0] };
 
-            try b.append(.{ .Cmp = .{ .lhs = sh4_mem("_pending_cycles"), .rhs = .{ .imm8 = MaxCyclesPerExecution } } });
+            try b.cmp(sh4_mem("_pending_cycles"), .{ .imm8 = MaxCyclesPerExecution });
             var skip = try b.jmp(.AboveEqual);
 
             if (ctx.mmu_enabled) {
@@ -808,7 +808,7 @@ pub const SH4JIT = struct {
                 try b.append(.{ .Or = .{ .dst = Key, .src = .{ .imm32 = ctx.start_physical_pc & 0xFFFF_FC00 } } });
                 // Compare next virtual page with the current one (conservatively assuming a 1K page)
                 try b.shr(.{ .reg = ReturnRegister }, 10);
-                try b.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = ctx.start_pc >> 10 } } });
+                try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.start_pc >> 10 });
                 const same_page = try b.jmp(.Equal);
                 // Might cross a page boundary: Fallback to MMU translation
                 try call(b, &ctx, &runtime_instruction_mmu_translation);
@@ -1098,7 +1098,7 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
             try block.pop(.{ .reg64 = ArgRegisters[0] });
 
             // Check if an exception was raised.
-            try block.append(.{ .Cmp = .{ .lhs = .{ .reg8 = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
+            try block.cmp(.{ .reg8 = ReturnRegister }, .{ .imm8 = 0 });
             // Terminate the block immediately if an exception was raised.
             try ctx.add_jump_to_end(try block.jmp(.NotEqual));
 
@@ -1394,7 +1394,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
         try block.shr(.{ .reg = ArgRegisters[0] }, 10);
         // Load Cached VPN
         try block.mov(.{ .reg = ArgRegisters[2] }, .{ .mem = .{ .base = ArgRegisters[2], .displacement = @offsetOf(MMUCacheType, "vpn"), .size = 32 } });
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[0] }, .rhs = .{ .reg = ArgRegisters[2] } } });
+        try block.cmp(.{ .reg = ArgRegisters[0] }, .{ .reg = ArgRegisters[2] });
         try block.cmov(.Equal, .{ .reg = addr }, .{ .reg = CandidatePhysicalAddress });
         vpn_match = try block.jmp(.Equal);
 
@@ -1432,7 +1432,7 @@ fn mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime access_siz
 
     // Check if an exception was raised.
     try block.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xFFFFFFFF });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg64 = ReturnRegister }, .rhs = .{ .reg64 = ArgRegisters[0] } } });
+    try block.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
 
     if (register_to_save) |r| {
         try block.pop(.{ .reg64 = r });
@@ -1484,7 +1484,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: u
     } else { // RAM Fast path
         try block.mov(.{ .reg = ReturnRegister }, .{ .reg = ArgRegisters[1] });
         try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = 0x1C000000 } } });
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        try block.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = 0x0C000000 });
         // TODO: Could it be worth to use a conditional move here to have a single jump (skipping the call)?
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
@@ -1564,7 +1564,7 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: union(enum) { HostRe
         // RAM Fast path
         try block.mov(.{ .reg = ArgRegisters[3] }, .{ .reg = addr });
         try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[3] }, .src = .{ .imm32 = 0x1C000000 } } });
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ArgRegisters[3] }, .rhs = .{ .imm32 = 0x0C000000 } } });
+        try block.cmp(.{ .reg = ArgRegisters[3] }, .{ .imm32 = 0x0C000000 });
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
         try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
@@ -1839,7 +1839,7 @@ pub fn addc_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn cmpeq_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = r0 }, .rhs = .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) } } });
+    try block.cmp(.{ .reg = r0 }, .{ .imm32 = @bitCast(bit_manip.sign_extension_u8(instr.nd8.d)) });
     try set_t(block, ctx, .Equal);
     return false;
 }
@@ -1847,7 +1847,7 @@ pub fn cmpeq_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 fn cmp_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, condition: JIT.Condition) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .reg = rm } } });
+    try block.cmp(.{ .reg = rn }, .{ .reg = rm });
     try set_t(block, ctx, condition);
     return false;
 }
@@ -1874,14 +1874,14 @@ pub fn cmphi_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn cmppl_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
+    try block.cmp(.{ .reg = rn }, .{ .imm8 = 0 });
     try set_t(block, ctx, .Greater);
     return false;
 }
 
 pub fn cmppz_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register(block, ctx, instr.nmd.n);
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
+    try block.cmp(.{ .reg = rn }, .{ .imm8 = 0 });
     try set_t(block, ctx, .GreaterEqual);
     return false;
 }
@@ -2745,7 +2745,7 @@ pub fn tst_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // sr.t = (Rm & Rn) == 0
     if (instr.nmd.n == instr.nmd.m) {
         const rn = try load_register(block, ctx, instr.nmd.n);
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
+        try block.cmp(.{ .reg = rn }, .{ .imm8 = 0 });
         try set_t(block, ctx, .Equal);
     } else {
         const rn = try load_register(block, ctx, instr.nmd.n);
@@ -2761,7 +2761,7 @@ pub fn tst_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
     try block.mov(.{ .reg = ReturnRegister }, .{ .reg = r0 });
     try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
-    try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm8 = 0 } } });
+    try block.cmp(.{ .reg = ReturnRegister }, .{ .imm8 = 0 });
     try set_t(block, ctx, .Zero);
     return false;
 }
@@ -2834,7 +2834,7 @@ pub fn shad_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     // Right shift by zero special case.
     rm_neg_zero.patch();
     {
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = rn }, .rhs = .{ .imm8 = 0 } } });
+        try block.cmp(.{ .reg = rn }, .{ .imm8 = 0 });
         var rn_neg = try block.jmp(.Less);
         try block.mov(.{ .reg = rn }, .{ .imm32 = 0 });
         var end_3 = try block.jmp(.Always);
@@ -2978,7 +2978,7 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
 
         // Break out if we already spent too many cycles here. NOTE: This doesn't currently take the base cycles into account.
         try block.mov(.{ .reg = ReturnRegister }, sh4_mem("_pending_cycles"));
-        try block.append(.{ .Cmp = .{ .lhs = .{ .reg = ReturnRegister }, .rhs = .{ .imm8 = MaxCyclesPerExecution } } });
+        try block.cmp(.{ .reg = ReturnRegister }, .{ .imm8 = MaxCyclesPerExecution });
         var break_loop = try block.jmp(.Greater);
 
         // Count cycles spent into one traversal of the loop.
