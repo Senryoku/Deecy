@@ -1332,10 +1332,6 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
         fn handler(cpu: *sh4.SH4, virtual_addr: u32) callconv(.c) packed struct(u64) { address: u32, exception: u32 } {
             std.debug.assert(cpu._mmu_state == .Full);
 
-            //if (virtual_addr >> 10 == CachedVPN) {
-            //    return .{ .address = CachedPPN | (virtual_addr & 0x3FF), .exception = 0 };
-            //}
-
             // Access to privileged memory (>= 0x80000000) is restricted, except for the store queue when MMUCR.SQMD == 0
             const unauthorized = sh4.DataProtectedCheck and (cpu.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and cpu.read_p4_register(sh4.mmu.MMUCR, .MMUCR).sqmd == 0));
             // Alignment check

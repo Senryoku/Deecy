@@ -120,8 +120,13 @@ pub const TLBEntry = struct {
         return self.v;
     }
 
-    pub inline fn match(self: *const @This(), check_asid: bool, asid: u8, vpn: u22) bool {
-        return self.valid() and (!check_asid or self.sh or self.asid == asid) and vpn_match(self.vpn, vpn, self.sz);
+    pub inline fn match(self: *const @This(), multiple_virtual_memory_mode: bool, asid: u8, vpn: u22) bool {
+        const check_asid = !self.sh and multiple_virtual_memory_mode;
+        if (check_asid) {
+            return self.valid() and (self.asid == asid) and vpn_match(self.vpn, vpn, self.sz);
+        } else {
+            return self.valid() and vpn_match(self.vpn, vpn, self.sz);
+        }
     }
 
     pub inline fn translate(self: *const @This(), virtual_address: u32) u32 {

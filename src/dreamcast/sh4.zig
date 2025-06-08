@@ -1043,8 +1043,8 @@ pub const SH4 = struct {
         mmucr.urc +%= 1;
         if (mmucr.urb > 0 and mmucr.urc == mmucr.urb) mmucr.urc = 0;
 
-        const check_asid = !mmucr.sv or self.sr.md == 0;
-        const asid = if (check_asid) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0x00;
+        const multiple_virtual_memory_mode = !mmucr.sv or self.sr.md == 0;
+        const asid = if (multiple_virtual_memory_mode) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0;
         const vpn: u22 = @truncate(virtual_addr >> 10);
 
         if (EnableUTLBFastLookup) {
@@ -1062,7 +1062,7 @@ pub const SH4 = struct {
         var found_entry: ?mmu.TLBEntry = null;
 
         for (self.utlb) |entry| {
-            if (entry.match(check_asid, asid, vpn)) {
+            if (entry.match(multiple_virtual_memory_mode, asid, vpn)) {
                 if (EmulateUTLBMultipleHit and found_entry != null) return error.TLBMultipleHit;
                 found_entry = entry;
                 if (!EmulateUTLBMultipleHit) break;
@@ -1107,10 +1107,10 @@ pub const SH4 = struct {
                     switch (access_type) {
                         .Read => return entry.translate(virtual_addr),
                         .Write => {
-                            if (!entry.d)
-                                return error.InitialPageWrite
-                            else if (entry.pr.read_only())
+                            if (entry.pr.read_only())
                                 return error.DataTLBProtectionViolation
+                            else if (!entry.d)
+                                return error.InitialPageWrite
                             else
                                 return entry.translate(virtual_addr);
                         },
@@ -1133,12 +1133,12 @@ pub const SH4 = struct {
 
         if (EmulateITLB) {
             // Search ITLB
-            const check_asid = !mmucr.sv or self.sr.md == 0;
-            const asid = self.read_p4_register(mmu.PTEH, .PTEH).asid;
+            const multiple_virtual_memory_mode = !mmucr.sv or self.sr.md == 0;
+            const asid = if (multiple_virtual_memory_mode) self.read_p4_register(mmu.PTEH, .PTEH).asid else 0;
             const vpn: u22 = @truncate(virtual_addr >> 10);
             for (self.itlb, 0..) |entry, idx| {
                 // NOTE: Here we assume only one entry will match, TLB multiple hit exception isn't emulated (It's fatal anyway).
-                if (entry.match(check_asid, asid, vpn)) {
+                if (entry.match(multiple_virtual_memory_mode, asid, vpn)) {
                     if (self.sr.md == 0 and entry.pr.privileged()) return error.TLBProtectionViolation;
 
                     // Update LRUI bits (determine which ITLB entry to evict on ITLB miss)
