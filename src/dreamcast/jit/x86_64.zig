@@ -218,17 +218,27 @@ pub const MemOperand = struct {
         _ = fmt;
         _ = options;
         if (value.index) |index| {
-            return writer.print("[{any}+{any}*{any}+0x{X}]", .{
-                value.base,
-                value.scale,
-                index,
-                value.displacement,
-            });
-        } else {
+            if (value.displacement > 0) {
+                return writer.print("[{any}+{any}*{any}+0x{X}]", .{
+                    value.base,
+                    value.scale,
+                    index,
+                    value.displacement,
+                });
+            } else {
+                return writer.print("[{any}+{any}*{any}]", .{
+                    value.base,
+                    value.scale,
+                    index,
+                });
+            }
+        } else if (value.displacement > 0) {
             return writer.print("[{any}+0x{X}]", .{
                 value.base,
                 value.displacement,
             });
+        } else {
+            return writer.print("[{any}]", .{value.base});
         }
     }
 };
