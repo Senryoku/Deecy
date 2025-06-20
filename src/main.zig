@@ -91,6 +91,7 @@ pub const std_options: std.Options = .{
         .{ .scope = .gdrom_hle, .level = .debug },
         .{ .scope = .cdi, .level = .info },
         .{ .scope = .chd, .level = .info },
+        .{ .scope = .chd_flac, .level = .warn },
         .{ .scope = .maple, .level = .info },
         .{ .scope = .renderer, .level = .info },
         .{ .scope = .flashrom, .level = .info },

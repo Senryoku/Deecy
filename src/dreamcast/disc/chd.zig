@@ -1,6 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
+const chd_flac = @import("chd_flac.zig");
 const host_memory = @import("../host/host_memory.zig");
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
 const Track = @import("track.zig");
@@ -631,12 +632,14 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             //     return error.InvalidCRC;
             return bytes;
         },
-        //.CD_Flac => {
-        //    log.err("Unsupported compression type: {any} (Skipping for test...)", .{compression});
-        //
-        //    @memset(dest[0..@min(dest.len, CD_MAX_SECTOR_DATA * sectors_per_hunk)], 0);
-        //    return @min(dest.len, CD_MAX_SECTOR_DATA * sectors_per_hunk);
-        //},
+        .CD_Flac => {
+            const bytes = CDMaxSectorBytes * sectors_per_hunk;
+            const num_samples = bytes / @sizeOf(i16);
+            var flac_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset..]);
+            const flac_reader = flac_stream.reader();
+            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @alignCast(@ptrCast(dest.ptr)))[0 .. dest.len / 2], num_samples, CDMaxSectorBytes);
+            return @min(dest.len, bytes);
+        },
         else => {
             log.err("Unsupported compression method: {any}", .{compression});
             return error.UnsupportedCompression;
