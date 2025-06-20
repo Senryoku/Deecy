@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // Adapted/Stripped down from https://github.com/Senryoku/zflac to decompress FLAC frames from CHD files.
+// (Exact commit: c494f37e76192fea694de2f30c0dd7ea2ce6558c, 20/06/2025)
 
 const log = std.log.scoped(.chd_flac);
 const log_frame = std.log.scoped(.chd_flac_frame);
@@ -130,7 +131,6 @@ const low_bit_mask = [_]u8{
     0b00011111,
     0b00111111,
     0b01111111,
-    // 0b11111111,
 };
 
 inline fn read_unary_integer_from_empty_buffer(bit_reader: anytype) !u32 {
@@ -159,7 +159,7 @@ inline fn read_unary_integer(bit_reader: anytype) !u32 {
         while (try bit_reader.readBitsNoEof(u1, 1) == 0) unary_integer += 1;
         return unary_integer;
     } else {
-        // WIP: Faster version relying on the internals of std.io.bitReader
+        // Faster version relying on the internals of std.io.bitReader
         if (bit_reader.count == 0)
             return try read_unary_integer_from_empty_buffer(bit_reader);
         const buffered_bits = (bit_reader.bits << @intCast(8 - bit_reader.count)) | low_bit_mask[8 - bit_reader.count];
@@ -332,12 +332,8 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         // Block size of 1 not allowed except for the last frame.
         if (block_size == 1 and frame_sample_offset + channel_count * block_size < num_samples) return error.InvalidFrameHeader;
 
-        const frame_header_crc = try reader.readInt(u8, .big);
-        log_frame.debug("  frame_header_crc: {X:0>2}", .{frame_header_crc});
-
-        // TODO: Check CRC
-        // Finally, an 8-bit CRC follows the frame/sample number, an uncommon block size, or an uncommon sample rate (depending on whether the latter two are stored).
-        // This CRC is initialized with 0 and has the polynomial x^8 + x^2 + x^1 + x^0. This CRC covers the whole frame header before the CRC, including the sync code.
+        // Frame header CRC
+        _ = try reader.readInt(u8, .big);
 
         for (0..channel_count) |channel| {
             const subframe_header: SubframeHeader = .{
@@ -456,10 +452,8 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         // NOTE: Last subframe is padded with zero bits to be byte aligned.
         bit_reader.alignToByte();
 
-        const frame_crc = try reader.readInt(u16, .big);
-        _ = frame_crc;
-        // TODO: Check CRC
-        // "Following this is a 16-bit CRC, initialized with 0, with the polynomial x^16 + x^15 + x^2 + x^0. This CRC covers the whole frame, excluding the 16-bit CRC but including the sync code."
+        // Frame CRC
+        _ = try reader.readInt(u16, .big);
 
         switch (frame_header.channels) {
             .LRLeftSideStereo => {
