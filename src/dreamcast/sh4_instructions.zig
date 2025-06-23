@@ -45,6 +45,9 @@ pub fn init_table() void {
     }
 }
 
+const fsca_table_file = @embedFile("./data/fsca.bin");
+pub const FSCATable = @as([*]const f32, @alignCast(@ptrCast(fsca_table_file.ptr)))[0 .. 2 * 0x10000];
+
 const CacheAccess = packed struct {
     r0: bool = false,
     rn: bool = false,
