@@ -2104,6 +2104,10 @@ pub fn fsca_FPUL_DRn(cpu: *SH4, opcode: Instr) !void {
     std.debug.assert(opcode.nmd.n & 1 == 0);
 
     const fraction = cpu.fpul & 0x0000_FFFF;
+    // Original approximation (table is hardware accurate):
+    //   const angle = 2 * std.math.pi * @as(f32, @floatFromInt(fraction)) / 0x10000;
+    //   cpu.FR(opcode.nmd.n).* = @sin(angle);
+    //   cpu.FR(opcode.nmd.n + 1).* = @cos(angle);
 
     cpu.FR(opcode.nmd.n).* = sh4_instructions.FSCATable[2 * fraction];
     cpu.FR(opcode.nmd.n + 1).* = sh4_instructions.FSCATable[2 * fraction + 1];

@@ -842,6 +842,7 @@ pub const Emitter = struct {
     }
 
     pub fn cmp_scalar_fp(self: *@This(), comptime size: OperandSize, lhs: FPRegister, rhs: FPRegister) !void {
+        // COMISS xmm1, xmm2/m64 / COMISD xmm1, xmm2/m64
         switch (size) {
             ._32 => {},
             ._64 => try self.emit(u8, 0x66),
