@@ -275,8 +275,8 @@ pub fn read_sector(self: *@This(), fad: u32) ![]const u8 {
 }
 
 pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
-    self.decompress_sectors(fad, count) catch {
-        log.err("Failed to decompress sectors [{d}, {d}]", .{ fad, fad + count - 1 });
+    self.decompress_sectors(fad, count) catch |err| {
+        log.err("Failed to decompress sectors [{d}, {d}]: {s}", .{ fad, fad + count - 1, @errorName(err) });
         return 0;
     };
     const track = Track.get_corresponding_track(&self.tracks, fad);
@@ -284,8 +284,8 @@ pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
 }
 
 pub fn load_sectors_raw(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
-    self.decompress_sectors(fad, count) catch {
-        log.err("Failed to decompress sectors [{d}, {d}]", .{ fad, fad + count - 1 });
+    self.decompress_sectors(fad, count) catch |err| {
+        log.err("Failed to decompress sectors [{d}, {d}]: {s}", .{ fad, fad + count - 1, @errorName(err) });
         return 0;
     };
     const track = Track.get_corresponding_track(&self.tracks, fad);
@@ -633,12 +633,12 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         .CD_Flac => {
-            const bytes = CDMaxSectorBytes * sectors_per_hunk;
+            const bytes = sectors_per_hunk * CDMaxSectorBytes;
             const num_samples = bytes / @sizeOf(i16);
             var flac_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset..]);
             const flac_reader = flac_stream.reader();
-            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @alignCast(@ptrCast(dest.ptr)))[0 .. dest.len / 2], num_samples, CDMaxSectorBytes);
-            return @min(dest.len, bytes);
+            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @alignCast(@ptrCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
+            return bytes;
         },
         else => {
             log.err("Unsupported compression method: {any}", .{compression});

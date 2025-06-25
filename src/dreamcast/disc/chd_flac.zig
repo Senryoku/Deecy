@@ -100,12 +100,29 @@ const BitDepth = enum(u3) {
     }
 };
 
+const BlockSize = enum(u4) {
+    Reserved = 0b0000,
+    @"192" = 0b0001,
+    Uncommon8b = 0b0110,
+    Uncommon16b = 0b0111,
+    _,
+
+    pub fn value(self: @This()) u16 {
+        return switch (@intFromEnum(self)) {
+            0b0001 => 192,
+            0b0010...0b0101 => |b| 144 * std.math.pow(u16, 2, b),
+            0b1000...0b1111 => |b| std.math.pow(u16, 2, b),
+            else => unreachable,
+        };
+    }
+};
+
 const FrameHeader = packed struct(u32) {
     zero: u1,
     bit_depth: BitDepth,
     channels: Channels,
     sample_rate: SampleRate,
-    block_size: u4,
+    block_size: BlockSize,
     blocking_strategy: enum(u1) { Fixed = 0, Variable = 1 },
     frame_sync: u15,
 };
@@ -122,138 +139,141 @@ const SubframeHeader = packed struct {
     wasted_bit_flag: u1,
 };
 
-const low_bit_mask = [_]u8{
-    0b00000000,
-    0b00000001,
-    0b00000011,
-    0b00000111,
-    0b00001111,
-    0b00011111,
-    0b00111111,
-    0b01111111,
-};
+pub fn BitReader(comptime Reader: type) type {
+    return struct {
+        reader: Reader,
+        bits: u8 = 0,
+        count: u4 = 0,
 
-inline fn read_unary_integer_from_empty_buffer(bit_reader: anytype) !u32 {
-    std.debug.assert(bit_reader.count == 0);
-    if (try bit_reader.readBitsNoEof(u1, 1) == 0) { // Force fetching the next byte
-        std.debug.assert(bit_reader.count == 7);
-        var unary_integer: u32 = 1;
-        const buffered_bits = (bit_reader.bits << @intCast(8 - bit_reader.count)) | low_bit_mask[8 - bit_reader.count];
-        const clz = @clz(buffered_bits);
-        unary_integer += clz;
-        if (clz == bit_reader.count) {
-            bit_reader.alignToByte(); // Discard those 0 bits
-            while (try bit_reader.readBitsNoEof(u1, 1) == 0) unary_integer += 1; // Revert to simple version
-        } else {
-            _ = try bit_reader.readBitsNoEof(u8, clz + 1); // Discard those bits and the 1
+        const LowBitMasks = [9]u8{
+            0b00000000,
+            0b00000001,
+            0b00000011,
+            0b00000111,
+            0b00001111,
+            0b00011111,
+            0b00111111,
+            0b01111111,
+            0b11111111,
+        };
+
+        pub inline fn readBitsNoEof(self: *@This(), comptime T: type, num: u32) !T {
+            std.debug.assert(self.count <= 8);
+            std.debug.assert(num <= @bitSizeOf(T));
+
+            const U = if (@bitSizeOf(T) < 8) u8 else std.meta.Int(.unsigned, @bitSizeOf(T));
+
+            if (num <= self.count) return @intCast(self.removeBits(@intCast(num)));
+
+            var bits_left: u32 = num - self.count;
+            std.debug.assert(bits_left > 0 and bits_left <= @bitSizeOf(T));
+            var out: U = self.flush();
+
+            if (bits_left >= 8) {
+                if (U == u8) {
+                    // Only possible case: num == 8 on an empty buffer
+                    std.debug.assert(num == 8);
+                    std.debug.assert(bits_left == 8);
+                    std.debug.assert(self.bits == 0);
+                    std.debug.assert(self.count == 0);
+                    return @intCast(try self.reader.readByte());
+                } else {
+                    const full_bytes_left = bits_left / 8;
+                    std.debug.assert(full_bytes_left <= @sizeOf(T));
+
+                    for (0..full_bytes_left) |_| {
+                        out <<= 8;
+                        out |= try self.reader.readByte();
+                    }
+
+                    bits_left %= 8;
+                }
+            }
+            if (bits_left == 0) return @intCast(out);
+
+            std.debug.assert(bits_left > 0 and bits_left < 8);
+
+            const final_byte = try self.reader.readByte();
+            const keep = 8 - bits_left;
+
+            out <<= @intCast(bits_left);
+            out |= final_byte >> @intCast(keep);
+            self.bits = final_byte & LowBitMasks[keep];
+
+            self.count = @intCast(keep);
+            return @intCast(out);
         }
-        return unary_integer;
-    }
-    return 0;
+
+        inline fn removeBits(self: *@This(), num: u4) u8 {
+            if (num == 8) return self.flush();
+
+            const keep = self.count - num;
+            const bits = self.bits >> @intCast(keep);
+            self.bits &= LowBitMasks[keep];
+
+            self.count = keep;
+            return bits;
+        }
+
+        inline fn flush(self: *@This()) u8 {
+            const bits = self.bits;
+            self.bits = 0;
+            self.count = 0;
+            return bits;
+        }
+
+        pub inline fn alignToByte(self: *@This()) void {
+            self.bits = 0;
+            self.count = 0;
+        }
+
+        pub inline fn readUnary(self: *@This()) !u32 {
+            // Also accounts for the self.count == 0 case.
+            if (self.bits == 0) return self.count + try self.readUnaryFromEmptyBuffer();
+            std.debug.assert(self.count > 0 and self.count <= 8);
+            const clz = @clz(self.bits) - (8 - self.count);
+            std.debug.assert(clz < 8);
+            // Discard those bits and the 1
+            self.count = self.count - 1 - clz;
+            self.bits &= LowBitMasks[self.count];
+            return clz;
+        }
+
+        inline fn readUnaryFromEmptyBuffer(self: *@This()) !u32 {
+            var unary_integer: u32 = 0;
+            var bits = try self.reader.readByte();
+            while (bits == 0) { // <=> clz == 8
+                unary_integer += 8;
+                bits = try self.reader.readByte();
+            }
+            const clz = @clz(bits);
+            std.debug.assert(clz < 8);
+            // Discard those bits and the 1
+            self.count = 8 - 1 - clz;
+            self.bits = bits & LowBitMasks[self.count];
+            return unary_integer + clz;
+        }
+    };
 }
 
-inline fn read_unary_integer(bit_reader: anytype) !u32 {
-    if (false) {
-        // Easy to read and portable version.
-        var unary_integer: u32 = 0;
-        while (try bit_reader.readBitsNoEof(u1, 1) == 0) unary_integer += 1;
-        return unary_integer;
-    } else {
-        // Faster version relying on the internals of std.io.bitReader
-        if (bit_reader.count == 0)
-            return try read_unary_integer_from_empty_buffer(bit_reader);
-        const buffered_bits = (bit_reader.bits << @intCast(8 - bit_reader.count)) | low_bit_mask[8 - bit_reader.count];
-        const clz = @clz(buffered_bits);
-        var unary_integer: u32 = clz;
-        if (clz == bit_reader.count) {
-            bit_reader.alignToByte(); // Discard those 0 bits
-            if (false) {
-                // Revert to simple version immediately
-                while (try bit_reader.readBitsNoEof(u1, 1) == 0) unary_integer += 1;
-            } else {
-                // Inline a second round before reverting (NOTE: a recursive call would prevent inlining and seems to be slower)
-                unary_integer += try read_unary_integer_from_empty_buffer(bit_reader);
-            }
-            return unary_integer;
-        } else {
-            _ = try bit_reader.readBitsNoEof(u8, clz + 1); // Discard those bits and the 1
-            return unary_integer;
-        }
-    }
+pub fn bitReader(reader: anytype) BitReader(@TypeOf(reader)) {
+    return .{ .reader = reader };
 }
 
 /// Reads a signed integer with a runtime known bit depth
 inline fn read_signed_integer(comptime T: type, bit_reader: anytype, bit_depth: u6) !T {
-    if (bit_depth == 0) return 0;
-    const container_type = switch (@bitSizeOf(T)) {
-        8 => u8,
-        16 => u16,
-        32 => u32,
-        64 => u64,
-        else => @compileError("Unsupported container type: " ++ @typeName(T)),
-    };
-
-    var r = try bit_reader.readBitsNoEof(container_type, bit_depth);
+    std.debug.assert(bit_depth > 0 and bit_depth <= @bitSizeOf(T));
+    const ContainerType = std.meta.Int(.unsigned, @bitSizeOf(T));
+    var r = try bit_reader.readBitsNoEof(ContainerType, bit_depth);
     // Sign extend from bit_depth to container_type size
-    if ((@as(container_type, 1) << @intCast(bit_depth - 1)) & r != 0) r |= @as(container_type, @truncate(0xFFFFFFFFFFFFFFFF)) << @intCast(bit_depth);
-    return @bitCast(r);
+    const shift = @bitSizeOf(ContainerType) - @as(usize, bit_depth);
+    r <<= @intCast(shift);
+    return @as(T, @bitCast(r)) >> @intCast(shift);
 }
 
 inline fn read_unencoded_sample(comptime SampleType: type, bit_reader: anytype, wasted_bits: u6, bits_per_sample: u6) !SampleType {
-    const InterType = switch (SampleType) {
-        i8 => i16,
-        i16 => i32,
-        i24 => i32,
-        i32 => i64,
-        else => @compileError("Unsupported sample type: " ++ @typeName(SampleType)),
-    };
-    if (wasted_bits > 0) {
-        return @intCast(try read_signed_integer(InterType, bit_reader, bits_per_sample - wasted_bits));
-    } else {
-        return @intCast(try read_signed_integer(InterType, bit_reader, bits_per_sample));
-    }
-}
-
-fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, block_size: u16, order: u6, bit_reader: anytype) !void {
-    std.debug.assert(residuals.len >= block_size);
-
-    const coding_method = try bit_reader.readBitsNoEof(u2, 2);
-    if (coding_method >= 0b10) return error.InvalidResidualCodingMethod;
-    const partition_order = try bit_reader.readBitsNoEof(u4, 4);
-
-    log_residual.debug("    Residual decoding. coding_method: {d}, partition_order: {d}", .{ coding_method, partition_order });
-
-    var partition_start_idx: u32 = 0;
-    for (0..std.math.pow(u32, 2, partition_order)) |partition| {
-        var count = (block_size >> partition_order);
-        if (partition == 0) count -= order;
-        const rice_parameter: u5 = try bit_reader.readBitsNoEof(u5, switch (coding_method) {
-            0b00 => 4,
-            0b01 => 5,
-            else => unreachable,
-        });
-        log_residual.debug("      partition[{d}]: rice_parameter: {d}", .{ partition, rice_parameter });
-        if ((coding_method == 0b00 and rice_parameter == 0b1111) or (coding_method == 0b01 and rice_parameter == 0b11111)) {
-            // No rice parameter
-            const bit_depth: u5 = try bit_reader.readBitsNoEof(u5, 5);
-            if (bit_depth == 0) {
-                @memset(residuals[partition_start_idx..][0..count], 0);
-            } else {
-                for (0..count) |i|
-                    residuals[partition_start_idx + i] = try read_signed_integer(ResidualType, bit_reader, bit_depth);
-            }
-        } else {
-            const UnsignedResidualType = std.meta.Int(.unsigned, @bitSizeOf(ResidualType));
-            for (0..count) |i| {
-                const quotient: UnsignedResidualType = @intCast(try read_unary_integer(bit_reader));
-                const remainder = try bit_reader.readBitsNoEof(UnsignedResidualType, rice_parameter);
-                const zigzag_encoded: UnsignedResidualType = (quotient << @intCast(rice_parameter)) + remainder;
-                const residual: ResidualType = @bitCast((zigzag_encoded >> 1) ^ @as(UnsignedResidualType, @bitCast(-@as(ResidualType, @intCast(zigzag_encoded & 1)))));
-                residuals[partition_start_idx + i] = residual;
-            }
-        }
-        partition_start_idx += count;
-    }
+    const InterType = std.meta.Int(.signed, try std.math.ceilPowerOfTwo(u32, @bitSizeOf(SampleType) + 1));
+    return @intCast(try read_signed_integer(InterType, bit_reader, bits_per_sample - wasted_bits));
 }
 
 fn read_coded_number(reader: anytype) !u64 {
@@ -269,7 +289,61 @@ fn read_coded_number(reader: anytype) !u64 {
     return coded_number;
 }
 
-pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, reader: anytype, output: []SampleType, num_samples: u32, expected_block_size: u16) !void {
+fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, block_size: u16, order: u6, bit_reader: anytype) !void {
+    std.debug.assert(residuals.len >= block_size - order);
+
+    const coding_method = try bit_reader.readBitsNoEof(u2, 2);
+    if (coding_method >= 0b10) return error.InvalidResidualCodingMethod;
+    const partition_order = try bit_reader.readBitsNoEof(u4, 4);
+
+    log_residual.debug("    Residual decoding: Coding method: {s}, Partition order: {d}", .{ if (coding_method == 0b00) "Rice" else "Rice2", partition_order });
+
+    var partition_start_idx: u32 = 0;
+    for (0..std.math.pow(u32, 2, partition_order)) |partition| {
+        var count = (block_size >> partition_order);
+        if (partition == 0) count -= order;
+        switch (coding_method) {
+            inline 0b00, 0b01 => |comptime_coding_method| try decode_residual_partition(ResidualType, @enumFromInt(comptime_coding_method), residuals[partition_start_idx..][0..count], bit_reader),
+            else => unreachable,
+        }
+        partition_start_idx += count;
+    }
+}
+
+fn decode_residual_partition(comptime ResidualType: type, comptime coding_method: enum(u2) { Rice = 0, Rice2 = 1 }, residuals: []ResidualType, bit_reader: anytype) !void {
+    const UnsignedResidualType = std.meta.Int(.unsigned, @bitSizeOf(ResidualType));
+    const RiceParameterType = switch (coding_method) {
+        .Rice => u4,
+        .Rice2 => u5,
+    };
+
+    const rice_parameter = try bit_reader.readBitsNoEof(RiceParameterType, @bitSizeOf(RiceParameterType));
+    log_residual.debug("      Partition: Rice parameter {d}", .{rice_parameter});
+
+    switch (rice_parameter) {
+        std.math.maxInt(RiceParameterType) => { // No rice parameter
+            const bit_depth: u5 = try bit_reader.readBitsNoEof(u5, 5);
+            if (bit_depth == 0) {
+                @memset(residuals, 0);
+            } else {
+                for (0..residuals.len) |i|
+                    residuals[i] = try read_signed_integer(ResidualType, bit_reader, bit_depth);
+            }
+        },
+        inline else => |comptime_rice_parameter| {
+            if (comptime_rice_parameter >= @bitSizeOf(UnsignedResidualType)) unreachable;
+            for (0..residuals.len) |i| {
+                const quotient: UnsignedResidualType = @intCast(try bit_reader.readUnary());
+                const remainder = try bit_reader.readBitsNoEof(UnsignedResidualType, comptime_rice_parameter);
+                const zigzag_encoded: UnsignedResidualType = (quotient << @intCast(comptime_rice_parameter)) + remainder;
+                const residual: ResidualType = @bitCast((zigzag_encoded >> 1) ^ @as(UnsignedResidualType, @bitCast(-@as(ResidualType, @intCast(zigzag_encoded & 1)))));
+                residuals[i] = residual;
+            }
+        },
+    }
+}
+
+pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, reader: anytype, output: []SampleType, num_samples: u32, expected_block_size: u16, expected_channel_count: u4, expected_bits_per_sample: u6) !void {
     // Larger type for intermediate computations
     const InterType = switch (SampleType) {
         i8 => i16,
@@ -278,37 +352,31 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         else => @compileError("Unsupported sample type: " ++ @typeName(SampleType)),
     };
 
-    var first_frame = true;
-    var channel_count: u4 = 2;
-    var bits_per_sample: u6 = 16;
+    // AFAIK these are fixed for CHDs. Keeping the distinction around just in case.
+    const channel_count = expected_channel_count;
+    const bits_per_sample = expected_bits_per_sample;
 
-    var residuals = try allocator.alloc(InterType, expected_block_size);
-    defer allocator.free(residuals);
+    var samples_working_buffer = try allocator.alloc(InterType, expected_block_size);
+    defer allocator.free(samples_working_buffer);
 
     var frame_sample_offset: usize = 0;
     while (frame_sample_offset < num_samples) {
         const frame_header: FrameHeader = @bitCast(try reader.readInt(u32, .big));
-        log_frame.debug("frame header: {any} (frame_sample_offset: {d})", .{ frame_header, frame_sample_offset });
+        if (frame_header.frame_sync != (0xFFF8 >> 1))
+            return error.InvalidFrameHeader; // NOTE: We could try to return normally when valid_total_sample_count is false here. The CRC check should catch if this was the wrong decision.
 
         const coded_number = try read_coded_number(&reader);
-        log_frame.debug("  Coded number: {d}", .{coded_number});
-
-        var bit_reader = std.io.bitReader(.big, reader);
 
         const block_size: u16 = switch (frame_header.block_size) {
-            0b0000 => return error.InvalidFrameHeader, // Reserved
-            0b0001 => 192,
-            0b0010...0b0101 => |b| 144 * std.math.pow(u16, 2, b),
-            // Uncommon block size
-            0b0110 => @as(u16, try reader.readInt(u8, .big)) + 1,
-            0b0111 => bs: {
+            .Reserved => return error.InvalidFrameHeader,
+            .Uncommon8b => @as(u16, try reader.readInt(u8, .big)) + 1,
+            .Uncommon16b => bs: {
                 const ubs = try reader.readInt(u16, .big);
                 if (ubs == std.math.maxInt(u16)) return error.InvalidFrameHeader;
                 break :bs ubs + 1;
             },
-            0b1000...0b1111 => |b| std.math.pow(u16, 2, b),
+            else => |b| b.value(),
         };
-        log_frame.debug("  block_size: {d}", .{block_size});
 
         const frame_sample_rate: u24 = switch (frame_header.sample_rate) {
             .StoredInMetadata => return error.InvalidFrameHeader,
@@ -318,22 +386,32 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
             .Forbidden => return error.InvalidFrameHeader,
             else => |sr| sr.hz(),
         };
-        log_frame.debug("  frame_sample_rate: {d}", .{frame_sample_rate});
 
-        if (first_frame) {
-            channel_count = frame_header.channels.count();
-            bits_per_sample = switch (frame_header.bit_depth) {
-                .StoredInMetadata => return error.InvalidFrameHeader,
-                else => |bd| bd.bps(),
-            };
+        if (block_size != expected_block_size) return error.UnexpectedBlockSize;
+        if (frame_header.channels.count() != expected_channel_count) return error.UnexpectedChannelCount;
+        const frame_bit_depth = switch (frame_header.bit_depth) {
+            .StoredInMetadata => return error.InvalidFrameHeader,
+            else => |bd| bd.bps(),
+        };
+        if (frame_bit_depth != expected_bits_per_sample) return error.UnexpectedBitsPerSample;
 
-            first_frame = false;
-        }
-        // Block size of 1 not allowed except for the last frame.
-        if (block_size == 1 and frame_sample_offset + channel_count * block_size < num_samples) return error.InvalidFrameHeader;
+        const frame_header_crc = try reader.readInt(u8, .big);
+        // TODO: Check CRC
+        // Finally, an 8-bit CRC follows the frame/sample number, an uncommon block size, or an uncommon sample rate (depending on whether the latter two are stored).
+        // This CRC is initialized with 0 and has the polynomial x^8 + x^2 + x^1 + x^0. This CRC covers the whole frame header before the CRC, including the sync code.
 
-        // Frame header CRC
-        _ = try reader.readInt(u8, .big);
+        log_frame.debug("Frame: First sample: {d}, Sample Rate: {s} ({d}Hz), Channels: {s} ({d}), Bit Depth: {s} ({d}), Block Size: {s} ({d}), CRC: {X:0>2}, Coded Number ({s}): {d}", .{
+            frame_sample_offset, @tagName(frame_header.sample_rate), frame_sample_rate, @tagName(frame_header.channels),
+            channel_count,       @tagName(frame_header.bit_depth),   bits_per_sample,   std.enums.tagName(BlockSize, frame_header.block_size) orelse "Common",
+            block_size,          frame_header_crc,
+            switch (frame_header.blocking_strategy) {
+                .Fixed => "Frame number",
+                .Variable => "Sample number",
+            },
+            coded_number,
+        });
+
+        var bit_reader = bitReader(reader);
 
         for (0..channel_count) |channel| {
             const subframe_header: SubframeHeader = .{
@@ -341,16 +419,11 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                 .subframe_type = try bit_reader.readBitsNoEof(u6, 6),
                 .wasted_bit_flag = try bit_reader.readBitsNoEof(u1, 1),
             };
-            log_subframe.debug("  subframe_header[{d}]: {any} (first sample: {d})", .{ channel, subframe_header, frame_sample_offset + channel });
-            if (subframe_header.zero != 0)
-                return error.InvalidSubframeHeader;
+            if (subframe_header.zero != 0) return error.InvalidSubframeHeader;
 
-            var wasted_bits: u6 = 0;
-            if (subframe_header.wasted_bit_flag == 1) {
-                wasted_bits = @intCast(try read_unary_integer(&bit_reader) + 1);
-                log_subframe.debug("  wasted_bits: {d}", .{wasted_bits});
-            }
+            const wasted_bits: u6 = if (subframe_header.wasted_bit_flag == 1) @intCast(try bit_reader.readUnary() + 1) else 0;
 
+            // "When stereo decorrelation is used, the side channel will have one extra bit of bit depth"
             const unencoded_samples_bit_depth = switch (frame_header.channels) {
                 .LRLeftSideStereo => if (channel == 1) bits_per_sample + 1 else bits_per_sample,
                 .LRSideRightStereo => if (channel == 0) bits_per_sample + 1 else bits_per_sample,
@@ -358,95 +431,104 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                 else => bits_per_sample,
             };
 
+            const subframe_samples = output[frame_sample_offset..][channel .. @as(usize, channel_count) * block_size];
             switch (subframe_header.subframe_type) {
                 0b000000 => { // Constant subframe
+                    log_subframe.debug("Subframe #{d}: Constant, {d} wasted bits", .{ channel, wasted_bits });
                     const sample = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, bits_per_sample);
                     if (channel_count == 1) {
-                        @memset(output[frame_sample_offset..][0..block_size], sample);
+                        @memset(subframe_samples, sample);
                     } else {
-                        for (0..block_size) |i| {
-                            output[frame_sample_offset + channel_count * i + channel] = sample;
-                        }
+                        for (0..block_size) |i|
+                            subframe_samples[channel_count * i] = sample;
                     }
                 },
                 0b000001 => { // Verbatim subframe
-                    for (0..block_size) |i| {
-                        output[frame_sample_offset + channel_count * i + channel] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
-                        log_subframe.debug("    sample: {d}", .{output[frame_sample_offset + channel_count * i + channel]});
-                    }
+                    log_subframe.debug("Subframe #{d}: Verbatim subframe, {d} wasted bits", .{ channel, wasted_bits });
+                    for (0..block_size) |i|
+                        subframe_samples[channel_count * i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
                 },
                 0b001000...0b001100 => |t| { // Subframe with a fixed predictor of order v-8; i.e., 0, 1, 2, 3 or 4
-                    const order: u3 = @intCast(t & 0b000111);
-                    log_subframe.debug("  Subframe with a fixed predictor of order {d}", .{order});
-                    if (order > 4) return error.InvalidSubframeHeader;
+                    if (samples_working_buffer.len < block_size)
+                        samples_working_buffer = try allocator.realloc(samples_working_buffer, block_size);
 
-                    for (0..order) |i| {
-                        output[frame_sample_offset + channel_count * i + channel] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
-                        log_subframe.debug("    warmup_sample: {d}", .{output[frame_sample_offset + channel_count * i + channel]});
+                    const order: u3 = @intCast(t & 0b000111);
+                    if (order > 4) return error.InvalidSubframeHeader;
+                    // Unencoded warm-up samples (n = subframe's bits per sample * LPC order).
+                    for (0..order) |i|
+                        samples_working_buffer[i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
+
+                    log_subframe.debug("Subframe #{d}: Fixed predictor of order {d}, {d} wasted bits", .{ channel, order, wasted_bits });
+                    log_subframe.debug("  Warmup Samples: {d}", .{samples_working_buffer[0..order]});
+
+                    try decode_residuals(InterType, samples_working_buffer[order..], block_size, order, &bit_reader);
+
+                    for (order..block_size) |i| {
+                        samples_working_buffer[i] += switch (order) {
+                            0 => 0, // Just the residuals
+                            1 => 1 * samples_working_buffer[i - 1],
+                            2 => 2 * samples_working_buffer[i - 1] - 1 * samples_working_buffer[i - 2],
+                            3 => 3 * samples_working_buffer[i - 1] - 3 * samples_working_buffer[i - 2] + 1 * samples_working_buffer[i - 3],
+                            4 => 4 * samples_working_buffer[i - 1] - 6 * samples_working_buffer[i - 2] + 4 * samples_working_buffer[i - 3] - samples_working_buffer[i - 4],
+                            else => unreachable,
+                        };
                     }
 
-                    if (residuals.len < block_size)
-                        residuals = try allocator.realloc(residuals, block_size);
-
-                    try decode_residuals(InterType, residuals, block_size, order, &bit_reader);
-
-                    for (0..block_size - order) |i| {
-                        const idx = frame_sample_offset + channel_count * (order + i) + channel;
-                        output[idx] = @intCast(switch (order) {
-                            0 => residuals[i],
-                            1 => residuals[i] + @as(InterType, 1) * output[idx - channel_count * 1],
-                            2 => residuals[i] + @as(InterType, 2) * output[idx - channel_count * 1] - @as(InterType, 1) * output[idx - channel_count * 2],
-                            3 => residuals[i] + @as(InterType, 3) * output[idx - channel_count * 1] - @as(InterType, 3) * output[idx - channel_count * 2] + @as(InterType, 1) * output[idx - channel_count * 3],
-                            4 => residuals[i] + @as(InterType, 4) * output[idx - channel_count * 1] - @as(InterType, 6) * output[idx - channel_count * 2] + @as(InterType, 4) * output[idx - channel_count * 3] - output[idx - channel_count * 4],
-                            else => unreachable,
-                        });
+                    // Interleave
+                    for (0..block_size) |i| {
+                        if (samples_working_buffer[i] < std.math.minInt(SampleType) or samples_working_buffer[i] > std.math.maxInt(SampleType))
+                            return error.FLPCOverflow;
+                        subframe_samples[channel_count * i] = @intCast(samples_working_buffer[i]);
                     }
                 },
                 0b100000...0b111111 => |t| { // Subframe with a linear predictor of order v-31; i.e., 1 through 32 (inclusive)
+                    if (samples_working_buffer.len < block_size)
+                        samples_working_buffer = try allocator.realloc(samples_working_buffer, block_size);
+
                     const order: u6 = @intCast(t - 31);
-                    log_subframe.debug("  Subframe with a linear predictor of order: {d}", .{order});
                     // Unencoded warm-up samples (n = subframe's bits per sample * LPC order).
-                    for (0..order) |i| {
-                        output[frame_sample_offset + channel_count * i + channel] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
-                        log_subframe.debug("    warmup_sample: {d}", .{output[frame_sample_offset + channel_count * i + channel]});
-                    }
+                    for (0..order) |i|
+                        samples_working_buffer[i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
                     // (Predictor coefficient precision in bits)-1 (Note: 0b1111 is forbidden).
                     const coefficient_precision = (try bit_reader.readBitsNoEof(u4, 4)) + 1;
-                    log_subframe.debug("    coefficient_precision: {d}", .{coefficient_precision});
                     // Prediction right shift needed in bits.
-                    const coefficient_shift_right = try bit_reader.readBitsNoEof(u5, 5);
-                    log_subframe.debug("    coefficient_shift_right: {d}", .{coefficient_shift_right});
-
+                    const prediction_shift_right = try bit_reader.readBitsNoEof(u5, 5);
                     // Predictor coefficients (n = predictor coefficient precision * LPC order).
-                    var predictor_coefficient: [32]SampleType = undefined;
-                    for (0..order) |i| {
-                        predictor_coefficient[i] = try read_unencoded_sample(SampleType, &bit_reader, 0, coefficient_precision);
-                        log_subframe.debug("    predictor_coefficient[{d}]: {d}", .{ i, predictor_coefficient[i] });
+                    var predictor_coefficient: [32]InterType align(32) = @splat(0);
+                    for (0..order) |i| // Stored in reverse order to match the layout of samples in memory (samples_working_buffer).
+                        predictor_coefficient[order - 1 - i] = try read_unencoded_sample(InterType, &bit_reader, 0, coefficient_precision);
+
+                    log_subframe.debug("Subframe #{d}: Linear predictor of order {d}, {d} bits coefficients, {d} bits right shift, {d} wasted bits", .{ channel, order, coefficient_precision, prediction_shift_right, wasted_bits });
+                    log_subframe.debug("  Warmup Samples: {d}", .{samples_working_buffer[0..order]});
+                    log_subframe.debug("  Predictor Coefficients: {d}", .{predictor_coefficient[0..order]});
+
+                    try decode_residuals(InterType, samples_working_buffer[order..], block_size, order, &bit_reader);
+
+                    switch (order) {
+                        0 => {}, // Just the residuals
+                        33...63 => unreachable,
+                        inline else => |comptime_order| {
+                            for (comptime_order..block_size) |i| {
+                                var prediction: InterType = 0;
+                                inline for (0..comptime_order) |o|
+                                    prediction += samples_working_buffer[i - comptime_order + o] * predictor_coefficient[o];
+                                samples_working_buffer[i] += prediction >> @intCast(prediction_shift_right);
+                            }
+                        },
                     }
-
-                    if (residuals.len < block_size)
-                        residuals = try allocator.realloc(residuals, block_size);
-
-                    try decode_residuals(InterType, residuals, block_size, order, &bit_reader);
-
-                    for (0..block_size - order) |i| {
-                        const idx = frame_sample_offset + channel_count * (order + i) + channel;
-                        var predicted_without_shift: InterType = 0;
-                        for (0..order) |o| {
-                            predicted_without_shift += @as(InterType, @intCast(output[idx - channel_count * (1 + o)])) * predictor_coefficient[o];
-                        }
-                        const predicted = predicted_without_shift >> @intCast(coefficient_shift_right);
-                        output[idx] = @intCast(predicted + residuals[i]);
+                    // Interleave
+                    for (0..block_size) |i| {
+                        if (samples_working_buffer[i] < std.math.minInt(SampleType) or samples_working_buffer[i] > std.math.maxInt(SampleType))
+                            return error.LPCOverflow;
+                        subframe_samples[channel_count * i] = @intCast(samples_working_buffer[i]);
                     }
                 },
                 0b000010...0b000111, 0b001101...0b011111 => return error.InvalidSubframeHeader, // Reserved
             }
 
             if (wasted_bits > 0) {
-                for (0..block_size) |i| {
-                    const idx = frame_sample_offset + channel_count * i + channel;
-                    output[idx] <<= @intCast(wasted_bits);
-                }
+                for (0..block_size) |i|
+                    subframe_samples[channel_count * i] <<= @intCast(wasted_bits);
             }
         }
         // NOTE: Last subframe is padded with zero bits to be byte aligned.
@@ -455,6 +537,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         // Frame CRC
         _ = try reader.readInt(u16, .big);
 
+        // Stereo decorrelation
         switch (frame_header.channels) {
             .LRLeftSideStereo => {
                 for (0..block_size) |i| {
