@@ -1065,14 +1065,14 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         if (ctx.mmu_enabled) {
             // We could do a lot better if the handler wasn't jumping directly to the exception.
             // TODO: Detect the exception, conditionally commit, and only then jump to the exception.
-            try ctx.gpr_cache.commit_all(block);
-            try ctx.fpr_cache.commit_all(block);
+            try ctx.gpr_cache.commit_all_speculatively(block);
+            try ctx.fpr_cache.commit_all_speculatively(block);
 
             // Same dance as in mmu_translation...
-            try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
-            try block.push(.{ .reg64 = ArgRegisters[0] });
-            try block.push(.{ .reg64 = ArgRegisters[0] });
             if (ctx.in_delay_slot) {
+                try block.mov(.{ .reg = ArgRegisters[0] }, sh4_mem("pc"));
+                try block.push(.{ .reg64 = ArgRegisters[0] });
+                try block.push(.{ .reg64 = ArgRegisters[0] });
                 try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc - 2 });
             } else {
                 try block.mov(sh4_mem("pc"), .{ .imm32 = ctx.current_pc });
@@ -1094,15 +1094,19 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         }
 
         if (ctx.mmu_enabled) {
-            try block.pop(.{ .reg64 = ArgRegisters[0] });
-            try block.pop(.{ .reg64 = ArgRegisters[0] });
+            if (ctx.in_delay_slot) {
+                try block.pop(.{ .reg64 = ArgRegisters[0] });
+                try block.pop(.{ .reg64 = ArgRegisters[0] });
+            }
 
             // Check if an exception was raised.
             try block.cmp(.{ .reg8 = ReturnRegister }, .{ .imm8 = 0 });
             // Terminate the block immediately if an exception was raised.
             try ctx.add_jump_to_end(try block.jmp(.NotEqual));
 
-            try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
+            if (ctx.in_delay_slot) {
+                try block.mov(sh4_mem("pc"), .{ .reg = ArgRegisters[0] });
+            }
         }
     }
 }
