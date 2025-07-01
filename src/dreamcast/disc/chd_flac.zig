@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // Adapted/Stripped down from https://github.com/Senryoku/zflac to decompress FLAC frames from CHD files.
-// (Exact commit: c494f37e76192fea694de2f30c0dd7ea2ce6558c, 20/06/2025)
 
 const log = std.log.scoped(.chd_flac);
 const log_frame = std.log.scoped(.chd_flac_frame);
