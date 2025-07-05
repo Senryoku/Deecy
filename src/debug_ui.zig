@@ -996,6 +996,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const header = try std.fmt.bufPrintZ(&buffer, name ++ " ({d})###" ++ name, .{list.vertex_strips.items.len});
 
                     if (zgui.collapsingHeader(header, .{})) {
+                        zgui.pushIntId(@intFromEnum(list_type));
+                        defer zgui.popId();
                         zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
                         for (list.vertex_strips.items, 0..) |strip, idx| {
                             const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d}) - {s}###strip_{d}", .{
@@ -1229,20 +1231,24 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Interrupts", .{})) {
         inline for (@typeInfo(HardwareRegisters.SB_ISTNRM).@"struct".fields) |field| {
-            if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
-                comptime var val: HardwareRegisters.SB_ISTNRM = .{};
-                @field(val, field.name) = 1;
-                dc.raise_normal_interrupt(val);
+            if (!std.mem.startsWith(u8, field.name, "_")) {
+                if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
+                    comptime var val: HardwareRegisters.SB_ISTNRM = .{};
+                    @field(val, field.name) = 1;
+                    dc.raise_normal_interrupt(val);
+                }
             }
         }
 
         zgui.separator();
 
         inline for (@typeInfo(HardwareRegisters.SB_ISTEXT).@"struct".fields) |field| {
-            if (zgui.button("Trigger " ++ field.name ++ " Interrupt", .{})) {
-                comptime var val: HardwareRegisters.SB_ISTEXT = .{};
-                @field(val, field.name) = 1;
-                dc.raise_external_interrupt(val);
+            if (!std.mem.startsWith(u8, field.name, "_")) {
+                if (zgui.button("Trigger " ++ field.name ++ " Ext Interrupt", .{})) {
+                    comptime var val: HardwareRegisters.SB_ISTEXT = .{};
+                    @field(val, field.name) = 1;
+                    dc.raise_external_interrupt(val);
+                }
             }
         }
     }
