@@ -234,6 +234,7 @@ pub fn main() !void {
             dc.cpu.pc = 0xAC010000;
         }
         start_immediately = true;
+        d.ui.binary_loaded = true;
     } else if (disc_path) |path| {
         std.log.info("Loading Disc: {s}...", .{path});
 

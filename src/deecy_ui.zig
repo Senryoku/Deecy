@@ -65,7 +65,7 @@ vmu_displays: [4][2]?struct {
     data: [48 * 32 / 8]u8 = @splat(255),
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
-display_library: bool = false,
+binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
 disc_files: std.ArrayList(GameFile),
 disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
@@ -471,7 +471,7 @@ pub fn draw(self: *@This()) !void {
         zgui.endMainMenuBar();
     }
 
-    if (!d.running and d.dc.gdrom.disc == null or self.display_library)
+    if (!d.running and d.dc.gdrom.disc == null and !self.binary_loaded)
         self.draw_game_library() catch |err| {
             // Most likely due to game loading, and not actually drawing the UI.
             switch (err) {

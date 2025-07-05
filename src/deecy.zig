@@ -654,6 +654,7 @@ pub fn reset(self: *@This()) !void {
     }
 
     try self.dc.reset();
+    self.ui.binary_loaded = false;
     self.renderer.reset();
     self._cycles_to_run = 0;
     self.last_frame_timestamp = std.time.microTimestamp();
