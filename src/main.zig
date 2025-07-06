@@ -11,6 +11,7 @@ const MapleModule = DreamcastModule.Maple;
 const zglfw = @import("zglfw");
 
 const Deecy = @import("deecy.zig");
+const ELF = @import("elf.zig");
 
 pub fn customLog(
     comptime message_level: std.log.Level,
@@ -77,6 +78,7 @@ pub const std_options: std.Options = .{
     .log_level = .info,
     .logFn = customLog,
     .log_scope_levels = &[_]std.log.ScopeLevel{
+        .{ .scope = .elf, .level = .warn },
         .{ .scope = .dc, .level = .info },
         .{ .scope = .sh4, .level = .warn },
         .{ .scope = .mmu, .level = .info },
@@ -221,9 +223,28 @@ pub fn main() !void {
         //        and won't work if the boot ROM is skipped.
         try dc.skip_bios(true);
 
-        var bin_file = try std.fs.cwd().openFile(path, .{});
-        defer bin_file.close();
-        _ = try bin_file.readAll(dc.ram[0x10000..]);
+        var entry_point: u32 = 0xAC010000;
+
+        if (std.mem.endsWith(u8, path, ".elf")) {
+            var elf_file = try std.fs.cwd().openFile(path, .{});
+            defer elf_file.close();
+            var stream: std.io.StreamSource = .{ .file = elf_file };
+
+            var elf = try ELF.init(allocator, &stream);
+            defer elf.deinit();
+
+            entry_point = @intCast(elf.program_entry_offset);
+            for (elf.program_headers) |ph| {
+                if (ph.p_type == .Load) {
+                    try elf_file.seekTo(ph.p_offset);
+                    _ = try elf_file.readAll(dc.ram[(ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000 ..]);
+                } else std.log.scoped(.elf).warn("Program header type {s} not supported", .{@tagName(ph.p_type)});
+            }
+        } else {
+            var bin_file = try std.fs.cwd().openFile(path, .{});
+            defer bin_file.close();
+            _ = try bin_file.readAll(dc.ram[0x10000..]);
+        }
 
         if (ip_bin_path) |ipb_path| {
             var ip_bin_file = try std.fs.cwd().openFile(ipb_path, .{});
@@ -231,7 +252,7 @@ pub fn main() !void {
             _ = try ip_bin_file.readAll(dc.ram[0x8000..]);
         } else {
             // Skip IP.bin
-            dc.cpu.pc = 0xAC010000;
+            dc.cpu.pc = entry_point;
         }
         start_immediately = true;
         d.ui.binary_loaded = true;
