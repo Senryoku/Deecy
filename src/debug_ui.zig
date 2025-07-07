@@ -940,6 +940,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 display(dc.gpu.read_register(Holly.TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL));
         }
 
+        if (zgui.collapsingHeader("Half Offset", .{ .frame_padding = true })) {
+            const HALF_OFFSET = dc.gpu.read_register(Holly.HALF_OFFSET, .HALF_OFFSET);
+            zgui.text("FPU Pixel Sampling Position: {s}", .{@tagName(HALF_OFFSET.fpu_pixel_sampling_position)});
+            zgui.text("TSP Pixel Sampling Position: {s}", .{@tagName(HALF_OFFSET.tsp_pixel_sampling_position)});
+            zgui.text("TSP Texel Sampling Position: {s}", .{@tagName(HALF_OFFSET.tsp_texel_sampling_position)});
+        }
+
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
             zgui.indent(.{});
             defer zgui.unindent(.{});
