@@ -377,10 +377,8 @@ pub const SH4 = struct {
         self.p4_register(u16, .SCSPTR2).* = 0x0000;
         self.p4_register(u16, .SCLSR2).* = 0x0000;
 
-        for (0..self.itlb.len) |i|
-            self.itlb[i].v = false;
-        for (0..self.utlb.len) |i|
-            self.utlb[i].v = false;
+        for (self.itlb) |*entry| entry.* = .{};
+        for (self.utlb) |*entry| entry.* = .{};
         self.reset_utlb_fast_lookup();
 
         self._mmu_state = .Disabled;
@@ -425,10 +423,8 @@ pub const SH4 = struct {
         // BCR1 Held
         // BCR2 Held
 
-        for (0..self.itlb.len) |i|
-            self.itlb[i].v = false;
-        for (0..self.utlb.len) |i|
-            self.utlb[i].v = false;
+        for (self.itlb) |*entry| entry.* = .{};
+        for (self.utlb) |*entry| entry.* = .{};
         self.reset_utlb_fast_lookup();
 
         self._mmu_state = .Disabled;
@@ -998,18 +994,19 @@ pub const SH4 = struct {
         self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
             std.debug.panic("Error allocating _fast_utlb_lookup: {s}", .{@errorName(err)});
         };
-        for (self.utlb, 0..) |entry, idx| {
-            if (entry.valid()) self.sync_utlb_fast_lookup(@intCast(idx));
-        }
+        for (0..self.utlb.len) |idx|
+            self.sync_utlb_fast_lookup(@intCast(idx));
     }
 
     pub fn invalidate_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry) void {
         if (!EnableUTLBFastLookup) return;
-        self.update_utlb_fast_lookup(entry, 0);
+        if (entry.valid())
+            self.update_utlb_fast_lookup(entry, 0);
     }
     pub fn sync_utlb_fast_lookup(self: *@This(), idx: u8) void {
         if (!EnableUTLBFastLookup) return;
-        self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
+        if (self.utlb[idx].valid())
+            self.update_utlb_fast_lookup(self.utlb[idx], idx + 1);
     }
 
     inline fn update_utlb_fast_lookup(self: *@This(), entry: mmu.TLBEntry, value: u8) void {

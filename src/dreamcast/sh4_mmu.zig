@@ -93,20 +93,20 @@ pub const MMU = packed struct {
 
 // Memory layout isn't hardware accurate
 pub const TLBEntry = struct {
-    asid: u8 = undefined, // Address space identifier
-    vpn: u22 = undefined, // Virtual page number
+    asid: u8 = 0xAA, // Address space identifier
+    vpn: u22 = 0xBAD, // Virtual page number
     v: bool = false, // Validity bit
 
-    tc: u1 = undefined, // Timing control bit
-    sa: u3 = undefined, // Space attribute bits
-    wt: bool = undefined, // Write-through bit
-    d: bool = undefined, // Dirty bit
-    pr: ProtectionKey = undefined, // Protection key data
-    c: bool = undefined, // Cacheability bit
-    sh: bool = undefined, // Share status bit, 1 => Shared
-    sz: u2 = undefined, // Page size
+    tc: u1 = 0, // Timing control bit
+    sa: u3 = 0, // Space attribute bits
+    wt: bool = false, // Write-through bit
+    d: bool = false, // Dirty bit
+    pr: ProtectionKey = .ReadWrite, // Protection key data
+    c: bool = true, // Cacheability bit
+    sh: bool = false, // Share status bit, 1 => Shared
+    sz: u2 = 0, // Page size
 
-    _ppn: u32 = undefined, // Physical page number, stored as u19 << 10
+    _ppn: u32 = 0xDEADCAFE, // Physical page number, stored as u19 << 10
 
     pub fn get_ppn(self: *const @This()) u19 {
         return @truncate(self._ppn >> 10);
