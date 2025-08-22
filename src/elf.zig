@@ -6,19 +6,21 @@ pub const ELFType = enum(u8) { Relocatable = 1, Executable = 2, Shared = 3, Core
 pub const InstructionSet = enum(u8) { None = 0, Sparc = 0x02, x86 = 0x03, MIPS = 0x08, PowerPC = 0x14, ARM = 0x28, SuperH = 0x2A, IA_64 = 0x32, x86_64 = 0x3E, AArch64 = 0xB7, RISC_V = 0xF3, _ };
 
 pub const SegmentType = enum(u32) {
-    Null = 0,
-    Load = 1,
-    Dynamic = 2,
-    Interp = 3,
-    Note = 4,
-    ShLib = 5,
-    Phdr = 6,
+    Null = 0, // Program header table entry unused.
+    Load = 1, // Loadable segment.
+    Dynamic = 2, // Dynamic linking information.
+    Interp = 3, // Interpreter information.
+    Note = 4, // Auxiliary information.
+    ShLib = 5, // Reserved
+    Phdr = 6, // Segment containing program header table itself.
+    Tls = 7, // Thread-Local Storage template.
     LoSunW = 0x6FFFFFFA,
     HiSunW = 0x6FFFFFFF,
     SunWBSS = 0x6FFFFFFB,
     // SunWStack = 0x6FFFFFFA,
     LoProc = 0x70000000,
     HiProc = 0x7FFFFFFF,
+    _,
 };
 
 pub const SegmentFlags = packed struct(u32) {
