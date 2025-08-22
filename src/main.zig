@@ -238,7 +238,13 @@ pub fn main() !void {
                 if (ph.p_type == .Load) {
                     try elf_file.seekTo(ph.p_offset);
                     _ = try elf_file.readAll(dc.ram[(ph.p_vaddr & 0x1FFF_FFFF) - 0x0C00_0000 ..]);
-                } else std.log.scoped(.elf).warn("Program header type {s} not supported", .{@tagName(ph.p_type)});
+                } else {
+                    if (std.enums.tagName(ELF.SegmentType, ph.p_type)) |tag| {
+                        std.log.scoped(.elf).warn(termcolor.yellow("Program header type {s} not supported"), .{tag});
+                    } else {
+                        std.log.scoped(.elf).warn(termcolor.yellow("Program header type {d} not supported"), .{@intFromEnum(ph.p_type)});
+                    }
+                }
             }
         } else {
             var bin_file = try std.fs.cwd().openFile(path, .{});

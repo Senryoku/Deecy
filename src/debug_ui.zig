@@ -350,6 +350,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
 
         for (0..d.breakpoints.items.len) |i| {
+            zgui.pushIntId(@intCast(i));
+            defer zgui.popId();
             zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, d.breakpoints.items[i] });
             zgui.sameLine(.{});
             if (zgui.button("Remove", .{})) {
