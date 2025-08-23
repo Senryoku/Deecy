@@ -1504,7 +1504,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 if (cpu._dc) |dc| {
                     const LMMode = dc.read_hw_register(u32, if (ext_addr >= 0x11000000 and ext_addr < 0x12000000) .SB_LMMODE0 else .SB_LMMODE1);
-                    dc.gpu.write_ta_direct_texture_path(addr, if (LMMode != 0) .b32 else .b64, cpu.store_queues[sq_addr.sq]);
+                    dc.gpu.write_ta_direct_texture_path(ext_addr, if (LMMode != 0) .b32 else .b64, cpu.store_queues[sq_addr.sq]);
                 }
             },
             // AICA Memory           System RAM               Texture Memory
