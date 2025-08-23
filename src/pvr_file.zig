@@ -126,7 +126,7 @@ pub fn decode(allocator: std.mem.Allocator, buffer: []const u8) !DecodedPVRImage
         }
 
         if (header.image_data_type.vq_compressed()) {
-            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height);
+            Renderer.decode_vq(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[code_book_offset..], buffer[8 * 256 + texels_offset ..], image.width, image.height, header.image_data_type.twiddled());
         } else {
             Renderer.decode_tex(@alignCast(@ptrCast(image.bgra.ptr)), @enumFromInt(@intFromEnum(header.pixel_format)), buffer[texels_offset..], image.width, image.height, header.image_data_type.twiddled());
         }

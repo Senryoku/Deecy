@@ -136,21 +136,33 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
     }
 }
 
-pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32) void {
+pub fn decode_vq(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFormat, code_book: []const u8, indices: []const u8, u_size: u32, v_size: u32, twiddled: bool) void {
     std.debug.assert(u_size >= 8 and u_size % 8 == 0);
     std.debug.assert(v_size >= 8 and v_size % 8 == 0);
     std.debug.assert(code_book.len >= 8 * 256);
     std.debug.assert(indices.len >= u_size * v_size / 4);
     std.debug.assert(pixel_format == .ARGB1555 or pixel_format == .RGB565 or pixel_format == .ARGB4444);
     const texels = std.mem.bytesAsSlice([4]Color16, code_book);
-    // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
-    for (0..v_size / 2) |v| {
-        for (0..u_size / 2) |u| {
-            const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
-            for (0..4) |tidx| {
-                //                  Macro 2*2 Block            Pixel within the block
-                const pixel_index = (2 * v * u_size + 2 * u) + u_size * (tidx & 1) + (tidx >> 1);
-                dest_bgra[pixel_index] = texels[index][tidx].bgra(pixel_format, true);
+    if (twiddled) {
+        // FIXME: It's not an efficient way to run through the texture, but it's already hard enough to wrap my head around the multiple levels of twiddling.
+        for (0..v_size / 2) |v| {
+            for (0..u_size / 2) |u| {
+                const index = indices[untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2)];
+                const block_index = (2 * v * u_size + 2 * u); // Macro 2*2 Block
+                for (0..4) |tidx| {
+                    const pixel_index = (tidx & 1) * u_size + (tidx >> 1);
+                    dest_bgra[block_index + pixel_index] = texels[index][tidx].bgra(pixel_format, true);
+                }
+            }
+        }
+    } else {
+        // NOTE: This isn't officially supported, but does work in hardware. See https://github.com/pcercuei/bloom/commit/2b214a94e9ed45c2f0a9c9507c8c1af43c4fcc3f for a example use case.
+        for (0..v_size) |v| {
+            for (0..u_size / 4) |u| {
+                const index = indices[v * u_size / 4 + u];
+                const block_index = (v * u_size + 4 * u); // Macro 4*1 Block
+                for (0..4) |tidx|
+                    dest_bgra[block_index + tidx] = texels[index][tidx].bgra(pixel_format, true);
             }
         }
     }
@@ -1670,8 +1682,7 @@ pub const Renderer = struct {
         }
 
         if (texture_control_word.vq_compressed == 1) {
-            std.debug.assert(twiddled);
-            decode_vq(self.bgra_scratch_pad(), texture_control_word.pixel_format, gpu.vram[addr..], gpu.vram[vq_index_addr..], u_size, v_size);
+            decode_vq(self.bgra_scratch_pad(), texture_control_word.pixel_format, gpu.vram[addr..], gpu.vram[vq_index_addr..], u_size, v_size, twiddled);
         } else {
             decode_tex(self.bgra_scratch_pad(), texture_control_word.pixel_format, gpu.vram[addr..], u_size, v_size, twiddled);
         }
