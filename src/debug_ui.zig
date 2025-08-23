@@ -352,6 +352,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         for (0..d.breakpoints.items.len) |i| {
             zgui.pushIntId(@intCast(i));
             defer zgui.popId();
+            zgui.alignTextToFramePadding();
             zgui.text("Breakpoint {d}: 0x{X:0>8}", .{ i, d.breakpoints.items[i] });
             zgui.sameLine(.{});
             if (zgui.button("Remove", .{})) {
@@ -455,20 +456,30 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("SH4 JIT", .{})) {
         _ = zgui.checkbox("Enable", .{ .v = &d.enable_jit });
-        zgui.sameLine(.{});
-        if (zgui.button("Clear Cache", .{})) {
-            const was_running = d.running;
-            if (was_running)
-                d.pause();
-            try dc.sh4_jit.reset();
-            if (was_running)
-                d.start();
-        }
-        _ = zgui.checkbox("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
-        var idle_skip_cycles: i32 = @intCast(d.dc.sh4_jit.idle_skip_cycles);
-        if (zgui.inputInt("Idle Skip Cycles", .{ .v = &idle_skip_cycles })) d.dc.sh4_jit.idle_skip_cycles = @intCast(idle_skip_cycles);
-        zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
         zgui.separator();
+        {
+            _ = zgui.checkbox("Enable Idle Skip", .{ .v = &d.dc.sh4_jit.idle_skip_enabled });
+            var idle_skip_cycles: i32 = @intCast(d.dc.sh4_jit.idle_skip_cycles);
+            if (zgui.inputInt("Idle Skip Cycles", .{ .v = &idle_skip_cycles })) d.dc.sh4_jit.idle_skip_cycles = @intCast(idle_skip_cycles);
+            zgui.separator();
+        }
+        {
+            var clear_cache: bool = false;
+            zgui.alignTextToFramePadding();
+            zgui.text("Cache Size: {d}KiB", .{dc.sh4_jit.block_cache.cursor / 1024});
+            zgui.sameLine(.{});
+            if (zgui.button("Clear", .{})) clear_cache = true;
+            if (zgui.comboFromEnum("Block Invalidation", &dc.sh4_jit.block_invalidation)) clear_cache = true;
+            if (clear_cache) {
+                const was_running = d.running;
+                if (was_running)
+                    d.pause();
+                try dc.sh4_jit.reset();
+                if (was_running)
+                    d.start();
+            }
+            zgui.separator();
+        }
         if (BasicBlock.EnableInstrumentation) {
             if (zgui.collapsingHeader("Block statistics", .{ .default_open = true })) {
                 const max = 50;

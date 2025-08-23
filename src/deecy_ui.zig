@@ -724,6 +724,7 @@ pub fn draw_game_library(self: *@This()) !void {
         zgui.sameLine(.{});
         zgui.spacing();
         zgui.sameLine(.{});
+        zgui.alignTextToFramePadding();
         if (d.config.game_directory) |dir| {
             zgui.text("Directory: {s}", .{dir});
         } else {

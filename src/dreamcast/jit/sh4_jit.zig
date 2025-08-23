@@ -546,6 +546,8 @@ pub const JITContext = struct {
 pub const SH4JIT = struct {
     idle_skip_enabled: bool = true,
     idle_skip_cycles: u32 = MaxCyclesPerExecution,
+    /// Additional checks to perform before executing a block and cause a recompilation if a change is detected. Should not be needed in most cases.
+    block_invalidation: enum { None, FirstInstruction, Always } = .None,
 
     block_cache: BlockCache,
 
@@ -729,6 +731,27 @@ pub const SH4JIT = struct {
         b.clearRetainingCapacity();
 
         ctx.start_index = @intCast(b.instructions.items.len);
+
+        // Perform additionnal checks and re-compiles the block if a change is detected.
+        switch (self.block_invalidation) {
+            .None => {},
+            .FirstInstruction => {
+                // Extremely basic: Only checks the first instruction. Seems to be enough for Bloom.
+                try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc });
+                try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[2], .size = 16 } });
+                try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
+                var valid = try b.jmp(.Equal);
+                // Recompile
+                try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+                valid.patch();
+            },
+            .Always => {
+                // Stupid one that *always* recompiles the block for debugging purposes (i.e. if this one works, this is a cache issue).
+                try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+            },
+        }
 
         var branch = false;
         while (true) {
