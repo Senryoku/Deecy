@@ -116,6 +116,7 @@ const BlockCache = struct {
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {
+        std.debug.assert(start_addr <= end_addr);
         if (start_addr > self.max_address or end_addr < self.min_address) return;
         sh4_jit_log.info("Invalidating {X:0>8}..{X:0>8}", .{ start_addr, end_addr });
 
@@ -3004,11 +3005,13 @@ fn conditional_branch(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr, compt
     }
 
     // NOTE: Disabled for now when MMU is enabled. The delay slot might raise a exception and we'll end up with a misaligned stack with the current implementation.
-    if (Optimizations.inline_small_forward_jumps and (!ctx.mmu_enabled or !delay_slot)) {
+    // if (Optimizations.inline_small_forward_jumps and (!ctx.mmu_enabled or !delay_slot)) {
+    // FIXME: Changes behaviour when the MMU is enabled. AFAIK, the previous condition should be enough, but clearly isn't. I don't understand it yet.
+    if (Optimizations.inline_small_forward_jumps and !ctx.mmu_enabled) {
         // Optimize small forward jumps if possible
         const max_instructions = 6;
         const first_instr = if (delay_slot) 2 else 1;
-        if (dest > ctx.current_pc and (dest - ctx.current_pc) / 2 < max_instructions + first_instr) {
+        if (dest > ctx.current_pc and (dest - ctx.current_pc) / 2 < max_instructions + first_instr and !(ctx.mmu_enabled and cross_page(dest, ctx.current_pc))) {
             const instr_count = (dest - ctx.current_pc) / 2 - first_instr;
             // Make sure there's no jump in there
             for (first_instr..first_instr + instr_count) |i| {
