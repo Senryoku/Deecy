@@ -655,12 +655,9 @@ pub const SH4JIT = struct {
         MMUCache.reset();
 
         sh4_jit_log.debug("Reset requested.", .{});
-        // Blocks will invalidate themselves with the Hash strategy. This should avoid excessive invalidation in some WinCE titles.
-        if (self.block_invalidation != .Hash) {
-            self.block_cache.reset_blocks() catch {
-                std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
-            };
-        }
+        self.block_cache.reset_blocks() catch {
+            std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
+        };
     }
 
     pub fn reset(self: *@This()) !void {

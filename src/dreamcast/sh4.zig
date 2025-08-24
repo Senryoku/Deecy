@@ -1604,7 +1604,11 @@ pub const SH4 = struct {
                             if (ccr.ici == 1 or ccr.oci == 1) {
                                 // Instruction cache invalidation - We'll use it as a clue to flush our JIT cache.
                                 sh4_log.info("Instruction cache invalidation - Purging JIT cache.", .{});
-                                if (self._dc) |dc| dc.sh4_jit.safe_reset();
+                                // Blocks should invalidate themselves with the Hash strategy. This should avoid excessive invalidation in some WinCE titles.
+                                if (self._dc) |dc| {
+                                    if (dc.sh4_jit.block_invalidation != .Hash)
+                                        dc.sh4_jit.safe_reset();
+                                }
                             }
                             if (ccr.oci == 1)
                                 @memset(&self._operand_cache_state.dirty, false);
