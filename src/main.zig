@@ -160,55 +160,63 @@ pub fn main() !void {
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
     while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "-b")) {
-            binary_path = args.next() orelse {
-                std.log.err(termcolor.red("Expected path to binary file after -b."), .{});
-                return error.InvalidArguments;
-            };
-        }
-        if (std.mem.eql(u8, arg, "-g")) {
-            disc_path = args.next() orelse {
-                std.log.err(termcolor.red("Expected path to disc file after -g."), .{});
-                return error.InvalidArguments;
-            };
-        }
-        if (std.mem.eql(u8, arg, "-i")) {
-            ip_bin_path = args.next() orelse {
-                std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
-                return error.InvalidArguments;
-            };
-        }
-        if (std.mem.eql(u8, arg, "--vmu")) {
-            const path = args.next() orelse {
-                std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
-                return error.InvalidArguments;
-            };
-            vmu_path.clearRetainingCapacity();
-            try vmu_path.appendSlice(path);
-            default_vmu = false;
-        }
-        if (std.mem.eql(u8, arg, "-d"))
-            dc.cpu.debug_trace = true;
-        if (std.mem.eql(u8, arg, "--skip-bios"))
-            skip_bios = true;
-        if (std.mem.eql(u8, arg, "--stop"))
-            force_stop = true;
-        if (std.mem.eql(u8, arg, "--force-render"))
-            force_render = true;
-        if (std.mem.eql(u8, arg, "--no-realtime"))
-            d.realtime = false;
-        if (std.mem.eql(u8, arg, "--load-state")) {
-            const num_str = args.next() orelse {
-                std.log.err(termcolor.red("Expected state number after --load-state."), .{});
-                return error.InvalidArguments;
-            };
-            load_state = std.fmt.parseInt(u32, num_str, 10) catch |err| {
-                std.log.err(termcolor.red("Invalid state number after --load-state: {s}"), .{@errorName(err)});
-                return error.InvalidArguments;
-            };
-            if (load_state.? >= Deecy.MaxSaveStates) {
-                std.log.err(termcolor.red("Invalid state number after --load-state: {d}"), .{load_state.?});
-                return error.InvalidArguments;
+        if (std.mem.startsWith(u8, arg, "-")) {
+            if (std.mem.eql(u8, arg, "-b")) {
+                binary_path = args.next() orelse {
+                    std.log.err(termcolor.red("Expected path to binary file after -b."), .{});
+                    return error.InvalidArguments;
+                };
+            } else if (std.mem.eql(u8, arg, "-g")) {
+                disc_path = args.next() orelse {
+                    std.log.err(termcolor.red("Expected path to disc file after -g."), .{});
+                    return error.InvalidArguments;
+                };
+            } else if (std.mem.eql(u8, arg, "-i")) {
+                ip_bin_path = args.next() orelse {
+                    std.log.err(termcolor.red("Expected path to IP.bin after -i."), .{});
+                    return error.InvalidArguments;
+                };
+            } else if (std.mem.eql(u8, arg, "--vmu")) {
+                const path = args.next() orelse {
+                    std.log.err(termcolor.red("Expected path to VMU after --vmu."), .{});
+                    return error.InvalidArguments;
+                };
+                vmu_path.clearRetainingCapacity();
+                try vmu_path.appendSlice(path);
+                default_vmu = false;
+            } else if (std.mem.eql(u8, arg, "-d")) {
+                dc.cpu.debug_trace = true;
+            } else if (std.mem.eql(u8, arg, "--skip-bios")) {
+                skip_bios = true;
+            } else if (std.mem.eql(u8, arg, "--stop")) {
+                force_stop = true;
+            } else if (std.mem.eql(u8, arg, "--force-render")) {
+                force_render = true;
+            } else if (std.mem.eql(u8, arg, "--no-realtime")) {
+                d.realtime = false;
+            } else if (std.mem.eql(u8, arg, "--load-state")) {
+                const num_str = args.next() orelse {
+                    std.log.err(termcolor.red("Expected state number after --load-state."), .{});
+                    return error.InvalidArguments;
+                };
+                load_state = std.fmt.parseInt(u32, num_str, 10) catch |err| {
+                    std.log.err(termcolor.red("Invalid state number after --load-state: {s}"), .{@errorName(err)});
+                    return error.InvalidArguments;
+                };
+                if (load_state.? >= Deecy.MaxSaveStates) {
+                    std.log.err(termcolor.red("Invalid state number after --load-state: {d}"), .{load_state.?});
+                    return error.InvalidArguments;
+                }
+            } else {
+                std.log.warn(termcolor.yellow("Unknown argument: '{s}'"), .{arg});
+            }
+        } else {
+            if (std.mem.endsWith(u8, arg, ".bin") or std.mem.endsWith(u8, arg, ".elf")) {
+                binary_path = arg;
+            } else if (std.mem.endsWith(u8, arg, ".gdi") or std.mem.endsWith(u8, arg, ".cdi") or std.mem.endsWith(u8, arg, ".chd")) {
+                disc_path = arg;
+            } else {
+                std.log.warn(termcolor.yellow("Unsupported file format: '{s}'"), .{arg});
             }
         }
     }
