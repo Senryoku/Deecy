@@ -547,7 +547,7 @@ pub const SH4JIT = struct {
     idle_skip_enabled: bool = true,
     idle_skip_cycles: u32 = MaxCyclesPerExecution,
     /// Additional checks to perform before executing a block and cause a recompilation if a change is detected. Should not be needed in most cases.
-    block_invalidation: enum { None, FirstInstruction, Always } = .None,
+    block_invalidation: enum { None, @"First Instruction", Hash, Always } = .None,
 
     block_cache: BlockCache,
 
@@ -655,9 +655,12 @@ pub const SH4JIT = struct {
         MMUCache.reset();
 
         sh4_jit_log.debug("Reset requested.", .{});
-        self.block_cache.reset_blocks() catch {
-            std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
-        };
+        // Blocks will invalidate themselves with the Hash strategy. This should avoid excessive invalidation in some WinCE titles.
+        if (self.block_invalidation != .Hash) {
+            self.block_cache.reset_blocks() catch {
+                std.debug.panic("SH4 JIT: Failed to reset blocks.", .{});
+            };
+        }
     }
 
     pub fn reset(self: *@This()) !void {
@@ -665,6 +668,10 @@ pub const SH4JIT = struct {
 
         try self.block_cache.reset();
         try self.init_compile_and_run_handler();
+    }
+
+    fn block_hash(ram: [*]u8, start: u32, end: u32) callconv(.c) u64 {
+        return std.hash.CityHash64.hash(ram[start..end]);
     }
 
     pub fn execute(self: *@This(), cpu: *sh4.SH4) !u32 {
@@ -733,24 +740,46 @@ pub const SH4JIT = struct {
         ctx.start_index = @intCast(b.instructions.items.len);
 
         // Perform additionnal checks and re-compiles the block if a change is detected.
-        switch (self.block_invalidation) {
-            .None => {},
-            .FirstInstruction => {
-                // Extremely basic: Only checks the first instruction. Seems to be enough for Bloom.
-                try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc });
-                try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[2], .size = 16 } });
-                try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
-                var valid = try b.jmp(.Equal);
-                // Recompile
-                try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
-                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-                valid.patch();
-            },
-            .Always => {
-                // Stupid one that *always* recompiles the block for debugging purposes (i.e. if this one works, this is a cache issue).
-                try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
-                try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
-            },
+        var hash_invalidation_end_offset: usize = 0;
+        var hash_invalidation_value_offset: usize = 0;
+        // Not necessary for the boot ROM
+        if (ctx.start_physical_pc >= 0x0C00_0000) {
+            switch (self.block_invalidation) {
+                .None => {},
+                .@"First Instruction" => {
+                    // Extremely basic: Only checks the first instruction. Seems to be enough for Bloom.
+                    try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = if (FastMem) ctx.start_physical_pc else ctx.start_physical_pc - 0x0C00_0000 });
+                    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[2], .size = 16 } });
+                    try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
+                    var valid = try b.jmp(.Equal);
+                    // Recompile
+                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+                    valid.patch();
+                },
+                .Hash => {
+                    // Pointer to the start of RAM
+                    try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = .rbp });
+                    if (FastMem) try b.add(.{ .reg64 = ArgRegisters[0] }, .{ .imm32 = 0x0C00_0000 });
+                    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = ctx.start_physical_pc - 0x0C00_0000 });
+                    hash_invalidation_end_offset = b.instructions.items.len;
+                    try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = 0xDEADCAFE });
+                    try call(b, &ctx, block_hash);
+                    hash_invalidation_value_offset = b.instructions.items.len;
+                    try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .imm64 = 0xDEADCAFEDEADCAFE });
+                    try b.cmp(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[0] });
+                    var valid = try b.jmp(.Equal);
+                    // Recompile
+                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+                    valid.patch();
+                },
+                .Always => {
+                    // Stupid one that *always* recompiles the block for debugging purposes (i.e. if this one works, this is a cache issue).
+                    try b.mov(.{ .reg64 = ReturnRegister }, .{ .imm64 = @intFromPtr(self.block_cache.buffer.ptr) });
+                    try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
+                },
+            }
         }
 
         var branch = false;
@@ -787,6 +816,20 @@ pub const SH4JIT = struct {
         // Also feels better than checking the length at each insertion.
         if (self.block_cache.cursor + 4 * 32 + 8 * 4 * b.instructions.items.len >= BlockBufferSize) {
             return error.JITCacheFull;
+        }
+
+        if (ctx.start_physical_pc >= 0x0C00_0000) {
+            switch (self.block_invalidation) {
+                .Hash => {
+                    // Patch end address of the block, and expected hash value.
+                    //          This can happen because of some optimisations (inline_backwards_bra). Solution is hackish for now.
+                    const end = (if (ctx.current_physical_pc < ctx.start_physical_pc) ctx.start_physical_pc + 16 else ctx.current_physical_pc) - 0x0C00_0000;
+                    const hash = block_hash(@ptrCast(ctx.cpu._dc.?.ram), ctx.start_physical_pc - 0x0C00_0000, end);
+                    b.instructions.items[hash_invalidation_end_offset].Mov.src.imm32 = end;
+                    b.instructions.items[hash_invalidation_value_offset].Mov.src.imm64 = hash;
+                },
+                else => {},
+            }
         }
 
         // We still rely on the interpreter implementation of the branch instructions which expects the PC to be updated automatically.
