@@ -300,11 +300,12 @@ pub fn refresh_games(self: *@This()) !void {
             std.mem.sort(GameFile, self.disc_files.items, {}, GameFile.sort);
         }
 
-        var threads = std.ArrayList(std.Thread).init(self.allocator);
-        defer threads.deinit();
-        for (self.disc_files.items) |file|
-            try threads.append(try std.Thread.spawn(.{}, get_game_image, .{ self, file.path }));
-        for (threads.items) |t| t.join();
+        var pool: std.Thread.Pool = undefined;
+        try pool.init(.{ .allocator = self.allocator });
+        defer pool.deinit();
+
+        for (0..self.disc_files.items.len) |file_idx| // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
+            try pool.spawn(get_game_image, .{ self, self.disc_files.items[self.disc_files.items.len - 1 - file_idx].path });
     }
 }
 
