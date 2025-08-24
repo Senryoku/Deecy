@@ -180,10 +180,10 @@ pub const Dreamcast = struct {
             dc.vram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
             dc.aram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {
-            dc.boot = try allocator.allocWithOptions(u8, BootSize, 4, null);
-            dc.ram = try allocator.allocWithOptions(u8, RAMSize, 4, null);
-            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 32, null);
-            dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 4, null);
+            dc.boot = try allocator.allocWithOptions(u8, BootSize, 64, null);
+            dc.ram = try allocator.allocWithOptions(u8, RAMSize, 64, null);
+            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 64, null);
+            dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 64, null);
             dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         }
 
