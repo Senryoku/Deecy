@@ -159,6 +159,7 @@ pub fn main() !void {
 
     var args = try std.process.argsWithAllocator(allocator);
     defer args.deinit();
+    _ = args.skip();
     while (args.next()) |arg| {
         if (std.mem.startsWith(u8, arg, "-")) {
             if (std.mem.eql(u8, arg, "-b")) {
