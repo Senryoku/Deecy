@@ -2048,9 +2048,7 @@ pub const Renderer = struct {
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.vertex_buffer).?, 0, Vertex, &vertices);
         self._gctx.queue.writeBuffer(self._gctx.lookupResource(self.index_buffer).?, 0, u32, &indices);
 
-        try self.strips_metadata.append(.{
-            .area0_instructions = tex,
-        });
+        try self.strips_metadata.append(self._allocator, .{ .area0_instructions = tex });
 
         std.debug.assert(FirstVertex == vertices.len);
         std.debug.assert(FirstIndex == indices.len);
@@ -2138,14 +2136,14 @@ pub const Renderer = struct {
         const index_buffer = self._gctx.lookupResource(self.index_buffer).?;
         var index_buffer_pointer = FirstIndex;
 
-        var pre_sorted_indices = std.ArrayList(u32).init(self._allocator);
-        defer pre_sorted_indices.deinit();
+        var pre_sorted_indices: std.ArrayList(u32) = .empty;
+        defer pre_sorted_indices.deinit(self._allocator);
 
         for (self.render_passes.items, 0..) |*render_pass, pass_idx| {
             if (self.ta_lists_to_render.items.len <= pass_idx) break;
             const ta_lists = &self.ta_lists_to_render.items[pass_idx];
 
-            render_pass.clearRetainingCapacity();
+            render_pass.clearRetainingCapacity(self._allocator);
 
             pre_sorted_indices.clearRetainingCapacity();
             var pre_sorted_index_offset: u32 = 0;
@@ -2295,7 +2293,7 @@ pub const Renderer = struct {
                     const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
 
                     const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
-                    try self.strips_metadata.append(.{
+                    try self.strips_metadata.append(self._allocator, .{
                         .area0_instructions = area0_instructions,
                         .area1_instructions = area1_instructions,
                     });
@@ -2307,7 +2305,7 @@ pub const Renderer = struct {
                                 // Sanity checks.
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                                 std.debug.assert(!textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2319,7 +2317,7 @@ pub const Renderer = struct {
                             .Type1 => |v| {
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .FloatingColor);
                                 std.debug.assert(!textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2330,7 +2328,7 @@ pub const Renderer = struct {
                             // Non-Textured, Intensity
                             .Type2 => |v| {
                                 std.debug.assert(!textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2342,7 +2340,7 @@ pub const Renderer = struct {
                             .Type3 => |v| {
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2355,7 +2353,7 @@ pub const Renderer = struct {
                             },
                             // Packed Color, Textured 16bit UV
                             .Type4 => |v| {
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2368,7 +2366,7 @@ pub const Renderer = struct {
                             },
                             // Floating Color, Textured
                             .Type5 => |v| {
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2381,7 +2379,7 @@ pub const Renderer = struct {
                             },
                             // Floating Color, Textured 16bit UV
                             .Type6 => |v| {
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2396,7 +2394,7 @@ pub const Renderer = struct {
                             .Type7 => |v| {
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2411,7 +2409,7 @@ pub const Renderer = struct {
                             .Type8 => |v| {
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .IntensityMode1 or parameter_control_word.obj_control.col_type == .IntensityMode2);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2427,7 +2425,7 @@ pub const Renderer = struct {
                                 std.debug.assert(area1_tsp_instruction != null);
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                                 std.debug.assert(!textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2440,7 +2438,7 @@ pub const Renderer = struct {
                             .Type10 => |v| {
                                 std.debug.assert(area1_tsp_instruction != null);
                                 std.debug.assert(!textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2455,7 +2453,7 @@ pub const Renderer = struct {
                                 std.debug.assert(area1_texture_control != null);
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2476,7 +2474,7 @@ pub const Renderer = struct {
                                 std.debug.assert(area1_texture_control != null);
                                 std.debug.assert(parameter_control_word.obj_control.col_type == .PackedColor);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2496,7 +2494,7 @@ pub const Renderer = struct {
                                 std.debug.assert(area1_tsp_instruction != null);
                                 std.debug.assert(area1_texture_control != null);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2516,7 +2514,7 @@ pub const Renderer = struct {
                                 std.debug.assert(area1_tsp_instruction != null);
                                 std.debug.assert(area1_texture_control != null);
                                 std.debug.assert(textured);
-                                try self.vertices.append(.{
+                                try self.vertices.append(self._allocator, .{
                                     .primitive_index = primitive_index,
                                     .x = v.x,
                                     .y = v.y,
@@ -2541,7 +2539,7 @@ pub const Renderer = struct {
                                     self.min_depth = @min(self.min_depth, v.z);
                                     self.max_depth = @max(self.max_depth, v.z);
 
-                                    try self.vertices.append(v.*);
+                                    try self.vertices.append(self._allocator, v.*);
                                 }
                             },
                         }
@@ -2625,11 +2623,11 @@ pub const Renderer = struct {
                                 // functions, this seem to be enough, while keeping most of the benefit of batching.
                                 if (current_depth_compare_function == null) { // Initialisation
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .init());
+                                    try pass.steps.append(self._allocator, .init(self._allocator));
                                     current_step = &pass.steps.items[0];
                                 } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(self._allocator, .init());
+                                    try pass.steps.append(self._allocator, .init(self._allocator));
                                     current_step = &pass.steps.items[pass.steps.items.len - 1];
                                 }
 
@@ -2643,15 +2641,14 @@ pub const Renderer = struct {
                                 var draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                                 if (draw_call == null) {
                                     try pipeline.draw_calls.put(draw_call_key, .init(
-                                        self._allocator,
                                         sampler,
                                         display_list.vertex_strips.items[idx].user_clip,
                                     ));
                                     draw_call = pipeline.draw_calls.getPtr(draw_call_key);
                                 }
                                 for (strip_first_vertex_index..self.vertices.items.len) |i|
-                                    try draw_call.?.indices.append(@intCast(FirstVertex + i));
-                                try draw_call.?.indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                                    try draw_call.?.indices.append(self._allocator, @intCast(FirstVertex + i));
+                                try draw_call.?.indices.append(self._allocator, std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             }
                         }
                     }
@@ -2690,9 +2687,9 @@ pub const Renderer = struct {
             self.modifier_volume_vertices.clearRetainingCapacity();
 
             for (ta_lists.volume_triangles.items) |triangle| {
-                try self.modifier_volume_vertices.append(.{ triangle.ax, triangle.ay, triangle.az, 1.0 });
-                try self.modifier_volume_vertices.append(.{ triangle.bx, triangle.by, triangle.bz, 1.0 });
-                try self.modifier_volume_vertices.append(.{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
+                try self.modifier_volume_vertices.append(self._allocator, .{ triangle.ax, triangle.ay, triangle.az, 1.0 });
+                try self.modifier_volume_vertices.append(self._allocator, .{ triangle.bx, triangle.by, triangle.bz, 1.0 });
+                try self.modifier_volume_vertices.append(self._allocator, .{ triangle.cx, triangle.cy, triangle.cz, 1.0 });
                 self.min_depth = @min(self.min_depth, triangle.az);
                 self.max_depth = @max(self.max_depth, triangle.az);
                 self.min_depth = @min(self.min_depth, triangle.bz);

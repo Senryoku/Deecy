@@ -110,7 +110,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         ._file = try MemoryMappedFile.init(filepath, allocator),
         ._allocator = allocator,
     };
-    errdefer self.deinit();
+    errdefer self.deinit(allocator);
     self._file_view = try self._file.create_full_view();
 
     var reader = std.Io.Reader.fixed(self._file_view);
@@ -162,32 +162,34 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             }
             if (track_tag == null) return error.NoTracks;
 
-            var tracks_metadata = std.ArrayList(MetadataEntry).init(allocator);
-            defer tracks_metadata.deinit();
-            try tracks_metadata.append(current_track);
+            var tracks_metadata: std.ArrayList(MetadataEntry) = .empty;
+            defer tracks_metadata.deinit(allocator);
+            try tracks_metadata.append(allocator, current_track);
 
             while (current_track.next != 0) {
                 current_track = self.search_metadata(current_track.next, track_tag.?, 0) catch |err| switch (err) {
                     error.NotFound => break,
                     else => |e| return e,
                 };
-                try tracks_metadata.append(current_track);
+                try tracks_metadata.append(allocator, current_track);
             }
 
             var fad_offset: u32 = 0;
             var current_fad: u32 = 150;
             for (tracks_metadata.items) |track| {
                 log.debug("Track Metadata entry: {any}", .{track});
-                reader = std.Io.Reader.fixed(self._file_view[track.offset + 16 ..]);
+                // reader = std.Io.Reader.fixed(self._file_view[track.offset + 16 ..]);
                 switch (track.tag) {
                     .GDROMTrack => {
-                        const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
-                        defer allocator.free(buffer);
-
                         // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
-                        _ = try reader.read(buffer);
-                        log.debug("  '{s}'", .{buffer});
-                        var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
+
+                        // const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
+                        // defer allocator.free(buffer);
+                        // _ = try reader.readSliceAll(buffer);
+                        // log.debug("  '{s}'", .{buffer});
+                        // var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
+
+                        var iterator = std.mem.tokenizeScalar(u8, self._file_view[track.offset + 16 ..][0 .. track.length - 1], ' ');
                         const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
                         const track_type_str = iterator.next().?["TYPE:".len..];
                         const sub_type = iterator.next().?["SUBTYPE:".len..];
@@ -215,8 +217,8 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CDMaxSectorBytes else return error.UnsupportedFormat;
                         const data = try host_memory.virtual_alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
-                        try self.track_data.append(data);
-                        try self.tracks.append(.{
+                        try self.track_data.append(allocator, data);
+                        try self.tracks.append(allocator, .{
                             .num = track_num,
                             .fad = current_fad,
                             .track_type = track_type,
@@ -224,7 +226,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                             .pregap = 0,
                             .data = data,
                         });
-                        try self.track_offsets.append(current_fad - fad_offset);
+                        try self.track_offsets.append(allocator, current_fad - fad_offset);
 
                         current_fad += frames;
                         fad_offset += std.mem.alignForward(u32, frames, 4);
@@ -244,7 +246,9 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    _ = allocator;
+
     self._allocator.free(self.map);
 
     self.sessions.deinit(self._allocator);
@@ -593,10 +597,11 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
     var header_reader = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset + ecc_bytes ..]);
     const compressed_length = if (complen_bytes == 2) try header_reader.takeInt(u16, .big) else try header_reader.takeInt(u24, .big);
 
-    var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-
     switch (compression) {
         .CD_LZMA => {
+            // FIXME: LZMA decompression has not been updated to use the new Reader API
+            var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            const file_reader = fixed_stream.reader();
             var decompressor = try std.compress.lzma.Decompress(@TypeOf(file_reader)).init(self._allocator, file_reader, .{
                 // There is no LZMA headers and these parameters are implicit...
                 // FIXME: They also depend on hunk_size, these are the parameters for hunk_size = 0x4C80.
@@ -616,9 +621,10 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         .CD_Zlib => {
-            const writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
             var decompress: std.compress.flate.Decompress = .init(&file_reader, .zlib, &.{});
-            const bytes = try decompress.reader.streamRemaining(writer);
+            const bytes = try decompress.reader.streamRemaining(&writer);
             // This probably won't work without subcodes/raw sector data
             // if (self.map[hunk].crc != crc16(dest[0..bytes]))
             //     return error.InvalidCRC;

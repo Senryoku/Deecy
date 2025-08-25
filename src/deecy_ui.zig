@@ -199,7 +199,7 @@ fn get_game_image(self: *@This(), path: []const u8) void {
         ui_log.err("Failed to load disc '{s}': {s}", .{ path, @errorName(err) });
         return;
     };
-    defer disc.deinit();
+    defer disc.deinit(allocator);
 
     const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
         ui_log.err("Failed to allocate texture buffer: {s}", .{@errorName(err)});
@@ -442,7 +442,7 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
                 const was_running = d.running;
                 if (was_running) d.pause();
-                d.dc.gdrom.disc.?.deinit();
+                d.dc.gdrom.disc.?.deinit(d._allocator);
                 d.dc.gdrom.disc = null;
                 if (d.dc.gdrom.state != .Open)
                     d.dc.gdrom.state = .Empty;
@@ -511,16 +511,16 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Controls", .{})) {
-                var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }).init(d._allocator);
-                defer available_controllers.deinit();
+                var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = .empty;
+                defer available_controllers.deinit(self.allocator);
 
-                try available_controllers.append(.{ .id = null, .name = "None" });
+                try available_controllers.append(self.allocator, .{ .id = null, .name = "None" });
 
                 for (0..zglfw.Joystick.maximum_supported) |idx| {
                     const joystick: zglfw.Joystick = @enumFromInt(idx);
                     if (joystick.isPresent()) {
                         if (joystick.asGamepad()) |gamepad| {
-                            try available_controllers.append(.{ .id = joystick, .name = gamepad.getName() });
+                            try available_controllers.append(self.allocator, .{ .id = joystick, .name = gamepad.getName() });
                         }
                     }
                 }

@@ -283,7 +283,11 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 d.pause();
             var file = try std.fs.cwd().createFile("logs/dc_dump.bin", .{});
             defer file.close();
-            _ = try dc.serialize(file.writer());
+            const buff = try self._allocator.alloc(u8, 8192);
+            var file_writer = file.writer(buff);
+            var writer = &file_writer.interface;
+            _ = try dc.serialize(writer);
+            try writer.flush();
             if (was_running)
                 d.start();
         }
@@ -671,8 +675,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             const state = dc.aica.channel_states[i];
             const time = std.time.milliTimestamp();
             if (self.show_disabled_channels or state.playing or channel.play_control.key_on_bit) {
-                const number = std.fmt.comptimePrint("{d}", .{i});
-                if (zgui.collapsingHeader("Channel " ++ number, .{ .default_open = true })) {
+                zgui.pushIntId(@intCast(i));
+                defer zgui.popId();
+                if (zgui.collapsingHeader("Channel", .{ .default_open = true })) {
+                    zgui.text("Channel {d}", .{i});
                     _ = zgui.checkbox("Mute (Debug)", .{ .v = &dc.aica.channel_states[i].debug.mute });
                     const start_addr = channel.sample_address();
 
@@ -713,7 +719,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     var loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
                     if (loop_size == 0) loop_size = 2048;
                     if (channel.play_control.sample_format == .i16) {
-                        if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size / 2) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                             zgui.plot.setupFinish();
@@ -722,7 +728,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.endPlot();
                         }
                     } else if (channel.play_control.sample_format == .i8) {
-                        if (zgui.plot.beginPlot("Samples##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                        if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
                             zgui.plot.setupFinish();
@@ -747,7 +753,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0)
                             self.audio_channels[i].amplitude_envelope.start_time = time - self.audio_channels[i].amplitude_envelope.xv.items[self.audio_channels[i].amplitude_envelope.xv.items.len - 1];
                     }
-                    if (zgui.plot.beginPlot("Envelope##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only })) {
+                    if (zgui.plot.beginPlot("Envelope", .{ .flags = zgui.plot.Flags.canvas_only })) {
                         zgui.plot.setupAxis(.x1, .{ .label = "time" });
                         zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = 10_000 });
                         zgui.plot.setupAxisLimits(.y1, .{ .min = 0, .max = 0x400 });
@@ -786,14 +792,16 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             zgui.indent(.{});
             defer zgui.unindent(.{});
             inline for (0..128) |i| {
-                const number = std.fmt.comptimePrint("{d: >3}", .{i});
-                zgui.text("Coeff #" ++ number ++ ": {d: >6}", .{dc.aica.dsp.read_coef(i)});
+                zgui.pushIntId(i);
+                defer zgui.popId();
+                zgui.text("Coeff #{d}: {d: >6}", .{ i, dc.aica.dsp.read_coef(i) });
             }
         }
         if (zgui.collapsingHeader("DSP Inputs (MIXS)", .{ .default_open = false })) {
             inline for (0..16) |i| {
-                const number = std.fmt.comptimePrint("{d}", .{i});
-                zgui.text("MIXS #" ++ number, .{});
+                zgui.pushIntId(i);
+                defer zgui.popId();
+                zgui.text("MIXS #{d}", .{i});
                 if (d.running) {
                     if (time - self.dsp_inputs[i].start_time > MaxSamples) {
                         self.dsp_inputs[i].xv.clearRetainingCapacity();
@@ -810,7 +818,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (self.dsp_inputs[i].xv.items.len > 0)
                         self.dsp_inputs[i].start_time = time - self.dsp_inputs[i].xv.items[self.dsp_inputs[i].xv.items.len - 1];
                 }
-                if (zgui.plot.beginPlot("DSPInput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                if (zgui.plot.beginPlot("DSPInput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
                     zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i16)), .max = @floatFromInt(std.math.maxInt(i16)) });
                     zgui.plot.setupFinish();
@@ -821,9 +829,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         }
         if (zgui.collapsingHeader("DSP Outputs (EFREG)", .{ .default_open = true })) {
             inline for (0..16) |i| {
-                const number = std.fmt.comptimePrint("{d}", .{i});
+                zgui.pushIntId(i);
+                defer zgui.popId();
                 const mix = dc.aica.get_dsp_mix_register(@intCast(i)).*;
-                zgui.text("EFREG #" ++ number ++ " (EFSDL: {X}, EFPAN: {X})", .{ mix.efsdl, mix.efpan });
+                zgui.text("EFREG #{d} (EFSDL: {X}, EFPAN: {X})", .{ i, mix.efsdl, mix.efpan });
                 if (d.running) {
                     if (time - self.dsp_outputs[i].start_time > MaxSamples) {
                         self.dsp_outputs[i].xv.clearRetainingCapacity();
@@ -840,7 +849,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     if (self.dsp_outputs[i].xv.items.len > 0)
                         self.dsp_outputs[i].start_time = time - self.dsp_outputs[i].xv.items[self.dsp_outputs[i].xv.items.len - 1];
                 }
-                if (zgui.plot.beginPlot("DSPOutput##" ++ number, .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
+                if (zgui.plot.beginPlot("DSPOutput", .{ .flags = zgui.plot.Flags.canvas_only, .h = 128.0 })) {
                     zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = MaxSamples });
                     zgui.plot.setupAxisLimits(.y1, .{ .min = @floatFromInt(std.math.minInt(i20)), .max = @floatFromInt(std.math.maxInt(i20)) });
                     zgui.plot.setupFinish();

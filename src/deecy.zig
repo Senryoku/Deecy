@@ -684,7 +684,7 @@ pub fn reset(self: *@This()) !void {
 pub fn stop(self: *@This()) !void {
     self.pause();
     try self.reset();
-    if (self.dc.gdrom.disc) |*disc| disc.deinit();
+    if (self.dc.gdrom.disc) |*disc| disc.deinit(self._allocator);
     self.dc.gdrom.disc = null;
 }
 
@@ -905,18 +905,18 @@ pub fn on_game_load(self: *@This()) !void {
     try self.check_save_state_slots();
 
     var title = try std.ArrayList(u8).initCapacity(self._allocator, 64);
-    defer title.deinit();
-    try title.appendSlice("Deecy");
+    defer title.deinit(self._allocator);
+    try title.appendSlice(self._allocator, "Deecy");
     if (self.get_product_name()) |name| {
-        try title.appendSlice(" - ");
-        try title.appendSlice(name);
+        try title.appendSlice(self._allocator, " - ");
+        try title.appendSlice(self._allocator, name);
         if (self.get_product_id()) |id| {
-            try title.appendSlice(" (");
-            try title.appendSlice(id);
-            try title.append(')');
+            try title.appendSlice(self._allocator, " (");
+            try title.appendSlice(self._allocator, id);
+            try title.append(self._allocator, ')');
         }
     }
-    try title.append(0);
+    try title.append(self._allocator, 0);
     self.window.setTitle(title.items[0 .. title.items.len - 1 :0]);
 }
 
@@ -1038,7 +1038,7 @@ pub fn draw_ui(self: *@This()) !void {
     } else {
         zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
         if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum)) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum())) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
             zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
         }
         zgui.end();
@@ -1185,28 +1185,30 @@ pub fn save_state(self: *@This(), index: usize) !void {
 
     // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
     var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+    defer allocating_writer.deinit();
     var writer = &allocating_writer.writer;
     _ = try self.dc.serialize(writer);
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
+    try writer.flush();
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
-    try self.launch_async(compress_and_dump_save_state, .{ self, index, allocating_writer.toOwnedSlice() });
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, try allocating_writer.toOwnedSlice() });
 }
 
-fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: std.ArrayList(u8)) !void {
+fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: []const u8) !void {
     const start_time = std.time.milliTimestamp();
-    defer uncompressed_array.deinit();
+    defer self._allocator.free(uncompressed_array);
 
-    const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array.items);
+    const compressed = try lz4.Standard.compress(self._allocator, uncompressed_array);
     defer self._allocator.free(compressed);
 
     var save_slot_path = try self.save_state_path(index);
-    defer save_slot_path.deinit();
+    defer save_slot_path.deinit(self._allocator);
     var file = try std.fs.cwd().createFile(save_slot_path.items, .{});
     defer file.close();
     _ = try file.write(std.mem.asBytes(&SaveStateHeader{
-        .uncompressed_size = @intCast(uncompressed_array.items.len),
+        .uncompressed_size = @intCast(uncompressed_array.len),
         .compressed_size = @intCast(compressed.len),
     }));
     _ = try file.write(compressed);

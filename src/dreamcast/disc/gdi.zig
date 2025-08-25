@@ -22,13 +22,11 @@ const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
 tracks: std.ArrayList(Track),
 
 _files: std.ArrayList(MemoryMappedFile),
-_allocator: std.mem.Allocator,
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
         .tracks = .empty,
         ._files = .empty,
-        ._allocator = allocator,
     };
 
     const file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -82,12 +80,11 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
-    self.tracks.deinit(self._allocator);
-    for (self._files.items) |*file| {
-        file.deinit(self._allocator);
-    }
-    self._files.deinit(self._allocator);
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.tracks.deinit(allocator);
+    for (self._files.items) |*file|
+        file.deinit();
+    self._files.deinit(allocator);
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {

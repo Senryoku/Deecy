@@ -1212,22 +1212,22 @@ pub const Dreamcast = struct {
         try self.maple.deserialize(reader);
         try self.gdrom.deserialize(reader);
         try self.flash.deserialize(reader);
-        try reader.read(std.mem.sliceAsBytes(self.ram));
-        try reader.read(std.mem.sliceAsBytes(self.vram));
-        try reader.read(std.mem.sliceAsBytes(self.aram));
-        try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.ram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.vram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.aram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.hardware_registers));
 
         while (self.scheduled_events.count() > 0)
             _ = self.scheduled_events.remove();
         var event_count: usize = 0;
-        try reader.read(std.mem.asBytes(&event_count));
+        try reader.readSliceAll(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
             var event: ScheduledEvent = undefined;
-            try reader.read(std.mem.asBytes(&event));
+            try reader.readSliceAll(std.mem.asBytes(&event));
             try self.scheduled_events.add(event);
         }
 
-        try reader.read(std.mem.asBytes(&self._global_cycles));
+        try reader.readSliceAll(std.mem.asBytes(&self._global_cycles));
 
         self.gpu.finalize_deserialization();
     }
