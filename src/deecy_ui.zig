@@ -43,7 +43,7 @@ const GameFile = struct {
 
 // Stupid way of waiting for any key press
 var key_pressed: ?zglfw.Key = null;
-fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.C) void {
+fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.c) void {
     if (action == .press)
         key_pressed = key;
 }

@@ -40,7 +40,7 @@ fn glfw_key_callback(
     scancode: i32,
     action: zglfw.Action,
     mods: zglfw.Mods,
-) callconv(.C) void {
+) callconv(.c) void {
     _ = scancode;
     _ = mods;
 
@@ -105,7 +105,7 @@ fn glfw_drop_callback(
     window: *zglfw.Window,
     count: i32,
     paths: [*][*:0]const u8,
-) callconv(.C) void {
+) callconv(.c) void {
     const maybe_app = window.getUserPointer(@This());
     if (maybe_app) |app| {
         if (count > 0) {
@@ -249,7 +249,27 @@ toggle_fullscreen_request: bool = false,
 previous_window_position: struct { x: i32 = 0, y: i32 = 0, w: i32 = 0, h: i32 = 0 } = .{},
 
 last_frame_timestamp: i64,
-last_n_frametimes: std.fifo.LinearFifo(i64, .Dynamic),
+last_n_frametimes: struct {
+    count: usize = 0,
+    position: usize = 0,
+    times: [60]i64 = @splat(0),
+
+    pub fn push(self: *@This(), time: i64) void {
+        self.times[self.position] = time;
+        self.position = (self.position + 1) % self.times.len;
+        if (self.count < self.times.len)
+            self.count += 1;
+    }
+
+    pub fn sum(self: *const @This()) i64 {
+        const first = if (self.position > self.count) self.position - self.count else self.position + self.times.len - self.count;
+        var s: i64 = 0;
+        for (0..self.count) |i| {
+            s += self.times[(first + i) % self.times.len];
+        }
+        return s;
+    }
+} = .{},
 
 running: bool = false,
 _cycles_to_run: i64 = 0,
@@ -328,8 +348,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         .window = undefined,
         .config = config,
         .last_frame_timestamp = std.time.microTimestamp(),
-        .last_n_frametimes = .init(allocator),
-        .breakpoints = .init(allocator),
+        .breakpoints = .empty,
         ._allocator = allocator,
     };
 
@@ -658,7 +677,7 @@ pub fn reset(self: *@This()) !void {
     self.renderer.reset();
     self._cycles_to_run = 0;
     self.last_frame_timestamp = std.time.microTimestamp();
-    self.last_n_frametimes.discard(self.last_n_frametimes.count);
+    self.last_n_frametimes = .{};
     try self.check_save_state_slots();
 }
 
@@ -811,32 +830,37 @@ pub fn load_and_start(self: *@This(), path: []const u8) !void {
 
 pub fn load_disc(self: *@This(), path: []const u8) !void {
     if (std.mem.endsWith(u8, path, ".zip")) {
-        var zip_file = try std.fs.cwd().openFile(path, .{});
-        defer zip_file.close();
-        var stream = zip_file.seekableStream();
-        var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
-        var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
-        var gdi_filename: []u8 = "";
-        while (try iter.next()) |entry| {
-            const filename = filename_buf[0..entry.filename_len];
-            try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
-            std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
-            if (std.mem.endsWith(u8, filename, ".gdi")) {
-                gdi_filename = filename;
-                break;
+        // FIXME: With 0.15.1 zip_file.seekableStream doesn't exist anymore, and I've always hated the fact that it extracted everything to disk.
+        //        Waiting on extract to memory to land (see https://github.com/ziglang/zig/issues/21922) before re-writing this.
+        if (false) {
+            var zip_file = try std.fs.cwd().openFile(path, .{});
+            defer zip_file.close();
+            var stream = zip_file.seekableStream();
+            var iter = try std.zip.Iterator(std.fs.File.SeekableStream).init(stream);
+            var filename_buf: [std.fs.max_path_bytes]u8 = undefined;
+            var gdi_filename: []u8 = "";
+            while (try iter.next()) |entry| {
+                const filename = filename_buf[0..entry.filename_len];
+                try zip_file.seekTo(entry.header_zip_offset + @sizeOf(std.zip.CentralDirectoryFileHeader));
+                std.debug.assert(try stream.context.reader().readAll(filename) == filename.len);
+                if (std.mem.endsWith(u8, filename, ".gdi")) {
+                    gdi_filename = filename;
+                    break;
+                }
             }
+            if (gdi_filename.len == 0) {
+                deecy_log.err("Could not find GDI file in zip file '{s}'.", .{path});
+                return error.GDIFileNotFound;
+            }
+            const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), TmpDirPath, gdi_filename });
+            deecy_log.info("Found GDI file: '{s}'.", .{gdi_filename});
+            deecy_log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});
+            var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});
+            defer tmp_dir.close();
+            try std.zip.extract(tmp_dir, stream, .{});
+            self.dc.gdrom.disc = try .init(tmp_gdi_path, self._allocator);
         }
-        if (gdi_filename.len == 0) {
-            std.log.err("Could not find GDI file in zip file '{s}'.", .{path});
-            return error.GDIFileNotFound;
-        }
-        const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), TmpDirPath, gdi_filename });
-        std.log.info("Found GDI file: '{s}'.", .{gdi_filename});
-        std.log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});
-        var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});
-        defer tmp_dir.close();
-        try std.zip.extract(tmp_dir, stream, .{});
-        self.dc.gdrom.disc = try .init(tmp_gdi_path, self._allocator);
+        return error.Unimplemented;
     } else {
         self.dc.gdrom.disc = try .init(path, self._allocator);
     }
@@ -1014,11 +1038,7 @@ pub fn draw_ui(self: *@This()) !void {
     } else {
         zgui.setNextWindowPos(.{ .x = 0, .y = 0 });
         if (zgui.begin("##FPSCounter", .{ .flags = .{ .no_resize = true, .no_move = true, .no_background = true, .no_title_bar = true, .no_mouse_inputs = true, .no_nav_inputs = true, .no_nav_focus = true } })) {
-            var sum: i128 = 0;
-            for (0..self.last_n_frametimes.count) |i| {
-                sum += self.last_n_frametimes.peekItem(i);
-            }
-            const avg: f32 = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
+            const avg: f32 = @as(f32, @floatFromInt(self.last_n_frametimes.sum)) / @as(f32, @floatFromInt(self.last_n_frametimes.count));
             zgui.text("FPS: {d: >4.1} ({d: >3.1}ms)", .{ 1000000.0 / avg, avg / 1000.0 });
         }
         zgui.end();
@@ -1112,7 +1132,7 @@ fn audio_callback(
     output: ?*anyopaque,
     _: ?*const anyopaque, // Input
     frame_count: u32,
-) callconv(.C) void {
+) callconv(.c) void {
     const self: *@This() = @ptrCast(@alignCast(device.getUserData()));
     const aica = &self.dc.aica;
 
@@ -1163,14 +1183,14 @@ pub fn save_state(self: *@This(), index: usize) !void {
     const start_time = std.time.milliTimestamp();
     deecy_log.info("Saving State #{d}...", .{index});
 
-    var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-    var writer = uncompressed_array.writer();
+    // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
+    var writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
     _ = try self.dc.serialize(writer);
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
-    try self.launch_async(compress_and_dump_save_state, .{ self, index, uncompressed_array });
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, writer.toOwnedSlice() });
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: std.ArrayList(u8)) !void {

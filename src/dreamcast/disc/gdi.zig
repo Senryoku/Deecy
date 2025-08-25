@@ -22,11 +22,13 @@ const GDI_SECTOR_OFFSET = 150; // FIXME: Still unsure about this.
 tracks: std.ArrayList(Track),
 
 _files: std.ArrayList(MemoryMappedFile),
+_allocator: std.mem.Allocator,
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = .init(allocator),
-        ._files = .init(allocator),
+        .tracks = .empty,
+        ._files = .empty,
+        ._allocator = allocator,
     };
 
     const file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -42,7 +44,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
     const first_line = lines.next().?;
     const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);
-    try self.tracks.resize(track_count);
+    try self.tracks.resize(allocator, track_count);
 
     for (0..track_count) |i| {
         var vals = std.mem.splitSequence(u8, lines.next().?, " ");
@@ -65,7 +67,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
         var track_file = try MemoryMappedFile.init(track_file_path, allocator);
-        try self._files.append(track_file);
+        try self._files.append(allocator, track_file);
 
         self.tracks.items[num - 1] = (.{
             .num = num,
@@ -81,11 +83,11 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 }
 
 pub fn deinit(self: *@This()) void {
-    self.tracks.deinit();
+    self.tracks.deinit(self._allocator);
     for (self._files.items) |*file| {
-        file.deinit();
+        file.deinit(self._allocator);
     }
-    self._files.deinit();
+    self._files.deinit(self._allocator);
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {

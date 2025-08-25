@@ -3,6 +3,8 @@ const termcolor = @import("termcolor");
 
 const gdrom_log = std.log.scoped(.gdrom);
 
+const fifo = @import("./fifo.zig");
+
 pub const Disc = @import("./disc/disc.zig").Disc;
 const Session = @import("./disc/disc.zig").Session;
 const DreamcastModule = @import("dreamcast.zig");
@@ -155,8 +157,8 @@ interrupt_reason_register: InterruptReasonRegister = .{},
 features: packed struct(u8) { DMA: u1 = 1, _: u7 = 0 } = .{},
 byte_count: u16 = 0,
 
-pio_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
-dma_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
+pio_data_queue: fifo.LinearFifo(u8, .Dynamic),
+dma_data_queue: fifo.LinearFifo(u8, .Dynamic),
 
 packet_command_idx: u8 = 0,
 packet_command: [12]u8 = @splat(0),
@@ -918,7 +920,7 @@ fn cd_read_pio_fetch(self: *@This()) !void {
     }
 }
 
-fn cd_read_fetch(self: *@This(), data_queue: *std.fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
+fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
     if (self.disc) |*disc| {
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)

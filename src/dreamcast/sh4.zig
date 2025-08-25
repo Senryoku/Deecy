@@ -1555,8 +1555,15 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.SCFTDR2) => {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
 
-                            std.fmt.format(std.io.getStdOut().writer(), "\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
-                                sh4_log.err(termcolor.red("Error formatting serial output: {}\n"), .{err});
+                            var stdout_buffer: [128]u8 = undefined;
+                            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                            const stdout = &stdout_writer.interface;
+
+                            stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
+                                sh4_log.err(termcolor.red("Error writing serial output: {}\n"), .{err});
+                            };
+                            stdout.flush() catch |err| {
+                                sh4_log.err(termcolor.red("Error flushing stdout: {}\n"), .{err});
                             };
 
                             // Immediately mark transfer as complete.

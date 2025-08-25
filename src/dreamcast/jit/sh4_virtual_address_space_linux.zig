@@ -79,7 +79,7 @@ fn allocate_backing_memory(name: []const u8, size: u64) !std.posix.fd_t {
 fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
     std.debug.assert(offset % std.heap.page_size_min == 0);
     const result = try std.posix.mmap(
-        @alignCast(@ptrCast(self.base[offset .. offset + size])),
+        @ptrCast(@alignCast(self.base[offset .. offset + size])),
         size,
         std.posix.PROT.READ | std.posix.PROT.WRITE,
         .{ .TYPE = .SHARED, .FIXED = true },
@@ -89,7 +89,7 @@ fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
     try self.mirrors.append(result);
 }
 
-fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.C) void {
+fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.c) void {
     switch (sig) {
         std.posix.SIG.SEGV => {
             const fault_address = switch (builtin.os.tag) {
@@ -98,7 +98,7 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
             };
 
             if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |base| {
-                const context: *std.posix.ucontext_t = @alignCast(@ptrCast(context_ptr.?));
+                const context: *std.posix.ucontext_t = @ptrCast(@alignCast(context_ptr.?));
                 VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.gregs[std.posix.REG.RIP]) catch |err| {
                     std.log.scoped(.sh4_jit).err("Failed to patch FastMem access @{X}: {s}", .{ fault_address, @errorName(err) });
                     signal_not_handled();
