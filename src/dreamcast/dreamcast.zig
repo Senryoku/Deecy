@@ -1183,7 +1183,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_SDST).* = 0;
     }
 
-    pub fn serialize(self: *@This(), writer: anytype) !usize {
+    pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
 
         bytes += try self.cpu.serialize(writer);
@@ -1205,7 +1205,7 @@ pub const Dreamcast = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !usize {
         var bytes: usize = 0;
 
         bytes += try self.cpu.deserialize(reader);

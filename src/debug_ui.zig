@@ -158,14 +158,14 @@ pub fn init(d: *Deecy) !@This() {
     }
 
     for (0..self.audio_channels.len) |i| {
-        self.audio_channels[i].amplitude_envelope.xv = .init(self._allocator);
-        self.audio_channels[i].amplitude_envelope.yv = .init(self._allocator);
+        self.audio_channels[i].amplitude_envelope.xv = .empty;
+        self.audio_channels[i].amplitude_envelope.yv = .empty;
     }
     for (0..16) |i| {
-        self.dsp_inputs[i].xv = .init(self._allocator);
-        self.dsp_inputs[i].yv = .init(self._allocator);
-        self.dsp_outputs[i].xv = .init(self._allocator);
-        self.dsp_outputs[i].yv = .init(self._allocator);
+        self.dsp_inputs[i].xv = .empty;
+        self.dsp_inputs[i].yv = .empty;
+        self.dsp_outputs[i].xv = .empty;
+        self.dsp_outputs[i].yv = .empty;
     }
 
     return self;
@@ -173,8 +173,8 @@ pub fn init(d: *Deecy) !@This() {
 
 pub fn deinit(self: *@This()) void {
     for (0..self.audio_channels.len) |i| {
-        self.audio_channels[i].amplitude_envelope.xv.deinit();
-        self.audio_channels[i].amplitude_envelope.yv.deinit();
+        self.audio_channels[i].amplitude_envelope.xv.deinit(self._allocator);
+        self.audio_channels[i].amplitude_envelope.yv.deinit(self._allocator);
     }
 
     for (self.renderer_texture_views) |views| {
@@ -183,10 +183,10 @@ pub fn deinit(self: *@This()) void {
     }
 
     for (0..16) |i| {
-        self.dsp_inputs[i].xv.deinit();
-        self.dsp_inputs[i].yv.deinit();
-        self.dsp_outputs[i].xv.deinit();
-        self.dsp_outputs[i].yv.deinit();
+        self.dsp_inputs[i].xv.deinit(self._allocator);
+        self.dsp_inputs[i].yv.deinit(self._allocator);
+        self.dsp_outputs[i].xv.deinit(self._allocator);
+        self.dsp_outputs[i].yv.deinit(self._allocator);
     }
 
     self._gctx.releaseResource(self.vram_texture_view);
@@ -366,7 +366,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         _ = zgui.inputInt("##breakpoint", .{ .v = &static.bp_addr, .flags = .{ .chars_hexadecimal = true } });
         zgui.sameLine(.{});
         if (zgui.button("Add Breakpoint", .{ .w = 200.0 })) {
-            try d.breakpoints.append(@as(u32, @intCast(static.bp_addr & 0x1FFFFFFF)));
+            try d.breakpoints.append(d._allocator, @as(u32, @intCast(static.bp_addr & 0x1FFFFFFF)));
         }
 
         const timers = .{
@@ -717,7 +717,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size / 2) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i16), .max = std.math.maxInt(i16) });
                             zgui.plot.setupFinish();
-                            zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                            zgui.plot.plotLineValues("samples", i16, .{ .v = @as([*]const i16, @ptrCast(@alignCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
                             zgui.plot.plotLine("play_position", i32, .{ .xv = &[_]i32{ @intCast(state.play_position), @intCast(state.play_position) }, .yv = &[_]i32{ -std.math.maxInt(i16), std.math.maxInt(i16) } });
                             zgui.plot.endPlot();
                         }
@@ -726,7 +726,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             zgui.plot.setupAxisLimits(.x1, .{ .min = 0, .max = @floatFromInt(loop_size) });
                             zgui.plot.setupAxisLimits(.y1, .{ .min = std.math.minInt(i8), .max = std.math.maxInt(i8) });
                             zgui.plot.setupFinish();
-                            zgui.plot.plotLineValues("samples", i8, .{ .v = @as([*]const i8, @alignCast(@ptrCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
+                            zgui.plot.plotLineValues("samples", i8, .{ .v = @as([*]const i8, @ptrCast(@alignCast(&dc.aica.wave_memory[start_addr])))[0..loop_size] });
                             zgui.plot.plotLine("play_position", i32, .{ .xv = &[_]i32{ @intCast(state.play_position), @intCast(state.play_position) }, .yv = &[_]i32{ -std.math.maxInt(i8), std.math.maxInt(i8) } });
                             zgui.plot.endPlot();
                         }
@@ -737,12 +737,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                             self.audio_channels[i].amplitude_envelope.yv.clearRetainingCapacity();
                         }
                         if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0) {
-                            try self.audio_channels[i].amplitude_envelope.xv.append(@intCast(time - self.audio_channels[i].amplitude_envelope.start_time));
+                            try self.audio_channels[i].amplitude_envelope.xv.append(self._allocator, @intCast(time - self.audio_channels[i].amplitude_envelope.start_time));
                         } else {
                             self.audio_channels[i].amplitude_envelope.start_time = time;
-                            try self.audio_channels[i].amplitude_envelope.xv.append(0);
+                            try self.audio_channels[i].amplitude_envelope.xv.append(self._allocator, 0);
                         }
-                        try self.audio_channels[i].amplitude_envelope.yv.append(state.amp_env_level);
+                        try self.audio_channels[i].amplitude_envelope.yv.append(self._allocator, state.amp_env_level);
                     } else {
                         if (self.audio_channels[i].amplitude_envelope.xv.items.len > 0)
                             self.audio_channels[i].amplitude_envelope.start_time = time - self.audio_channels[i].amplitude_envelope.xv.items[self.audio_channels[i].amplitude_envelope.xv.items.len - 1];
@@ -800,12 +800,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         self.dsp_inputs[i].yv.clearRetainingCapacity();
                     }
                     if (self.dsp_inputs[i].xv.items.len > 0) {
-                        try self.dsp_inputs[i].xv.append(@intCast(time - self.dsp_inputs[i].start_time));
+                        try self.dsp_inputs[i].xv.append(self._allocator, @intCast(time - self.dsp_inputs[i].start_time));
                     } else {
                         self.dsp_inputs[i].start_time = time;
-                        try self.dsp_inputs[i].xv.append(0);
+                        try self.dsp_inputs[i].xv.append(self._allocator, 0);
                     }
-                    try self.dsp_inputs[i].yv.append(@intCast(@as(i20, @bitCast(dc.aica.dsp.read_mixs(i)))));
+                    try self.dsp_inputs[i].yv.append(self._allocator, @intCast(@as(i20, @bitCast(dc.aica.dsp.read_mixs(i)))));
                 } else {
                     if (self.dsp_inputs[i].xv.items.len > 0)
                         self.dsp_inputs[i].start_time = time - self.dsp_inputs[i].xv.items[self.dsp_inputs[i].xv.items.len - 1];
@@ -830,12 +830,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         self.dsp_outputs[i].yv.clearRetainingCapacity();
                     }
                     if (self.dsp_outputs[i].xv.items.len > 0) {
-                        try self.dsp_outputs[i].xv.append(@intCast(time - self.dsp_outputs[i].start_time));
+                        try self.dsp_outputs[i].xv.append(self._allocator, @intCast(time - self.dsp_outputs[i].start_time));
                     } else {
                         self.dsp_outputs[i].start_time = time;
-                        try self.dsp_outputs[i].xv.append(0);
+                        try self.dsp_outputs[i].xv.append(self._allocator, 0);
                     }
-                    try self.dsp_outputs[i].yv.append(@intCast(dc.aica.dsp.read_efreg(i)));
+                    try self.dsp_outputs[i].yv.append(self._allocator, @intCast(dc.aica.dsp.read_efreg(i)));
                 } else {
                     if (self.dsp_outputs[i].xv.items.len > 0)
                         self.dsp_outputs[i].start_time = time - self.dsp_outputs[i].xv.items[self.dsp_outputs[i].xv.items.len - 1];

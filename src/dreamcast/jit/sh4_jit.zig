@@ -592,7 +592,7 @@ pub const SH4JIT = struct {
         self._working_block.deinit();
         self.block_cache.deinit();
         if (FastMem)
-            self.virtual_address_space.deinit();
+            self.virtual_address_space.deinit(self._allocator);
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {

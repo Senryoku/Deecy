@@ -89,7 +89,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                     const pixel_idx = v * u_size + u;
                     const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size, v_size);
                     const data: u8 = if (format == .Palette4BPP) ((texture[texel_idx >> 1] >> @intCast(4 * (texel_idx & 0x1))) & 0xF) else texture[texel_idx];
-                    @as([*]u32, @alignCast(@ptrCast(&dest_bgra[0])))[pixel_idx] = data;
+                    @as([*]u32, @ptrCast(@alignCast(&dest_bgra[0])))[pixel_idx] = data;
                 }
             }
         },
@@ -99,7 +99,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                     for (0..u_size / 2) |u| {
                         const pixel_idx = 2 * v * u_size + 2 * u;
                         const texel_idx = untwiddle(@intCast(u), @intCast(v), u_size / 2, v_size / 2);
-                        const halfwords = @as([*]const u16, @alignCast(@ptrCast(&texture[8 * texel_idx])))[0..4];
+                        const halfwords = @as([*]const u16, @ptrCast(@alignCast(&texture[8 * texel_idx])))[0..4];
                         const texels_0_1: YUV422 = @bitCast(@as(u32, halfwords[2]) << 16 | @as(u32, halfwords[0]));
                         const texels_2_3: YUV422 = @bitCast(@as(u32, halfwords[3]) << 16 | @as(u32, halfwords[1]));
                         const colors_0 = Colors.yuv_to_rgba(texels_0_1);
@@ -321,18 +321,17 @@ const DrawCall = struct {
     start_index: u32 = 0,
     index_count: u32 = 0,
 
-    indices: std.ArrayList(u32), // Temporary storage before uploading them to the GPU.
+    indices: std.ArrayList(u32) = .empty, // Temporary storage before uploading them to the GPU.
 
-    pub fn init(allocator: std.mem.Allocator, sampler: u8, user_clip: ?HollyModule.UserTileClipInfo) DrawCall {
+    pub fn init(sampler: u8, user_clip: ?HollyModule.UserTileClipInfo) DrawCall {
         return .{
             .sampler = sampler,
             .user_clip = user_clip,
-            .indices = .init(allocator),
         };
     }
 
-    pub fn deinit(self: *DrawCall) void {
-        self.indices.deinit();
+    pub fn deinit(self: *DrawCall, allocator: std.mem.Allocator) void {
+        self.indices.deinit(allocator);
     }
 };
 
@@ -417,32 +416,31 @@ const PipelineMetadata = struct {
         return .{ .draw_calls = .init(allocator) };
     }
 
-    fn deinit(self: *@This()) void {
-        for (self.draw_calls.values()) |*draw_call| draw_call.deinit();
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        for (self.draw_calls.values()) |*draw_call| draw_call.deinit(allocator);
         self.draw_calls.deinit();
     }
 };
 
 const PassMetadata = struct {
     pass_type: HollyModule.ListType,
-    steps: std.ArrayList(std.AutoArrayHashMap(PipelineKey, PipelineMetadata)),
+    steps: std.ArrayList(std.AutoArrayHashMap(PipelineKey, PipelineMetadata)) = .empty,
 
-    pub fn init(allocator: std.mem.Allocator, pass_type: HollyModule.ListType) PassMetadata {
+    pub fn init(pass_type: HollyModule.ListType) PassMetadata {
         return .{
             .pass_type = pass_type,
-            .steps = .init(allocator),
         };
     }
 
-    fn deinit(self: *@This()) void {
-        self.reset();
-        self.steps.deinit();
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.reset(allocator);
+        self.steps.deinit(allocator);
     }
 
-    pub fn reset(self: *@This()) void {
+    pub fn reset(self: *@This(), allocator: std.mem.Allocator) void {
         for (self.steps.items) |*step| {
             for (step.values()) |*pipeline|
-                pipeline.deinit();
+                pipeline.deinit(allocator);
             step.deinit();
         }
         self.steps.clearRetainingCapacity();
@@ -464,26 +462,26 @@ const RenderPass = struct {
     translucent_pass: PassMetadata,
     pre_sorted_translucent_pass: std.ArrayList(SortedDrawCall),
 
-    pub fn init(allocator: std.mem.Allocator) RenderPass {
+    pub fn init() RenderPass {
         return .{
-            .opaque_pass = .init(allocator, .Opaque),
-            .punchthrough_pass = .init(allocator, .PunchThrough),
-            .translucent_pass = .init(allocator, .Translucent),
-            .pre_sorted_translucent_pass = .init(allocator),
+            .opaque_pass = .init(.Opaque),
+            .punchthrough_pass = .init(.PunchThrough),
+            .translucent_pass = .init(.Translucent),
+            .pre_sorted_translucent_pass = .empty,
         };
     }
 
-    pub fn deinit(self: *@This()) void {
-        self.opaque_pass.deinit();
-        self.punchthrough_pass.deinit();
-        self.translucent_pass.deinit();
-        self.pre_sorted_translucent_pass.deinit();
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.opaque_pass.deinit(allocator);
+        self.punchthrough_pass.deinit(allocator);
+        self.translucent_pass.deinit(allocator);
+        self.pre_sorted_translucent_pass.deinit(allocator);
     }
 
-    pub fn clearRetainingCapacity(self: *@This()) void {
-        self.opaque_pass.reset();
-        self.punchthrough_pass.reset();
-        self.translucent_pass.reset();
+    pub fn clearRetainingCapacity(self: *@This(), allocator: std.mem.Allocator) void {
+        self.opaque_pass.reset(allocator);
+        self.punchthrough_pass.reset(allocator);
+        self.translucent_pass.reset(allocator);
         self.pre_sorted_translucent_pass.clearRetainingCapacity();
     }
 };
@@ -1231,17 +1229,17 @@ pub const Renderer = struct {
             .strips_metadata = try .initCapacity(allocator, 4096),
             .modifier_volume_vertices = try .initCapacity(allocator, 4096),
 
-            .render_passes = .init(allocator),
-            .ta_lists = .init(allocator),
-            .ta_lists_to_render = .init(allocator),
+            .render_passes = .empty,
+            .ta_lists = .empty,
+            .ta_lists_to_render = .empty,
 
-            ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, 4, null),
+            ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, .@"4", null),
 
             ._gctx = gctx,
             ._allocator = allocator,
         };
-        try renderer.ta_lists.append(.init(allocator));
-        try renderer.ta_lists_to_render.append(.init(allocator));
+        try renderer.ta_lists.append(allocator, .init());
+        try renderer.ta_lists_to_render.append(allocator, .init());
 
         MipMap.init(allocator, gctx);
         // Blit pipeline
@@ -1521,7 +1519,7 @@ pub const Renderer = struct {
 
         for (self.ta_lists_to_render.items) |*list| list.clearRetainingCapacity();
         for (self.ta_lists.items) |*list| list.clearRetainingCapacity();
-        for (self.render_passes.items) |*pass| pass.clearRetainingCapacity();
+        for (self.render_passes.items) |*pass| pass.clearRetainingCapacity(self._allocator);
 
         self.modifier_volume_vertices.clearRetainingCapacity();
         self.strips_metadata.clearRetainingCapacity();
@@ -1560,7 +1558,7 @@ pub const Renderer = struct {
                     .Type2 => renderer_log.debug("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
                 }
 
-                if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(.init(self._allocator)) catch @panic("Out of memory");
+                if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(self._allocator, .init()) catch @panic("Out of memory");
 
                 self.render_passes.items[region_array_idx].z_clear = region_config.settings.z_clear == .Clear;
                 self.render_passes.items[region_array_idx].pre_sort = region_config.settings.pre_sort;
@@ -1578,7 +1576,7 @@ pub const Renderer = struct {
 
             if (region_count < self.render_passes.items.len) {
                 for (region_count..self.render_passes.items.len) |i|
-                    self.render_passes.items[i].deinit();
+                    self.render_passes.items[i].deinit(self._allocator);
                 self.render_passes.shrinkRetainingCapacity(region_count);
             }
 
@@ -2609,15 +2607,15 @@ pub const Renderer = struct {
                                         pre_sorted_index_offset += draw_call.index_count;
                                     }
 
-                                    try render_pass.pre_sorted_translucent_pass.append(.{
+                                    try render_pass.pre_sorted_translucent_pass.append(self._allocator, .{
                                         .pipeline_key = pipeline_key,
                                         .sampler = sampler,
                                         .user_clip = display_list.vertex_strips.items[idx].user_clip,
                                     });
                                 }
                                 for (strip_first_vertex_index..self.vertices.items.len) |i|
-                                    try pre_sorted_indices.append(@intCast(FirstVertex + i));
-                                try pre_sorted_indices.append(std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
+                                    try pre_sorted_indices.append(self._allocator, @intCast(FirstVertex + i));
+                                try pre_sorted_indices.append(self._allocator, std.math.maxInt(u32)); // Primitive Restart: Ends the current triangle strip.
                             } else {
                                 // Draw calls are batched together as much as possible by PipelineKeys (and then by DrawCallKey).
                                 // This works well in most cases and reduces host draw calls by a lot, but it fails in some
@@ -2627,11 +2625,11 @@ pub const Renderer = struct {
                                 // functions, this seem to be enough, while keeping most of the benefit of batching.
                                 if (current_depth_compare_function == null) { // Initialisation
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(.init(self._allocator));
+                                    try pass.steps.append(self._allocator, .init());
                                     current_step = &pass.steps.items[0];
                                 } else if (current_depth_compare_function != pipeline_key.depth_compare) { // Next Step
                                     current_depth_compare_function = pipeline_key.depth_compare;
-                                    try pass.steps.append(.init(self._allocator));
+                                    try pass.steps.append(self._allocator, .init());
                                     current_step = &pass.steps.items[pass.steps.items.len - 1];
                                 }
 

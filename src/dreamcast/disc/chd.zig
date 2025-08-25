@@ -1,6 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
+const BitReader = @import("bit_reader.zig");
 const chd_flac = @import("chd_flac.zig");
 const host_memory = @import("../host/host_memory.zig");
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
@@ -9,8 +10,8 @@ const Session = @import("session.zig");
 
 const log = std.log.scoped(.chd);
 
-tracks: std.ArrayList(Track),
-sessions: std.ArrayList(Session),
+tracks: std.ArrayList(Track) = .empty,
+sessions: std.ArrayList(Session) = .empty,
 
 version: u32 = undefined,
 compressors: [4]Compression = undefined,
@@ -21,8 +22,8 @@ hunk_bytes: u32 = undefined,
 unit_bytes: u32 = undefined,
 map: []MapEntry = undefined,
 
-track_offsets: std.ArrayList(u32),
-track_data: std.ArrayList([]u8),
+track_offsets: std.ArrayList(u32) = .empty,
+track_data: std.ArrayList([]u8) = .empty,
 
 _file: MemoryMappedFile,
 _file_view: []const u8 = undefined,
@@ -106,10 +107,6 @@ const MetadataEntry = struct {
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = std.ArrayList(Track).init(allocator),
-        .sessions = std.ArrayList(Session).init(allocator),
-        .track_offsets = std.ArrayList(u32).init(allocator),
-        .track_data = std.ArrayList([]u8).init(allocator),
         ._file = try MemoryMappedFile.init(filepath, allocator),
         ._allocator = allocator,
     };
@@ -251,12 +248,12 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 pub fn deinit(self: *@This()) void {
     self._allocator.free(self.map);
 
-    self.sessions.deinit();
-    self.track_offsets.deinit();
+    self.sessions.deinit(self._allocator);
+    self.track_offsets.deinit(self._allocator);
     for (self.track_data.items) |track_data|
         host_memory.virtual_dealloc(track_data);
-    self.track_data.deinit();
-    self.tracks.deinit();
+    self.track_data.deinit(self._allocator);
+    self.tracks.deinit(self._allocator);
     self._file.deinit();
 }
 
@@ -326,9 +323,8 @@ fn decode_map_v5(self: *@This()) !void {
 
     self.map = try self._allocator.alloc(MapEntry, hunk_count);
 
-    var stream = std.io.fixedBufferStream(self._file_view);
-    try stream.seekTo(self.map_offset);
-    var reader = stream.reader();
+    var reader = std.Io.Reader.fixed(self._file_view);
+    std.debug.assert(reader.discardShort(self.map_offset) == self.map_offset);
 
     const map_bytes = try reader.readInt(u32, .big);
     const first_offset = try reader.readInt(u48, .big);
@@ -344,14 +340,14 @@ fn decode_map_v5(self: *@This()) !void {
     log.debug("  Self Bits: {X}", .{self_bits});
     log.debug("  Parent Bits: {X}", .{parent_bits});
 
-    try stream.seekTo(self.map_offset + 16);
+    std.debug.assert(reader.discardShort(1) == 1);
 
     const NumCodes = 16;
     const MaxBits = 8;
 
     var nodes: [NumCodes]struct { bits: u32, num_bits: u4 } = undefined;
 
-    var bit_reader = std.io.bitReader(.big, reader);
+    var bit_reader: BitReader = .init(reader);
     var node_idx: u32 = 0;
     while (node_idx < NumCodes) {
         var nodebits: u4 = try bit_reader.readBitsNoEof(u4, 4);
@@ -443,6 +439,7 @@ fn decode_map_v5(self: *@This()) !void {
         }
     }
 
+    // FIXME: This might be a bit annoying
     if (decoder.unused_bits != 0) {
         const pos = try stream.getPos();
         try stream.seekTo(pos - 1);
@@ -600,8 +597,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
     const header_reader = header_stream.reader();
     const compressed_length = if (complen_bytes == 2) try header_reader.readInt(u16, .big) else try header_reader.readInt(u24, .big);
 
-    var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-    const file_reader = fixed_stream.reader();
+    var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
 
     switch (compression) {
         .CD_LZMA => {
@@ -624,9 +620,9 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         .CD_Zlib => {
-            var output_stream = std.io.fixedBufferStream(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
-            try std.compress.flate.decompress(file_reader, output_stream.writer());
-            const bytes = try output_stream.getPos();
+            const writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var decompress: std.compress.flate.Decompress = .init(&file_reader, .zlib, &.{});
+            const bytes = try decompress.reader.streamRemaining(writer);
             // This probably won't work without subcodes/raw sector data
             // if (self.map[hunk].crc != crc16(dest[0..bytes]))
             //     return error.InvalidCRC;
@@ -637,7 +633,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             const num_samples = bytes / @sizeOf(i16);
             var flac_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset..]);
             const flac_reader = flac_stream.reader();
-            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @alignCast(@ptrCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
+            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
             return bytes;
         },
         else => {

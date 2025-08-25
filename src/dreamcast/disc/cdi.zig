@@ -13,17 +13,15 @@ const Version = enum(u32) {
     _,
 };
 
-tracks: std.ArrayList(Track),
-sessions: std.ArrayList(Session),
+tracks: std.ArrayList(Track) = .empty,
+sessions: std.ArrayList(Session) = .empty,
 _file: MemoryMappedFile,
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = .init(allocator),
-        .sessions = .init(allocator),
         ._file = try .init(filepath, allocator),
     };
-    errdefer self.deinit();
+    errdefer self.deinit(allocator);
 
     const file = try std.fs.cwd().openFile(filepath, .{});
     defer file.close();
@@ -31,29 +29,30 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     const size = try file.getEndPos();
     if (size < 8) return error.InvalidCDI;
     try file.seekFromEnd(-8);
-    var reader = file.reader();
-    const version: Version = try reader.readEnum(Version, .little);
+    const buffer = try allocator.alloc(u8, 8192);
+    defer allocator.free(buffer);
+    var file_reader = file.reader(buffer);
+    var reader = &file_reader.interface;
+    const version: Version = try reader.takeEnum(Version, .little);
     log.debug("Version: {any}", .{version});
 
     switch (version) {
         .V2, .V3 => {
-            const header_offset = try reader.readInt(u32, .little);
+            const header_offset = try reader.takeInt(u32, .little);
             log.debug("Header Offset: {X}", .{header_offset});
 
-            try file.seekTo(header_offset);
-            reader = file.reader();
+            try file_reader.seekTo(header_offset);
         },
         .V4 => {
-            const header_size = try reader.readInt(u32, .little);
+            const header_size = try reader.takeInt(u32, .little);
             log.debug("Header Size: {X}", .{header_size});
 
-            try file.seekFromEnd(-@as(i64, header_size));
-            reader = file.reader();
+            try file_reader.seekTo(try file_reader.getSize() - header_size);
         },
         else => return error.UnsupportedCDIVersion,
     }
 
-    const session_count = try reader.readInt(u16, .little);
+    const session_count = try reader.takeInt(u16, .little);
     log.debug("Session Count: {d}", .{session_count});
 
     var track_offset: u64 = 0;
@@ -68,59 +67,59 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             .end_fad = 0,
         };
 
-        const track_count = try reader.readInt(u16, .little);
+        const track_count = try reader.takeInt(u16, .little);
         log.debug("  Track Count: {d}", .{track_count});
 
         for (0..track_count) |_| {
             try track_header(reader);
 
-            try reader.skipBytes(2, .{});
-            const pregap = try reader.readInt(u32, .little);
-            const length = try reader.readInt(u32, .little);
+            std.debug.assert(try reader.discardShort(2) == 2);
+            const pregap = try reader.takeInt(u32, .little);
+            const length = try reader.takeInt(u32, .little);
             log.debug("    Pregap: {X}, Length: {X}", .{ pregap, length });
             std.debug.assert(pregap == 150); // Assumed for the session start fad.
 
-            try reader.skipBytes(6, .{});
-            const mode = try reader.readInt(u32, .little);
+            std.debug.assert(try reader.discardShort(6) == 6);
+            const mode = try reader.takeInt(u32, .little);
             log.debug("    Mode: {d}", .{mode});
 
-            try reader.skipBytes(4, .{});
-            const session_number = try reader.readInt(u32, .little);
-            const track_number = try reader.readInt(u32, .little);
-            const start_lba = try reader.readInt(u32, .little);
-            const total_length = try reader.readInt(u32, .little);
+            std.debug.assert(try reader.discardShort(4) == 4);
+            const session_number = try reader.takeInt(u32, .little);
+            const track_number = try reader.takeInt(u32, .little);
+            const start_lba = try reader.takeInt(u32, .little);
+            const total_length = try reader.takeInt(u32, .little);
             log.debug("    Session Number: {d}, Track Number: {d}, Start LBA: {X}, Track Length: {X}", .{ session_number, track_number, start_lba, total_length });
             std.debug.assert(total_length == length + pregap);
 
-            try reader.skipBytes(16, .{});
-            const sector_size: u32 = switch (try reader.readInt(u32, .little)) {
+            std.debug.assert(try reader.discardShort(16) == 16);
+            const sector_size: u32 = switch (try reader.takeInt(u32, .little)) {
                 0 => 2048,
                 1 => 2336,
                 2 => 2352,
                 else => return error.InvalidSectorSize,
             };
-            const sector_type = try reader.readInt(u32, .little);
+            const sector_type = try reader.takeInt(u32, .little);
             log.debug("    Sector Size: {d}, Sector Type: {d}", .{ sector_size, sector_type });
             std.debug.assert(sector_type == 0 or sector_type == 4);
-            try reader.skipBytes(1, .{});
+            std.debug.assert(try reader.discardShort(1) == 1);
 
-            const total_length_2 = try reader.readInt(u32, .little); // Repeated?
+            const total_length_2 = try reader.takeInt(u32, .little); // Repeated?
             log.debug("    Total Length: {d}", .{total_length_2});
             std.debug.assert(total_length_2 == length + pregap);
             std.debug.assert(total_length_2 == total_length);
 
-            try reader.skipBytes(25, .{});
+            std.debug.assert(try reader.discardShort(25) == 25);
             switch (version) {
-                .V2 => try reader.skipBytes(4, .{}),
+                .V2 => std.debug.assert(try reader.discardShort(4) == 4),
                 else => {
-                    if (try reader.readInt(u32, .little) == 0xFFFFFFFF)
-                        try reader.skipBytes(78, .{});
+                    if (try reader.takeInt(u32, .little) == 0xFFFFFFFF)
+                        std.debug.assert(try reader.discardShort(78) == 78);
                 },
             }
 
             log.debug("     [+] Creating view: {X}, length: {X}", .{ track_offset + pregap * sector_size, length * sector_size });
 
-            try self.tracks.append(.{
+            try self.tracks.append(allocator, .{
                 .num = @truncate(self.tracks.items.len + 1),
                 .fad = start_lba + pregap,
                 .track_type = @enumFromInt(sector_type),
@@ -133,35 +132,35 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
             track_offset += total_length * sector_size;
         }
-        const session_type = try reader.readInt(u32, .little);
-        try reader.skipBytes(4, .{});
-        session.start_fad = try reader.readInt(u32, .little) + 150;
+        const session_type = try reader.takeInt(u32, .little);
+        std.debug.assert(try reader.discardShort(4) == 4);
+        session.start_fad = try reader.takeInt(u32, .little) + 150;
         log.debug("Session Type: {X}, Last Session Start LBA: {X}", .{ session_type, session.start_fad });
         if (session.start_fad != self.tracks.items[session.first_track].fad)
             log.warn("Session start fad doesn't match first track: {X} != {X}", .{ session.start_fad, self.tracks.items[session.first_track].fad });
-        if (version != .V2) try reader.skipBytes(1, .{});
+        if (version != .V2) std.debug.assert(try reader.discardShort(1) == 1);
 
         session.last_track = @intCast(self.tracks.items.len - 1);
         session.end_fad = self.tracks.items[session.last_track].get_end_fad();
-        try self.sessions.append(session);
+        try self.sessions.append(allocator, session);
     }
-    const total_tracks = try reader.readInt(u16, .little);
+    const total_tracks = try reader.takeInt(u16, .little);
     std.debug.assert(total_tracks == 0); // Marks the end of sessions.
     try track_header(reader);
 
-    const total_number_of_sectors = try reader.readInt(u32, .little);
-    const volume_name_length = try reader.readInt(u8, .little);
+    const total_number_of_sectors = try reader.takeInt(u32, .little);
+    const volume_name_length = try reader.takeInt(u8, .little);
     var volume_name_buffer: [256]u8 = undefined;
     const volume_name = volume_name_buffer[0..volume_name_length];
-    _ = try reader.read(volume_name);
+    _ = try reader.readSliceAll(volume_name);
     log.debug("Sector count: {X}, Volume Name Length: {d}, Volume Name: {s}", .{ total_number_of_sectors, volume_name_length, volume_name });
 
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
-    self.sessions.deinit();
-    self.tracks.deinit();
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.sessions.deinit(allocator);
+    self.tracks.deinit(allocator);
     self._file.deinit();
 }
 
@@ -201,31 +200,31 @@ pub fn get_area_boundaries(self: *const @This(), area: Session.Area) [2]u32 {
     return .{ 0, @intCast(self.tracks.items.len - 1) };
 }
 
-fn track_header(reader: anytype) !void {
-    const null_or_extra = try reader.readInt(u32, .little);
+fn track_header(reader: *std.io.Reader) !void {
+    const null_or_extra = try reader.takeInt(u32, .little);
     if (null_or_extra != 0)
-        try reader.skipBytes(8, .{});
-    const track_start_mark = try reader.readInt(u160, .big);
+        std.debug.assert(try reader.discardShort(8) == 8);
+    const track_start_mark = try reader.takeInt(u160, .big);
     if (track_start_mark != 0x0000_0100_0000_FFFF_FFFF_0000_0100_0000_FFFF_FFFF) {
         log.err("  Invalid Track Start Mark: {X}", .{track_start_mark});
         return error.InvalidCDI;
     }
-    try reader.skipBytes(4, .{});
+    std.debug.assert(try reader.discardShort(4) == 4);
 
-    const filename_length = try reader.readInt(u8, .little);
+    const filename_length = try reader.takeInt(u8, .little);
     var buffer: [256]u8 = undefined;
     const filename = buffer[0..filename_length];
-    _ = try reader.read(filename);
+    _ = try reader.readSliceAll(filename);
     log.debug("    Filename: {s}", .{filename});
-    try reader.skipBytes(1 + 10 + 4 + 4, .{});
+    std.debug.assert(try reader.discardShort(1 + 10 + 4 + 4) == 1 + 10 + 4 + 4);
 
-    const v4_mark = try reader.readInt(u32, .little);
+    const v4_mark = try reader.takeInt(u32, .little);
     const max_cd_length = mcl: {
         if (v4_mark != 0x80000000) {
             break :mcl v4_mark;
         } else {
-            const max_cd_length = try reader.readInt(u32, .little);
-            const v4_mark_2 = try reader.readInt(u32, .little);
+            const max_cd_length = try reader.takeInt(u32, .little);
+            const v4_mark_2 = try reader.takeInt(u32, .little);
             if (v4_mark_2 != 0x980000) {
                 log.debug("  V4 Mark 2: {X}", .{v4_mark_2});
                 return error.InvalidCDI;

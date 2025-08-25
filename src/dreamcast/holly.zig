@@ -1454,8 +1454,8 @@ pub const Holly = struct {
             ._dc = dc,
         };
         for (&r._ta_lists) |*ta_list| {
-            ta_list.* = .init(allocator);
-            try ta_list.append(.init(allocator));
+            ta_list.* = .empty;
+            try ta_list.append(allocator, .init());
         }
         return r;
     }
@@ -1463,7 +1463,7 @@ pub const Holly = struct {
     pub fn deinit(self: *@This()) void {
         for (&self._ta_lists) |*ta_lists| {
             for (ta_lists.items) |*list|
-                list.deinit();
+                list.deinit(self._allocator);
         }
         self._allocator.free(self.registers);
     }
@@ -1734,7 +1734,7 @@ pub const Holly = struct {
                 if (v == 0x80000000) {
                     self._ta_current_pass += 1;
                     if (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass)
-                        self._ta_lists[self.ta_list_index()].append(self._allocator, .init(self._allocator)) catch @panic("Out of memory");
+                        self._ta_lists[self.ta_list_index()].append(self._allocator, .init()) catch @panic("Out of memory");
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -2081,7 +2081,7 @@ pub const Holly = struct {
                 if (self._ta_list_type) |list_type| {
                     if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                         if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                        self.ta_current_lists().volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
+                        self.ta_current_lists().volume_triangles.append(self._allocator, @as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
                             holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {any}"), .{err});
                         };
 
@@ -2099,12 +2099,12 @@ pub const Holly = struct {
                                     }
                                     if (polygon_obj_control.texture == 0) {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
-                                        display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
+                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
                                             holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
                                         };
                                     } else {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
-                                        display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
+                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
                                             holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
                                         };
                                     }
@@ -2113,7 +2113,7 @@ pub const Holly = struct {
                                     const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
                                     if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
 
-                                    display_list.vertex_parameters.append(switch (format) {
+                                    display_list.vertex_parameters.append(self._allocator, switch (format) {
                                         .SpriteType0, .SpriteType1 => unreachable,
                                         inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
                                     }) catch |err| {
@@ -2123,7 +2123,7 @@ pub const Holly = struct {
                             }
 
                             if (parameter_control_word.end_of_strip == 1) {
-                                display_list.vertex_strips.append(.{
+                                display_list.vertex_strips.append(self._allocator, .{
                                     .polygon = polygon.*,
                                     .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
                                     .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
@@ -2168,13 +2168,13 @@ pub const Holly = struct {
                         const config = self.get_region_array_data_config(0);
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convenience.
-                            self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
-                            self.ta_current_lists().translucent_modifier_volumes.append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                            self.ta_current_lists().opaque_modifier_volumes.append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                            self.ta_current_lists().translucent_modifier_volumes.append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
                         } else {
                             (if (list_type == .OpaqueModifierVolume)
                                 self.ta_current_lists().opaque_modifier_volumes
                             else
-                                self.ta_current_lists().translucent_modifier_volumes).append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                                self.ta_current_lists().translucent_modifier_volumes).append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
                         }
                     }
 

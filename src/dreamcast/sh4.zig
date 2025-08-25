@@ -1759,7 +1759,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.r[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.r_bank[0..]));
@@ -1790,7 +1790,7 @@ pub const SH4 = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !usize {
         var bytes: usize = 0;
         bytes += try reader.read(std.mem.sliceAsBytes(self.r[0..]));
         bytes += try reader.read(std.mem.sliceAsBytes(self.r_bank[0..]));

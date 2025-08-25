@@ -40,7 +40,7 @@ pub const IRBlock = struct {
     }
 
     pub fn deinit(self: *@This()) void {
-        self._emitter.deinit(self._allocator);
+        self._emitter.deinit();
         self.instructions.deinit(self._allocator);
     }
 

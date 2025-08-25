@@ -924,15 +924,15 @@ pub fn on_game_load(self: *@This()) !void {
 fn save_state_path(self: *@This(), index: usize) !std.ArrayList(u8) {
     const game_dir = try self.userdata_game_directory();
     defer self._allocator.free(game_dir);
-    var save_slot_path = std.ArrayList(u8).init(self._allocator);
-    try save_slot_path.writer().print("{s}/save_{d}.sav", .{ game_dir, index });
+    var save_slot_path: std.ArrayList(u8) = .empty;
+    try save_slot_path.writer(self._allocator).print("{s}/save_{d}.sav", .{ game_dir, index });
     return save_slot_path;
 }
 
 fn check_save_state_slots(self: *@This()) !void {
     for (0..self.save_state_slots.len) |i| {
         var save_slot_path = try self.save_state_path(i);
-        defer save_slot_path.deinit();
+        defer save_slot_path.deinit(self._allocator);
         self.save_state_slots[i] = try file_exists(save_slot_path.items);
     }
 }
@@ -1184,13 +1184,14 @@ pub fn save_state(self: *@This(), index: usize) !void {
     deecy_log.info("Saving State #{d}...", .{index});
 
     // var uncompressed_array = try std.ArrayList(u8).initCapacity(self._allocator, 32 * 1024 * 1024);
-    var writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+    var allocating_writer = try std.Io.Writer.Allocating.initCapacity(self._allocator, 32 * 1024 * 1024);
+    var writer = &allocating_writer.writer;
     _ = try self.dc.serialize(writer);
     _ = try writer.write(std.mem.asBytes(&self._cycles_to_run));
 
     deecy_log.info("  Serialized state in {d} ms. Compressing...", .{std.time.milliTimestamp() - start_time});
 
-    try self.launch_async(compress_and_dump_save_state, .{ self, index, writer.toOwnedSlice() });
+    try self.launch_async(compress_and_dump_save_state, .{ self, index, allocating_writer.toOwnedSlice() });
 }
 
 fn compress_and_dump_save_state(self: *@This(), index: usize, uncompressed_array: std.ArrayList(u8)) !void {
@@ -1225,7 +1226,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
     }
 
     var save_slot_path = try self.save_state_path(index);
-    defer save_slot_path.deinit();
+    defer save_slot_path.deinit(self._allocator);
 
     deecy_log.info("Loading State #{d} from '{s}'...", .{ index, save_slot_path.items });
 
@@ -1239,7 +1240,7 @@ pub fn load_state(self: *@This(), index: usize) !void {
     if (header_size != @sizeOf(SaveStateHeader)) return error.InvalidSaveState;
     try header.validate();
 
-    const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, header.compressed_size, 8, null);
+    const compressed = try file.readToEndAllocOptions(self._allocator, 32 * 1024 * 1024, header.compressed_size, .@"8", null);
     defer self._allocator.free(compressed);
 
     if (header.compressed_size != compressed.len) return error.UnexpectedSaveStateSize;
@@ -1268,7 +1269,11 @@ fn save_config(self: *@This()) !void {
     defer self._allocator.free(config_path);
     var config_file = try std.fs.cwd().createFile(config_path, .{});
     defer config_file.close();
-    try std.json.stringify(self.config, .{}, config_file.writer());
+    const buffer = try self._allocator.alloc(u8, 8192);
+    defer self._allocator.free(buffer);
+    var writer = config_file.writer(buffer);
+    try std.json.fmt(self.config, .{}).format(&writer.interface);
+    try writer.end();
 }
 
 pub fn wait_async_jobs(self: *@This()) void {

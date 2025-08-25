@@ -66,7 +66,7 @@ vmu_displays: [4][2]?struct {
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
-disc_files: std.ArrayList(GameFile),
+disc_files: std.ArrayList(GameFile) = .empty,
 disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
 notifications: Notifications,
@@ -77,7 +77,6 @@ allocator: std.mem.Allocator,
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
-        .disc_files = .init(allocator),
         .notifications = .init(allocator),
         .deecy = d,
         .allocator = allocator,
@@ -88,7 +87,7 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
 
 pub fn destroy(self: *@This()) void {
     for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-    self.disc_files.deinit();
+    self.disc_files.deinit(self.allocator);
 
     for (&self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
@@ -284,7 +283,7 @@ pub fn refresh_games(self: *@This()) !void {
                     {
                         self.disc_files_mutex.lock();
                         defer self.disc_files_mutex.unlock();
-                        try self.disc_files.append(.{
+                        try self.disc_files.append(self.allocator, .{
                             .name = name,
                             .path = path,
                             .texture = null,
