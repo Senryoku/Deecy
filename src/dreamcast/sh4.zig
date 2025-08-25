@@ -174,18 +174,16 @@ const OperandCacheState = struct {
     dirty: [256]bool = @splat(false), // U bit
     // V bit not implemented
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.addr[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.dirty[0..]));
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.addr[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.dirty[0..]));
-        return bytes;
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.addr[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.dirty[0..]));
     }
 };
 
@@ -1790,40 +1788,37 @@ pub const SH4 = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.r[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.r_bank[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.sr));
-        bytes += try reader.read(std.mem.asBytes(&self.gbr));
-        bytes += try reader.read(std.mem.asBytes(&self.ssr));
-        bytes += try reader.read(std.mem.asBytes(&self.spc));
-        bytes += try reader.read(std.mem.asBytes(&self.sgr));
-        bytes += try reader.read(std.mem.asBytes(&self.dbr));
-        bytes += try reader.read(std.mem.asBytes(&self.vbr));
-        bytes += try reader.read(std.mem.asBytes(&self.pc));
-        bytes += try reader.read(std.mem.asBytes(&self.macl));
-        bytes += try reader.read(std.mem.asBytes(&self.mach));
-        bytes += try reader.read(std.mem.asBytes(&self.pr));
-        bytes += try reader.read(std.mem.asBytes(&self.fpscr));
-        bytes += try reader.read(std.mem.asBytes(&self.fpul));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.fp_banks[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.store_queues[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._operand_cache[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.p4_registers[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.itlb[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.utlb[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.interrupt_requests));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._last_timer_update[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.execution_state));
-        bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
-        bytes += try self._operand_cache_state.deserialize(reader);
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.r[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.r_bank[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.sr));
+        try reader.readSliceAll(std.mem.asBytes(&self.gbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.ssr));
+        try reader.readSliceAll(std.mem.asBytes(&self.spc));
+        try reader.readSliceAll(std.mem.asBytes(&self.sgr));
+        try reader.readSliceAll(std.mem.asBytes(&self.dbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.vbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.pc));
+        try reader.readSliceAll(std.mem.asBytes(&self.macl));
+        try reader.readSliceAll(std.mem.asBytes(&self.mach));
+        try reader.readSliceAll(std.mem.asBytes(&self.pr));
+        try reader.readSliceAll(std.mem.asBytes(&self.fpscr));
+        try reader.readSliceAll(std.mem.asBytes(&self.fpul));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.fp_banks[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.store_queues[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._operand_cache[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.p4_registers[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.itlb[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.utlb[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.interrupt_requests));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._last_timer_update[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.execution_state));
+        try reader.readSliceAll(std.mem.asBytes(&self._pending_cycles));
+        try self._operand_cache_state.deserialize(reader);
 
         self.compute_interrupt_priorities();
         self.update_sse_settings();
         self.reset_utlb_fast_lookup();
         self.check_mmu_state();
-
-        return bytes;
     }
 };

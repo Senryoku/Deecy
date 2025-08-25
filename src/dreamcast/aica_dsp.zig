@@ -886,12 +886,11 @@ test {
     try std.testing.expectEqual(f16_from_i24(i24_from_f16(0xFFFF)), 0xDFFF);
 }
 
-pub fn serialize(_: @This(), _: anytype) !usize {
+pub fn serialize(_: @This(), _: *std.Io.Writer) !usize {
     // All our internal state is within _regs
     return 0;
 }
 
-pub fn deserialize(self: *@This(), _: anytype) !usize {
+pub fn deserialize(self: *@This(), _: *std.Io.Reader) !void {
     self._dirty_mpro = true;
-    return 0;
 }

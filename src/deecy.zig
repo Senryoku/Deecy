@@ -489,7 +489,7 @@ pub fn destroy(self: *@This()) void {
     self.save_config() catch |err| deecy_log.err("Error writing config: {s}", .{@errorName(err)});
     self.config.deinit(self._allocator);
 
-    self.breakpoints.deinit();
+    self.breakpoints.deinit(self._allocator);
 
     self.audio_device.destroy();
 
@@ -1248,16 +1248,12 @@ pub fn load_state(self: *@This(), index: usize) !void {
     const decompressed = try lz4.Standard.decompress(self._allocator, compressed, header.uncompressed_size);
     defer self._allocator.free(decompressed);
 
-    var uncompressed_stream = std.io.fixedBufferStream(decompressed);
-    var reader = uncompressed_stream.reader();
+    var reader = std.io.Reader.fixed(decompressed);
 
     try self.reset();
 
-    var bytes = try self.dc.deserialize(&reader);
-    bytes += try reader.read(std.mem.asBytes(&self._cycles_to_run));
-
-    if (bytes != header.uncompressed_size)
-        deecy_log.err(termcolor.red("Loading save state used {d} bytes, expected {d}"), .{ bytes, header.uncompressed_size });
+    try self.dc.deserialize(&reader);
+    try reader.readSliceAll(std.mem.asBytes(&self._cycles_to_run));
 
     deecy_log.info("Loaded State #{d} from '{s}' in {d}ms", .{ index, save_slot_path.items, std.time.milliTimestamp() - start_time });
 

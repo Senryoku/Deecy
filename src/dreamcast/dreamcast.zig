@@ -1205,35 +1205,31 @@ pub const Dreamcast = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !usize {
-        var bytes: usize = 0;
-
-        bytes += try self.cpu.deserialize(reader);
-        bytes += try self.gpu.deserialize(reader);
-        bytes += try self.aica.deserialize(reader);
-        bytes += try self.maple.deserialize(reader);
-        bytes += try self.gdrom.deserialize(reader);
-        bytes += try self.flash.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.aram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try self.cpu.deserialize(reader);
+        try self.gpu.deserialize(reader);
+        try self.aica.deserialize(reader);
+        try self.maple.deserialize(reader);
+        try self.gdrom.deserialize(reader);
+        try self.flash.deserialize(reader);
+        try reader.read(std.mem.sliceAsBytes(self.ram));
+        try reader.read(std.mem.sliceAsBytes(self.vram));
+        try reader.read(std.mem.sliceAsBytes(self.aram));
+        try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
 
         while (self.scheduled_events.count() > 0)
             _ = self.scheduled_events.remove();
         var event_count: usize = 0;
-        bytes += try reader.read(std.mem.asBytes(&event_count));
+        try reader.read(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
             var event: ScheduledEvent = undefined;
-            bytes += try reader.read(std.mem.asBytes(&event));
+            try reader.read(std.mem.asBytes(&event));
             try self.scheduled_events.add(event);
         }
 
-        bytes += try reader.read(std.mem.asBytes(&self._global_cycles));
+        try reader.read(std.mem.asBytes(&self._global_cycles));
 
         self.gpu.finalize_deserialization();
-
-        return bytes;
     }
 };
 

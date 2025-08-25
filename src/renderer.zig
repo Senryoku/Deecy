@@ -1418,12 +1418,12 @@ pub const Renderer = struct {
     }
 
     pub fn destroy(self: *Renderer) void {
-        for (self.ta_lists.items) |*list| list.deinit();
-        self.ta_lists.deinit();
-        for (self.ta_lists_to_render.items) |*list| list.deinit();
-        self.ta_lists_to_render.deinit();
-        for (self.render_passes.items) |*pass| pass.deinit();
-        self.render_passes.deinit();
+        for (self.ta_lists.items) |*list| list.deinit(self._allocator);
+        self.ta_lists.deinit(self._allocator);
+        for (self.ta_lists_to_render.items) |*list| list.deinit(self._allocator);
+        self.ta_lists_to_render.deinit(self._allocator);
+        for (self.render_passes.items) |*pass| pass.deinit(self._allocator);
+        self.render_passes.deinit(self._allocator);
 
         // Wait for async pipeline creation to finish (prevents crashing on exit).
         while (self._gctx.lookupResource(self.closed_modifier_volume_pipeline) == null or
@@ -1453,9 +1453,9 @@ pub const Renderer = struct {
 
         self._allocator.free(self._scratch_pad);
 
-        self.modifier_volume_vertices.deinit();
-        self.strips_metadata.deinit();
-        self.vertices.deinit();
+        self.modifier_volume_vertices.deinit(self._allocator);
+        self.strips_metadata.deinit(self._allocator);
+        self.vertices.deinit(self._allocator);
 
         for (self.sampler_bind_groups) |sampler_bind_group| {
             self._gctx.releaseResource(sampler_bind_group);

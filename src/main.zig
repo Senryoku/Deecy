@@ -226,9 +226,10 @@ pub fn main() !void {
         if (std.mem.endsWith(u8, path, ".elf")) {
             var elf_file = try std.fs.cwd().openFile(path, .{});
             defer elf_file.close();
-            var stream: std.io.StreamSource = .{ .file = elf_file };
-
-            var elf = try ELF.init(allocator, &stream);
+            const buffer = try allocator.alloc(u8, 8192);
+            defer allocator.free(buffer);
+            var file_reader = elf_file.reader(buffer);
+            var elf = try ELF.init(allocator, &file_reader);
             defer elf.deinit();
 
             entry_point = @intCast(elf.program_entry_offset);

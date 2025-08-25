@@ -51,8 +51,8 @@
             .hash = "zpool-0.11.0-dev-bG692QtEAQCyqBnzSBJbJlY0-a_3v1YcjFTGmg0VBjOc",
         },
         .arm7 = .{
-            .url = "git+https://github.com/Senryoku/arm7.git#17cc0a6853eb49cf1c1eec7e273f437623e25a86",
-            .hash = "arm7-0.1.0-al93rKJsAQCcsaNjSEeCB2FSJAl5Y6tSe5twQ9C0JWno",
+            .url = "git+https://github.com/Senryoku/arm7.git#476b859c5be1f9f8e37d6c90123a8482fe4a9fa5",
+            .hash = "arm7-0.1.0-al93rIZuAQAxsY7qMxO34haxEZPiMzTX_qhMGOR6AXjW",
         },
         .ziglz4 = .{
             .url = "git+https://github.com/Senryoku/zig-lz4#75df19f05ead46824c92f1cb81241b82ef8769b4",

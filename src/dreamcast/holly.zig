@@ -2379,7 +2379,7 @@ pub const Holly = struct {
         self.schedule_interrupts();
     }
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.registers[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.dirty_framebuffer));
@@ -2404,17 +2404,16 @@ pub const Holly = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.registers[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.dirty_framebuffer));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_command_buffer_index));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_list_type));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_current_polygon));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_user_tile_clip));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_current_volume));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.registers[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.dirty_framebuffer));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_command_buffer_index));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_list_type));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_current_polygon));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_user_tile_clip));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_current_volume));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
         // for (&self._ta_lists) |*lists| {
         //     for (lists.items) |*list| {
         //         list.deinit();
@@ -2427,11 +2426,9 @@ pub const Holly = struct {
         //         bytes += try lists.items[i].deserialize(reader);
         //     }
         // }
-        bytes += try reader.read(std.mem.asBytes(&self._pixel));
-        bytes += try reader.read(std.mem.asBytes(&self._tmp_subcycles));
-        bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));
-
-        return bytes;
+        try reader.readSliceAll(std.mem.asBytes(&self._pixel));
+        try reader.readSliceAll(std.mem.asBytes(&self._tmp_subcycles));
+        try reader.readSliceAll(std.mem.asBytes(&self._last_spg_update));
     }
 };
 
