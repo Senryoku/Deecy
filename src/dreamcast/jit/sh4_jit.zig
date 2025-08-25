@@ -112,17 +112,17 @@ const BlockCache = struct {
         } else {
             // NOTE: madvise 'dontneed' could be faster and should reliably zero out the memory on private anonymous mappings on Linux, if I believe what I read here and there online.
             //       However this isn't standard or portable, maybe I should just use the fixed mmap fallback directly.
-            std.posix.madvise(@alignCast(@ptrCast(self.blocks.ptr)), byte_size, std.posix.MADV.DONTNEED) catch |madv_err| {
+            std.posix.madvise(@ptrCast(@alignCast(self.blocks.ptr)), byte_size, std.posix.MADV.DONTNEED) catch |madv_err| {
                 sh4_jit_log.warn("Failed to madvise: {s}. Fallback to mmap.", .{@errorName(madv_err)});
                 const remmaped = try std.posix.mmap(
-                    @alignCast(@ptrCast(self.blocks.ptr)),
+                    @ptrCast(@alignCast(self.blocks.ptr)),
                     byte_size,
                     std.posix.PROT.READ | std.posix.PROT.WRITE,
                     .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = true },
                     -1,
                     0,
                 );
-                std.debug.assert(remmaped.ptr == @as([*]align(std.heap.page_size_min) u8, @alignCast(@ptrCast(self.blocks.ptr))));
+                std.debug.assert(remmaped.ptr == @as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(self.blocks.ptr))));
             };
         }
     }
@@ -400,7 +400,7 @@ pub const JITContext = struct {
             .start_physical_pc = physical_pc,
             .current_pc = cpu.pc,
             .current_physical_pc = physical_pc,
-            .instructions = @alignCast(@ptrCast(cpu._dc.?._get_memory(physical_pc))),
+            .instructions = @ptrCast(@alignCast(cpu._dc.?._get_memory(physical_pc))),
             .fpscr_sz = if (cpu.fpscr.sz == 1) .Double else .Single,
             .fpscr_pr = if (cpu.fpscr.pr == 1) .Double else .Single,
         };
@@ -592,7 +592,7 @@ pub const SH4JIT = struct {
         self._working_block.deinit();
         self.block_cache.deinit();
         if (FastMem)
-            self.virtual_address_space.deinit();
+            self.virtual_address_space.deinit(self._allocator);
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {

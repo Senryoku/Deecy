@@ -10,12 +10,14 @@ const View = if (builtin.os.tag == .windows) std.os.windows.HANDLE else []align(
 file: if (builtin.os.tag == .windows) std.os.windows.HANDLE else std.fs.File,
 mapping_handle: if (builtin.os.tag == .windows) std.os.windows.HANDLE else void,
 views: std.ArrayList(View),
+_allocator: std.mem.Allocator,
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
         .file = undefined,
         .mapping_handle = undefined,
         .views = try .initCapacity(allocator, 1),
+        ._allocator = allocator,
     };
     if (builtin.os.tag != .windows) {
         self.file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -56,7 +58,7 @@ pub fn deinit(self: *@This()) void {
         if (self.file != std.os.windows.INVALID_HANDLE_VALUE)
             std.os.windows.CloseHandle(self.file);
     }
-    self.views.deinit();
+    self.views.deinit(self._allocator);
 }
 
 pub fn create_full_view(self: *@This()) ![]u8 {
@@ -71,7 +73,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
         const adjusted_size = size + adjustment;
         const r = try std.posix.mmap(null, adjusted_size, std.posix.PROT.READ, .{ .TYPE = .SHARED }, self.file.handle, aligned_offset);
         errdefer std.posix.munmap(r);
-        try self.views.append(r);
+        try self.views.append(self._allocator, r);
         return r[adjustment..];
     } else {
         var map_to_end = size == 0;
@@ -93,7 +95,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
         }
 
         if (ptr_or_null) |ptr| {
-            try self.views.append(ptr);
+            try self.views.append(self._allocator, ptr);
 
             const final_size = sz: {
                 if (map_to_end) {

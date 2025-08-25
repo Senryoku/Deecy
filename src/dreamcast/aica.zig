@@ -632,7 +632,7 @@ pub const AICA = struct {
 
     pub fn read_mem(self: *const AICA, comptime T: type, addr: u32) T {
         std.debug.assert(addr >= 0x00800000 and addr < 0x01000000);
-        return @as(*T, @alignCast(@ptrCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).*;
+        return @as(*T, @ptrCast(@alignCast(&self.wave_memory[(addr - 0x00800000) % self.wave_memory.len]))).*;
     }
 
     pub fn write_mem(self: *AICA, comptime T: type, addr: u32, value: T) void {
@@ -643,24 +643,24 @@ pub const AICA = struct {
             self.arm_jit.block_cache.signal_write(local_addr);
 
         // FIXME: No idea if this actually wraps around. Dev kit had 8MB of RAM instead of the final 2MB.
-        @as(*T, @alignCast(@ptrCast(&self.wave_memory[(local_addr) % self.wave_memory.len]))).* = value;
+        @as(*T, @ptrCast(@alignCast(&self.wave_memory[(local_addr) % self.wave_memory.len]))).* = value;
     }
 
     pub inline fn get_channel_registers(self: *const AICA, number: u8) *const AICAChannel {
         std.debug.assert(number < 64);
-        return @alignCast(@ptrCast(&self.regs[0x80 / 4 * @as(u32, number)]));
+        return @ptrCast(@alignCast(&self.regs[0x80 / 4 * @as(u32, number)]));
     }
 
     pub inline fn get_reg(self: *const AICA, comptime T: type, reg: AICARegister) *T {
-        return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4])));
+        return @as(*T, @ptrCast(@alignCast(&self.regs[@intFromEnum(reg) / 4])));
     }
 
     pub inline fn get_dsp_mix_register(self: *const AICA, channel: u4) *DSPOutputMixer {
-        return @as(*DSPOutputMixer, @alignCast(@ptrCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
+        return @as(*DSPOutputMixer, @ptrCast(@alignCast(&self.regs[(@as(u32, 0x2000) + 4 * @as(u32, channel)) / 4])));
     }
 
     pub inline fn debug_read_reg(self: *const AICA, comptime T: type, reg: AICARegister) T {
-        return @as(*T, @alignCast(@ptrCast(&self.regs[@intFromEnum(reg) / 4]))).*;
+        return @as(*T, @ptrCast(@alignCast(&self.regs[@intFromEnum(reg) / 4]))).*;
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
@@ -1306,12 +1306,12 @@ pub const AICA = struct {
             state.prev_sample = state.curr_sample;
             const sample_ram = self.wave_memory[registers.sample_address()..];
             state.curr_sample = switch (registers.play_control.sample_format) {
-                .i16 => @as([*]const i16, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position],
-                .i8 => @as(i32, @intCast(@as([*]const i8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position])) << 8,
+                .i16 => @as([*]const i16, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position],
+                .i8 => @as(i32, @intCast(@as([*]const i8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position])) << 8,
                 // FIXME: ADPCMStream, how does it work?
                 .ADPCM, .ADPCMStream => adpcm: {
                     // 4 bits per sample
-                    var s: u8 = @intCast(@as([*]const u8, @alignCast(@ptrCast(sample_ram.ptr)))[state.play_position >> 1]);
+                    var s: u8 = @intCast(@as([*]const u8, @ptrCast(@alignCast(sample_ram.ptr)))[state.play_position >> 1]);
                     if (state.play_position & 1 == 1)
                         s >>= 4;
                     break :adpcm state.compute_adpcm(@truncate(s));
@@ -1488,7 +1488,7 @@ pub const AICA = struct {
         dc.raise_normal_interrupt(.{ .EoD_AICA = 1 });
     }
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try self.arm7.serialize(writer);
         bytes += try self.dsp.serialize(writer);
@@ -1512,30 +1512,26 @@ pub const AICA = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
         try self.arm_jit.reset();
 
-        bytes += try self.arm7.deserialize(reader);
-        bytes += try self.dsp.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.regs));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.channel_states));
-        bytes += try reader.read(std.mem.asBytes(&self.rtc_write_enabled));
-        bytes += try reader.read(std.mem.asBytes(&self._arm_cycles_counter));
-        bytes += try reader.read(std.mem.asBytes(&self._timer_cycles_counter));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._timer_counters[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self._samples_counter));
+        try self.arm7.deserialize(reader);
+        try self.dsp.deserialize(reader);
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.regs));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.channel_states));
+        try reader.readSliceAll(std.mem.asBytes(&self.rtc_write_enabled));
+        try reader.readSliceAll(std.mem.asBytes(&self._arm_cycles_counter));
+        try reader.readSliceAll(std.mem.asBytes(&self._timer_cycles_counter));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._timer_counters[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self._samples_counter));
 
-        bytes += try reader.read(std.mem.asBytes(&self.sample_read_offset));
-        bytes += try reader.read(std.mem.asBytes(&self.sample_write_offset));
+        try reader.readSliceAll(std.mem.asBytes(&self.sample_read_offset));
+        try reader.readSliceAll(std.mem.asBytes(&self.sample_write_offset));
         if (self.sample_read_offset > self.sample_write_offset) {
-            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
-            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[0..self.sample_write_offset]));
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..]));
         } else {
-            bytes += try reader.read(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
+            try reader.readSliceAll(std.mem.sliceAsBytes(self.sample_buffer[self.sample_read_offset..self.sample_write_offset]));
         }
-
-        return bytes;
     }
 };

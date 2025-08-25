@@ -188,7 +188,7 @@ pub const ARM7JIT = struct {
         // Not necessary, just here to allow compatibility with the interpreter if we need it.
         // (Right now we're always calling to the interpreter so this should stay in sync, but once
         //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-        cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+        cpu.instruction_pipeline[0] = @as(*const u32, @ptrCast(@alignCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
 
         return @intCast(spent_cycles);
     }
@@ -197,7 +197,7 @@ pub const ARM7JIT = struct {
     pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) callconv(.c) void {
         const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
         arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
-        const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
+        const instructions: [*]u32 = @ptrCast(@alignCast(&cpu.memory[pc]));
         const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 self.block_cache.reset() catch |reset_err| {

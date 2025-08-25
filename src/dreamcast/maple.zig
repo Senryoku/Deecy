@@ -247,14 +247,6 @@ pub const Controller = struct {
         }
         return r;
     }
-
-    pub fn serialize(_: @This(), _: anytype) !usize {
-        return 0;
-    }
-
-    pub fn deserialize(_: anytype) !@This() {
-        return .{};
-    }
 };
 
 const GetMediaInformationResponse = packed struct(u192) {
@@ -386,7 +378,7 @@ pub const VMU = struct {
             for (0..self.blocks.len) |i| {
                 @memset(&self.blocks[i], 0);
             }
-            var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
+            var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
             @memset(fat_entries[0..0x100], FATValue.Unused);
             @memcpy(self.blocks[FATBlock][0x1E0..], &[_]u8{
                 0xFC, 0xFF, 0xFA, 0xFF, 0xF1, 0x00, 0xF2, 0x00,
@@ -424,7 +416,7 @@ pub const VMU = struct {
             })[0..24]);
 
             // "Format" the device.
-            var fat_entries = @as([*]FATValue, @alignCast(@ptrCast(&self.blocks[FATBlock][0])));
+            var fat_entries = @as([*]FATValue, @ptrCast(@alignCast(&self.blocks[FATBlock][0])));
             @memset(fat_entries[0..0x100], FATValue.Unused);
             fat_entries[FATBlock] = FATValue.DataEnd;
             fat_entries[SystemBlock] = FATValue.DataEnd; // Marks the system area block.
@@ -668,7 +660,7 @@ const MaplePort = struct {
                             std.debug.assert(function_type == 0x01000000);
                             const condition = c.get_condition();
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .DataTransfer, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = @intCast(condition.len) }));
-                            const ptr: [*]u32 = @alignCast(@ptrCast(dc._get_memory(return_addr + 4)));
+                            const ptr: [*]u32 = @ptrCast(@alignCast(dc._get_memory(return_addr + 4)));
                             @memcpy(ptr[0..condition.len], &condition);
                             return 1 + condition.len;
                         },
@@ -790,9 +782,7 @@ const MaplePort = struct {
         }
     }
 
-    pub fn deserialize(_: @This(), _: anytype) !usize {
-        return 0;
-    }
+    pub fn deserialize(_: @This(), _: anytype) !void {}
 };
 
 pub const MapleHost = struct {
@@ -876,7 +866,7 @@ pub const MapleHost = struct {
         }
     }
 
-    pub fn serialize(self: @This(), writer: anytype) !usize {
+    pub fn serialize(self: @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         for (&self.ports) |port| {
             bytes += try port.serialize(writer);
@@ -884,11 +874,9 @@ pub const MapleHost = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
         for (&self.ports) |*port| {
-            bytes += try port.deserialize(reader);
+            try port.deserialize(reader);
         }
-        return bytes;
     }
 };
