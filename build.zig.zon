@@ -34,13 +34,9 @@
             .hash = "N-V-__8AAIz1QAKx8C8vft2YoHjGTjEAkH2QMR2UiAo8xZJ-",
             .lazy = true,
         },
-        .zglfw = .{
-            .url = "git+https://github.com/zig-gamedev/zglfw#feeeff9386dd44ba2c18488113023865c41b80a4",
-            .hash = "zglfw-0.10.0-dev-zgVDNLyhIQCZR_rbIf7hnCKuifzcmPOLOQhd_hrqq8cl",
-        },
         .zgui = .{
-            .url = "git+https://github.com/zig-gamedev/zgui#068c56384d756d9e955b779a4b96a157025b84ef",
-            .hash = "zgui-0.6.0-dev--L6sZCJ_aQDN8-3-W-__lzfAk3xpqNO7ZpsD_gi_REpb",
+            .url = "git+https://github.com/Senryoku/zgui.git#50423d4e4fdb95ec4a2c025e2e0aae3b41389fcf",
+            .hash = "zgui-0.6.0-dev--L6sZCyAaQANYKdViUb-emwCUqYrwcKYVxBLnJ-cLjpU",
         },
         .zaudio = .{
             .url = "git+https://github.com/Senryoku/zaudio.git#bc37245a1a0b8a361f7c29c43d140744eb875b31",
@@ -54,17 +50,21 @@
             .url = "git+https://github.com/zig-gamedev/zpool#7829cf02f78e8c39e19b802ccb47ed44037299c2",
             .hash = "zpool-0.11.0-dev-bG692QtEAQCyqBnzSBJbJlY0-a_3v1YcjFTGmg0VBjOc",
         },
-        .nfd = .{
-            .url = "https://github.com/Senryoku/nfd-zig/archive/ad81729d33da30d5f4fd23718debec48245121ca.tar.gz",
-            .hash = "1220a679380847513262c8c5c474d4a415f9ecc4921c8c6aefbdbdce66cf2aa19ceb",
-        },
         .arm7 = .{
             .url = "git+https://github.com/Senryoku/arm7.git#17cc0a6853eb49cf1c1eec7e273f437623e25a86",
             .hash = "arm7-0.1.0-al93rKJsAQCcsaNjSEeCB2FSJAl5Y6tSe5twQ9C0JWno",
         },
         .ziglz4 = .{
-            .url = "git+https://github.com/Senryoku/zig-lz4#13dbe791ed06dca142e164b626eca91a466ee248",
-            .hash = "ziglz4-0.1.1-AAAAAPhcAACOYR6mnlQdCzCbbokCaMFBXALA8bmenbJb",
+            .url = "git+https://github.com/Senryoku/zig-lz4#75df19f05ead46824c92f1cb81241b82ef8769b4",
+            .hash = "ziglz4-0.1.1-HIQ645RdAAAId9ddADLegH1cVrHNG13Dl-C6GrWVbqOU",
+        },
+        .nfdzig = .{
+            .url = "git+https://github.com/Senryoku/nfd-zig.git#c276c2ef9b18fab5ac686f8ebf95a6fc558b972e",
+            .hash = "nfdzig-0.1.0-11fxvN6IBgD5rvvfjrw1wPqibMsbUJ-h2ZcGR6FOEvrm",
+        },
+        .zglfw = .{
+            .url = "git+https://github.com/zig-gamedev/zglfw#feeeff9386dd44ba2c18488113023865c41b80a4",
+            .hash = "zglfw-0.10.0-dev-zgVDNLyhIQCZR_rbIf7hnCKuifzcmPOLOQhd_hrqq8cl",
         },
     },
 }
