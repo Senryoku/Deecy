@@ -422,13 +422,12 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
             : [_] "{edx}" (cpu.sr.t),
               [_] "{eax}" (rn.*),
               [_] "{ecx}" (rm.*),
-            : "edx", "eax"
-        );
+            : .{ .edx = true, .eax = true });
         cpu.sr.t = asm volatile (
             \\ setb %dl
             : [ret] "={dl}" (-> bool),
             :
-            : "dl"
+            : .{ .dl = true }
         );
     }
 }
@@ -1510,7 +1509,7 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             // AICA Memory           System RAM               Texture Memory
             0x00800000...0x009FFFFF, 0x0C000000...0x0FFFFFFF, 0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
                 @setRuntimeSafety(false);
-                const dst: *@Vector(8, u32) = @alignCast(@ptrCast(cpu._dc.?._get_memory(ext_addr)));
+                const dst: *@Vector(8, u32) = @ptrCast(@alignCast(cpu._dc.?._get_memory(ext_addr)));
                 dst.* = cpu.store_queues[sq_addr.sq];
             },
             // Texture memory, 32bit path
