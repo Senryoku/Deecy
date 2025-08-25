@@ -1783,10 +1783,10 @@ pub const Holly = struct {
                     self.handle_command();
                 }
             },
-            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
+            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {any}"), .{ addr, v }),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 // Direct Texture Path
-                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
+                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {any}"), .{ addr, v });
                 switch (access_type) {
                     .b64 => {
                         for (v, 0..) |w, idx|
@@ -1798,7 +1798,7 @@ pub const Holly = struct {
                     },
                 }
             },
-            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
+            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{any}"), .{ addr, v }),
         }
     }
 

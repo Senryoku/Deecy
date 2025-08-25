@@ -80,7 +80,7 @@ fn glfw_key_callback(
                         else => unreachable,
                     };
                     app.save_state(idx) catch |err| {
-                        deecy_log.err(termcolor.red("Failed to save state #{d}: {}"), .{ idx, err });
+                        deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
                     };
                 },
                 .F5, .F6, .F7, .F8 => {
@@ -92,7 +92,7 @@ fn glfw_key_callback(
                         else => unreachable,
                     };
                     app.load_state(idx) catch |err| {
-                        deecy_log.err(termcolor.red("Failed to load state #{d}: {}"), .{ idx, err });
+                        deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
                     };
                 },
                 else => {},
