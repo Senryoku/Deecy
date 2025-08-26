@@ -569,25 +569,25 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     .GetToC => self.get_toc(),
                     .ReqSes => self.req_ses(),
                     .CDOpen => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command});
+                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X}"), .{self.packet_command});
                         self.spi_non_data_command();
                     },
                     .CDPlay => self.cd_play(),
                     .CDSeek => self.cd_seek(),
                     .CDScan => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
+                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X}"), .{self.packet_command});
                         self.state = .Scanning;
                         self.state = .Paused; // FIXME: Do not resolve immediatly?
                         self.spi_non_data_command();
                     },
                     .CDRead => self.cd_read(),
-                    .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
+                    .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X}"), .{self.packet_command}),
                     .GetSCD => self.get_subcode(),
                     .SYS_CHK_SECU => self.chk_secu(),
                     .SYS_REQ_SECU => self.req_secu(),
                     else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
                 } catch |err| {
-                    gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{any}\n", .{ err, self.packet_command });
+                    gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{X}\n", .{ err, self.packet_command });
                 });
             }
         },
@@ -645,7 +645,7 @@ fn nop(self: *@This()) void {
 }
 
 fn test_unit(self: *@This()) void {
-    gdrom_log.debug("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
+    gdrom_log.debug("  GDROM PacketCommand TestUnit: {X}", .{self.packet_command});
     self.spi_non_data_command();
 }
 
@@ -735,7 +735,7 @@ fn req_mode(self: *@This()) !void {
 }
 
 fn set_mode(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X}"), .{self.packet_command});
     // TODO: Set some stuff?
     // See "Transfer Packet Command Flow For PIO Data from Host"
 
@@ -834,7 +834,7 @@ fn req_ses(self: *@This()) !void {
 }
 
 fn cd_play(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
 
     self.audio_state.mutex.lock();
     defer self.audio_state.mutex.unlock();
@@ -868,7 +868,7 @@ fn cd_play(self: *@This()) !void {
 }
 
 fn cd_seek(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X}"), .{self.packet_command});
 
     self.audio_state.status = .Paused;
     self.state = .Seeking;
@@ -1096,7 +1096,7 @@ fn chk_secu(self: *@This()) !void {
 }
 
 fn req_secu(self: *@This()) !void {
-    gdrom_log.info(" GDROM PacketCommand ReqSecu: {X:0>2}", .{self.packet_command});
+    gdrom_log.info(" GDROM PacketCommand ReqSecu: {X}", .{self.packet_command});
     const parameter = self.packet_command[1];
     _ = parameter;
     try self.pio_data_queue.write(&GDROMCommand71Reply);
