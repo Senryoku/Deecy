@@ -192,7 +192,7 @@ var TestState: struct {
 
 fn read8(addr: u32) u8 {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].read_addr, addr) catch {
-        std.debug.print("  Read8 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
+        std.debug.print("  Read8 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
         TestState.test_data.log();
         @panic("read8 address error");
     };
@@ -211,7 +211,7 @@ fn read16(addr: u32) u16 {
         return @truncate(TestState.test_data.cycles[TestState.cycle].fetch_val);
     }
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].read_addr, addr) catch {
-        std.debug.print("  Read16 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
+        std.debug.print("  Read16 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
         TestState.test_data.log();
         @panic("read16 address error");
     };
@@ -220,7 +220,7 @@ fn read16(addr: u32) u16 {
 
 fn read32(addr: u32) u32 {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].read_addr, addr) catch {
-        std.debug.print("  Read32 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
+        std.debug.print("  Read32 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
         TestState.test_data.log();
         @panic("read32 address error");
     };
@@ -229,7 +229,7 @@ fn read32(addr: u32) u32 {
 
 fn read64(addr: u32) u64 {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].read_addr, addr) catch {
-        std.debug.print("  Read64 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
+        std.debug.print("  Read64 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].read_addr, addr });
         TestState.test_data.log();
         @panic("read64 address error");
     };
@@ -238,12 +238,12 @@ fn read64(addr: u32) u64 {
 
 fn write8(addr: u32, val: u8) void {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_addr, addr) catch {
-        std.debug.print("  Write8 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
+        std.debug.print("  Write8 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
         TestState.test_data.log();
         @panic("write8 address error");
     };
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_val, val) catch {
-        std.debug.print("  Write8 failed at cycle {d}. Expected value {?X:0>2}, got {?X:0>2}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
+        std.debug.print("  Write8 failed at cycle {d}. Expected value {?X:0>2}, got {X:0>2}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
         TestState.test_data.log();
         @panic("write8 value error");
     };
@@ -251,12 +251,12 @@ fn write8(addr: u32, val: u8) void {
 
 fn write16(addr: u32, val: u16) void {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_addr, addr) catch {
-        std.debug.print("  Write16 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
+        std.debug.print("  Write16 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
         TestState.test_data.log();
         @panic("write16 address error");
     };
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_val, val) catch {
-        std.debug.print("  Write16 failed at cycle {d}. Expected value {?X:0>4}, got {?X:0>4}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
+        std.debug.print("  Write16 failed at cycle {d}. Expected value {?X:0>4}, got {X:0>4}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
         TestState.test_data.log();
         @panic("write16 value error");
     };
@@ -264,12 +264,12 @@ fn write16(addr: u32, val: u16) void {
 
 fn write32(addr: u32, val: u32) void {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_addr, addr) catch {
-        std.debug.print("  Write32 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
+        std.debug.print("  Write32 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
         TestState.test_data.log();
         @panic("write32 address error");
     };
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_val, val) catch {
-        std.debug.print("  Write32 failed at cycle {d}. Expected value {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
+        std.debug.print("  Write32 failed at cycle {d}. Expected value {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
         TestState.test_data.log();
         @panic("write32 value error");
     };
@@ -277,12 +277,12 @@ fn write32(addr: u32, val: u32) void {
 
 fn write64(addr: u32, val: u64) void {
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_addr, addr) catch {
-        std.debug.print("  Write64 failed at cycle {d}. Expected address {?X:0>8}, got {?X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
+        std.debug.print("  Write64 failed at cycle {d}. Expected address {?X:0>8}, got {X:0>8}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_addr, addr });
         TestState.test_data.log();
         @panic("write64 address error");
     };
     std.testing.expectEqual(TestState.test_data.cycles[TestState.cycle].write_val, val) catch {
-        std.debug.print("  Write64 failed at cycle {d}. Expected value {?X:0>16}, got {?X:0>16}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
+        std.debug.print("  Write64 failed at cycle {d}. Expected value {?X:0>16}, got {X:0>16}\n", .{ TestState.cycle, TestState.test_data.cycles[TestState.cycle].write_val, val });
         TestState.test_data.log();
         @panic("write64 value error");
     };
@@ -373,7 +373,8 @@ fn run_test(t: Test, cpu: *SH4Module.SH4, comptime log: bool) !void {
 }
 
 test {
-    defer SH4Module.disassembly.free_disassembly_cache(std.testing.allocator);
+    const allocator = std.testing.allocator;
+    defer SH4Module.disassembly.free_disassembly_cache(allocator);
 
     SH4Module.DebugHooks.read8 = read8;
     SH4Module.DebugHooks.read16 = read16;
@@ -388,18 +389,18 @@ test {
     var test_dir = try std.fs.cwd().openDir(TestDir, .{ .iterate = true });
     defer test_dir.close();
 
-    var walker = try test_dir.walk(std.testing.allocator);
+    var walker = try test_dir.walk(allocator);
     defer walker.deinit();
 
-    var cpu = try SH4Module.SH4.init(std.testing.allocator, null);
+    var cpu = try SH4Module.SH4.init(allocator, null);
     defer cpu.deinit();
 
     var skipped_tests: u32 = 0;
-    var failed_tests = std.ArrayList(struct {
+    var failed_tests: std.ArrayList(struct {
         instruction: []const u8,
         failed_cases: u32,
-    }).init(std.testing.allocator);
-    defer failed_tests.deinit();
+    }) = .empty;
+    defer failed_tests.deinit(allocator);
     var file_num: u32 = 0;
     tests_loop: while (try walker.next()) |entry| {
         if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".json")) {
@@ -448,7 +449,7 @@ test {
             }
             if (failed_test_cases > 0) {
                 std.debug.print(termcolor.red("  [{s}] {d}/{d} test cases failed.\n"), .{ entry.basename, failed_test_cases, test_data.value.len });
-                try failed_tests.append(.{
+                try failed_tests.append(allocator, .{
                     .instruction = SH4Module.instructions.Opcodes[SH4Module.instructions.JumpTable[test_data.value[0].opcodes[1]]].name,
                     .failed_cases = failed_test_cases,
                 });

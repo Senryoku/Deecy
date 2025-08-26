@@ -427,8 +427,7 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
             \\ setb %dl
             : [ret] "={dl}" (-> bool),
             :
-            : .{ .dl = true }
-        );
+            : .{ .dl = true });
     }
 }
 
@@ -1425,7 +1424,7 @@ pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) !void {
     if (addr & (@as(u32, 1) << 25) != 0) {
         // DCA3 Hack
         const index = (addr / 32) & 255;
-        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>2}, OIX_CACHE[index]={X:0>8}, dirty={any}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
+        sh4_log.debug("  ocbwb {X:0>8}, index={X:0>2}, OIX_CACHE[index]={any}, dirty={}, OIX_ADDR[index]={X:0>8}", .{ addr, index, cpu.operand_cache_lines()[index], cpu._operand_cache_state.dirty[index], cpu._operand_cache_state.addr[index] });
         if (cpu._operand_cache_state.addr[index] != ((addr & 0x1FFF_FFFF) & ~@as(u32, 31)))
             sh4_log.warn("  (ocbwb_atRn) Expected OIX_ADDR[index] = {X:0>8}, got {X:0>8}", .{ cpu._operand_cache_state.addr[index], (addr & 0x1FFF_FFFF) & ~@as(u32, 31) });
         if (cpu._operand_cache_state.dirty[index]) {

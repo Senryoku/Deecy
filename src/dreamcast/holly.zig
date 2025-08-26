@@ -1773,7 +1773,7 @@ pub const Holly = struct {
 
     /// Write to the Tile Accelerator
     pub fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
-        holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
+        holly_log.debug("  TA Bulk Write: {X:0>8} = {any}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (v.len % 8 == 0) self.write_ta_fifo_polygon_path(v) else {
@@ -1798,7 +1798,7 @@ pub const Holly = struct {
                     },
                 }
             },
-            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{any}"), .{ addr, v }),
+            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = {any}"), .{ addr, v }),
         }
     }
 
