@@ -442,12 +442,11 @@ fn decode_map_v5(self: *@This()) !void {
         }
     }
 
-    // FIXME: This might be a bit annoying
     if (decoder.unused_bits != 0) {
-        // const pos = try stream.getPos();
-        // try stream.seekTo(pos - 1);
-        // _ = try bit_reader.readBitsNoEof(u8, 8 - decoder.unused_bits);
-        return error.TODORestoreFunctionality; // I don't know how I'm going to handle this yet.
+        // FIXME: This might be a bit annoying, but I don't think it's possible as long as MaxBits == 8
+        if (decoder.unused_bits + bit_reader.count > 8) return error.CHDMapDecodingError;
+        bit_reader.bits |= decoder.bits;
+        bit_reader.count += decoder.unused_bits;
     }
 
     // For CRC computation only
@@ -572,8 +571,6 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
 }
 
 fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
-    log.debug("  Reading hunk {d}", .{hunk});
-
     const compression = switch (self.map[hunk].compression) {
         .Type0 => self.compressors[0],
         .Type1 => self.compressors[1],
@@ -588,6 +585,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return error.UnsupportedCompressionType;
         },
     };
+    log.debug("  Reading hunk {d} compressed with {t}", .{ hunk, compression });
 
     const sectors_per_hunk = self.hunk_bytes / CDFrameSize;
     const complen_bytes: u32 = if (self.hunk_bytes < 65536) 2 else 3;
@@ -623,7 +621,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
         .CD_Zlib => {
             var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
             var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
-            var decompress: std.compress.flate.Decompress = .init(&file_reader, .zlib, &.{});
+            var decompress: std.compress.flate.Decompress = .init(&file_reader, .raw, &.{});
             const bytes = try decompress.reader.streamRemaining(&writer);
             // This probably won't work without subcodes/raw sector data
             // if (self.map[hunk].crc != crc16(dest[0..bytes]))
