@@ -26,12 +26,14 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     const file = try std.fs.cwd().openFile(filepath, .{});
     defer file.close();
 
-    const size = try file.getEndPos();
-    if (size < 8) return error.InvalidCDI;
-    try file.seekFromEnd(-8);
     const buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(buffer);
     var file_reader = file.reader(buffer);
+
+    const size = try file_reader.getSize();
+    if (size < 8) return error.InvalidCDI;
+    try file_reader.seekTo(size - 8);
+
     var reader = &file_reader.interface;
     const version: Version = try reader.takeEnum(Version, .little);
     log.debug("Version: {any}", .{version});
