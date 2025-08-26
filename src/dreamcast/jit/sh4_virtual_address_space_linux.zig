@@ -41,7 +41,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = sigsegv_handler },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = std.posix.SA.SIGINFO,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
@@ -52,7 +52,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
@@ -117,7 +117,7 @@ fn signal_not_handled() void {
     // Signal outside of expected range, restore default handler and let it deal with it.
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
