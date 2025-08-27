@@ -266,7 +266,7 @@ pub const ARM7JIT = struct {
         try b.pop(.{ .reg64 = SavedRegisters[0] });
 
         for (b.instructions.items, 0..) |instr, idx|
-            arm_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
+            arm_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
 
         const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         const block = BasicBlock{
@@ -275,7 +275,7 @@ pub const ARM7JIT = struct {
         };
         self.block_cache.cursor += block_size;
 
-        arm_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
+        arm_jit_log.debug("Compiled: {any}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.address, ctx.address, block);
         return block;

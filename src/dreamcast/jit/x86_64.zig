@@ -140,9 +140,7 @@ pub const Condition = enum {
     Greater,
     NotLessEqual,
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         return writer.print("{s}", .{@tagName(value)});
     }
 
@@ -197,7 +195,7 @@ pub const Scale = enum(u2) {
     _4 = 0b10,
     _8 = 0b11,
 
-    pub fn format(value: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(value: @This(), writer: anytype) !void {
         switch (value) {
             ._1 => try writer.writeAll("1"),
             ._2 => try writer.writeAll("2"),
@@ -214,31 +212,29 @@ pub const MemOperand = struct {
     displacement: u32 = 0,
     size: u8,
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         if (value.index) |index| {
             if (value.displacement > 0) {
-                return writer.print("[{any}+{any}*{any}+0x{X}]", .{
+                return writer.print("[{f}+{f}*{f}+0x{X}]", .{
                     value.base,
                     value.scale,
                     index,
                     value.displacement,
                 });
             } else {
-                return writer.print("[{any}+{any}*{any}]", .{
+                return writer.print("[{f}+{f}*{f}]", .{
                     value.base,
                     value.scale,
                     index,
                 });
             }
         } else if (value.displacement > 0) {
-            return writer.print("[{any}+0x{X}]", .{
+            return writer.print("[{f}+0x{X}]", .{
                 value.base,
                 value.displacement,
             });
         } else {
-            return writer.print("[{any}]", .{value.base});
+            return writer.print("[{f}]", .{value.base});
         }
     }
 };
@@ -261,22 +257,20 @@ pub const Operand = union(enum) {
         return std.meta.activeTag(self);
     }
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         return switch (value) {
-            .reg8 => |reg| writer.print("{any}<8>", .{reg}),
-            .reg16 => |reg| writer.print("{any}<16>", .{reg}),
-            .reg => |reg| writer.print("{any}", .{reg}),
-            .reg64 => |reg| writer.print("{any}<64>", .{reg}),
-            .freg32 => |reg| writer.print("{any}<32>", .{reg}),
-            .freg64 => |reg| writer.print("{any}<64>", .{reg}),
-            .freg128 => |reg| writer.print("{any}<128>", .{reg}),
+            .reg8 => |reg| writer.print("{f}<8>", .{reg}),
+            .reg16 => |reg| writer.print("{f}<16>", .{reg}),
+            .reg => |reg| writer.print("{f}", .{reg}),
+            .reg64 => |reg| writer.print("{f}<64>", .{reg}),
+            .freg32 => |reg| writer.print("{f}<32>", .{reg}),
+            .freg64 => |reg| writer.print("{f}<64>", .{reg}),
+            .freg128 => |reg| writer.print("{f}<128>", .{reg}),
             .imm8 => |imm| writer.print("0x{X:0>2}", .{imm}),
             .imm16 => |imm| writer.print("0x{X:0>4}", .{imm}),
             .imm32 => |imm| writer.print("0x{X:0>8}", .{imm}),
             .imm64 => |imm| writer.print("0x{X:0>16}", .{imm}),
-            .mem => |mem| writer.print("{any}", .{mem}),
+            .mem => |mem| writer.print("{f}", .{mem}),
         };
     }
 
@@ -344,52 +338,50 @@ pub const Instruction = union(enum) {
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         return switch (value) {
             .Nop => writer.print("nop", .{}),
             .Break => writer.print("break", .{}),
             .FunctionCall => |function| writer.print("call {any}", .{function}),
-            .Mov => |mov| writer.print("mov {any}, {any}", .{ mov.dst, mov.src }),
-            .Cmov => |cmov| writer.print("cmov {} {}, {}", .{ cmov.condition, cmov.dst, cmov.src }),
-            .Movsx => |movsx| writer.print("movsx {any}, {any}", .{ movsx.dst, movsx.src }),
-            .Push => |reg| writer.print("push {any}", .{reg}),
-            .Pop => |reg| writer.print("pop {any}", .{reg}),
-            .Not => |not| writer.print("not {any}", .{not.dst}),
-            .Neg => |neg| writer.print("neg {any}", .{neg.dst}),
-            .Add => |add| writer.print("add {any}, {any}", .{ add.dst, add.src }),
-            .Adc => |add| writer.print("adc {any}, {any}", .{ add.dst, add.src }),
-            .Sub => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
-            .Sbb => |sub| writer.print("sub {any}, {any}", .{ sub.dst, sub.src }),
-            .Mul => |mul| writer.print("mul {any}, {any}", .{ mul.dst, mul.src }),
-            .Div => |div| writer.print("div {any}, {any}", .{ div.dst, div.src }),
-            .Fma => |fma| writer.print("fma {any} += {any} * {any}", .{ fma.dst, fma.src1, fma.src2 }),
-            .Sqrt => |sqrt| writer.print("sqrt {any}, {any}", .{ sqrt.dst, sqrt.src }),
-            .Min => |min| writer.print("min {any}, {any}", .{ min.dst, min.src }),
-            .Max => |max| writer.print("max {any}, {any}", .{ max.dst, max.src }),
-            .And => |and_| writer.print("and {any}, {any}", .{ and_.dst, and_.src }),
-            .Or => |or_| writer.print("or {any}, {any}", .{ or_.dst, or_.src }),
-            .Xor => |xor_| writer.print("xor {any}, {any}", .{ xor_.dst, xor_.src }),
-            .Cmp => |cmp| writer.print("cmp {any}, {any}", .{ cmp.lhs, cmp.rhs }),
-            .SetByteCondition => |set| writer.print("set{any} {any}", .{ set.condition, set.dst }),
-            .BitTest => |bit_test| writer.print("bt {any}, {any}", .{ bit_test.reg, bit_test.offset }),
+            .Mov => |mov| writer.print("mov {f}, {f}", .{ mov.dst, mov.src }),
+            .Cmov => |cmov| writer.print("cmov {f} {f}, {f}", .{ cmov.condition, cmov.dst, cmov.src }),
+            .Movsx => |movsx| writer.print("movsx {f}, {f}", .{ movsx.dst, movsx.src }),
+            .Push => |reg| writer.print("push {f}", .{reg}),
+            .Pop => |reg| writer.print("pop {f}", .{reg}),
+            .Not => |not| writer.print("not {f}", .{not.dst}),
+            .Neg => |neg| writer.print("neg {f}", .{neg.dst}),
+            .Add => |add| writer.print("add {f}, {f}", .{ add.dst, add.src }),
+            .Adc => |add| writer.print("adc {f}, {f}", .{ add.dst, add.src }),
+            .Sub => |sub| writer.print("sub {f}, {f}", .{ sub.dst, sub.src }),
+            .Sbb => |sub| writer.print("sub {f}, {f}", .{ sub.dst, sub.src }),
+            .Mul => |mul| writer.print("mul {f}, {f}", .{ mul.dst, mul.src }),
+            .Div => |div| writer.print("div {f}, {f}", .{ div.dst, div.src }),
+            .Fma => |fma| writer.print("fma {f} += {f} * {f}", .{ fma.dst, fma.src1, fma.src2 }),
+            .Sqrt => |sqrt| writer.print("sqrt {f}, {f}", .{ sqrt.dst, sqrt.src }),
+            .Min => |min| writer.print("min {f}, {f}", .{ min.dst, min.src }),
+            .Max => |max| writer.print("max {f}, {f}", .{ max.dst, max.src }),
+            .And => |and_| writer.print("and {f}, {f}", .{ and_.dst, and_.src }),
+            .Or => |or_| writer.print("or {f}, {f}", .{ or_.dst, or_.src }),
+            .Xor => |xor_| writer.print("xor {f}, {f}", .{ xor_.dst, xor_.src }),
+            .Cmp => |cmp| writer.print("cmp {f}, {f}", .{ cmp.lhs, cmp.rhs }),
+            .SetByteCondition => |set| writer.print("set{f} {f}", .{ set.condition, set.dst }),
+            .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.reg, bit_test.offset }),
             .Jmp => |jmp| switch (jmp.dst) {
-                .rel => writer.print("jmp {any} 0x{x}", .{ jmp.condition, jmp.dst.rel }),
-                .abs_indirect => writer.print("jmp {any} {any}", .{ jmp.condition, jmp.dst.abs_indirect }),
+                .rel => writer.print("jmp {f} {d}", .{ jmp.condition, jmp.dst.rel }),
+                .abs_indirect => writer.print("jmp {f} {f}", .{ jmp.condition, jmp.dst.abs_indirect }),
             },
             .BlockEpilogue => writer.print("block_epilogue", .{}),
-            .Rol => |rol| writer.print("rol {any}, {any}", .{ rol.dst, rol.amount }),
-            .Ror => |ror| writer.print("ror {any}, {any}", .{ ror.dst, ror.amount }),
-            .Rcl => |rcl| writer.print("rcl {any}, {any}", .{ rcl.dst, rcl.amount }),
-            .Rcr => |rcr| writer.print("rcr {any}, {any}", .{ rcr.dst, rcr.amount }),
-            .Shl => |shl| writer.print("shl {any}, {any}", .{ shl.dst, shl.amount }),
-            .Shr => |shr| writer.print("shr {any}, {any}", .{ shr.dst, shr.amount }),
-            .Sar => |sar| writer.print("sar {any}, {any}", .{ sar.dst, sar.amount }),
-            .Convert => |cvt| writer.print("convert {any}, {any}", .{ cvt.dst, cvt.src }),
-            .Div64_32 => |div| writer.print("div64_32 {any},{any}:{any},{any},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
-            .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {any}", .{instr.count}),
-            .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {any}", .{instr.count}),
+            .Rol => |rol| writer.print("rol {f}, {f}", .{ rol.dst, rol.amount }),
+            .Ror => |ror| writer.print("ror {f}, {f}", .{ ror.dst, ror.amount }),
+            .Rcl => |rcl| writer.print("rcl {f}, {f}", .{ rcl.dst, rcl.amount }),
+            .Rcr => |rcr| writer.print("rcr {f}, {f}", .{ rcr.dst, rcr.amount }),
+            .Shl => |shl| writer.print("shl {f}, {f}", .{ shl.dst, shl.amount }),
+            .Shr => |shr| writer.print("shr {f}, {f}", .{ shr.dst, shr.amount }),
+            .Sar => |sar| writer.print("sar {f}, {f}", .{ sar.dst, sar.amount }),
+            .Convert => |cvt| writer.print("convert {f}, {f}", .{ cvt.dst, cvt.src }),
+            .Div64_32 => |div| writer.print("div64_32 {f},{f}:{f},{f},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
+            .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
+            .RestoreFPRegisters => |instr| writer.print("RestoreFPRegisters {d}", .{instr.count}),
         };
     }
 };
@@ -412,9 +404,7 @@ pub const Register = enum(u4) {
     r14 = 14,
     r15 = 15,
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         return writer.print("{s}", .{@tagName(value)});
     }
 
@@ -447,9 +437,7 @@ pub const FPRegister = enum(u4) {
     xmm14 = 14,
     xmm15 = 15,
 
-    pub fn format(value: @This(), comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(value: @This(), writer: anytype) !void {
         return writer.print("{s}", .{@tagName(value)});
     }
 };
@@ -676,7 +664,7 @@ pub const Emitter = struct {
             }
         }
         if (self.forward_jumps_to_patch.count() > 0) {
-            std.debug.print("Jumps left to patch: {}\n", .{self.forward_jumps_to_patch.count()});
+            std.debug.print("Jumps left to patch: {d}\n", .{self.forward_jumps_to_patch.count()});
             @panic("Error: Unpatched jumps!");
         }
     }
