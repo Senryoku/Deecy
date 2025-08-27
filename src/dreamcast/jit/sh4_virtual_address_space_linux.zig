@@ -8,7 +8,7 @@ const VAS = @import("sh4_virtual_address_space.zig");
 var GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE: ?[]align(std.heap.page_size_min) u8 = null;
 
 base: []align(std.heap.page_size_min) u8,
-mirrors: std.ArrayList([]align(std.heap.page_size_min) u8),
+mirrors: std.ArrayList([]align(std.heap.page_size_min) u8) = .empty,
 boot: std.posix.fd_t,
 ram: std.posix.fd_t,
 vram: std.posix.fd_t,
@@ -21,7 +21,6 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 
     var vas: @This() = .{
         .base = try std.posix.mmap(null, 0x1_0000_0000, std.posix.PROT.NONE, .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .NORESERVE = true }, -1, 0),
-        .mirrors = .init(allocator),
         .boot = try allocate_backing_memory("boot", Dreamcast.BootSize),
         .ram = try allocate_backing_memory("ram", Dreamcast.RAMSize),
         .vram = try allocate_backing_memory("vram", Dreamcast.VRAMSize),
@@ -30,19 +29,19 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
 
     //           U0/P0 and mirrors,                                  P1,          P2,          P3
     for ([_]u32{ 0x0000_0000, 0x2000_0000, 0x4000_0000, 0x6000_0000, 0x8000_0000, 0xA000_0000, 0xC000_0000 }) |base| {
-        try vas.mirror(vas.boot, Dreamcast.BootSize, base + 0x0000_0000);
+        try vas.mirror(allocator, vas.boot, Dreamcast.BootSize, base + 0x0000_0000);
         for (0..(0x0100_0000 - 0x0080_0000) / Dreamcast.ARAMSize) |i|
-            try vas.mirror(vas.aram, Dreamcast.ARAMSize, @intCast(base + 0x0080_0000 + i * Dreamcast.ARAMSize));
-        try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0400_0000);
-        try vas.mirror(vas.vram, Dreamcast.VRAMSize, base + 0x0600_0000);
+            try vas.mirror(allocator, vas.aram, Dreamcast.ARAMSize, @intCast(base + 0x0080_0000 + i * Dreamcast.ARAMSize));
+        try vas.mirror(allocator, vas.vram, Dreamcast.VRAMSize, base + 0x0400_0000);
+        try vas.mirror(allocator, vas.vram, Dreamcast.VRAMSize, base + 0x0600_0000);
         for (0..(0x1000_0000 - 0x0C00_0000) / Dreamcast.RAMSize) |i|
-            try vas.mirror(vas.ram, Dreamcast.RAMSize, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
+            try vas.mirror(allocator, vas.ram, Dreamcast.RAMSize, @intCast(base + 0x0C00_0000 + i * Dreamcast.RAMSize));
     }
 
     GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE = vas.base;
     var act = std.posix.Sigaction{
         .handler = .{ .sigaction = sigsegv_handler },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = std.posix.SA.SIGINFO,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
@@ -50,10 +49,10 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     return vas;
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);
@@ -62,7 +61,7 @@ pub fn deinit(self: *@This()) void {
 
     for (self.mirrors.items) |item|
         std.posix.munmap(item);
-    self.mirrors.deinit();
+    self.mirrors.deinit(allocator);
     std.posix.munmap(self.base);
 }
 
@@ -76,20 +75,20 @@ fn allocate_backing_memory(name: []const u8, size: u64) !std.posix.fd_t {
     return fd;
 }
 
-fn mirror(self: *@This(), fd: std.posix.fd_t, size: u64, offset: u64) !void {
+fn mirror(self: *@This(), allocator: std.mem.Allocator, fd: std.posix.fd_t, size: u64, offset: u64) !void {
     std.debug.assert(offset % std.heap.page_size_min == 0);
     const result = try std.posix.mmap(
-        @alignCast(@ptrCast(self.base[offset .. offset + size])),
+        @ptrCast(@alignCast(self.base[offset .. offset + size])),
         size,
         std.posix.PROT.READ | std.posix.PROT.WRITE,
         .{ .TYPE = .SHARED, .FIXED = true },
         fd,
         0,
     );
-    try self.mirrors.append(result);
+    try self.mirrors.append(allocator, result);
 }
 
-fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.C) void {
+fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*anyopaque) callconv(.c) void {
     switch (sig) {
         std.posix.SIG.SEGV => {
             const fault_address = switch (builtin.os.tag) {
@@ -98,7 +97,7 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
             };
 
             if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |base| {
-                const context: *std.posix.ucontext_t = @alignCast(@ptrCast(context_ptr.?));
+                const context: *std.posix.ucontext_t = @ptrCast(@alignCast(context_ptr.?));
                 VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.gregs[std.posix.REG.RIP]) catch |err| {
                     std.log.scoped(.sh4_jit).err("Failed to patch FastMem access @{X}: {s}", .{ fault_address, @errorName(err) });
                     signal_not_handled();
@@ -118,7 +117,7 @@ fn signal_not_handled() void {
     // Signal outside of expected range, restore default handler and let it deal with it.
     var act = std.posix.Sigaction{
         .handler = .{ .handler = std.posix.SIG.DFL },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     };
     std.posix.sigaction(std.posix.SIG.SEGV, &act, null);

@@ -174,18 +174,16 @@ const OperandCacheState = struct {
     dirty: [256]bool = @splat(false), // U bit
     // V bit not implemented
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.addr[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.dirty[0..]));
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.addr[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.dirty[0..]));
-        return bytes;
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.addr[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.dirty[0..]));
     }
 };
 
@@ -497,8 +495,7 @@ pub const SH4 = struct {
         asm volatile ("ldmxcsr (%%rax)"
             :
             : [_] "{rax}" (&mxcsr),
-            : "rax"
-        );
+            : .{ .rax = true });
     }
 
     pub fn set_fpscr(self: *@This(), value: u32) callconv(.c) void {
@@ -523,7 +520,7 @@ pub const SH4 = struct {
     }
 
     pub inline fn operand_cache_lines(self: *const @This()) [][8]u32 {
-        return @as([*][32 / 4]u32, @alignCast(@ptrCast(self._operand_cache.ptr)))[0..256];
+        return @as([*][32 / 4]u32, @ptrCast(@alignCast(self._operand_cache.ptr)))[0..256];
     }
 
     inline fn operand_cache(self: *@This(), comptime T: type, virtual_addr: u32) *T {
@@ -549,7 +546,7 @@ pub const SH4 = struct {
                 std.debug.assert(self.read_p4_register(P4.CCR, .CCR).oix == 0 or (virtual_addr >= 0x7DFFF000 and virtual_addr <= 0x7E000FFF));
             }
 
-            return @alignCast(@ptrCast(&self._operand_cache[virtual_addr & 0x1FFF]));
+            return @ptrCast(@alignCast(&self._operand_cache[virtual_addr & 0x1FFF]));
         } else {
             // Correct addressing, in case we end up needing it.
             if (self.read_p4_register(P4.CCR, .CCR).oix == 0) {
@@ -561,12 +558,12 @@ pub const SH4 = struct {
                 // 0x7C00_3000 - 0x7C00_3FFF : RAM Area 1
                 // [...]
                 const index = ((virtual_addr & 0x0000_2000) >> 1) | (virtual_addr & 0x0FFF);
-                return @alignCast(@ptrCast(&self._operand_cache[index]));
+                return @ptrCast(@alignCast(&self._operand_cache[index]));
             } else {
                 // RAM Area 1 Mirroring from 0x7C00_0000 to 0x7DFF_FFFF
                 // RAM Area 2 Mirroring from 0x7E00_0000 to 0x7FFF_FFFF
                 const index = ((virtual_addr & 0x02000000) >> 13) | (virtual_addr & 0x0FFF);
-                return @alignCast(@ptrCast(&self._operand_cache[index]));
+                return @ptrCast(@alignCast(&self._operand_cache[index]));
             }
         }
     }
@@ -584,7 +581,7 @@ pub const SH4 = struct {
         std.debug.assert(addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0);
 
         const real_addr = ((0b0000_0000_1111_1000_0000_0000_0000_0000 & addr) >> 12) | (addr & 0b0111_1111);
-        return @as(*T, @alignCast(@ptrCast(&self.p4_registers[real_addr])));
+        return @as(*T, @ptrCast(@alignCast(&self.p4_registers[real_addr])));
     }
 
     pub inline fn R(self: *@This(), r: u4) *u32 {
@@ -899,12 +896,12 @@ pub const SH4 = struct {
             switch (dst_addr) {
                 // Polygon Path
                 0x10000000...0x10800000 - 1, 0x12000000...0x12800000 - 1 => {
-                    var src: [*]u32 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
+                    var src: [*]u32 = @ptrCast(@alignCast(self._dc.?._get_memory(src_addr)));
                     self._dc.?.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * len]);
                 },
                 // YUV Converter Path
                 0x10800000...0x11000000 - 1, 0x12800000...0x13000000 - 1 => {
-                    var src: [*]u8 = @alignCast(@ptrCast(self._dc.?._get_memory(src_addr)));
+                    var src: [*]u8 = @ptrCast(@alignCast(self._dc.?._get_memory(src_addr)));
                     self._dc.?.gpu.write_ta_fifo_yuv_converter_path(src[0..byte_len]);
                 },
                 // Direct Texture Path
@@ -1556,8 +1553,15 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.SCFTDR2) => {
                             check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
 
-                            std.fmt.format(std.io.getStdOut().writer(), "\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
-                                sh4_log.err(termcolor.red("Error formatting serial output: {}\n"), .{err});
+                            var stdout_buffer: [128]u8 = undefined;
+                            var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+                            const stdout = &stdout_writer.interface;
+
+                            stdout.print("\u{001b}[44m\u{001b}[97m{c}\u{001b}[0m", .{value}) catch |err| {
+                                sh4_log.err(termcolor.red("Error writing serial output: {}\n"), .{err});
+                            };
+                            stdout.flush() catch |err| {
+                                sh4_log.err(termcolor.red("Error flushing stdout: {}\n"), .{err});
                             };
 
                             // Immediately mark transfer as complete.
@@ -1735,7 +1739,7 @@ pub const SH4 = struct {
         sh4_log.debug("Operand Cache addr = {X:0>8}, index = {d}, offset = {d} (OC.addr[index] = {X:0>8})", .{ addr, index, offset, self._operand_cache_state.addr[index] });
         if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
             sh4_log.warn("  (read)  Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
-        return @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
+        return @as([*]T, @ptrCast(@alignCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)];
     }
     pub fn operand_cache_write(self: *@This(), comptime T: type, addr: u32, value: T) void {
         const index: u32 = (addr / 32) & 255;
@@ -1744,7 +1748,7 @@ pub const SH4 = struct {
         if (self._operand_cache_state.addr[index] != addr & ~@as(u32, 31))
             sh4_log.warn("  (write) Expected OC.addr[index] = {X:0>8}, got {X:0>8}\n", .{ addr & ~@as(u32, 31), self._operand_cache_state.addr[index] });
         self._operand_cache_state.dirty[index] = true;
-        @as([*]T, @alignCast(@ptrCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
+        @as([*]T, @ptrCast(@alignCast(&self.operand_cache_lines()[index])))[offset / @sizeOf(T)] = value;
     }
 
     pub fn set_trapa_callback(self: *@This(), callback: *const fn (userdata: *anyopaque) void, userdata: *anyopaque) void {
@@ -1753,7 +1757,7 @@ pub const SH4 = struct {
         }
     }
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.r[0..]));
         bytes += try writer.write(std.mem.sliceAsBytes(self.r_bank[0..]));
@@ -1784,40 +1788,37 @@ pub const SH4 = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.r[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.r_bank[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.sr));
-        bytes += try reader.read(std.mem.asBytes(&self.gbr));
-        bytes += try reader.read(std.mem.asBytes(&self.ssr));
-        bytes += try reader.read(std.mem.asBytes(&self.spc));
-        bytes += try reader.read(std.mem.asBytes(&self.sgr));
-        bytes += try reader.read(std.mem.asBytes(&self.dbr));
-        bytes += try reader.read(std.mem.asBytes(&self.vbr));
-        bytes += try reader.read(std.mem.asBytes(&self.pc));
-        bytes += try reader.read(std.mem.asBytes(&self.macl));
-        bytes += try reader.read(std.mem.asBytes(&self.mach));
-        bytes += try reader.read(std.mem.asBytes(&self.pr));
-        bytes += try reader.read(std.mem.asBytes(&self.fpscr));
-        bytes += try reader.read(std.mem.asBytes(&self.fpul));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.fp_banks[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.store_queues[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._operand_cache[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.p4_registers[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.itlb[0..]));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.utlb[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.interrupt_requests));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._last_timer_update[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.execution_state));
-        bytes += try reader.read(std.mem.asBytes(&self._pending_cycles));
-        bytes += try self._operand_cache_state.deserialize(reader);
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.r[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.r_bank[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.sr));
+        try reader.readSliceAll(std.mem.asBytes(&self.gbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.ssr));
+        try reader.readSliceAll(std.mem.asBytes(&self.spc));
+        try reader.readSliceAll(std.mem.asBytes(&self.sgr));
+        try reader.readSliceAll(std.mem.asBytes(&self.dbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.vbr));
+        try reader.readSliceAll(std.mem.asBytes(&self.pc));
+        try reader.readSliceAll(std.mem.asBytes(&self.macl));
+        try reader.readSliceAll(std.mem.asBytes(&self.mach));
+        try reader.readSliceAll(std.mem.asBytes(&self.pr));
+        try reader.readSliceAll(std.mem.asBytes(&self.fpscr));
+        try reader.readSliceAll(std.mem.asBytes(&self.fpul));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.fp_banks[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.store_queues[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._operand_cache[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.p4_registers[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.itlb[0..]));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.utlb[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.interrupt_requests));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._last_timer_update[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.execution_state));
+        try reader.readSliceAll(std.mem.asBytes(&self._pending_cycles));
+        try self._operand_cache_state.deserialize(reader);
 
         self.compute_interrupt_priorities();
         self.update_sse_settings();
         self.reset_utlb_fast_lookup();
         self.check_mmu_state();
-
-        return bytes;
     }
 };

@@ -25,11 +25,13 @@ pub const IRBlock = struct {
     instructions: std.ArrayList(Instruction),
 
     _emitter: Architecture.Emitter,
+    _allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !IRBlock {
         return .{
-            .instructions = .init(allocator),
+            .instructions = .empty,
             ._emitter = try .init(allocator),
+            ._allocator = allocator,
         };
     }
 
@@ -39,52 +41,52 @@ pub const IRBlock = struct {
 
     pub fn deinit(self: *@This()) void {
         self._emitter.deinit();
-        self.instructions.deinit();
+        self.instructions.deinit(self._allocator);
     }
 
     pub fn append(self: *@This(), instr: Instruction) !void {
-        try self.instructions.append(instr);
+        try self.instructions.append(self._allocator, instr);
     }
 
     // Insert a breakpoint for debugging.
     pub fn bp(self: *@This()) !void {
-        try self.instructions.append(.Break);
+        try self.instructions.append(self._allocator, .Break);
     }
 
     pub fn call(self: *@This(), func: ?*const anyopaque) !void {
-        try self.instructions.append(.{ .FunctionCall = func });
+        try self.instructions.append(self._allocator, .{ .FunctionCall = func });
     }
 
     pub fn mov(self: *@This(), dst: Operand, src: Operand) !void {
-        try self.instructions.append(.{ .Mov = .{ .dst = dst, .src = src } });
+        try self.instructions.append(self._allocator, .{ .Mov = .{ .dst = dst, .src = src } });
     }
 
     pub fn cmov(self: *@This(), condition: Condition, dst: Operand, src: Operand) !void {
-        try self.instructions.append(.{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
+        try self.instructions.append(self._allocator, .{ .Cmov = .{ .condition = condition, .dst = dst, .src = src } });
     }
 
     pub fn cmp(self: *@This(), lhs: Operand, rhs: Operand) !void {
-        try self.instructions.append(.{ .Cmp = .{ .lhs = lhs, .rhs = rhs } });
+        try self.instructions.append(self._allocator, .{ .Cmp = .{ .lhs = lhs, .rhs = rhs } });
     }
 
     pub fn movsx(self: *@This(), dst: Operand, src: Operand) !void {
-        try self.instructions.append(.{ .Movsx = .{ .dst = dst, .src = src } });
+        try self.instructions.append(self._allocator, .{ .Movsx = .{ .dst = dst, .src = src } });
     }
 
     pub fn push(self: *@This(), op: Operand) !void {
-        try self.instructions.append(.{ .Push = op });
+        try self.instructions.append(self._allocator, .{ .Push = op });
     }
 
     pub fn pop(self: *@This(), op: Operand) !void {
-        try self.instructions.append(.{ .Pop = op });
+        try self.instructions.append(self._allocator, .{ .Pop = op });
     }
 
     pub fn add(self: *@This(), dst: Operand, src: Operand) !void {
-        try self.instructions.append(.{ .Add = .{ .dst = dst, .src = src } });
+        try self.instructions.append(self._allocator, .{ .Add = .{ .dst = dst, .src = src } });
     }
 
     pub fn sub(self: *@This(), dst: Operand, src: Operand) !void {
-        try self.instructions.append(.{ .Sub = .{ .dst = dst, .src = src } });
+        try self.instructions.append(self._allocator, .{ .Sub = .{ .dst = dst, .src = src } });
     }
 
     pub fn shl(self: *@This(), dst: Operand, amount: Operand) !void {
@@ -96,7 +98,7 @@ pub const IRBlock = struct {
                 return;
             }
         }
-        try self.instructions.append(.{ .Shl = .{ .dst = dst, .amount = amount } });
+        try self.instructions.append(self._allocator, .{ .Shl = .{ .dst = dst, .amount = amount } });
     }
 
     pub fn shr(self: *@This(), dst: Operand, amount: anytype) !void {
@@ -117,21 +119,21 @@ pub const IRBlock = struct {
                 return;
             }
         }
-        try self.instructions.append(.{ .Shr = .{ .dst = dst, .amount = amount } });
+        try self.instructions.append(self._allocator, .{ .Shr = .{ .dst = dst, .amount = amount } });
     }
 
     pub fn sar(self: *@This(), dst: Operand, amount: anytype) !void {
         switch (@TypeOf(amount)) {
-            comptime_int, u8 => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .imm8 = amount } } }),
-            Register => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = .{ .reg = amount } } }),
-            Operand => try self.instructions.append(.{ .Sar = .{ .dst = dst, .amount = amount } }),
+            comptime_int, u8 => try self.instructions.append(self._allocator, .{ .Sar = .{ .dst = dst, .amount = .{ .imm8 = amount } } }),
+            Register => try self.instructions.append(self._allocator, .{ .Sar = .{ .dst = dst, .amount = .{ .reg = amount } } }),
+            Operand => try self.instructions.append(self._allocator, .{ .Sar = .{ .dst = dst, .amount = amount } }),
             else => @compileError("Invalid Type used as SAR amount"),
         }
     }
 
     // Forward Jump
     pub fn jmp(self: *@This(), condition: Condition) !PatchableJump {
-        try self.instructions.append(.{ .Jmp = .{ .condition = condition, .dst = .{ .rel = 0x00C0FFEE } } });
+        try self.instructions.append(self._allocator, .{ .Jmp = .{ .condition = condition, .dst = .{ .rel = 0x00C0FFEE } } });
 
         return .{
             .source_index = self.instructions.items.len - 1,
@@ -141,7 +143,7 @@ pub const IRBlock = struct {
 
     // NOTE: offset could also be a register
     pub fn bit_test(self: *@This(), reg: Register, offset: u8) !void {
-        try self.instructions.append(.{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
+        try self.instructions.append(self._allocator, .{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
     }
 
     pub fn emit(self: *@This(), buffer: []u8) !u32 {

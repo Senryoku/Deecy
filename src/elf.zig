@@ -139,33 +139,33 @@ program_headers: []ProgramHeader(u64),
 section_headers: []SectionHeader(u64),
 allocator: std.mem.Allocator,
 
-pub fn init(allocator: std.mem.Allocator, stream: *std.io.StreamSource) !@This() {
-    const reader = stream.reader();
-    const signature = try reader.readInt(u32, .little);
+pub fn init(allocator: std.mem.Allocator, file_reader: *std.fs.File.Reader) !@This() {
+    const reader = &file_reader.interface;
+    const signature = try reader.takeInt(u32, .little);
     if (signature != 0x464C457F) return error.InvalidELF;
 
-    const word_size: u8 = switch (try reader.readByte()) {
+    const word_size: u8 = switch (try reader.takeByte()) {
         1 => 32,
         2 => 64,
         else => return error.InvalidELF,
     };
-    const endianness: std.builtin.Endian = switch (try reader.readByte()) {
+    const endianness: std.builtin.Endian = switch (try reader.takeByte()) {
         1 => .little,
         2 => .big,
         else => return error.InvalidELF,
     };
-    const header_version = try reader.readByte();
-    const abi = try reader.readByte();
+    const header_version = try reader.takeByte();
+    const abi = try reader.takeByte();
     _ = abi;
 
-    try reader.skipBytes(8, .{});
+    std.debug.assert(try reader.discardShort(8) == 8);
 
     if (header_version != 1) return error.Unsupported;
     switch (endianness) {
         inline .little, .big => |e| {
             switch (word_size) {
-                32 => return _init(e, u32, allocator, stream),
-                64 => return _init(e, u64, allocator, stream),
+                32 => return _init(e, u32, allocator, file_reader),
+                64 => return _init(e, u64, allocator, file_reader),
                 else => return error.InvalidELF,
             }
         },
@@ -176,21 +176,21 @@ pub fn string(self: *@This(), index: u64) []const u8 {
     return self.strings[index..][0 .. std.mem.indexOf(u8, self.strings[index..], &[_]u8{0}) orelse 0];
 }
 
-fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allocator: std.mem.Allocator, stream: *std.io.StreamSource) !@This() {
-    const reader = stream.reader();
-    const elf_type: ELFType = @enumFromInt(try reader.readInt(u16, endianness));
-    const instruction_set: InstructionSet = @enumFromInt(try reader.readInt(u16, endianness));
-    const version = try reader.readInt(u32, endianness);
-    const program_entry_offset = try reader.readInt(word_type, endianness);
-    const program_header_table_offset = try reader.readInt(word_type, endianness);
-    const section_header_table_offset = try reader.readInt(word_type, endianness);
-    const flags = try reader.readInt(u32, endianness);
-    const header_size = try reader.readInt(u16, endianness);
-    const program_header_entry_size = try reader.readInt(u16, endianness);
-    const program_header_entry_count = try reader.readInt(u16, endianness);
-    const section_header_entry_size = try reader.readInt(u16, endianness);
-    const section_header_entry_count = try reader.readInt(u16, endianness);
-    const section_header_string_table_index = try reader.readInt(u16, endianness);
+fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allocator: std.mem.Allocator, file_reader: *std.fs.File.Reader) !@This() {
+    const reader = &file_reader.interface;
+    const elf_type: ELFType = @enumFromInt(try reader.takeInt(u16, endianness));
+    const instruction_set: InstructionSet = @enumFromInt(try reader.takeInt(u16, endianness));
+    const version = try reader.takeInt(u32, endianness);
+    const program_entry_offset = try reader.takeInt(word_type, endianness);
+    const program_header_table_offset = try reader.takeInt(word_type, endianness);
+    const section_header_table_offset = try reader.takeInt(word_type, endianness);
+    const flags = try reader.takeInt(u32, endianness);
+    const header_size = try reader.takeInt(u16, endianness);
+    const program_header_entry_size = try reader.takeInt(u16, endianness);
+    const program_header_entry_count = try reader.takeInt(u16, endianness);
+    const section_header_entry_size = try reader.takeInt(u16, endianness);
+    const section_header_entry_count = try reader.takeInt(u16, endianness);
+    const section_header_string_table_index = try reader.takeInt(u16, endianness);
     log.info(
         \\  elf_type: {any}, 
         \\  instruction_set: {any}, 
@@ -221,15 +221,15 @@ fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allo
         section_header_string_table_index,
     });
 
-    var program_headers = std.ArrayList(ProgramHeader(u64)).init(allocator);
-    defer program_headers.deinit();
+    var program_headers: std.ArrayList(ProgramHeader(u64)) = .empty;
+    defer program_headers.deinit(allocator);
 
     if (elf_type == .Executable) {
-        try stream.seekableStream().seekTo(program_header_table_offset);
+        try file_reader.seekTo(program_header_table_offset);
         for (0..program_header_entry_count) |i| {
-            const ph = try reader.readStruct(ProgramHeader(word_type));
+            const ph = try reader.takeStruct(ProgramHeader(word_type), .little);
             log.debug("ProgramHeader {d}: {any}", .{ i, ph });
-            try program_headers.append(.{
+            try program_headers.append(allocator, .{
                 .p_type = ph.p_type,
                 .p_offset = ph.p_offset,
                 .p_vaddr = ph.p_vaddr,
@@ -242,14 +242,14 @@ fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allo
         }
     }
 
-    var section_headers = std.ArrayList(SectionHeader(u64)).init(allocator);
-    defer section_headers.deinit();
+    var section_headers: std.ArrayList(SectionHeader(u64)) = .empty;
+    defer section_headers.deinit(allocator);
 
-    try stream.seekableStream().seekTo(section_header_table_offset);
+    try file_reader.seekTo(section_header_table_offset);
     for (0..section_header_entry_count) |i| {
-        const sh = try reader.readStruct(SectionHeader(word_type));
+        const sh = try reader.takeStruct(SectionHeader(word_type), .little);
         log.debug("SectionHeader {d}: {any}", .{ i, sh });
-        try section_headers.append(.{
+        try section_headers.append(allocator, .{
             .sh_name = sh.sh_name,
             .sh_type = sh.sh_type,
             .sh_flags = sh.sh_flags,
@@ -266,8 +266,8 @@ fn _init(comptime endianness: std.builtin.Endian, comptime word_type: type, allo
     return .{
         .program_entry_offset = program_entry_offset,
         .section_header_string_table_index = section_header_string_table_index,
-        .program_headers = try program_headers.toOwnedSlice(),
-        .section_headers = try section_headers.toOwnedSlice(),
+        .program_headers = try program_headers.toOwnedSlice(allocator),
+        .section_headers = try section_headers.toOwnedSlice(allocator),
         .allocator = allocator,
     };
 }

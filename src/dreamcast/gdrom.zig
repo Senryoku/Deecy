@@ -3,6 +3,8 @@ const termcolor = @import("termcolor");
 
 const gdrom_log = std.log.scoped(.gdrom);
 
+const fifo = @import("./fifo.zig");
+
 pub const Disc = @import("./disc/disc.zig").Disc;
 const Session = @import("./disc/disc.zig").Session;
 const DreamcastModule = @import("dreamcast.zig");
@@ -155,8 +157,8 @@ interrupt_reason_register: InterruptReasonRegister = .{},
 features: packed struct(u8) { DMA: u1 = 1, _: u7 = 0 } = .{},
 byte_count: u16 = 0,
 
-pio_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
-dma_data_queue: std.fifo.LinearFifo(u8, .Dynamic),
+pio_data_queue: fifo.LinearFifo(u8, .Dynamic),
+dma_data_queue: fifo.LinearFifo(u8, .Dynamic),
 
 packet_command_idx: u8 = 0,
 packet_command: [12]u8 = @splat(0),
@@ -181,7 +183,7 @@ audio_state: struct {
         self.samples_in_buffer = 0;
     }
 
-    pub fn serialize(self: @This(), writer: anytype) !usize {
+    pub fn serialize(self: @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.asBytes(&self.status));
         bytes += try writer.write(std.mem.asBytes(&self.start_addr));
@@ -196,22 +198,18 @@ audio_state: struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.asBytes(&self.status));
-        bytes += try reader.read(std.mem.asBytes(&self.start_addr));
-        bytes += try reader.read(std.mem.asBytes(&self.end_addr));
-        bytes += try reader.read(std.mem.asBytes(&self.current_addr));
-        bytes += try reader.read(std.mem.asBytes(&self.repetitions));
-
-        bytes += try reader.read(std.mem.asBytes(&self.current_position));
-        bytes += try reader.read(std.mem.asBytes(&self.samples_in_buffer));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
-
-        return bytes;
+        try reader.readSliceAll(std.mem.asBytes(&self.status));
+        try reader.readSliceAll(std.mem.asBytes(&self.start_addr));
+        try reader.readSliceAll(std.mem.asBytes(&self.end_addr));
+        try reader.readSliceAll(std.mem.asBytes(&self.current_addr));
+        try reader.readSliceAll(std.mem.asBytes(&self.repetitions));
+        try reader.readSliceAll(std.mem.asBytes(&self.current_position));
+        try reader.readSliceAll(std.mem.asBytes(&self.samples_in_buffer));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.buffer[0..self.samples_in_buffer]));
     }
 },
 
@@ -571,25 +569,25 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
                     .GetToC => self.get_toc(),
                     .ReqSes => self.req_ses(),
                     .CDOpen => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X:0>2}"), .{self.packet_command});
+                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDOpen: {X}"), .{self.packet_command});
                         self.spi_non_data_command();
                     },
                     .CDPlay => self.cd_play(),
                     .CDSeek => self.cd_seek(),
                     .CDScan => {
-                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X:0>2}"), .{self.packet_command});
+                        gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDScan: {X}"), .{self.packet_command});
                         self.state = .Scanning;
                         self.state = .Paused; // FIXME: Do not resolve immediatly?
                         self.spi_non_data_command();
                     },
                     .CDRead => self.cd_read(),
-                    .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X:0>2}"), .{self.packet_command}),
+                    .CDRead2 => gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand CDRead2: {X}"), .{self.packet_command}),
                     .GetSCD => self.get_subcode(),
                     .SYS_CHK_SECU => self.chk_secu(),
                     .SYS_REQ_SECU => self.req_secu(),
                     else => gdrom_log.warn(termcolor.yellow("  Unhandled GDROM PacketCommand 0x{X:0>2}"), .{self.packet_command[0]}),
                 } catch |err| {
-                    gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{any}\n", .{ err, self.packet_command });
+                    gdrom_log.err("Error in handling GDROM SPI Packet Command: {}\n{X}\n", .{ err, self.packet_command });
                 });
             }
         },
@@ -647,7 +645,7 @@ fn nop(self: *@This()) void {
 }
 
 fn test_unit(self: *@This()) void {
-    gdrom_log.debug("  GDROM PacketCommand TestUnit: {X:0>2}", .{self.packet_command});
+    gdrom_log.debug("  GDROM PacketCommand TestUnit: {X}", .{self.packet_command});
     self.spi_non_data_command();
 }
 
@@ -737,7 +735,7 @@ fn req_mode(self: *@This()) !void {
 }
 
 fn set_mode(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  Unimplemented GDROM PacketCommand SetMode: {X}"), .{self.packet_command});
     // TODO: Set some stuff?
     // See "Transfer Packet Command Flow For PIO Data from Host"
 
@@ -836,7 +834,7 @@ fn req_ses(self: *@This()) !void {
 }
 
 fn cd_play(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDPlay: {X}"), .{self.packet_command});
 
     self.audio_state.mutex.lock();
     defer self.audio_state.mutex.unlock();
@@ -870,7 +868,7 @@ fn cd_play(self: *@This()) !void {
 }
 
 fn cd_seek(self: *@This()) !void {
-    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X:0>2}"), .{self.packet_command});
+    gdrom_log.warn(termcolor.yellow("  GDROM PacketCommand CDSeek: {X}"), .{self.packet_command});
 
     self.audio_state.status = .Paused;
     self.state = .Seeking;
@@ -918,7 +916,7 @@ fn cd_read_pio_fetch(self: *@This()) !void {
     }
 }
 
-fn cd_read_fetch(self: *@This(), data_queue: *std.fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
+fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), data_select: u4, expected_data_type: u3, start_addr: u32, transfer_length: u32) !void {
     if (self.disc) |*disc| {
         if (data_select == 0b0001) {
             // Raw data (all 2352 bytes of each sector)
@@ -1098,7 +1096,7 @@ fn chk_secu(self: *@This()) !void {
 }
 
 fn req_secu(self: *@This()) !void {
-    gdrom_log.info(" GDROM PacketCommand ReqSecu: {X:0>2}", .{self.packet_command});
+    gdrom_log.info(" GDROM PacketCommand ReqSecu: {X}", .{self.packet_command});
     const parameter = self.packet_command[1];
     _ = parameter;
     try self.pio_data_queue.write(&GDROMCommand71Reply);
@@ -1134,44 +1132,37 @@ pub fn serialize(self: *@This(), writer: anytype) !usize {
     return bytes;
 }
 
-pub fn deserialize(self: *@This(), reader: anytype) !usize {
-    var bytes: usize = 0;
-    bytes += try reader.read(std.mem.asBytes(&self.state));
-    bytes += try reader.read(std.mem.asBytes(&self.status_register));
-    bytes += try reader.read(std.mem.asBytes(&self.control_register));
-    bytes += try reader.read(std.mem.asBytes(&self.error_register));
-    bytes += try reader.read(std.mem.asBytes(&self.interrupt_reason_register));
-    bytes += try reader.read(std.mem.asBytes(&self.features));
-    bytes += try reader.read(std.mem.asBytes(&self.byte_count));
+pub fn deserialize(self: *@This(), reader: anytype) !void {
+    try reader.readSliceAll(std.mem.asBytes(&self.state));
+    try reader.readSliceAll(std.mem.asBytes(&self.status_register));
+    try reader.readSliceAll(std.mem.asBytes(&self.control_register));
+    try reader.readSliceAll(std.mem.asBytes(&self.error_register));
+    try reader.readSliceAll(std.mem.asBytes(&self.interrupt_reason_register));
+    try reader.readSliceAll(std.mem.asBytes(&self.features));
+    try reader.readSliceAll(std.mem.asBytes(&self.byte_count));
 
     {
         self.pio_data_queue.discard(self.pio_data_queue.count);
         var pio_data_queue_count: usize = 0;
-        bytes += try reader.read(std.mem.asBytes(&pio_data_queue_count));
+        try reader.readSliceAll(std.mem.asBytes(&pio_data_queue_count));
         if (pio_data_queue_count > 0) {
-            const bytes_read = try reader.read((try self.pio_data_queue.writableWithSize(pio_data_queue_count))[0..pio_data_queue_count]);
-            if (bytes_read != pio_data_queue_count) return error.ErrorReadingPIODataQueue;
-            bytes += bytes_read;
+            try reader.readSliceAll((try self.pio_data_queue.writableWithSize(pio_data_queue_count))[0..pio_data_queue_count]);
             self.pio_data_queue.update(pio_data_queue_count);
         }
     }
     {
         self.dma_data_queue.discard(self.dma_data_queue.count);
         var dma_data_queue_count: usize = 0;
-        bytes += try reader.read(std.mem.asBytes(&dma_data_queue_count));
+        try reader.readSliceAll(std.mem.asBytes(&dma_data_queue_count));
         if (dma_data_queue_count > 0) {
-            const bytes_read = try reader.read((try self.dma_data_queue.writableWithSize(dma_data_queue_count))[0..dma_data_queue_count]);
-            if (bytes_read != dma_data_queue_count) return error.ErrorReadingDMADataQueue;
-            bytes += bytes_read;
+            try reader.readSliceAll((try self.dma_data_queue.writableWithSize(dma_data_queue_count))[0..dma_data_queue_count]);
             self.dma_data_queue.update(dma_data_queue_count);
         }
     }
-    bytes += try reader.read(std.mem.asBytes(&self.packet_command_idx));
-    bytes += try reader.read(std.mem.sliceAsBytes(&self.packet_command));
+    try reader.readSliceAll(std.mem.asBytes(&self.packet_command_idx));
+    try reader.readSliceAll(std.mem.sliceAsBytes(&self.packet_command));
 
-    bytes += try self.audio_state.deserialize(reader);
+    try self.audio_state.deserialize(reader);
 
-    bytes += try reader.read(std.mem.asBytes(&self.cd_read_state));
-
-    return bytes;
+    try reader.readSliceAll(std.mem.asBytes(&self.cd_read_state));
 }

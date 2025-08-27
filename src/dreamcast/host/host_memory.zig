@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn allocate_executable(allocator: std.mem.Allocator, size: usize) ![]align(std.heap.page_size_min) u8 {
-    const r = try allocator.alignedAlloc(u8, std.heap.page_size_min, size);
+    const r = try allocator.alignedAlloc(u8, .fromByteUnits(std.heap.page_size_min), size);
     try std.posix.mprotect(r, std.posix.PROT.READ | std.posix.PROT.WRITE | std.posix.PROT.EXEC);
     return r;
 }
@@ -16,7 +16,7 @@ pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type 
                 std.os.windows.MEM_RESERVE | std.os.windows.MEM_COMMIT,
                 std.os.windows.PAGE_READWRITE,
             );
-            return @as([*]element_type, @alignCast(@ptrCast(memory)))[0..count];
+            return @as([*]element_type, @ptrCast(@alignCast(memory)))[0..count];
         },
         .linux => {
             const memory = try std.posix.mmap(
@@ -27,7 +27,7 @@ pub fn virtual_alloc(comptime element_type: type, count: usize) ![]element_type 
                 -1,
                 0,
             );
-            return @as([*]element_type, @alignCast(@ptrCast(memory)))[0..count];
+            return @as([*]element_type, @ptrCast(@alignCast(memory)))[0..count];
         },
         else => @compileError("Unsupported OS."),
     }
@@ -38,7 +38,7 @@ pub fn virtual_dealloc(memory: anytype) void {
 
     switch (builtin.os.tag) {
         .windows => std.os.windows.VirtualFree(memory.ptr, 0, std.os.windows.MEM_RELEASE),
-        .linux => std.posix.munmap(@as([*]align(std.heap.page_size_min) const u8, @alignCast(@ptrCast(memory.ptr)))[0 .. memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)))]),
+        .linux => std.posix.munmap(@as([*]align(std.heap.page_size_min) const u8, @ptrCast(@alignCast(memory.ptr)))[0 .. memory.len * @sizeOf(std.meta.Elem(@TypeOf(memory)))]),
         else => @compileError("Unsupported OS."),
     }
 }

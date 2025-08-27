@@ -1,6 +1,7 @@
 const std = @import("std");
 const termcolor = @import("termcolor");
 
+const BitReader = @import("bit_reader.zig");
 const chd_flac = @import("chd_flac.zig");
 const host_memory = @import("../host/host_memory.zig");
 const MemoryMappedFile = @import("../host/memory_mapped_file.zig");
@@ -9,8 +10,8 @@ const Session = @import("session.zig");
 
 const log = std.log.scoped(.chd);
 
-tracks: std.ArrayList(Track),
-sessions: std.ArrayList(Session),
+tracks: std.ArrayList(Track) = .empty,
+sessions: std.ArrayList(Session) = .empty,
 
 version: u32 = undefined,
 compressors: [4]Compression = undefined,
@@ -21,8 +22,8 @@ hunk_bytes: u32 = undefined,
 unit_bytes: u32 = undefined,
 map: []MapEntry = undefined,
 
-track_offsets: std.ArrayList(u32),
-track_data: std.ArrayList([]u8),
+track_offsets: std.ArrayList(u32) = .empty,
+track_data: std.ArrayList([]u8) = .empty,
 
 _file: MemoryMappedFile,
 _file_view: []const u8 = undefined,
@@ -106,40 +107,35 @@ const MetadataEntry = struct {
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = std.ArrayList(Track).init(allocator),
-        .sessions = std.ArrayList(Session).init(allocator),
-        .track_offsets = std.ArrayList(u32).init(allocator),
-        .track_data = std.ArrayList([]u8).init(allocator),
         ._file = try MemoryMappedFile.init(filepath, allocator),
         ._allocator = allocator,
     };
-    errdefer self.deinit();
+    errdefer self.deinit(allocator);
     self._file_view = try self._file.create_full_view();
 
-    var stream = std.io.fixedBufferStream(self._file_view);
-    const reader = stream.reader();
-    const tag = try reader.readBytesNoEof(8);
-    if (!std.mem.eql(u8, &tag, Tag)) return error.InvalidCHD;
-    const header_length = try reader.readInt(u32, .big);
-    self.version = try reader.readInt(u32, .big);
+    var reader = std.Io.Reader.fixed(self._file_view);
+    const tag = try reader.takeArray(8);
+    if (!std.mem.eql(u8, tag, Tag)) return error.InvalidCHD;
+    const header_length = try reader.takeInt(u32, .big);
+    self.version = try reader.takeInt(u32, .big);
 
     switch (self.version) {
         5 => {
             if (header_length != 124) return error.InvalidCHDv5;
             self.compressors = [4]Compression{
-                @enumFromInt(try reader.readInt(u32, .big)),
-                @enumFromInt(try reader.readInt(u32, .big)),
-                @enumFromInt(try reader.readInt(u32, .big)),
-                @enumFromInt(try reader.readInt(u32, .big)),
+                @enumFromInt(try reader.takeInt(u32, .big)),
+                @enumFromInt(try reader.takeInt(u32, .big)),
+                @enumFromInt(try reader.takeInt(u32, .big)),
+                @enumFromInt(try reader.takeInt(u32, .big)),
             };
-            self.logical_bytes = try reader.readInt(u64, .big);
-            self.map_offset = try reader.readInt(u64, .big);
-            self.meta_offset = try reader.readInt(u64, .big);
-            self.hunk_bytes = try reader.readInt(u32, .big);
-            self.unit_bytes = try reader.readInt(u32, .big);
-            const raw_sha1 = try reader.readBytesNoEof(20);
-            const sha1 = try reader.readBytesNoEof(20);
-            const parent_sha1 = try reader.readBytesNoEof(20);
+            self.logical_bytes = try reader.takeInt(u64, .big);
+            self.map_offset = try reader.takeInt(u64, .big);
+            self.meta_offset = try reader.takeInt(u64, .big);
+            self.hunk_bytes = try reader.takeInt(u32, .big);
+            self.unit_bytes = try reader.takeInt(u32, .big);
+            const raw_sha1 = try reader.takeArray(20);
+            const sha1 = try reader.takeArray(20);
+            const parent_sha1 = try reader.takeArray(20);
 
             log.debug("  Compressor: {any}", .{self.compressors});
             log.debug("  Logical Bytes: {X}", .{self.logical_bytes});
@@ -166,32 +162,34 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             }
             if (track_tag == null) return error.NoTracks;
 
-            var tracks_metadata = std.ArrayList(MetadataEntry).init(allocator);
-            defer tracks_metadata.deinit();
-            try tracks_metadata.append(current_track);
+            var tracks_metadata: std.ArrayList(MetadataEntry) = .empty;
+            defer tracks_metadata.deinit(allocator);
+            try tracks_metadata.append(allocator, current_track);
 
             while (current_track.next != 0) {
                 current_track = self.search_metadata(current_track.next, track_tag.?, 0) catch |err| switch (err) {
                     error.NotFound => break,
                     else => |e| return e,
                 };
-                try tracks_metadata.append(current_track);
+                try tracks_metadata.append(allocator, current_track);
             }
 
             var fad_offset: u32 = 0;
             var current_fad: u32 = 150;
             for (tracks_metadata.items) |track| {
                 log.debug("Track Metadata entry: {any}", .{track});
-                try stream.seekTo(track.offset + 16);
+                // reader = std.Io.Reader.fixed(self._file_view[track.offset + 16 ..]);
                 switch (track.tag) {
                     .GDROMTrack => {
-                        const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
-                        defer allocator.free(buffer);
-
                         // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
-                        _ = try reader.read(buffer);
-                        log.debug("  '{s}'", .{buffer});
-                        var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
+
+                        // const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
+                        // defer allocator.free(buffer);
+                        // _ = try reader.readSliceAll(buffer);
+                        // log.debug("  '{s}'", .{buffer});
+                        // var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
+
+                        var iterator = std.mem.tokenizeScalar(u8, self._file_view[track.offset + 16 ..][0 .. track.length - 1], ' ');
                         const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
                         const track_type_str = iterator.next().?["TYPE:".len..];
                         const sub_type = iterator.next().?["SUBTYPE:".len..];
@@ -219,8 +217,8 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                         const format: u32 = if (std.mem.eql(u8, track_type_str, "AUDIO")) 2336 else if (std.mem.eql(u8, track_type_str, "MODE1_RAW")) CDMaxSectorBytes else return error.UnsupportedFormat;
                         const data = try host_memory.virtual_alloc(u8, CDMaxSectorBytes * std.mem.alignForward(u32, frames, sectors_per_hunk));
 
-                        try self.track_data.append(data);
-                        try self.tracks.append(.{
+                        try self.track_data.append(allocator, data);
+                        try self.tracks.append(allocator, .{
                             .num = track_num,
                             .fad = current_fad,
                             .track_type = track_type,
@@ -228,7 +226,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
                             .pregap = 0,
                             .data = data,
                         });
-                        try self.track_offsets.append(current_fad - fad_offset);
+                        try self.track_offsets.append(allocator, current_fad - fad_offset);
 
                         current_fad += frames;
                         fad_offset += std.mem.alignForward(u32, frames, 4);
@@ -248,15 +246,17 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    _ = allocator;
+
     self._allocator.free(self.map);
 
-    self.sessions.deinit();
-    self.track_offsets.deinit();
+    self.sessions.deinit(self._allocator);
+    self.track_offsets.deinit(self._allocator);
     for (self.track_data.items) |track_data|
         host_memory.virtual_dealloc(track_data);
-    self.track_data.deinit();
-    self.tracks.deinit();
+    self.track_data.deinit(self._allocator);
+    self.tracks.deinit(self._allocator);
     self._file.deinit();
 }
 
@@ -326,16 +326,15 @@ fn decode_map_v5(self: *@This()) !void {
 
     self.map = try self._allocator.alloc(MapEntry, hunk_count);
 
-    var stream = std.io.fixedBufferStream(self._file_view);
-    try stream.seekTo(self.map_offset);
-    var reader = stream.reader();
+    var reader = std.Io.Reader.fixed(self._file_view);
+    std.debug.assert(try reader.discardShort(self.map_offset) == self.map_offset);
 
-    const map_bytes = try reader.readInt(u32, .big);
-    const first_offset = try reader.readInt(u48, .big);
-    const map_crc = try reader.readInt(u16, .big);
-    const length_bits = try reader.readByte();
-    const self_bits = try reader.readByte();
-    const parent_bits = try reader.readByte();
+    const map_bytes = try reader.takeInt(u32, .big);
+    const first_offset = try reader.takeInt(u48, .big);
+    const map_crc = try reader.takeInt(u16, .big);
+    const length_bits = try reader.takeByte();
+    const self_bits = try reader.takeByte();
+    const parent_bits = try reader.takeByte();
 
     log.debug("  Map Bytes: {X}", .{map_bytes});
     log.debug("  First Offset: {X}", .{first_offset});
@@ -344,14 +343,14 @@ fn decode_map_v5(self: *@This()) !void {
     log.debug("  Self Bits: {X}", .{self_bits});
     log.debug("  Parent Bits: {X}", .{parent_bits});
 
-    try stream.seekTo(self.map_offset + 16);
+    std.debug.assert(try reader.discardShort(1) == 1);
 
     const NumCodes = 16;
     const MaxBits = 8;
 
     var nodes: [NumCodes]struct { bits: u32, num_bits: u4 } = undefined;
 
-    var bit_reader = std.io.bitReader(.big, reader);
+    var bit_reader: BitReader = .init(&reader);
     var node_idx: u32 = 0;
     while (node_idx < NumCodes) {
         var nodebits: u4 = try bit_reader.readBitsNoEof(u4, 4);
@@ -444,9 +443,10 @@ fn decode_map_v5(self: *@This()) !void {
     }
 
     if (decoder.unused_bits != 0) {
-        const pos = try stream.getPos();
-        try stream.seekTo(pos - 1);
-        _ = try bit_reader.readBitsNoEof(u8, 8 - decoder.unused_bits);
+        // FIXME: This might be a bit annoying, but I don't think it's possible as long as MaxBits == 8
+        if (decoder.unused_bits + bit_reader.count > 8) return error.CHDMapDecodingError;
+        bit_reader.bits |= decoder.bits;
+        bit_reader.count += decoder.unused_bits;
     }
 
     // For CRC computation only
@@ -497,15 +497,12 @@ fn search_metadata(self: *@This(), offset: ?u64, tag: MetadataTag, index: u32) !
     var current_offset: u64 = if (offset) |o| o else self.meta_offset;
     var current_index: u32 = 0;
 
-    var stream = std.io.fixedBufferStream(self._file_view);
-    var reader = stream.reader();
-
     while (current_offset != 0) {
         var entry: MetadataEntry = undefined;
-        try stream.seekTo(current_offset);
-        entry.tag = @enumFromInt(try reader.readInt(u32, .big));
-        entry.length = try reader.readInt(u32, .big);
-        entry.next = try reader.readInt(u64, .big);
+        var reader = std.Io.Reader.fixed(self._file_view[current_offset..]);
+        entry.tag = @enumFromInt(try reader.takeInt(u32, .big));
+        entry.length = try reader.takeInt(u32, .big);
+        entry.next = try reader.takeInt(u64, .big);
 
         entry.offset = current_offset;
         entry.flags = @truncate(entry.length >> 24);
@@ -574,8 +571,6 @@ pub fn decompress_sectors(self: *@This(), fad: u32, count: u32) !void {
 }
 
 fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
-    log.debug("  Reading hunk {d}", .{hunk});
-
     const compression = switch (self.map[hunk].compression) {
         .Type0 => self.compressors[0],
         .Type1 => self.compressors[1],
@@ -590,21 +585,21 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return error.UnsupportedCompressionType;
         },
     };
+    log.debug("  Reading hunk {d} compressed with {t}", .{ hunk, compression });
 
     const sectors_per_hunk = self.hunk_bytes / CDFrameSize;
     const complen_bytes: u32 = if (self.hunk_bytes < 65536) 2 else 3;
     const ecc_bytes: u32 = (sectors_per_hunk + 7) / 8;
     const header_bytes: u32 = ecc_bytes + complen_bytes;
 
-    var header_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + ecc_bytes ..]);
-    const header_reader = header_stream.reader();
-    const compressed_length = if (complen_bytes == 2) try header_reader.readInt(u16, .big) else try header_reader.readInt(u24, .big);
-
-    var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
-    const file_reader = fixed_stream.reader();
+    var header_reader = std.Io.Reader.fixed(self._file_view[self.map[hunk].offset + ecc_bytes ..]);
+    const compressed_length = if (complen_bytes == 2) try header_reader.takeInt(u16, .big) else try header_reader.takeInt(u24, .big);
 
     switch (compression) {
         .CD_LZMA => {
+            // FIXME: LZMA decompression has not been updated to use the new Reader API
+            var fixed_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            const file_reader = fixed_stream.reader();
             var decompressor = try std.compress.lzma.Decompress(@TypeOf(file_reader)).init(self._allocator, file_reader, .{
                 // There is no LZMA headers and these parameters are implicit...
                 // FIXME: They also depend on hunk_size, these are the parameters for hunk_size = 0x4C80.
@@ -624,9 +619,10 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         .CD_Zlib => {
-            var output_stream = std.io.fixedBufferStream(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
-            try std.compress.flate.decompress(file_reader, output_stream.writer());
-            const bytes = try output_stream.getPos();
+            var file_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset + header_bytes ..][0..compressed_length]);
+            var writer = std.io.Writer.fixed(dest[0 .. sectors_per_hunk * CDMaxSectorBytes]);
+            var decompress: std.compress.flate.Decompress = .init(&file_reader, .raw, &.{});
+            const bytes = try decompress.reader.streamRemaining(&writer);
             // This probably won't work without subcodes/raw sector data
             // if (self.map[hunk].crc != crc16(dest[0..bytes]))
             //     return error.InvalidCRC;
@@ -637,7 +633,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             const num_samples = bytes / @sizeOf(i16);
             var flac_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset..]);
             const flac_reader = flac_stream.reader();
-            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @alignCast(@ptrCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
+            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
             return bytes;
         },
         else => {

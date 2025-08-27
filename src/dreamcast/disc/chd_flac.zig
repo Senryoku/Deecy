@@ -458,7 +458,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                         samples_working_buffer[i] = try read_unencoded_sample(SampleType, &bit_reader, wasted_bits, unencoded_samples_bit_depth);
 
                     log_subframe.debug("Subframe #{d}: Fixed predictor of order {d}, {d} wasted bits", .{ channel, order, wasted_bits });
-                    log_subframe.debug("  Warmup Samples: {d}", .{samples_working_buffer[0..order]});
+                    log_subframe.debug("  Warmup Samples: {any}", .{samples_working_buffer[0..order]});
 
                     try decode_residuals(InterType, samples_working_buffer[order..], block_size, order, &bit_reader);
 
@@ -498,8 +498,8 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
                         predictor_coefficient[order - 1 - i] = try read_unencoded_sample(InterType, &bit_reader, 0, coefficient_precision);
 
                     log_subframe.debug("Subframe #{d}: Linear predictor of order {d}, {d} bits coefficients, {d} bits right shift, {d} wasted bits", .{ channel, order, coefficient_precision, prediction_shift_right, wasted_bits });
-                    log_subframe.debug("  Warmup Samples: {d}", .{samples_working_buffer[0..order]});
-                    log_subframe.debug("  Predictor Coefficients: {d}", .{predictor_coefficient[0..order]});
+                    log_subframe.debug("  Warmup Samples: {any}", .{samples_working_buffer[0..order]});
+                    log_subframe.debug("  Predictor Coefficients: {any}", .{predictor_coefficient[0..order]});
 
                     try decode_residuals(InterType, samples_working_buffer[order..], block_size, order, &bit_reader);
 

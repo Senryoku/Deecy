@@ -188,7 +188,7 @@ pub const ARM7JIT = struct {
         // Not necessary, just here to allow compatibility with the interpreter if we need it.
         // (Right now we're always calling to the interpreter so this should stay in sync, but once
         //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
-        cpu.instruction_pipeline[0] = @as(*const u32, @alignCast(@ptrCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
+        cpu.instruction_pipeline[0] = @as(*const u32, @ptrCast(@alignCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
 
         return @intCast(spent_cycles);
     }
@@ -197,7 +197,7 @@ pub const ARM7JIT = struct {
     pub noinline fn compile_and_run(cpu: *arm7.ARM7, self: *@This()) callconv(.c) void {
         const pc = (cpu.pc() -% 4) & cpu.memory_address_mask; // Pipelining...
         arm_jit_log.debug("(Cache Miss) Compiling {X:0>8}...", .{pc});
-        const instructions: [*]u32 = @alignCast(@ptrCast(&cpu.memory[pc]));
+        const instructions: [*]u32 = @ptrCast(@alignCast(&cpu.memory[pc]));
         const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 self.block_cache.reset() catch |reset_err| {
@@ -266,7 +266,7 @@ pub const ARM7JIT = struct {
         try b.pop(.{ .reg64 = SavedRegisters[0] });
 
         for (b.instructions.items, 0..) |instr, idx|
-            arm_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
+            arm_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
 
         const block_size = try b.emit(self.block_cache.buffer[self.block_cache.cursor..]);
         const block = BasicBlock{
@@ -275,7 +275,7 @@ pub const ARM7JIT = struct {
         };
         self.block_cache.cursor += block_size;
 
-        arm_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
+        arm_jit_log.debug("Compiled: {any}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.address, ctx.address, block);
         return block;

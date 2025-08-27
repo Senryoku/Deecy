@@ -168,22 +168,22 @@ pub const Dreamcast = struct {
             .cpu = try .init(allocator, dc),
             .maple = try .init(allocator),
             .flash = try .init(allocator),
-            .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, 4, null), // FIXME: Huge waste of memory.
+            .hardware_registers = try allocator.allocWithOptions(u8, 0x20_0000, .@"4", null), // FIXME: Huge waste of memory.
             .scheduled_events = .init(allocator, {}),
             ._allocator = allocator,
         };
 
         if (SH4JITModule.FastMem) {
             dc.sh4_jit = try .init(allocator, null);
-            dc.boot = @as([*]align(64) u8, @alignCast(@ptrCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
+            dc.boot = @as([*]align(64) u8, @ptrCast(@alignCast(dc.sh4_jit.virtual_address_space.base_addr())))[0..BootSize];
             dc.ram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0C00_0000))[0..RAMSize];
             dc.vram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0400_0000))[0..Holly.VRAMSize];
             dc.aram = @as([*]align(64) u8, @ptrFromInt(@intFromPtr(dc.sh4_jit.virtual_address_space.base_addr()) + 0x0080_0000))[0..AICA.RAMSize];
         } else {
-            dc.boot = try allocator.allocWithOptions(u8, BootSize, 64, null);
-            dc.ram = try allocator.allocWithOptions(u8, RAMSize, 64, null);
-            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, 64, null);
-            dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, 64, null);
+            dc.boot = try allocator.allocWithOptions(u8, BootSize, .@"64", null);
+            dc.ram = try allocator.allocWithOptions(u8, RAMSize, .@"64", null);
+            dc.vram = try allocator.allocWithOptions(u8, Holly.VRAMSize, .@"64", null);
+            dc.aram = try allocator.allocWithOptions(u8, AICA.RAMSize, .@"64", null);
             dc.sh4_jit = try .init(allocator, dc.ram.ptr);
         }
 
@@ -346,7 +346,7 @@ pub const Dreamcast = struct {
         self.flash.data[0x1A0A2] = @as(u8, '0') + @intFromEnum(self.region);
 
         // Get current system config, update it with user preference and fix block crc.
-        const system_bitmap = @as(*u512, @alignCast(@ptrCast(self.flash.data[0x1FFC0..0x20000].ptr)));
+        const system_bitmap = @as(*u512, @ptrCast(@alignCast(self.flash.data[0x1FFC0..0x20000].ptr)));
         const last_entry = @ctz(system_bitmap.*);
         if (last_entry == 0) return error.InvalidFlash;
         var system_block = self.flash.get_system_block(last_entry - 1);
@@ -499,11 +499,11 @@ pub const Dreamcast = struct {
     }
     pub inline fn hw_register_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
-        return @as(*T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800])));
+        return @as(*T, @ptrCast(@alignCast(&self.hardware_registers[addr - 0x005F6800])));
     }
     pub inline fn read_hw_register_addr(self: *const @This(), comptime T: type, addr: u32) T {
         std.debug.assert(addr >= 0x005F6800 and addr < 0x005F6800 + self.hardware_registers.len);
-        return @as(*const T, @alignCast(@ptrCast(&self.hardware_registers[addr - 0x005F6800]))).*;
+        return @as(*const T, @ptrCast(@alignCast(&self.hardware_registers[addr - 0x005F6800]))).*;
     }
     pub inline fn read_hw_register(self: *const @This(), comptime T: type, r: HardwareRegister) T {
         return self.read_hw_register_addr(T, @intFromEnum(r));
@@ -676,7 +676,7 @@ pub const Dreamcast = struct {
                                 // Too spammy even for debugging.
                                 if (addr != @intFromEnum(HardwareRegister.SB_ISTNRM) and addr != @intFromEnum(HardwareRegister.SB_FFST))
                                     dc_log.debug("  Read({any}) to hardware register @{X:0>8} {s} = 0x{X:0>8}", .{
-                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @alignCast(@ptrCast(@constCast(self)._get_memory(addr)))).*,
+                                        T, addr, HardwareRegisters.getRegisterName(addr), @as(*const u32, @ptrCast(@alignCast(@constCast(self)._get_memory(addr)))).*,
                                     });
                                 return self.read_hw_register_addr(T, addr);
                             },
@@ -702,7 +702,7 @@ pub const Dreamcast = struct {
             },
             // Area 1 - 64bit access
             0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
-                return @as(*T, @alignCast(@ptrCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
+                return @as(*T, @ptrCast(@alignCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).*;
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
@@ -735,7 +735,7 @@ pub const Dreamcast = struct {
             else => {},
         }
 
-        return @as(*const T, @alignCast(@ptrCast(
+        return @as(*const T, @ptrCast(@alignCast(
             @constCast(self)._get_memory(addr),
         ))).*;
     }
@@ -777,7 +777,7 @@ pub const Dreamcast = struct {
             },
             // Area 1 - 64bit access
             0x04000000...0x04FFFFFF, 0x06000000...0x06FFFFFF => {
-                @as(*T, @alignCast(@ptrCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
+                @as(*T, @ptrCast(@alignCast(&self.gpu.vram[addr & (Dreamcast.VRAMSize - 1)]))).* = value;
                 return;
             },
             // Area 1 - 32bit access
@@ -817,7 +817,7 @@ pub const Dreamcast = struct {
             else => {},
         }
 
-        @as(*T, @alignCast(@ptrCast(
+        @as(*T, @ptrCast(@alignCast(
             self._get_memory(addr),
         ))).* = value;
     }
@@ -967,7 +967,7 @@ pub const Dreamcast = struct {
             dc_log.debug("Maple-DMA initiation!", .{});
             const sb_mdstar = self.read_hw_register(u32, .SB_MDSTAR);
             std.debug.assert(sb_mdstar >> 28 == 0 and sb_mdstar & 0x1F == 0);
-            self.maple.transfer(self, @as([*]u32, @alignCast(@ptrCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
+            self.maple.transfer(self, @as([*]u32, @ptrCast(@alignCast(&self.ram[sb_mdstar - 0x0C000000])))[0..]);
         }
     }
 
@@ -1168,7 +1168,7 @@ pub const Dreamcast = struct {
 
                 const block_count = if (current_data_size == 0) 0x100 else current_data_size;
                 const bytes = block_count * 8 * 4;
-                var src: [*]u32 = @alignCast(@ptrCast(self._get_memory(link_address)));
+                var src: [*]u32 = @ptrCast(@alignCast(self._get_memory(link_address)));
                 self.gpu.write_ta_fifo_polygon_path(src[0 .. 8 * block_count]);
                 bytes_transfered += bytes;
 
@@ -1183,7 +1183,7 @@ pub const Dreamcast = struct {
         self.hw_register(u32, .SB_SDST).* = 0;
     }
 
-    pub fn serialize(self: *@This(), writer: anytype) !usize {
+    pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
 
         bytes += try self.cpu.serialize(writer);
@@ -1205,35 +1205,31 @@ pub const Dreamcast = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-
-        bytes += try self.cpu.deserialize(reader);
-        bytes += try self.gpu.deserialize(reader);
-        bytes += try self.aica.deserialize(reader);
-        bytes += try self.maple.deserialize(reader);
-        bytes += try self.gdrom.deserialize(reader);
-        bytes += try self.flash.deserialize(reader);
-        bytes += try reader.read(std.mem.sliceAsBytes(self.ram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.vram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.aram));
-        bytes += try reader.read(std.mem.sliceAsBytes(self.hardware_registers));
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try self.cpu.deserialize(reader);
+        try self.gpu.deserialize(reader);
+        try self.aica.deserialize(reader);
+        try self.maple.deserialize(reader);
+        try self.gdrom.deserialize(reader);
+        try self.flash.deserialize(reader);
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.ram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.vram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.aram));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.hardware_registers));
 
         while (self.scheduled_events.count() > 0)
             _ = self.scheduled_events.remove();
         var event_count: usize = 0;
-        bytes += try reader.read(std.mem.asBytes(&event_count));
+        try reader.readSliceAll(std.mem.asBytes(&event_count));
         for (0..event_count) |_| {
             var event: ScheduledEvent = undefined;
-            bytes += try reader.read(std.mem.asBytes(&event));
+            try reader.readSliceAll(std.mem.asBytes(&event));
             try self.scheduled_events.add(event);
         }
 
-        bytes += try reader.read(std.mem.asBytes(&self._global_cycles));
+        try reader.readSliceAll(std.mem.asBytes(&self._global_cycles));
 
         self.gpu.finalize_deserialization();
-
-        return bytes;
     }
 };
 

@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
     });
-    const nfd = b.dependency("nfd", .{
+    const nfd = b.dependency("nfdzig", .{
         .target = target,
         .optimize = .ReleaseFast,
     });
@@ -159,9 +159,11 @@ pub fn build(b: *std.Build) void {
     {
         const interpreter_perf = b.addExecutable(.{
             .name = "InterpreterPerf",
-            .root_source_file = b.path("test/interpreter_perf.zig"),
-            .target = target,
-            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/interpreter_perf.zig"),
+                .target = target,
+                .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+            }),
         });
         interpreter_perf.root_module.addImport("termcolor", termcolor_module);
         interpreter_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
@@ -181,9 +183,11 @@ pub fn build(b: *std.Build) void {
     {
         const jit_perf = b.addExecutable(.{
             .name = "JITPerf",
-            .root_source_file = b.path("test/jit_perf.zig"),
-            .target = target,
-            .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("test/jit_perf.zig"),
+                .target = target,
+                .optimize = .ReleaseFast, // Note: This ignores the optimization level set by the user.
+            }),
         });
         jit_perf.root_module.addImport("termcolor", termcolor_module);
         jit_perf.root_module.addImport("lz4", ziglz4.module("zig-lz4"));
@@ -205,11 +209,7 @@ pub fn build(b: *std.Build) void {
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
-    const unit_tests = b.addTest(.{
-        .root_module = dc_module,
-        .target = target,
-        .optimize = optimize,
-    });
+    const unit_tests = b.addTest(.{ .root_module = dc_module });
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to
@@ -218,7 +218,16 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
 
-    const sh4_tests = b.addTest(.{ .root_source_file = b.path("test/sh4_SingleStepTests.zig"), .target = target, .optimize = optimize });
+    const sh4_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/sh4_SingleStepTests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
+        //       I don't know  if the test is reliable in the first place, but llvm is used the releases anyway.
+        .use_llvm = true,
+    });
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
     sh4_tests.root_module.addImport("dreamcast", dc_module);
     const run_sh4_tests = b.addRunArtifact(sh4_tests);

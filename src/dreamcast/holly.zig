@@ -1249,13 +1249,13 @@ pub const VertexParameter = union(enum) {
     }
     pub fn position(self: *const @This()) [3]f32 {
         std.debug.assert(self.tag() != .SpriteType0 and self.tag() != .SpriteType1);
-        return @as([*]const f32, @alignCast(@ptrCast(self)))[1..4].*;
+        return @as([*]const f32, @ptrCast(@alignCast(self)))[1..4].*;
     }
 
     // NOTE: Z position of the last vertex will be garbage.
     pub fn sprite_positions(self: *const @This()) [4][3]f32 {
         std.debug.assert(self.tag() == .SpriteType0 or self.tag() == .SpriteType1);
-        return @bitCast(@as([*]const f32, @alignCast(@ptrCast(self)))[1 .. 1 + 4 * 3].*);
+        return @bitCast(@as([*]const f32, @ptrCast(@alignCast(self)))[1 .. 1 + 4 * 3].*);
     }
 
     pub fn scale_x(self: *@This(), factor: f32) void {
@@ -1323,23 +1323,20 @@ pub const VertexStrip = struct {
 };
 
 pub const DisplayList = struct {
-    vertex_strips: std.ArrayList(VertexStrip),
-    vertex_parameters: std.ArrayList(VertexParameter),
+    vertex_strips: std.ArrayList(VertexStrip) = .empty,
+    vertex_parameters: std.ArrayList(VertexParameter) = .empty,
     next_first_vertex_parameters_index: usize = 0,
 
     zclear: bool = true,
     presort: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator) DisplayList {
-        return .{
-            .vertex_strips = std.ArrayList(VertexStrip).init(allocator),
-            .vertex_parameters = std.ArrayList(VertexParameter).init(allocator),
-        };
+    pub fn init() DisplayList {
+        return .{};
     }
 
-    pub fn deinit(self: *DisplayList) void {
-        self.vertex_parameters.deinit();
-        self.vertex_strips.deinit();
+    pub fn deinit(self: *DisplayList, allocator: std.mem.Allocator) void {
+        self.vertex_parameters.deinit(allocator);
+        self.vertex_strips.deinit(allocator);
     }
 
     pub fn clearRetainingCapacity(self: *DisplayList) void {
@@ -1350,33 +1347,26 @@ pub const DisplayList = struct {
 };
 
 pub const TALists = struct {
-    opaque_list: DisplayList,
-    punchthrough_list: DisplayList,
-    translucent_list: DisplayList,
-    opaque_modifier_volumes: std.ArrayList(ModifierVolume),
-    translucent_modifier_volumes: std.ArrayList(ModifierVolume),
-    volume_triangles: std.ArrayList(ModifierVolumeParameter),
+    opaque_list: DisplayList = .{},
+    punchthrough_list: DisplayList = .{},
+    translucent_list: DisplayList = .{},
+    opaque_modifier_volumes: std.ArrayList(ModifierVolume) = .empty,
+    translucent_modifier_volumes: std.ArrayList(ModifierVolume) = .empty,
+    volume_triangles: std.ArrayList(ModifierVolumeParameter) = .empty,
 
     _should_reset: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator) TALists {
-        return .{
-            .opaque_list = .init(allocator),
-            .punchthrough_list = .init(allocator),
-            .translucent_list = .init(allocator),
-            .opaque_modifier_volumes = .init(allocator),
-            .translucent_modifier_volumes = .init(allocator),
-            .volume_triangles = .init(allocator),
-        };
+    pub fn init() TALists {
+        return .{};
     }
 
-    pub fn deinit(self: *TALists) void {
-        self.opaque_list.deinit();
-        self.punchthrough_list.deinit();
-        self.translucent_list.deinit();
-        self.opaque_modifier_volumes.deinit();
-        self.translucent_modifier_volumes.deinit();
-        self.volume_triangles.deinit();
+    pub fn deinit(self: *TALists, allocator: std.mem.Allocator) void {
+        self.opaque_list.deinit(allocator);
+        self.punchthrough_list.deinit(allocator);
+        self.translucent_list.deinit(allocator);
+        self.opaque_modifier_volumes.deinit(allocator);
+        self.translucent_modifier_volumes.deinit(allocator);
+        self.volume_triangles.deinit(allocator);
     }
 
     pub fn clearRetainingCapacity(self: *TALists) void {
@@ -1464,8 +1454,8 @@ pub const Holly = struct {
             ._dc = dc,
         };
         for (&r._ta_lists) |*ta_list| {
-            ta_list.* = .init(allocator);
-            try ta_list.append(.init(allocator));
+            ta_list.* = .empty;
+            try ta_list.append(allocator, .init());
         }
         return r;
     }
@@ -1473,7 +1463,7 @@ pub const Holly = struct {
     pub fn deinit(self: *@This()) void {
         for (&self._ta_lists) |*ta_lists| {
             for (ta_lists.items) |*list|
-                list.deinit();
+                list.deinit(self._allocator);
         }
         self._allocator.free(self.registers);
     }
@@ -1744,7 +1734,7 @@ pub const Holly = struct {
                 if (v == 0x80000000) {
                     self._ta_current_pass += 1;
                     if (self._ta_lists[self.ta_list_index()].items.len <= self._ta_current_pass)
-                        self._ta_lists[self.ta_list_index()].append(.init(self._allocator)) catch @panic("Out of memory");
+                        self._ta_lists[self.ta_list_index()].append(self._allocator, .init()) catch @panic("Out of memory");
                     self._ta_command_buffer_index = 0;
                     self._ta_list_type = null;
                     self._ta_current_polygon = null;
@@ -1783,7 +1773,7 @@ pub const Holly = struct {
 
     /// Write to the Tile Accelerator
     pub fn write_ta(self: *@This(), addr: u32, v: []const u32, access_type: enum(u32) { b64 = 0, b32 = 1 }) void {
-        holly_log.debug("  TA Bulk Write: {X:0>8} = {X:0>8}\n", .{ addr, v });
+        holly_log.debug("  TA Bulk Write: {X:0>8} = {any}\n", .{ addr, v });
         std.debug.assert(addr >= 0x10000000 and addr < 0x14000000);
         switch (addr) {
             0x10000000...0x107FFFFF, 0x12000000...0x127FFFFF => if (v.len % 8 == 0) self.write_ta_fifo_polygon_path(v) else {
@@ -1793,14 +1783,14 @@ pub const Holly = struct {
                     self.handle_command();
                 }
             },
-            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {X:0>8}"), .{ addr, v }),
+            0x10800000...0x10FFFFFF, 0x12800000...0x12FFFFFF => holly_log.warn(termcolor.yellow("  TODO: YUV Conv. {X:0>8} = {any}"), .{ addr, v }),
             0x11000000...0x11FFFFFF, 0x13000000...0x13FFFFFF => {
                 // Direct Texture Path
-                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {X:0>8}"), .{ addr, v });
+                holly_log.warn(termcolor.yellow("  Direct Texture Path write {X:0>8} = {any}"), .{ addr, v });
                 switch (access_type) {
                     .b64 => {
                         for (v, 0..) |w, idx|
-                            @as(*u32, @alignCast(@ptrCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
+                            @as(*u32, @ptrCast(@alignCast(&self.vram[addr & VRAMMask + 4 * idx]))).* = w;
                     },
                     .b32 => {
                         for (v, 0..) |w, idx|
@@ -1808,7 +1798,7 @@ pub const Holly = struct {
                     },
                 }
             },
-            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = 0x{X:0>8}"), .{ addr, v }),
+            else => holly_log.err(termcolor.red("  Unhandled TA Bulk Write to @{X:0>8} = {any}"), .{ addr, v }),
         }
     }
 
@@ -1822,7 +1812,7 @@ pub const Holly = struct {
     pub fn write_ta_fifo_polygon_path_command(self: *@This(), v: @Vector(8, u32)) void {
         std.debug.assert(self._ta_command_buffer_index % 8 == 0);
         @setRuntimeSafety(false);
-        const dst: *@Vector(8, u32) = @alignCast(@ptrCast(&self._ta_command_buffer[self._ta_command_buffer_index]));
+        const dst: *@Vector(8, u32) = @ptrCast(@alignCast(&self._ta_command_buffer[self._ta_command_buffer_index]));
         dst.* = v;
         self._ta_command_buffer_index += 8;
         self.handle_command();
@@ -1830,7 +1820,7 @@ pub const Holly = struct {
 
     pub fn write_ta_direct_texture_path(self: *@This(), addr: u32, access_type: enum(u32) { b64 = 0, b32 = 1 }, v: @Vector(8, u32)) void {
         switch (access_type) {
-            .b64 => @as(*@Vector(8, u32), @alignCast(@ptrCast(&self.vram[addr & VRAMMask]))).* = v,
+            .b64 => @as(*@Vector(8, u32), @ptrCast(@alignCast(&self.vram[addr & VRAMMask]))).* = v,
             .b32 => {
                 for (0..8) |idx|
                     self.write_vram(u32, @intCast(addr + 4 * idx), v[idx]);
@@ -1903,7 +1893,7 @@ pub const Holly = struct {
             const y = block_counter.* / u_size;
 
             const tex_base = self._get_register(u32, .TA_YUV_TEX_BASE).*;
-            const tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
+            const tex: [*]YUV422 = @ptrCast(@alignCast(&self.vram[tex_base]));
 
             yuv_converter_process_macro_block(u_size, v_size, x, y, tex, &static.buffer);
 
@@ -1922,7 +1912,7 @@ pub const Holly = struct {
         const ctrl = self._get_register(TA_YUV_TEX_CTRL, .TA_YUV_TEX_CTRL).*;
         const u_size = @as(u32, ctrl.u_size) + 1; // In 16x16 blocks
         const v_size = @as(u32, ctrl.v_size) + 1; // In 16x16 blocks
-        const tex: [*]YUV422 = @alignCast(@ptrCast(&self.vram[tex_base]));
+        const tex: [*]YUV422 = @ptrCast(@alignCast(&self.vram[tex_base]));
         if (ctrl.format == 0) {
             // YUV 420
             if (ctrl.tex == 0) {
@@ -2091,7 +2081,7 @@ pub const Holly = struct {
                 if (self._ta_list_type) |list_type| {
                     if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                         if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
-                        self.ta_current_lists().volume_triangles.append(@as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
+                        self.ta_current_lists().volume_triangles.append(self._allocator, @as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
                             holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {any}"), .{err});
                         };
 
@@ -2109,12 +2099,12 @@ pub const Holly = struct {
                                     }
                                     if (polygon_obj_control.texture == 0) {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
-                                        display_list.vertex_parameters.append(.{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
+                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
                                             holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
                                         };
                                     } else {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
-                                        display_list.vertex_parameters.append(.{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
+                                        display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
                                             holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
                                         };
                                     }
@@ -2123,7 +2113,7 @@ pub const Holly = struct {
                                     const format = obj_control_to_vertex_parameter_format(polygon_obj_control);
                                     if (self._ta_command_buffer_index < VertexParameter.size(format)) return;
 
-                                    display_list.vertex_parameters.append(switch (format) {
+                                    display_list.vertex_parameters.append(self._allocator, switch (format) {
                                         .SpriteType0, .SpriteType1 => unreachable,
                                         inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
                                     }) catch |err| {
@@ -2133,7 +2123,7 @@ pub const Holly = struct {
                             }
 
                             if (parameter_control_word.end_of_strip == 1) {
-                                display_list.vertex_strips.append(.{
+                                display_list.vertex_strips.append(self._allocator, .{
                                     .polygon = polygon.*,
                                     .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
                                     .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
@@ -2178,13 +2168,13 @@ pub const Holly = struct {
                         const config = self.get_region_array_data_config(0);
                         if (@as(u32, @bitCast(config.opaque_modifier_volume_pointer)) == @as(u32, @bitCast(config.translucent_modifier_volume_pointer))) {
                             // Both lists are actually the same, we'll add it twice for convenience.
-                            self.ta_current_lists().opaque_modifier_volumes.append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
-                            self.ta_current_lists().translucent_modifier_volumes.append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                            self.ta_current_lists().opaque_modifier_volumes.append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                            self.ta_current_lists().translucent_modifier_volumes.append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
                         } else {
                             (if (list_type == .OpaqueModifierVolume)
                                 self.ta_current_lists().opaque_modifier_volumes
                             else
-                                self.ta_current_lists().translucent_modifier_volumes).append(volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
+                                self.ta_current_lists().translucent_modifier_volumes).append(self._allocator, volume.*) catch |err| std.debug.panic("Failed to append ModifierVolume : {}", .{err});
                         }
                     }
 
@@ -2212,15 +2202,15 @@ pub const Holly = struct {
 
     pub inline fn _get_register_from_addr(self: *@This(), comptime T: type, addr: u32) *T {
         std.debug.assert(addr >= HollyRegisterStart and addr < HollyRegisterStart + self.registers.len);
-        return @as(*T, @alignCast(@ptrCast(&self.registers[addr - HollyRegisterStart])));
+        return @as(*T, @ptrCast(@alignCast(&self.registers[addr - HollyRegisterStart])));
     }
 
     pub inline fn get_palette(self: *const @This()) []const u32 {
-        return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart])))[0..1024];
+        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@intFromEnum(HollyRegister.PALETTE_RAM_START) - HollyRegisterStart])))[0..1024];
     }
 
     pub inline fn get_fog_table(self: *const @This()) []const u32 {
-        return @as([*]const u32, @alignCast(@ptrCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
+        return @as([*]const u32, @ptrCast(@alignCast(&self.registers[@intFromEnum(HollyRegister.FOG_TABLE_START) - HollyRegisterStart])))[0..0x80];
     }
 
     pub inline fn get_region_header_type(self: *const @This()) FPU_PARAM_CFG.RegionHeaderType {
@@ -2283,13 +2273,13 @@ pub const Holly = struct {
     /// 32-bit path read (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
     pub inline fn read_vram(self: *const @This(), comptime T: type, addr: u32) T {
         std.debug.assert(@sizeOf(T) <= 4);
-        return @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*;
+        return @as(*T, @ptrCast(@alignCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).*;
     }
     /// 32-bit path write (0x50000000 - 0x5FFFFFFF; or DMA with SB_LMMODE0/1 == 1)
     pub inline fn write_vram(self: *@This(), comptime T: type, addr: u32, value: T) void {
         std.debug.assert(@sizeOf(T) <= 4);
         self.check_framebuffer_write(addr);
-        @as(*T, @alignCast(@ptrCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).* = value;
+        @as(*T, @ptrCast(@alignCast(&self.vram[translate_32bit_path_addr(addr & VRAMMask)]))).* = value;
     }
     inline fn translate_32bit_path_addr(offset: u32) u32 {
         //   64bit access             32bit access
@@ -2354,7 +2344,7 @@ pub const Holly = struct {
                     .RGB565 => {
                         var addr: u32 = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 2 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
-                        var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
+                        var pixel: *Colors.Color16 = @ptrCast(@alignCast(&self.vram[addr]));
                         pixel.rgb565.r = @truncate(pixels[idx + 2] >> 3);
                         pixel.rgb565.g = @truncate(pixels[idx + 1] >> 2);
                         pixel.rgb565.b = @truncate(pixels[idx + 0] >> 3);
@@ -2362,7 +2352,7 @@ pub const Holly = struct {
                     .ARGB1555 => {
                         var addr: u32 = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 2 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
-                        var pixel: *Colors.Color16 = @alignCast(@ptrCast(&self.vram[addr]));
+                        var pixel: *Colors.Color16 = @ptrCast(@alignCast(&self.vram[addr]));
                         pixel.argb1555.r = @truncate(pixels[idx + 2] >> 3);
                         pixel.argb1555.g = @truncate(pixels[idx + 1] >> 3);
                         pixel.argb1555.b = @truncate(pixels[idx + 0] >> 3);
@@ -2389,7 +2379,7 @@ pub const Holly = struct {
         self.schedule_interrupts();
     }
 
-    pub fn serialize(self: *const @This(), writer: anytype) !usize {
+    pub fn serialize(self: *const @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         bytes += try writer.write(std.mem.sliceAsBytes(self.registers[0..]));
         bytes += try writer.write(std.mem.asBytes(&self.dirty_framebuffer));
@@ -2414,17 +2404,16 @@ pub const Holly = struct {
         return bytes;
     }
 
-    pub fn deserialize(self: *@This(), reader: anytype) !usize {
-        var bytes: usize = 0;
-        bytes += try reader.read(std.mem.sliceAsBytes(self.registers[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self.dirty_framebuffer));
-        bytes += try reader.read(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_command_buffer_index));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_list_type));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_current_polygon));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_user_tile_clip));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_current_volume));
-        bytes += try reader.read(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
+    pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+        try reader.readSliceAll(std.mem.sliceAsBytes(self.registers[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self.dirty_framebuffer));
+        try reader.readSliceAll(std.mem.sliceAsBytes(self._ta_command_buffer[0..]));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_command_buffer_index));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_list_type));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_current_polygon));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_user_tile_clip));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_current_volume));
+        try reader.readSliceAll(std.mem.asBytes(&self._ta_volume_next_polygon_is_last));
         // for (&self._ta_lists) |*lists| {
         //     for (lists.items) |*list| {
         //         list.deinit();
@@ -2437,11 +2426,9 @@ pub const Holly = struct {
         //         bytes += try lists.items[i].deserialize(reader);
         //     }
         // }
-        bytes += try reader.read(std.mem.asBytes(&self._pixel));
-        bytes += try reader.read(std.mem.asBytes(&self._tmp_subcycles));
-        bytes += try reader.read(std.mem.asBytes(&self._last_spg_update));
-
-        return bytes;
+        try reader.readSliceAll(std.mem.asBytes(&self._pixel));
+        try reader.readSliceAll(std.mem.asBytes(&self._tmp_subcycles));
+        try reader.readSliceAll(std.mem.asBytes(&self._last_spg_update));
     }
 };
 

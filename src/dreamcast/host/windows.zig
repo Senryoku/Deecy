@@ -13,7 +13,7 @@ pub extern "kernel32" fn OpenFileMappingA(
     dwDesiredAccess: std.os.windows.DWORD,
     bInheritHandle: bool,
     lpName: std.os.windows.LPCSTR,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
+) callconv(.winapi) ?std.os.windows.HANDLE;
 
 pub extern "kernel32" fn CreateFileMappingA(
     hFile: std.os.windows.HANDLE,
@@ -22,7 +22,7 @@ pub extern "kernel32" fn CreateFileMappingA(
     dwMaximumSizeHigh: std.os.windows.DWORD,
     dwMaximumSizeLow: std.os.windows.DWORD,
     lpName: ?std.os.windows.LPCSTR,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.HANDLE;
+) callconv(.winapi) ?std.os.windows.HANDLE;
 
 pub extern "kernel32" fn MapViewOfFile(
     hFileMappingObject: std.os.windows.HANDLE,
@@ -30,7 +30,7 @@ pub extern "kernel32" fn MapViewOfFile(
     dwFileOffsetHigh: std.os.windows.DWORD,
     dwFileOffsetLow: std.os.windows.DWORD,
     dwNumberOfBytesToMap: std.os.windows.SIZE_T,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.LPVOID;
+) callconv(.winapi) ?std.os.windows.LPVOID;
 
 pub extern "kernel32" fn MapViewOfFileEx(
     hFileMappingObject: std.os.windows.HANDLE,
@@ -39,15 +39,15 @@ pub extern "kernel32" fn MapViewOfFileEx(
     dwFileOffsetLow: std.os.windows.DWORD,
     dwNumberOfBytesToMap: std.os.windows.SIZE_T,
     lpBaseAddress: ?std.os.windows.LPVOID,
-) callconv(std.os.windows.WINAPI) ?std.os.windows.LPVOID;
+) callconv(.winapi) ?std.os.windows.LPVOID;
 
 pub extern "kernel32" fn UnmapViewOfFile(
     lpBaseAddress: std.os.windows.LPCVOID,
-) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
+) callconv(.winapi) std.os.windows.BOOL;
 
 pub extern "kernel32" fn VirtualProtect(
     lpAddress: std.os.windows.LPVOID,
     dwSize: std.os.windows.SIZE_T,
     flNewProtect: std.os.windows.DWORD,
     lpflOldProtect: *std.os.windows.DWORD,
-) callconv(std.os.windows.WINAPI) bool;
+) callconv(.winapi) bool;

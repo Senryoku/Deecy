@@ -43,7 +43,7 @@ const GameFile = struct {
 
 // Stupid way of waiting for any key press
 var key_pressed: ?zglfw.Key = null;
-fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.C) void {
+fn wait_for_key_callback(_: *zglfw.Window, key: zglfw.Key, _: i32, action: zglfw.Action, _: zglfw.Mods) callconv(.c) void {
     if (action == .press)
         key_pressed = key;
 }
@@ -66,7 +66,7 @@ vmu_displays: [4][2]?struct {
 } = .{ .{ null, null }, .{ null, null }, .{ null, null }, .{ null, null } },
 
 binary_loaded: bool = false, // Indicates if we're running a raw binary loaded directly in RAM (not from a disc) (FIXME: Used to avoid drawing the game library when pausing without a disc. Clunky.)
-disc_files: std.ArrayList(GameFile),
+disc_files: std.ArrayList(GameFile) = .empty,
 disc_files_mutex: std.Thread.Mutex = .{}, // Used during disc_files population (then assumed to be constant outside of refresh_games)
 
 notifications: Notifications,
@@ -77,7 +77,6 @@ allocator: std.mem.Allocator,
 pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
     var r = try allocator.create(@This());
     r.* = .{
-        .disc_files = .init(allocator),
         .notifications = .init(allocator),
         .deecy = d,
         .allocator = allocator,
@@ -88,7 +87,7 @@ pub fn create(allocator: std.mem.Allocator, d: *Deecy) !*@This() {
 
 pub fn destroy(self: *@This()) void {
     for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
-    self.disc_files.deinit();
+    self.disc_files.deinit(self.allocator);
 
     for (&self.vmu_displays) |*vmu_texture| {
         if (vmu_texture[0]) |texture| {
@@ -200,7 +199,7 @@ fn get_game_image(self: *@This(), path: []const u8) void {
         ui_log.err("Failed to load disc '{s}': {s}", .{ path, @errorName(err) });
         return;
     };
-    defer disc.deinit();
+    defer disc.deinit(allocator);
 
     const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
         ui_log.err("Failed to allocate texture buffer: {s}", .{@errorName(err)});
@@ -284,7 +283,7 @@ pub fn refresh_games(self: *@This()) !void {
                     {
                         self.disc_files_mutex.lock();
                         defer self.disc_files_mutex.unlock();
-                        try self.disc_files.append(.{
+                        try self.disc_files.append(self.allocator, .{
                             .name = name,
                             .path = path,
                             .texture = null,
@@ -443,7 +442,7 @@ pub fn draw(self: *@This()) !void {
             if (zgui.menuItem("Remove Disc", .{ .enabled = d.dc.gdrom.disc != null })) {
                 const was_running = d.running;
                 if (was_running) d.pause();
-                d.dc.gdrom.disc.?.deinit();
+                d.dc.gdrom.disc.?.deinit(d._allocator);
                 d.dc.gdrom.disc = null;
                 if (d.dc.gdrom.state != .Open)
                     d.dc.gdrom.state = .Empty;
@@ -512,16 +511,16 @@ pub fn draw(self: *@This()) !void {
             }
 
             if (zgui.beginTabItem("Controls", .{})) {
-                var available_controllers = std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }).init(d._allocator);
-                defer available_controllers.deinit();
+                var available_controllers: std.ArrayList(struct { id: ?zglfw.Joystick, name: [:0]const u8 }) = .empty;
+                defer available_controllers.deinit(self.allocator);
 
-                try available_controllers.append(.{ .id = null, .name = "None" });
+                try available_controllers.append(self.allocator, .{ .id = null, .name = "None" });
 
                 for (0..zglfw.Joystick.maximum_supported) |idx| {
                     const joystick: zglfw.Joystick = @enumFromInt(idx);
                     if (joystick.isPresent()) {
                         if (joystick.asGamepad()) |gamepad| {
-                            try available_controllers.append(.{ .id = joystick, .name = gamepad.getName() });
+                            try available_controllers.append(self.allocator, .{ .id = joystick, .name = gamepad.getName() });
                         }
                     }
                 }

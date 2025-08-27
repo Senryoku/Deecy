@@ -174,7 +174,7 @@ fn unexpected_write(self: *@This(), addr: u32, data: u16) void {
     self.mode = .Normal;
 }
 
-pub fn serialize(self: @This(), writer: anytype) !usize {
+pub fn serialize(self: @This(), writer: *std.Io.Writer) !usize {
     var bytes: usize = 0;
     bytes += try writer.write(std.mem.asBytes(&self.mode));
     bytes += try writer.write(std.mem.asBytes(&self.write_cycle));
@@ -182,12 +182,10 @@ pub fn serialize(self: @This(), writer: anytype) !usize {
     return bytes;
 }
 
-pub fn deserialize(self: *@This(), reader: anytype) !usize {
-    var bytes: usize = 0;
-    bytes += try reader.read(std.mem.asBytes(&self.mode));
-    bytes += try reader.read(std.mem.asBytes(&self.write_cycle));
-    bytes += try reader.read(std.mem.sliceAsBytes(self.data[0..]));
-    return bytes;
+pub fn deserialize(self: *@This(), reader: *std.Io.Reader) !void {
+    try reader.readSliceAll(std.mem.asBytes(&self.mode));
+    try reader.readSliceAll(std.mem.asBytes(&self.write_cycle));
+    try reader.readSliceAll(std.mem.sliceAsBytes(self.data[0..]));
 }
 
 // Dreamcast specific bits
@@ -235,7 +233,7 @@ pub const SystemConfigPayload = extern struct {
 };
 
 pub fn get_system_block(self: *@This(), index: usize) *UserBlock(SystemConfigPayload) {
-    return @alignCast(@ptrCast(&self.data[0x1C000 + (index + 1) * 0x40]));
+    return @ptrCast(@alignCast(&self.data[0x1C000 + (index + 1) * 0x40]));
 }
 
 pub fn block_crc(block: []u8) u16 {

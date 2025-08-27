@@ -40,7 +40,7 @@ pub fn load_state(dc: *Dreamcast, path: []const u8) !void {
     if (header_size != @sizeOf(SaveStateHeader)) return error.InvalidSaveState;
     try header.validate();
 
-    const compressed = try file.readToEndAllocOptions(dc._allocator, 32 * 1024 * 1024, header.compressed_size, 8, null);
+    const compressed = try file.readToEndAllocOptions(dc._allocator, 32 * 1024 * 1024, header.compressed_size, .@"8", null);
     defer dc._allocator.free(compressed);
 
     if (header.compressed_size != compressed.len) return error.UnexpectedSaveStateSize;
@@ -48,8 +48,7 @@ pub fn load_state(dc: *Dreamcast, path: []const u8) !void {
     const decompressed = try lz4.Standard.decompress(dc._allocator, compressed, header.uncompressed_size);
     defer dc._allocator.free(decompressed);
 
-    var uncompressed_stream = std.io.fixedBufferStream(decompressed);
-    var reader = uncompressed_stream.reader();
+    var reader = std.Io.Reader.fixed(decompressed);
 
     try dc.reset();
 

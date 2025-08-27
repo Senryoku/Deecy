@@ -37,30 +37,19 @@ pub fn customLog(
         args_hash == static.last_message.args_hash)
     {
         static.count +|= 1;
-        const stderr = std.io.getStdErr().writer();
-        var bw = std.io.bufferedWriter(stderr);
-        const writer = bw.writer();
 
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
-        nosuspend {
-            writer.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
-            bw.flush() catch return;
-        }
+        var buffer: [64]u8 = undefined;
+        const stderr = std.debug.lockStderrWriter(&buffer);
+        defer std.debug.unlockStderrWriter();
+        nosuspend stderr.print(termcolor.grey("\r  (...x{d})"), .{static.count}) catch return;
         return;
     }
 
     if (static.count > 1) {
-        const stderr = std.io.getStdErr().writer();
-        var bw = std.io.bufferedWriter(stderr);
-        const writer = bw.writer();
-
-        std.debug.lockStdErr();
-        defer std.debug.unlockStdErr();
-        nosuspend {
-            writer.print("\n", .{}) catch return;
-            bw.flush() catch return;
-        }
+        var buffer: [64]u8 = undefined;
+        const stderr = std.debug.lockStderrWriter(&buffer);
+        defer std.debug.unlockStderrWriter();
+        nosuspend stderr.print("\n", .{}) catch return;
     }
 
     static.last_message = .{
@@ -104,7 +93,7 @@ pub const std_options: std.Options = .{
 };
 
 fn trapa_handler(app: *anyopaque) void {
-    @as(*Deecy, @alignCast(@ptrCast(app))).pause();
+    @as(*Deecy, @ptrCast(@alignCast(app))).pause();
 }
 
 const Hack = struct { addr: u32, instr: []const u16 };
@@ -146,10 +135,10 @@ pub fn main() !void {
     var disc_path: ?[]const u8 = null;
 
     var default_vmu = true;
-    var vmu_path = std.ArrayList(u8).init(allocator);
-    defer vmu_path.deinit();
-    try vmu_path.appendSlice(DreamcastModule.HostPaths.get_userdata_path());
-    try vmu_path.appendSlice("/vmu_default.bin");
+    var vmu_path: std.ArrayList(u8) = .empty;
+    defer vmu_path.deinit(allocator);
+    try vmu_path.appendSlice(allocator, DreamcastModule.HostPaths.get_userdata_path());
+    try vmu_path.appendSlice(allocator, "/vmu_default.bin");
 
     var skip_bios = false;
     var start_immediately = false;
@@ -183,7 +172,7 @@ pub fn main() !void {
                     return error.InvalidArguments;
                 };
                 vmu_path.clearRetainingCapacity();
-                try vmu_path.appendSlice(path);
+                try vmu_path.appendSlice(allocator, path);
                 default_vmu = false;
             } else if (std.mem.eql(u8, arg, "-d")) {
                 dc.cpu.debug_trace = true;
@@ -237,9 +226,10 @@ pub fn main() !void {
         if (std.mem.endsWith(u8, path, ".elf")) {
             var elf_file = try std.fs.cwd().openFile(path, .{});
             defer elf_file.close();
-            var stream: std.io.StreamSource = .{ .file = elf_file };
-
-            var elf = try ELF.init(allocator, &stream);
+            const buffer = try allocator.alloc(u8, 8192);
+            defer allocator.free(buffer);
+            var file_reader = elf_file.reader(buffer);
+            var elf = try ELF.init(allocator, &file_reader);
             defer elf.deinit();
 
             entry_point = @intCast(elf.program_entry_offset);
@@ -371,11 +361,8 @@ pub fn main() !void {
             d.renderer.render_start = false;
 
             if (!d.dc.gpu.render_to_texture()) {
-                if (d.last_n_frametimes.count >= 60) {
-                    _ = d.last_n_frametimes.readItem();
-                }
                 const now = std.time.microTimestamp();
-                try d.last_n_frametimes.writeItem(now - d.last_frame_timestamp);
+                d.last_n_frametimes.push(now - d.last_frame_timestamp);
                 d.last_frame_timestamp = now;
             }
         }

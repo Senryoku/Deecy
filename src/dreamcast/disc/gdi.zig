@@ -25,8 +25,8 @@ _files: std.ArrayList(MemoryMappedFile),
 
 pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     var self: @This() = .{
-        .tracks = .init(allocator),
-        ._files = .init(allocator),
+        .tracks = .empty,
+        ._files = .empty,
     };
 
     const file = std.fs.cwd().openFile(filepath, .{}) catch {
@@ -42,7 +42,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
     const first_line = lines.next().?;
     const track_count = try std.fmt.parseUnsigned(u32, first_line, 10);
-    try self.tracks.resize(track_count);
+    try self.tracks.resize(allocator, track_count);
 
     for (0..track_count) |i| {
         var vals = std.mem.splitSequence(u8, lines.next().?, " ");
@@ -65,7 +65,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         const track_file_path = try std.fs.path.join(allocator, &[_][]const u8{ folder, filename });
         defer allocator.free(track_file_path);
         var track_file = try MemoryMappedFile.init(track_file_path, allocator);
-        try self._files.append(track_file);
+        try self._files.append(allocator, track_file);
 
         self.tracks.items[num - 1] = (.{
             .num = num,
@@ -80,12 +80,11 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
-    self.tracks.deinit();
-    for (self._files.items) |*file| {
+pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    self.tracks.deinit(allocator);
+    for (self._files.items) |*file|
         file.deinit();
-    }
-    self._files.deinit();
+    self._files.deinit(allocator);
 }
 
 pub fn get_first_data_track(self: *const @This()) ?Track {
