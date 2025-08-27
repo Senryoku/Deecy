@@ -416,15 +416,15 @@ pub fn addc_Rm_Rn(cpu: *SH4, opcode: Instr) !void {
         const rm = cpu.R(opcode.nmd.m);
 
         rn.* = asm volatile (
-            \\ bt $0, %edx
-            \\ adc %ecx, %eax
+            \\ bt $0, %%edx
+            \\ adc %%ecx, %%eax
             : [ret] "={eax}" (-> u32),
-            : [_] "{edx}" (cpu.sr.t),
-              [_] "{eax}" (rn.*),
-              [_] "{ecx}" (rm.*),
+            : [t] "{edx}" (cpu.sr.t),
+              [rn] "{eax}" (rn.*),
+              [rm] "{ecx}" (rm.*),
             : .{ .edx = true, .eax = true });
         cpu.sr.t = asm volatile (
-            \\ setb %dl
+            \\ setb %%dl
             : [ret] "={dl}" (-> bool),
             :
             : .{ .dl = true });
