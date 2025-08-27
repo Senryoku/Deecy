@@ -130,6 +130,9 @@ pub const JITContext = struct {
     did_fallback: bool = false, // Only there for analysis.
 };
 
+const CPUPointer = SavedRegisters[0];
+const MemPointer = SavedRegisters[1];
+
 pub const ARM7JIT = struct {
     block_cache: BlockCache,
 
@@ -189,8 +192,6 @@ pub const ARM7JIT = struct {
         }
 
         // Not necessary, just here to allow compatibility with the interpreter if we need it.
-        // (Right now we're always calling to the interpreter so this should stay in sync, but once
-        //  we start actually JITing some instructions, we won't keep instruction_pipeline updated)
         cpu.instruction_pipeline[0] = @as(*const u32, @ptrCast(@alignCast(&cpu.memory[(cpu.pc() -% 4) & cpu.memory_address_mask]))).*;
 
         return @intCast(spent_cycles);
@@ -226,8 +227,11 @@ pub const ARM7JIT = struct {
         // We'll be using these callee saved registers, push 'em to the stack.
         try b.push(.{ .reg64 = SavedRegisters[0] });
         try b.push(.{ .reg64 = SavedRegisters[1] }); // NOTE: We need to align the stack to 16 bytes anyway.
+        try b.push(.{ .reg64 = SavedRegisters[2] }); // Bit more space to work with.
+        try b.push(.{ .reg64 = SavedRegisters[3] });
 
-        try b.mov(.{ .reg = SavedRegisters[0] }, .{ .reg = ArgRegisters[0] }); // Save the pointer to the cpu struct
+        try b.mov(.{ .reg64 = CPUPointer }, .{ .reg64 = ArgRegisters[0] }); // Save the pointer to the cpu struct
+        try b.mov(.{ .reg64 = MemPointer }, .{ .imm64 = @intFromPtr(ctx.cpu.memory.ptr) });
 
         var cycles: u32 = 0;
         var index: u32 = 0;
@@ -265,6 +269,8 @@ pub const ARM7JIT = struct {
         }
 
         // Restore callee saved registers.
+        try b.pop(.{ .reg64 = SavedRegisters[3] });
+        try b.pop(.{ .reg64 = SavedRegisters[2] });
         try b.pop(.{ .reg64 = SavedRegisters[1] });
         try b.pop(.{ .reg64 = SavedRegisters[0] });
 
@@ -278,7 +284,7 @@ pub const ARM7JIT = struct {
         };
         self.block_cache.cursor += block_size;
 
-        arm_jit_log.debug("Compiled: {any}", .{self.block_cache.buffer[block.offset..][0..block_size]});
+        arm_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.address, ctx.address, block);
         return block;
@@ -341,34 +347,72 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try load_wave_memory(b, ctx, T, dst, addr_imm32);
             } else {
-                // TODO: External memory, fallback for now!
                 try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
                 try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
-                if (T == u8) {
-                    try b.call(read8);
-                    if (dst != ReturnRegister)
-                        try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
-                } else if (T == u32) {
-                    try b.call(read32);
-                    if (dst != ReturnRegister)
-                        try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
-                } else @compileError("Unsupported type: " ++ @typeName(T));
+                switch (T) {
+                    u8 => {
+                        try b.call(read8);
+                        if (dst != ReturnRegister)
+                            try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
+                    },
+                    u32 => {
+                        try b.call(read32);
+                        if (dst != ReturnRegister)
+                            try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+                    },
+                    else => @compileError("Unsupported type: " ++ @typeName(T)),
+                }
             }
         },
         .reg => |addr_reg| {
-            // TODO: Fallback for now. Can't do everything at once.
+            std.debug.assert(dst != addr_reg);
+
+            const UseCMOV = true and T == u32;
+
+            const tmp = ArgRegisters[2];
+            std.debug.assert(tmp != dst);
+            std.debug.assert(tmp != addr_reg);
+            try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
+            // Test if this is external memory, or unaligned.
+            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.external_memory_address_mask | switch (T) {
+                u32 => 0b11,
+                else => 0,
+            } } } });
+            if (UseCMOV) {
+                try b.mov(.{ .reg = dst }, .{ .reg = addr_reg });
+                try b.append(.{ .And = .{ .dst = .{ .reg = dst }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
+            }
+            try b.cmp(.{ .reg = tmp }, .{ .imm32 = 0 });
+            if (UseCMOV)
+                try b.cmov(.Equal, .{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
+            var wave_mem = try b.jmp(.Equal);
+
+            // Fallback to function call
             if (addr_reg != ArgRegisters[1])
                 try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr_reg });
             try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-            if (T == u8) {
-                try b.call(read8);
-                if (dst != ReturnRegister)
-                    try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
-            } else if (T == u32) {
-                try b.call(read32);
-                if (dst != ReturnRegister)
-                    try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
-            } else @compileError("Unsupported type: " ++ @typeName(T));
+            switch (T) {
+                u8 => {
+                    try b.call(read8);
+                    if (dst != ReturnRegister)
+                        try b.mov(.{ .reg = dst }, .{ .reg8 = ReturnRegister });
+                },
+                u32 => {
+                    try b.call(read32);
+                    if (dst != ReturnRegister)
+                        try b.mov(.{ .reg = dst }, .{ .reg = ReturnRegister });
+                },
+                else => @compileError("Unsupported type: " ++ @typeName(T)),
+            }
+            var end = if (!UseCMOV) try b.jmp(.Always) else {};
+
+            wave_mem.patch();
+            if (!UseCMOV) {
+                try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
+                try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
+                try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = tmp, .size = @bitSizeOf(T) } });
+                end.patch();
+            }
         },
         else => return error.UnsupportedAddrOperand,
     }
@@ -381,19 +425,27 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try store_wave_memory(b, ctx, T, addr_imm32, value);
             } else {
-                // TODO: External memory, fallback for now!
                 if (value != ArgRegisters[2])
                     try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
                 try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
                 try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
-                if (T == u8) {
-                    try b.call(write8);
-                } else if (T == u32) {
-                    try b.call(write32);
-                } else @compileError("Unsupported type: " ++ @typeName(T));
+                switch (T) {
+                    u8 => try b.call(write8),
+                    u32 => try b.call(write32),
+                    else => @compileError("Unsupported type: " ++ @typeName(T)),
+                }
             }
         },
         .reg => |addr_reg| {
+            const tmp = ArgRegisters[3];
+            std.debug.assert(tmp != value);
+            std.debug.assert(tmp != addr_reg);
+            try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
+            // Test if this is external memory, or unaligned.
+            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.external_memory_address_mask } } });
+            try b.cmp(.{ .reg = tmp }, .{ .imm32 = 0 });
+            var wave_mem = try b.jmp(.Equal);
+
             std.debug.assert(value != ArgRegisters[1]); // It would be overwritten.
             // TODO: Fallback for now.
             if (addr_reg != ArgRegisters[1])
@@ -401,11 +453,26 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             if (value != ArgRegisters[2])
                 try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
             try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-            if (T == u8) {
-                try b.call(write8);
-            } else if (T == u32) {
-                try b.call(write32);
-            } else @compileError("Unsupported type: " ++ @typeName(T));
+            switch (T) {
+                u8 => try b.call(write8),
+                u32 => try b.call(write32),
+                else => @compileError("Unsupported type: " ++ @typeName(T)),
+            }
+            var end = try b.jmp(.Always);
+
+            wave_mem.patch();
+            try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
+            switch (T) {
+                u8 => try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } }),
+                u32 => try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask & 0xFFFF_FFFC } } }),
+                else => @compileError("Unsupported type: " ++ @typeName(T)),
+            }
+            try b.mov(.{ .mem = .{ .base = MemPointer, .index = tmp, .size = @bitSizeOf(T) } }, switch (T) {
+                u8 => .{ .reg8 = value },
+                u32 => .{ .reg = value },
+                else => unreachable,
+            });
+            end.patch();
         },
         else => return error.UnsupportedAddrOperand,
     }
@@ -855,9 +922,9 @@ fn handle_single_data_swap(b: *IRBlock, ctx: *JITContext, instruction: u32) !boo
         return false;
     }
 
-    const addr: JIT.Operand = .{ .reg = SavedRegisters[1] };
+    const addr: JIT.Operand = .{ .reg = SavedRegisters[2] };
     const rd = ReturnRegister;
-    const reg = ArgRegisters[2];
+    const reg = SavedRegisters[3];
     try load_register(b, addr.reg, inst.rn);
     try load_register(b, reg, inst.rm);
     if (inst.b == 1) {

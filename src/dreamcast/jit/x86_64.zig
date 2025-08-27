@@ -1059,7 +1059,7 @@ pub const Emitter = struct {
                     },
                     .mem => |mem| {
                         if (dst.size() != mem.size) return error.OperandSizeMismatch;
-                        try self.emit(REX, .{
+                        try self.emit_rex_if_needed(.{
                             .w = b64,
                             .r = need_rex(reg),
                             .x = if (mem.index) |i| need_rex(i) else false,
@@ -1068,7 +1068,6 @@ pub const Emitter = struct {
                         try self.emit(u8, 0x0F);
                         try self.emit(u8, 0x40 | condition.nibble());
                         try self.emit_mem_addressing(encode(reg), mem);
-                        return error.UntestedCmovEmit; // Implemented but unused, thus untested! Be careful!
                     },
                     else => return error.InvalidCmovSource,
                 }

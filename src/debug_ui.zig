@@ -716,7 +716,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         channel.lfo_control.frequency,
                         channel.lfo_control.reset,
                     });
-                    var loop_size = if (channel.play_control.sample_loop) channel.loop_end - channel.loop_start else channel.loop_end;
+                    var loop_size = if (channel.play_control.sample_loop and channel.loop_end > channel.loop_start) channel.loop_end - channel.loop_start else channel.loop_end;
                     if (loop_size == 0) loop_size = 2048;
                     if (channel.play_control.sample_format == .i16) {
                         if (zgui.plot.beginPlot("Samples", .{ .flags = zgui.plot.Flags.canvas_only })) {
