@@ -100,31 +100,7 @@ const BlockCache = struct {
     }
 
     pub fn reset_blocks(self: *@This()) !void {
-        const byte_size = self.blocks.len * @sizeOf(BasicBlock);
-        if (builtin.os.tag == .windows) {
-            std.os.windows.VirtualFree(self.blocks.ptr, byte_size, std.os.windows.MEM_DECOMMIT);
-            std.debug.assert(try std.os.windows.VirtualAlloc(
-                self.blocks.ptr,
-                byte_size,
-                std.os.windows.MEM_COMMIT,
-                std.os.windows.PAGE_READWRITE,
-            ) == @as(*anyopaque, @ptrCast(self.blocks.ptr)));
-        } else {
-            // NOTE: madvise 'dontneed' could be faster and should reliably zero out the memory on private anonymous mappings on Linux, if I believe what I read here and there online.
-            //       However this isn't standard or portable, maybe I should just use the fixed mmap fallback directly.
-            std.posix.madvise(@ptrCast(@alignCast(self.blocks.ptr)), byte_size, std.posix.MADV.DONTNEED) catch |madv_err| {
-                sh4_jit_log.warn("Failed to madvise: {s}. Fallback to mmap.", .{@errorName(madv_err)});
-                const remmaped = try std.posix.mmap(
-                    @ptrCast(@alignCast(self.blocks.ptr)),
-                    byte_size,
-                    std.posix.PROT.READ | std.posix.PROT.WRITE,
-                    .{ .TYPE = .PRIVATE, .ANONYMOUS = true, .FIXED = true },
-                    -1,
-                    0,
-                );
-                std.debug.assert(remmaped.ptr == @as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(self.blocks.ptr))));
-            };
-        }
+        try host_memory.reset_virtual_alloc(self.blocks);
     }
 
     pub fn invalidate(self: *@This(), start_addr: u32, end_addr: u32) void {

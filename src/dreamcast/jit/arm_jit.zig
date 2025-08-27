@@ -100,23 +100,26 @@ const BlockCache = struct {
         self.min_address = std.math.maxInt(u32);
         self.max_address = 0;
 
-        self.deallocate_blocks();
-        try self.allocate_blocks();
+        try host_memory.reset_virtual_alloc(self.blocks);
+    }
+
+    inline fn block_key(self: *@This(), address: u32) u32 {
+        return (address & self.addr_mask) >> 2;
     }
 
     pub fn invalidate(self: *@This(), address: u32) void {
-        self.blocks[(address & self.addr_mask) >> 2] = .{ .offset = 0, .cycles = 0 };
+        self.blocks[self.block_key(address)] = .{ .offset = 0, .cycles = 0 };
     }
 
     pub fn get(self: *@This(), address: u32) BasicBlock {
-        return self.blocks[(address & self.addr_mask) >> 2];
+        return self.blocks[self.block_key(address)];
     }
 
     pub fn put(self: *@This(), address: u32, end_address: u32, block: BasicBlock) void {
         self.min_address = @min(self.min_address, address & self.addr_mask);
         self.max_address = @max(self.max_address, end_address & self.addr_mask);
 
-        self.blocks[(address & self.addr_mask) >> 2] = block;
+        self.blocks[self.block_key(address)] = block;
     }
 };
 
@@ -163,7 +166,7 @@ pub const ARM7JIT = struct {
         self.block_cache.cursor = std.mem.alignForward(usize, block_size, 0x10);
     }
 
-    pub noinline fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
+    pub fn run_for(self: *@This(), cpu: *arm7.ARM7, cycles: i32) !i32 {
         if (!cpu.running) return 0;
 
         var spent_cycles: u32 = 0;

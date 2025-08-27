@@ -225,7 +225,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
         // NOTE: The ftrv XMTRX,FVn test fails with the self-hosted backend, I guess there are differences in float handling.
-        //       I don't know  if the test is reliable in the first place, but llvm is used the releases anyway.
+        //       I don't know if the test is reliable in the first place, but llvm is used the releases anyway.
         .use_llvm = true,
     });
     sh4_tests.root_module.addImport("termcolor", termcolor_module);
