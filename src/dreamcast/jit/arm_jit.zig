@@ -128,6 +128,7 @@ pub const JITContext = struct {
     cpu: *arm7.ARM7,
 
     did_fallback: bool = false, // Only there for analysis.
+    skipped_instructions: u32 = 0,
 };
 
 const CPUPointer = SavedRegisters[0];
@@ -257,6 +258,11 @@ pub const ARM7JIT = struct {
             cycles += 1; // FIXME
             index += 1;
             ctx.address += 4;
+
+            if (ctx.skipped_instructions > 0) {
+                index += ctx.skipped_instructions;
+                ctx.skipped_instructions = 0;
+            }
 
             if (branch or cycles > MaxCyclesPerBlock)
                 break;
@@ -791,6 +797,13 @@ fn handle_branch(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
 
     // +4 to simulate next prefetch
     try b.add(guest_register(15), .{ .imm32 = offset +% 4 });
+
+    // Treat unconditional forward branches as a single block.
+    if (inst.cond == .AL and offset & 0x80000000 == 0) {
+        ctx.address +%= offset;
+        ctx.skipped_instructions = (offset >> 2) + 1;
+        return false;
+    }
 
     return true;
 }
