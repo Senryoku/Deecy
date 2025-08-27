@@ -38,7 +38,7 @@ pub fn patch_access(fault_address: u64, space_base: u64, space_size: u64, rip: *
             0xE9 => end_patch += 5, // JMP rel32 in 64bit mode
             else => |byte| {
                 std.log.scoped(.sh4_jit).err(termcolor.red("Unhandled jump: {X:0>2}"), .{byte});
-                std.log.scoped(.sh4_jit).err("  {X:0>2}", .{@as([*]u8, @ptrFromInt(end_patch))[0..16]});
+                std.log.scoped(.sh4_jit).err("  {X}", .{@as([*]u8, @ptrFromInt(end_patch))[0..16]});
                 return error.InvalidJumpInstruction;
             },
         }

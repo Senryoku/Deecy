@@ -303,18 +303,33 @@ fn store_register(b: *IRBlock, arm_reg: u5, value: JIT.Operand) !void {
     try b.mov(guest_register(arm_reg), value);
 }
 
+inline fn get_cpu() *arm7.ARM7 {
+    return switch (CPUPointer) {
+        .rbx => asm volatile (""
+            : [rbx] "={rbx}" (-> *arm7.ARM7),
+        ),
+        else => @compileError("Unhandled CPU register."),
+    };
+}
+
 // Zero-extended
-noinline fn read8(self: *arm7.ARM7, address: u32) callconv(.c) u32 {
-    return self.read(u8, address);
+noinline fn read8(address: u32) callconv(.c) u32 {
+    const self = get_cpu();
+    return @call(.always_inline, arm7.ARM7.read, .{ self, u8, address });
 }
-noinline fn read32(self: *arm7.ARM7, address: u32) callconv(.c) u32 {
-    return self.read(u32, address);
+noinline fn read32(address: u32) callconv(.c) u32 {
+    const self = get_cpu();
+    return @call(.always_inline, arm7.ARM7.read, .{ self, u32, address });
 }
-noinline fn write8(self: *arm7.ARM7, address: u32, value: u8) callconv(.c) void {
-    self.write(u8, address, value);
+noinline fn write8(address: u32, value: u8) callconv(.c) void {
+    const self = get_cpu();
+    std.debug.assert(address & self.external_memory_address_mask != 0);
+    @call(.always_inline, arm7.ARM7.write, .{ self, u8, address, value });
 }
-noinline fn write32(self: *arm7.ARM7, address: u32, value: u32) callconv(.c) void {
-    self.write(u32, address, value);
+noinline fn write32(address: u32, value: u32) callconv(.c) void {
+    const self = get_cpu();
+    std.debug.assert(address & self.external_memory_address_mask != 0);
+    @call(.always_inline, arm7.ARM7.write, .{ self, u32, address, value });
 }
 
 fn reset_pipeline(cpu: *arm7.ARM7) callconv(.c) void {
@@ -347,8 +362,7 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try load_wave_memory(b, ctx, T, dst, addr_imm32);
             } else {
-                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = addr_imm32 });
                 switch (T) {
                     u8 => {
                         try b.call(read8);
@@ -367,7 +381,7 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
         .reg => |addr_reg| {
             std.debug.assert(dst != addr_reg);
 
-            const UseCMOV = true and T == u32;
+            const UseCMOV = T == u32;
 
             const tmp = ArgRegisters[2];
             std.debug.assert(tmp != dst);
@@ -388,9 +402,8 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
             var wave_mem = try b.jmp(.Equal);
 
             // Fallback to function call
-            if (addr_reg != ArgRegisters[1])
-                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr_reg });
-            try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+            if (addr_reg != ArgRegisters[0])
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr_reg });
             switch (T) {
                 u8 => {
                     try b.call(read8);
@@ -419,16 +432,16 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
 }
 
 /// NOTE: Overwrites ArgRegisters 0, 1 and 2 (ReturnRegister too). And calls a function, so don't rely on caller saved registers anyway.
+///       Prefered arguments: addr = ArgRegisters[0] and value = ArgRegisters[1]
 fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Operand, value: JIT.Register) !void {
     switch (addr) {
         .imm32 => |addr_imm32| {
             if ((addr_imm32 & ctx.cpu.external_memory_address_mask) == 0) {
                 try store_wave_memory(b, ctx, T, addr_imm32, value);
             } else {
-                if (value != ArgRegisters[2])
-                    try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
-                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
-                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = addr_imm32 });
+                if (value != ArgRegisters[1])
+                    try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = value });
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .imm32 = addr_imm32 });
                 switch (T) {
                     u8 => try b.call(write8),
                     u32 => try b.call(write32),
@@ -441,18 +454,17 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             std.debug.assert(tmp != value);
             std.debug.assert(tmp != addr_reg);
             try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
-            // Test if this is external memory, or unaligned.
+            // Test if this is external memory.
             try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.external_memory_address_mask } } });
             try b.cmp(.{ .reg = tmp }, .{ .imm32 = 0 });
             var wave_mem = try b.jmp(.Equal);
 
-            std.debug.assert(value != ArgRegisters[1]); // It would be overwritten.
-            // TODO: Fallback for now.
-            if (addr_reg != ArgRegisters[1])
-                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = addr_reg });
-            if (value != ArgRegisters[2])
-                try b.mov(.{ .reg = ArgRegisters[2] }, .{ .reg = value });
-            try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
+            std.debug.assert(value != ArgRegisters[0]); // It would be overwritten.
+            // Fallback
+            if (addr_reg != ArgRegisters[0])
+                try b.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = addr_reg });
+            if (value != ArgRegisters[1])
+                try b.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = value });
             switch (T) {
                 u8 => try b.call(write8),
                 u32 => try b.call(write32),
@@ -462,11 +474,11 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
 
             wave_mem.patch();
             try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
-            switch (T) {
-                u8 => try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } }),
-                u32 => try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask & 0xFFFF_FFFC } } }),
+            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = switch (T) {
+                u8 => ctx.cpu.memory_address_mask,
+                u32 => ctx.cpu.memory_address_mask & 0xFFFF_FFFC,
                 else => @compileError("Unsupported type: " ++ @typeName(T)),
-            }
+            } } } });
             try b.mov(.{ .mem = .{ .base = MemPointer, .index = tmp, .size = @bitSizeOf(T) } }, switch (T) {
                 u8 => .{ .reg8 = value },
                 u32 => .{ .reg = value },
@@ -610,7 +622,8 @@ pub const InstructionHandlers = [_]*const fn (b: *IRBlock, ctx: *JITContext, ins
 };
 
 // NOTE: With this stupid setup, SavedRegisters[0] is a pointer to the cpu struct and should not be changed.
-//       SavedRegisters[1] is the only register we save and that will survive a function call (e.g. load_mem/store_mem).
+//       SavedRegisters[1] is a pointer to wave memory.
+//       SavedRegisters[2] and SavedRegisters[3] are used as temporaries that will survive a function call (e.g. load_mem/store_mem).
 
 fn handle_branch_and_exchange(b: *IRBlock, ctx: *JITContext, instruction: u32) !bool {
     _ = b;
@@ -855,13 +868,13 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
     if (inst.i == 0) {
         const offset: u32 = inst.offset;
         const signed_offset: u32 = if (inst.u == 1) offset else (~offset +% 1);
-        const addr = ReturnRegister;
+        const addr = ArgRegisters[0];
         try load_register(block, addr, inst.rn);
         if (inst.p == 1)
             try block.add(.{ .reg = addr }, .{ .imm32 = signed_offset });
 
-        const rd = ArgRegisters[0];
         if (inst.l == 0) {
+            const rd = ArgRegisters[1];
             try load_register(block, rd, inst.rd);
 
             if (inst.rd == 15) try block.add(.{ .reg = rd }, .{ .imm32 = 4 });
@@ -874,6 +887,7 @@ fn handle_single_data_transfer(block: *IRBlock, ctx: *JITContext, instruction: u
             if (inst.w == 1 or inst.p == 0)
                 try block.add(guest_register(inst.rn), .{ .imm32 = signed_offset });
         } else {
+            const rd = ReturnRegister;
             if (inst.w == 1 or inst.p == 0)
                 try block.add(guest_register(inst.rn), .{ .imm32 = signed_offset });
 
@@ -922,22 +936,23 @@ fn handle_single_data_swap(b: *IRBlock, ctx: *JITContext, instruction: u32) !boo
         return false;
     }
 
-    const addr: JIT.Operand = .{ .reg = SavedRegisters[2] };
+    const addr: JIT.Operand = .{ .reg = SavedRegisters[2] }; // Using a saved register to avoid it being clobbered by load_mem.
     const rd = ReturnRegister;
-    const reg = SavedRegisters[3];
+    const reg = ArgRegisters[1];
     try load_register(b, addr.reg, inst.rn);
-    try load_register(b, reg, inst.rm);
     if (inst.b == 1) {
         // cpu.r[inst.rd] = cpu.read(u8, addr);
         try load_mem(b, ctx, u8, rd, addr);
         try store_register(b, inst.rd, .{ .reg = rd }); // rd is zero extended
         // cpu.write(u8, addr, @truncate(reg));
+        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u8, addr, reg);
     } else {
         // cpu.r[inst.rd] = cpu.read(u32, addr);
         try load_mem(b, ctx, u32, rd, addr);
         try store_register(b, inst.rd, .{ .reg = rd });
         // cpu.write(u32, addr, reg);
+        try load_register(b, reg, inst.rm);
         try store_mem(b, ctx, u32, addr, reg);
     }
 
