@@ -2926,10 +2926,36 @@ fn shld(n: u32, m: u32) callconv(.c) u32 {
 pub fn shld_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const rn = try load_register_for_writing(block, ctx, instr.nmd.n);
     const rm = try load_register(block, ctx, instr.nmd.m);
-    try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = rn });
-    try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rm });
-    try call(block, ctx, shld); // TODO: Getting rid of this call will require implementing the TEST instruction in the x86_64 backend.
-    try block.mov(.{ .reg = rn }, .{ .reg = ReturnRegister });
+    if (!try Architecture.runtime_check_cpu_feature(.bmi2)) {
+        try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = rn });
+        try block.mov(.{ .reg = ArgRegisters[1] }, .{ .reg = rm });
+        try call(block, ctx, shld);
+        try block.mov(.{ .reg = rn }, .{ .reg = ReturnRegister });
+    } else {
+        try block.test_(.{ .reg = rm }, .{ .reg = rm });
+        var positive = try block.jmp(.NotSign);
+
+        try block.test_(.{ .reg = rm }, .{ .imm32 = 31 });
+        var zero = try block.jmp(.Zero);
+
+        // Negative Shift
+        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rm });
+        try block.append(.{ .Neg = .{ .dst = .{ .reg = ReturnRegister } } });
+        try block.append(.{ .Shrx = .{ .dst = rn, .src = .{ .reg = rn }, .amount = ReturnRegister } });
+        var end_negative = try block.jmp(.Always);
+
+        // Zero Shift ((m & 0x1F) == 0)
+        zero.patch();
+        try block.append(.{ .Mov = .{ .dst = .{ .reg = rn }, .src = .{ .imm32 = 0 }, .preserve_flags = false } });
+        var end_zero = try block.jmp(.Always);
+
+        // Positive Shift
+        positive.patch();
+        try block.append(.{ .Shlx = .{ .dst = rn, .src = .{ .reg = rn }, .amount = rm } });
+
+        end_negative.patch();
+        end_zero.patch();
+    }
     return false;
 }
 
