@@ -117,9 +117,9 @@ pub const FPSavedRegisters = switch (JITABI) {
 
 // RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
 const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
-// I mean, I don't know what to call these... (0xF7 opcode)
-const OtherRegOpcode = enum(u3) { Test = 0, Not = 2, Neg = 3, Mul = 4, IMul = 5, Div = 6, IDiv = 7 };
-// Opcode: C1 / D3
+// Opcodes: F6 / F7
+const UnaryGroup3RegOpcode = enum(u3) { Test = 0, Not = 2, Neg = 3, Mul = 4, IMul = 5, Div = 6, IDiv = 7 };
+// Opcodes: C1 / D3
 const ShiftRegOpcode = enum(u3) { Rol = 0, Ror = 1, Rcl = 2, Rcr = 3, Shl = 4, Shr = 5, Sar = 7 };
 
 // Above/Below: Unsigned
@@ -224,6 +224,7 @@ pub const MemOperand = struct {
     index: ?Register = null,
     scale: Scale = ._1, // Only valid if index is supplied.
     displacement: u32 = 0,
+    /// Bit size
     size: u8,
 
     pub fn format(value: @This(), writer: anytype) !void {
@@ -465,10 +466,14 @@ pub const FPRegister = enum(u4) {
 };
 
 pub const REX = packed struct(u8) {
-    b: bool = false, // Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
-    x: bool = false, // Extension of the SIB index field
-    r: bool = false, // Extension of the ModR/M reg field
-    w: bool = false, // 0 = Operand size determined by CS.D; 1 = 64 Bit Operand Siz
+    /// Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
+    b: bool = false,
+    /// Extension of the SIB index field
+    x: bool = false,
+    /// Extension of the ModR/M reg field
+    r: bool = false,
+    /// 0 = Operand size determined by CS.D; 1 = 64 Bit Operand Size
+    w: bool = false,
     _: u4 = 0b0100,
 };
 
@@ -679,8 +684,8 @@ pub const Emitter = struct {
                 .Sarx => |r| try self.shift_instruction_x(.Sar, r.dst, r.src, r.amount),
                 .Shrx => |r| try self.shift_instruction_x(.Shr, r.dst, r.src, r.amount),
                 .Shlx => |r| try self.shift_instruction_x(.Shl, r.dst, r.src, r.amount),
-                .Not => |r| try self.f7_op(r.dst, .Not),
-                .Neg => |r| try self.f7_op(r.dst, .Neg),
+                .Not => |r| try self.unary_group3(.Not, r.dst),
+                .Neg => |r| try self.unary_group3(.Neg, r.dst),
                 .Convert => |r| try self.convert(r.dst, r.src),
                 .Div64_32 => |d| try self.div64_32(d.dividend_high, d.dividend_low, d.divisor, d.result),
 
@@ -969,7 +974,10 @@ pub const Emitter = struct {
                     .reg => try mov_reg_mem(self, .RegToMem, src, dst_m),
                     .imm32 => |imm| {
                         if (dst.mem.size != 32) return error.OperandSizeMismatch;
-                        try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+                        try self.emit_rex_if_needed(.{
+                            .x = if (dst_m.index) |i| need_rex(i) else false,
+                            .b = need_rex(dst_m.base),
+                        });
                         try self.emit(u8, 0xC7);
                         try self.emit_mem_addressing(0, dst_m);
                         try self.emit(u32, imm);
@@ -1109,7 +1117,12 @@ pub const Emitter = struct {
                 const is_64 = dst == .reg64;
                 switch (src) {
                     .mem => |src_m| {
-                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                        try self.emit_rex_if_needed(.{
+                            .w = is_64,
+                            .r = need_rex(dst_reg),
+                            .x = if (src_m.index) |i| need_rex(i) else false,
+                            .b = need_rex(src_m.base),
+                        });
                         try self.emit(u8, 0x0F);
                         switch (src_m.size) {
                             8 => try self.emit(u8, 0xBE),
@@ -1234,7 +1247,12 @@ pub const Emitter = struct {
                         switch (src_m.size) {
                             32, 64 => {
                                 if (src_m.size == 64 and !b64) return error.OperandSizeMismatch;
-                                try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(dst_reg), .b = need_rex(src_m.base) });
+                                try self.emit_rex_if_needed(.{
+                                    .w = b64,
+                                    .r = need_rex(dst_reg),
+                                    .x = if (src_m.index) |i| need_rex(i) else false,
+                                    .b = need_rex(src_m.base),
+                                });
                                 try self.emit(u8, rm_opcode);
                                 try self.emit_mem_addressing(encode(dst_reg), src_m);
                             },
@@ -1249,9 +1267,17 @@ pub const Emitter = struct {
                     .reg8 => |src_reg| {
                         if (dst_m.size != 8) return error.OperandSizeMismatch;
                         if (src_reg.require_rex_8bit()) {
-                            try self.emit(REX, .{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                            try self.emit(REX, .{
+                                .r = need_rex(src_reg),
+                                .x = if (dst_m.index) |i| need_rex(i) else false,
+                                .b = need_rex(dst_m.base),
+                            });
                         } else {
-                            try self.emit_rex_if_needed(.{ .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                            try self.emit_rex_if_needed(.{
+                                .r = need_rex(src_reg),
+                                .x = if (dst_m.index) |i| need_rex(i) else false,
+                                .b = need_rex(dst_m.base),
+                            });
                         }
                         try self.emit(u8, mr_opcode_8);
                         try self.emit_mem_addressing(encode(src_reg), dst_m);
@@ -1259,7 +1285,12 @@ pub const Emitter = struct {
                     .reg => |src_reg| {
                         switch (dst_m.size) {
                             32, 64 => {
-                                try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .r = need_rex(src_reg), .b = need_rex(dst_m.base) });
+                                try self.emit_rex_if_needed(.{
+                                    .w = dst_m.size == 64,
+                                    .r = need_rex(src_reg),
+                                    .x = if (dst_m.index) |i| need_rex(i) else false,
+                                    .b = need_rex(dst_m.base),
+                                });
                                 try self.emit(u8, mr_opcode);
                                 try self.emit_mem_addressing(encode(src_reg), dst_m);
                             },
@@ -1269,7 +1300,10 @@ pub const Emitter = struct {
                     .imm8 => |imm| {
                         switch (dst_m.size) {
                             8 => {
-                                try self.emit_rex_if_needed(.{ .b = need_rex(dst_m.base) });
+                                try self.emit_rex_if_needed(.{
+                                    .x = if (dst_m.index) |i| need_rex(i) else false,
+                                    .b = need_rex(dst_m.base),
+                                });
                                 try self.emit(u8, 0x80);
                                 try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
                                 try self.emit(u8, imm);
@@ -1281,7 +1315,11 @@ pub const Emitter = struct {
                                 std.debug.assert(imm < 0x80);
 
                                 if (dst_m.size == 16) try self.emit(u8, 0x66);
-                                try self.emit_rex_if_needed(.{ .w = dst_m.size == 64, .b = need_rex(dst_m.base) });
+                                try self.emit_rex_if_needed(.{
+                                    .w = dst_m.size == 64,
+                                    .x = if (dst_m.index) |i| need_rex(i) else false,
+                                    .b = need_rex(dst_m.base),
+                                });
                                 try self.emit(u8, 0x83);
                                 try self.emit_mem_addressing(@intFromEnum(rm_imm_opcode), dst_m);
                                 try self.emit(u8, imm);
@@ -1415,17 +1453,14 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.MulOperandMismatch;
-                        const is_64 = dst == .reg64;
-
                         // FIXME: This is supposed to be a condensed version of the instruction for rax,
                         //        but it's measurably slower on my machine. What?
                         //        Disabling it for now.
                         if (comptime false and dst_reg == .rax) {
-                            try self.emit_rex_if_needed(.{ .w = is_64, .b = need_rex(src_reg) });
-                            try self.emit(u8, 0xF7);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 5, .r_m = encode(src_reg) });
+                            try self.unary_group3(.Mul, src);
                         } else {
-                            try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
+                            // IMUL
+                            try self.emit_rex_if_needed(.{ .w = dst == .reg64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                             try self.emit(u8, 0x0F);
                             try self.emit(u8, 0xAF);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
@@ -1558,12 +1593,21 @@ pub const Emitter = struct {
         }
     }
 
-    fn f7_op(self: *@This(), dst: Operand, opcode: OtherRegOpcode) !void {
-        switch (dst) {
-            .reg => |dst_reg| {
-                try self.emit_rex_if_needed(.{ .b = need_rex(dst_reg) });
+    fn unary_group3(self: *@This(), opcode: UnaryGroup3RegOpcode, operand: Operand) !void {
+        switch (operand) {
+            .reg, .reg64 => |reg| {
+                try self.emit_rex_if_needed(.{ .w = operand == .reg64, .b = need_rex(reg) });
                 try self.emit(u8, 0xF7);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(dst) });
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(opcode), .r_m = encode(operand) });
+            },
+            .mem => |mem| {
+                try self.emit_rex_if_needed(.{
+                    .w = mem.size == 64,
+                    .x = if (mem.index) |i| need_rex(i) else false,
+                    .b = need_rex(mem.base),
+                });
+                try self.emit(u8, 0xF7);
+                try self.emit_mem_addressing(@intFromEnum(UnaryGroup3RegOpcode.Test), mem);
             },
             else => return error.InvalidF7Destination,
         }
@@ -1645,10 +1689,8 @@ pub const Emitter = struct {
             if (dividend_high != .rdx)
                 try self.mov(.{ .reg = .rdx }, .{ .reg = dividend_high }, false);
         }
-        // Actual div instruction
-        try self.emit_rex_if_needed(.{ .b = need_rex(divisor) });
-        try self.emit(u8, 0xF7);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 6, .r_m = encode(divisor) });
+        // Unsigned divide EDX:EAX by r/m32, with result stored in EAX := Quotient, EDX := Remainder
+        try self.unary_group3(.Div, .{ .reg = divisor });
         if (result != .rax)
             try self.mov(.{ .reg = result }, .{ .reg = .rax }, false);
     }
@@ -1676,9 +1718,7 @@ pub const Emitter = struct {
                 } else {
                     switch (rhs) {
                         .imm32 => |imm| {
-                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64, .b = need_rex(lhs_reg) });
-                            try self.emit(u8, 0xF7);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Test), .r_m = encode(lhs_reg) });
+                            try self.unary_group3(.Test, lhs);
                             try self.emit(u32, imm);
                         },
                         .reg, .reg64 => |rhs_reg| {
@@ -1690,12 +1730,10 @@ pub const Emitter = struct {
                     }
                 }
             },
-            .mem => |mem| {
+            .mem => {
                 switch (rhs) {
                     .imm32 => |imm| {
-                        try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
-                        try self.emit(u8, 0xF7);
-                        try self.emit_mem_addressing(@intFromEnum(OtherRegOpcode.Test), mem);
+                        try self.unary_group3(.Test, lhs);
                         try self.emit(u32, imm);
                     },
                     else => return error.UnsupportedTestRHS,
