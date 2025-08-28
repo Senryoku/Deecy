@@ -389,23 +389,19 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
 
             const UseCMOV = T == u32;
 
-            const tmp = ArgRegisters[2];
-            std.debug.assert(tmp != dst);
-            std.debug.assert(tmp != addr_reg);
-            try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
             // Test if this is external memory, or unaligned.
-            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.external_memory_address_mask | switch (T) {
-                u32 => 0b11,
-                else => 0,
-            } } } });
             if (UseCMOV) {
                 try b.mov(.{ .reg = dst }, .{ .reg = addr_reg });
                 try b.append(.{ .And = .{ .dst = .{ .reg = dst }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
             }
-            try b.cmp(.{ .reg = tmp }, .{ .imm32 = 0 });
+            const mask: u32 = ctx.cpu.external_memory_address_mask | switch (T) {
+                u32 => 0b11,
+                else => 0,
+            };
+            try b.test_(.{ .reg = addr_reg }, .{ .imm32 = mask });
             if (UseCMOV)
-                try b.cmov(.Equal, .{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
-            var wave_mem = try b.jmp(.Equal);
+                try b.cmov(.Zero, .{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
+            var wave_mem = try b.jmp(.Zero);
 
             // Fallback to function call
             if (addr_reg != ArgRegisters[0])
@@ -427,9 +423,9 @@ fn load_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, dst: JIT.Regi
 
             wave_mem.patch();
             if (!UseCMOV) {
-                try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
-                try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
-                try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = tmp, .size = @bitSizeOf(T) } });
+                try b.mov(.{ .reg = dst }, .{ .reg = addr_reg });
+                try b.append(.{ .And = .{ .dst = .{ .reg = dst }, .src = .{ .imm32 = ctx.cpu.memory_address_mask } } });
+                try b.mov(.{ .reg = dst }, .{ .mem = .{ .base = MemPointer, .index = dst, .size = @bitSizeOf(T) } });
                 end.patch();
             }
         },
@@ -456,14 +452,9 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             }
         },
         .reg => |addr_reg| {
-            const tmp = ArgRegisters[3];
-            std.debug.assert(tmp != value);
-            std.debug.assert(tmp != addr_reg);
-            try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
             // Test if this is external memory.
-            try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = ctx.cpu.external_memory_address_mask } } });
-            try b.cmp(.{ .reg = tmp }, .{ .imm32 = 0 });
-            var wave_mem = try b.jmp(.Equal);
+            try b.test_(.{ .reg = addr_reg }, .{ .imm32 = ctx.cpu.external_memory_address_mask });
+            var wave_mem = try b.jmp(.Zero);
 
             std.debug.assert(value != ArgRegisters[0]); // It would be overwritten.
             // Fallback
@@ -479,6 +470,10 @@ fn store_mem(b: *IRBlock, ctx: *const JITContext, comptime T: type, addr: JIT.Op
             var end = try b.jmp(.Always);
 
             wave_mem.patch();
+            // Write directly to memory
+            const tmp = ArgRegisters[3];
+            std.debug.assert(tmp != value);
+            std.debug.assert(tmp != addr_reg);
             try b.mov(.{ .reg = tmp }, .{ .reg = addr_reg });
             try b.append(.{ .And = .{ .dst = .{ .reg = tmp }, .src = .{ .imm32 = switch (T) {
                 u8 => ctx.cpu.memory_address_mask,
@@ -504,6 +499,7 @@ fn cpsr_mask(comptime flags: []const u8) u32 {
     return mask;
 }
 
+/// Extracts the specified flags in the CPSR and stores them in ReturnRegister
 fn extract_cpsr_flags(b: *IRBlock, comptime flags: []const u8) !void {
     try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = SavedRegisters[0], .displacement = @offsetOf(arm7.ARM7, "cpsr"), .size = 32 } });
     try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask(flags) } } });
@@ -515,11 +511,12 @@ fn test_cpsr_flags(b: *IRBlock, comptime flags: []const u8, comptime expected_fl
     return b.jmp(.NotEqual);
 }
 
-// Emits code testing the flags in the CPSR and returns a patchable jump meant to point at the next instruction, taken if the condition is not met.
+/// Emits code testing the flags in the CPSR and returns a patchable jump meant to point at the next instruction, taken if the condition is not met.
 fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.PatchableJump {
     _ = ctx;
     const condition = arm7.ARM7.get_instr_condition(instruction);
     switch (condition) {
+        // NOTE: I tried 'optimizing' this using test or bit_test instructions, but it was measurably slower.
         .EQ => return try test_cpsr_flags(b, "z", "z"), // z
         .NE => return try test_cpsr_flags(b, "z", ""), // !z
         .CS => return try test_cpsr_flags(b, "c", "c"), // c
