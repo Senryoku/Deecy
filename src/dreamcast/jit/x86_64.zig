@@ -115,12 +115,14 @@ pub const FPSavedRegisters = switch (JITABI) {
     .SystemV => [_]FPRegister{}, // NOTE: SH4 JIT uses xmm8-xmm13 (manually saving them)
 };
 
-// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
+/// RegOpcodes (ModRM) for 0x81: OP r/m32, imm32 - 0x83: OP r/m32, imm8 (sign extended)
 const RegOpcode = enum(u3) { Add = 0, Adc = 2, Sub = 5, Sbb = 3, And = 4, Or = 1, Xor = 6, Cmp = 7 };
-// Opcodes: F6 / F7
+/// Opcodes: F6 / F7
 const UnaryGroup3RegOpcode = enum(u3) { Test = 0, Not = 2, Neg = 3, Mul = 4, IMul = 5, Div = 6, IDiv = 7 };
-// Opcodes: C1 / D3
+/// Opcodes: C1 / D3
 const ShiftRegOpcode = enum(u3) { Rol = 0, Ror = 1, Rcl = 2, Rcr = 3, Shl = 4, Shr = 5, Sar = 7 };
+/// Opcode: 0F BA
+const Group8RegOpcode = enum(u3) { BT = 4, BTS = 5, BTR = 6, BTC = 7 };
 
 // Above/Below: Unsigned
 // Greater/Less: Signed
@@ -1628,8 +1630,7 @@ pub const Emitter = struct {
                             .r = need_rex(dst_reg),
                             .b = need_rex(src_reg),
                         });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0x2C);
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x2C });
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
                     },
                     else => return error.InvalidConvertSource,
@@ -1647,8 +1648,7 @@ pub const Emitter = struct {
                             .x = if (src_mem.index) |i| need_rex(i) else false,
                             .b = need_rex(src_mem.base),
                         });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0x2A);
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x2A });
                         try self.emit_mem_addressing(encode(dst_reg), src_mem);
                     },
                     else => return error.InvalidConvertSource,
@@ -1666,8 +1666,7 @@ pub const Emitter = struct {
                             .x = if (src_mem.index) |i| need_rex(i) else false,
                             .b = need_rex(src_mem.base),
                         });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0x2A);
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x2A });
                         try self.emit_mem_addressing(encode(dst_reg), src_mem);
                     },
                     else => return error.InvalidConvertSource,
@@ -1699,9 +1698,12 @@ pub const Emitter = struct {
         // NOTE: We only support 32-bit registers here.
         switch (offset) {
             .imm8 => |imm| {
-                try self.emit(u8, 0x0F);
-                try self.emit(u8, 0xBA);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
+                try self.emit_slice(u8, &[_]u8{ 0x0F, 0xBA });
+                try self.emit(MODRM, .{
+                    .mod = .reg,
+                    .reg_opcode = @intFromEnum(Group8RegOpcode.BT),
+                    .r_m = encode(reg),
+                });
                 try self.emit(u8, imm);
             },
             else => return error.UnsupportedBitTestOffset,
@@ -1826,30 +1828,22 @@ pub const Emitter = struct {
     pub fn native_call(self: *@This(), function: ?*const anyopaque) !void {
         if (function) |fp| {
             // mov rax, function
-            try self.emit(u8, 0x48);
-            try self.emit(u8, 0xB8);
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0xB8 });
             try self.emit(u64, @intFromPtr(fp));
         }
 
         if (builtin.os.tag == .windows) {
             // Allocate shadow space - We still don't support specifying register sizes, so, hardcoding it.
             // sub rsp, 0x20
-            try self.emit(u8, 0x48);
-            try self.emit(u8, 0x83);
-            try self.emit(u8, 0xEC);
-            try self.emit(u8, 0x20);
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, 0x20 });
         }
 
         // call rax
-        try self.emit(u8, 0xFF);
-        try self.emit(u8, 0xD0);
+        try self.emit_slice(u8, &[_]u8{ 0xFF, 0xD0 });
 
         if (builtin.os.tag == .windows) {
             // add rsp, 0x20
-            try self.emit(u8, 0x48);
-            try self.emit(u8, 0x83);
-            try self.emit(u8, 0xC4);
-            try self.emit(u8, 0x20);
+            try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, 0x20 });
         }
     }
 
@@ -1862,14 +1856,9 @@ pub const Emitter = struct {
             // sub rsp, count * 16
             const byte_count: u32 = count * 16;
             if (byte_count < 0x80) {
-                try self.emit(u8, 0x48);
-                try self.emit(u8, 0x83);
-                try self.emit(u8, 0xEC);
-                try self.emit(u8, @truncate(byte_count));
+                try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xEC, @truncate(byte_count) });
             } else {
-                try self.emit(u8, 0x48);
-                try self.emit(u8, 0x81);
-                try self.emit(u8, 0xEC);
+                try self.emit_slice(u8, &[_]u8{ 0x48, 0x81, 0xEC });
                 try self.emit(u32, byte_count);
             }
 
@@ -1919,14 +1908,9 @@ pub const Emitter = struct {
             // add rsp, count * 16
             const byte_count: u32 = count * 16;
             if (byte_count < 0x80) {
-                try self.emit(u8, 0x48);
-                try self.emit(u8, 0x83);
-                try self.emit(u8, 0xC4);
-                try self.emit(u8, @truncate(byte_count));
+                try self.emit_slice(u8, &[_]u8{ 0x48, 0x83, 0xC4, @truncate(byte_count) });
             } else {
-                try self.emit(u8, 0x48);
-                try self.emit(u8, 0x81);
-                try self.emit(u8, 0xC4);
+                try self.emit_slice(u8, &[_]u8{ 0x48, 0x81, 0xC4 });
                 try self.emit(u32, byte_count);
             }
         }
