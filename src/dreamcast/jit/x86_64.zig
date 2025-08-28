@@ -322,6 +322,7 @@ pub const Instruction = union(enum) {
     Cmp: struct { lhs: Operand, rhs: Operand },
     SetByteCondition: struct { condition: Condition, dst: Operand },
     BitTest: struct { reg: Register, offset: Operand },
+    Test: struct { lhs: Operand, rhs: Operand }, // Ands lhs and rhs together, setting the status flags accordingly and discards the result
     Rol: struct { dst: Operand, amount: Operand },
     Ror: struct { dst: Operand, amount: Operand },
     Rcl: struct { dst: Operand, amount: Operand },
@@ -366,6 +367,7 @@ pub const Instruction = union(enum) {
             .Cmp => |cmp| writer.print("cmp {f}, {f}", .{ cmp.lhs, cmp.rhs }),
             .SetByteCondition => |set| writer.print("set{f} {f}", .{ set.condition, set.dst }),
             .BitTest => |bit_test| writer.print("bt {f}, {f}", .{ bit_test.reg, bit_test.offset }),
+            .Test => |t| writer.print("test {f}, {f}", .{ t.lhs, t.rhs }),
             .Jmp => |jmp| switch (jmp.dst) {
                 .rel => writer.print("jmp {f} {d}", .{ jmp.condition, jmp.dst.rel }),
                 .abs_indirect => writer.print("jmp {f} {f}", .{ jmp.condition, jmp.dst.abs_indirect }),
@@ -646,6 +648,7 @@ pub const Emitter = struct {
                 .Jmp => |j| try self.jmp(j.condition, @intCast(idx), j.dst),
                 .BlockEpilogue => try self.emit_block_epilogue(),
                 .BitTest => |b| try self.bit_test(b.reg, b.offset),
+                .Test => |t| try self.test_(t.lhs, t.rhs),
                 .Rol => |r| try self.shift_instruction(.Rol, r.dst, r.amount),
                 .Ror => |r| try self.shift_instruction(.Ror, r.dst, r.amount),
                 .Rcl => |r| try self.shift_instruction(.Rcl, r.dst, r.amount),
@@ -1610,6 +1613,45 @@ pub const Emitter = struct {
                 try self.emit(u8, imm);
             },
             else => return error.UnsupportedBitTestOffset,
+        }
+    }
+
+    pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
+        switch (lhs) {
+            .reg, .reg64 => |lhs_reg| {
+                if (lhs_reg == .rax) { // Shorter form for RAX
+                    switch (rhs) {
+                        .imm32 => |imm| {
+                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
+                            try self.emit(u8, 0xA9);
+                            try self.emit(u32, imm);
+                        },
+                        else => return error.UnsupportedTestRHS,
+                    }
+                } else {
+                    switch (rhs) {
+                        .imm32 => |imm| {
+                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64, .b = need_rex(lhs_reg) });
+                            try self.emit(u8, 0xF7);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Test), .r_m = encode(lhs_reg) });
+                            try self.emit(u32, imm);
+                        },
+                        else => return error.UnsupportedTestRHS,
+                    }
+                }
+            },
+            .mem => |mem| {
+                switch (rhs) {
+                    .imm32 => |imm| {
+                        try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
+                        try self.emit(u8, 0xF7);
+                        try self.emit_mem_addressing(@intFromEnum(OtherRegOpcode.Test), mem);
+                        try self.emit(u32, imm);
+                    },
+                    else => return error.UnsupportedTestRHS,
+                }
+            },
+            else => return error.UnsupportedTestLHS,
         }
     }
 

@@ -146,6 +146,10 @@ pub const IRBlock = struct {
         try self.instructions.append(self._allocator, .{ .BitTest = .{ .reg = reg, .offset = .{ .imm8 = offset } } });
     }
 
+    pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
+        try self.instructions.append(self._allocator, .{ .Test = .{ .lhs = lhs, .rhs = rhs } });
+    }
+
     pub fn emit(self: *@This(), buffer: []u8) !u32 {
         self._emitter.set_buffer(buffer);
 
