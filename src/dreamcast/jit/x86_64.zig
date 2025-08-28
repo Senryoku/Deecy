@@ -203,7 +203,16 @@ pub const EFLAGSCondition = enum(u4) {
     Greater = 0b1111,
 };
 
-pub const OperandSize = enum(u8) { _8 = 8, _16 = 16, _32 = 32, _64 = 64 };
+pub const OperandSize = enum(u8) {
+    _8 = 8,
+    _16 = 16,
+    _32 = 32,
+    _64 = 64,
+
+    pub fn fromInt(size: u8) OperandSize {
+        return @enumFromInt(size);
+    }
+};
 
 pub const Scale = enum(u2) {
     _1 = 0b00,
@@ -811,11 +820,23 @@ pub const Emitter = struct {
             try self.emit(u8, @bitCast(rex));
     }
 
-    pub fn mov_reg_reg(self: *@This(), dst: Register, src: Register) !void {
-        // Always 64bits
-        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(src), .b = need_rex(dst) });
-        try self.emit(u8, 0x89);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src), .r_m = encode(dst) });
+    /// Assumes both registers are of the same size.
+    fn binary_reg_reg(self: *@This(), size: OperandSize, opcode: []const u8, reg: Register, r_m: Register) !void {
+        if (size == ._8 and r_m.require_rex_8bit() or reg.require_rex_8bit()) {
+            try self.emit(REX, .{ .r = need_rex(reg), .b = need_rex(r_m) });
+        } else {
+            try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(reg), .b = need_rex(r_m) });
+        }
+        try self.emit_slice(u8, opcode);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(reg), .r_m = encode(r_m) });
+    }
+
+    /// Assumes both registers are of the same size.
+    fn binary_freg_freg(self: *@This(), size: OperandSize, opcode: []const u8, reg: FPRegister, r_m: FPRegister) !void {
+        _ = size;
+        try self.emit_rex_if_needed(.{ .r = need_rex(reg), .b = need_rex(r_m) });
+        try self.emit_slice(u8, opcode);
+        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(reg), .r_m = encode(r_m) });
     }
 
     // movd xmm, r/m32 / movq xmm, r/m64
@@ -837,26 +858,21 @@ pub const Emitter = struct {
     }
 
     // <op>ss xmm1, xmm2/m32
-    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst: FPRegister, src: Operand) !void {
+    pub fn scalar_floating_point_operation(self: *@This(), comptime size: OperandSize, opcode: ScalarFPOpcodes, dst_reg: FPRegister, src: Operand) !void {
         try self.emit(u8, switch (size) {
             ._32 => 0xF3,
             ._64 => 0xF2,
             else => @compileError("Unsupported operand size"),
         });
         switch (src) {
-            .freg32, .freg64 => |src_reg| {
-                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src_reg) });
-                try self.emit(u8, 0x0F);
-                try self.emit(ScalarFPOpcodes, opcode);
-                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
-            },
+            .freg32, .freg64 => |src_reg| try self.binary_freg_freg(size, &[_]u8{ 0x0F, @intFromEnum(opcode) }, dst_reg, src_reg),
             .mem => |src_mem| {
                 x86_64_emitter_log.warn(termcolor.yellow("Untested <{s}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{@tagName(opcode)});
 
-                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst), .b = need_rex(src_mem.base) });
+                try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_mem.base) });
                 try self.emit(u8, 0x0F);
                 try self.emit(ScalarFPOpcodes, opcode);
-                try self.emit_mem_addressing(encode(dst), src_mem);
+                try self.emit_mem_addressing(encode(dst_reg), src_mem);
             },
             else => return error.UnsupportedSourceForScalarFPOperation,
         }
@@ -869,10 +885,7 @@ pub const Emitter = struct {
             ._64 => try self.emit(u8, 0x66),
             else => @compileError("Unsupported operand size"),
         }
-        try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(lhs), .b = need_rex(rhs) });
-        try self.emit(u8, 0x0F);
-        try self.emit(u8, 0x2F);
-        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(lhs), .r_m = encode(rhs) });
+        try self.binary_freg_freg(size, &[_]u8{ 0x0F, 0x2F }, lhs, rhs);
     }
 
     // Emits ModRM, SIB and displacement bytes, as needed.
@@ -998,21 +1011,9 @@ pub const Emitter = struct {
             .reg => |dst_reg| {
                 switch (src) {
                     // NOTE: Both reg8 to reg and reg16 to reg zero extend the source to 64-bits.
-                    .reg8 => |src_reg| {
-                        // NOTE: If for some reason this is changed so that .w is not necessarily set,
-                        //       remember to always emit a REX prefix in the rsp/rbp/rsi/rdi case.
-                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0xB6);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
-                    .reg16 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = true, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0xB7);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
-                    .reg => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
+                    .reg8 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{ 0x0F, 0xB6 }, dst_reg, src_reg),
+                    .reg16 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{ 0x0F, 0xB7 }, dst_reg, src_reg),
+                    .reg => |src_reg| try self.binary_reg_reg(._64, &[_]u8{0x89}, src_reg, dst_reg),
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
@@ -1036,7 +1037,7 @@ pub const Emitter = struct {
             },
             .reg64 => |dst_reg| {
                 switch (src) {
-                    .reg64 => |src_reg| try self.mov_reg_reg(dst_reg, src_reg),
+                    .reg64 => |src_reg| try self.binary_reg_reg(._64, &[_]u8{0x89}, src_reg, dst_reg),
                     .imm64 => |imm| {
                         if (imm == 0 and !preserve_flags) {
                             try self.xor_(dst, dst);
@@ -1081,29 +1082,25 @@ pub const Emitter = struct {
         if (condition == .Always) return error.InvalidCondition;
 
         switch (dst) {
-            .reg16, .reg, .reg64 => |reg| {
+            .reg16, .reg, .reg64 => |dst_reg| {
                 const b64 = (dst == .reg64);
                 if (dst == .reg16)
                     try self.emit(u8, 0x66);
                 switch (src) {
-                    .reg16, .reg, .reg64 => {
+                    .reg16, .reg, .reg64 => |src_reg| {
                         if (std.meta.activeTag(dst) != std.meta.activeTag(src)) return error.IncompatibleSourceAndDestination;
-                        try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(dst), .b = need_rex(src) });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0x40 | condition.nibble());
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src) });
+                        try self.binary_reg_reg(.fromInt(dst.size()), &[_]u8{ 0x0F, 0x40 | condition.nibble() }, dst_reg, src_reg);
                     },
                     .mem => |mem| {
                         if (dst.size() != mem.size) return error.OperandSizeMismatch;
                         try self.emit_rex_if_needed(.{
                             .w = b64,
-                            .r = need_rex(reg),
+                            .r = need_rex(dst_reg),
                             .x = if (mem.index) |i| need_rex(i) else false,
                             .b = need_rex(mem.base),
                         });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0x40 | condition.nibble());
-                        try self.emit_mem_addressing(encode(reg), mem);
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x40 | condition.nibble() });
+                        try self.emit_mem_addressing(encode(dst_reg), mem);
                     },
                     else => return error.InvalidCmovSource,
                 }
@@ -1141,33 +1138,17 @@ pub const Emitter = struct {
                         } else {
                             try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
                         }
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0xBE);
+                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0xBE });
                         try self.emit(MODRM, .{
                             .mod = .reg,
                             .reg_opcode = encode(dst_reg),
                             .r_m = encode(src_reg),
                         });
                     },
-                    .reg16 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit(u8, 0x0F);
-                        try self.emit(u8, 0xBF);
-                        try self.emit(MODRM, .{
-                            .mod = .reg,
-                            .reg_opcode = encode(dst_reg),
-                            .r_m = encode(src_reg),
-                        });
-                    },
+                    .reg16 => |src_reg| try self.binary_reg_reg(if (is_64) ._64 else ._32, &[_]u8{ 0x0F, 0xBF }, dst_reg, src_reg),
                     .reg => |src_reg| {
-                        if (!is_64) return error.Movsx32to32; // Mov a normal mov instead!
-                        try self.emit_rex_if_needed(.{ .w = is_64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit(u8, 0x63);
-                        try self.emit(MODRM, .{
-                            .mod = .reg,
-                            .reg_opcode = encode(dst_reg),
-                            .r_m = encode(src_reg),
-                        });
+                        if (!is_64) return error.Movsx32to32; // Use a normal mov instead!
+                        try self.binary_reg_reg(._64, &[_]u8{0x63}, dst_reg, src_reg);
                     },
                     else => return error.InvalidMovsxSource,
                 }
@@ -1198,15 +1179,7 @@ pub const Emitter = struct {
         switch (dst) {
             .reg8 => |dst_reg| {
                 switch (src) {
-                    .reg8 => |src_reg| {
-                        if (dst_reg.require_rex_8bit() or src_reg.require_rex_8bit()) {
-                            try self.emit(REX, .{ .r = need_rex(src), .b = need_rex(dst) });
-                        } else {
-                            try self.emit_rex_if_needed(.{ .r = need_rex(src), .b = need_rex(dst) });
-                        }
-                        try self.emit(u8, rm_opcode_8);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
+                    .reg8 => |src_reg| try binary_reg_reg(self, ._8, &[_]u8{rm_opcode_8}, dst_reg, src_reg),
                     .imm8 => |imm8| {
                         if (dst_reg == .rax) { // OP AL, imm8
                             try self.emit(u8, rax_dst_opcode_8);
@@ -1223,9 +1196,7 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.OperandSizeMismatch;
-                        try self.emit_rex_if_needed(.{ .w = b64, .r = need_rex(src_reg), .b = need_rex(dst_reg) });
-                        try self.emit(u8, mr_opcode);
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(src_reg), .r_m = encode(dst_reg) });
+                        try binary_reg_reg(self, if (b64) ._64 else ._32, &[_]u8{mr_opcode}, src_reg, dst_reg);
                     },
                     .imm8, .imm32 => |imm| {
                         if (dst_reg == .rax and imm >= 0x80) { // OP EAX, imm32
@@ -1357,21 +1328,13 @@ pub const Emitter = struct {
             // Yes, it's the same thing for both sizes, we're operating on the full size of the xmm registers here.
             .freg32 => |dst_reg| {
                 switch (src) {
-                    .freg32 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x54 });
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
+                    .freg32 => |src_reg| try self.binary_freg_freg(._64, &[_]u8{ 0x0F, 0x54 }, dst_reg, src_reg),
                     else => return error.InvalidSubSource,
                 }
             },
             .freg64 => |dst_reg| {
                 switch (src) {
-                    .freg64 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x54 });
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
+                    .freg64 => |src_reg| try self.binary_freg_freg(._64, &[_]u8{ 0x0F, 0x54 }, dst_reg, src_reg),
                     else => return error.InvalidSubSource,
                 }
             },
@@ -1390,21 +1353,13 @@ pub const Emitter = struct {
             // Yes, it's the same thing for both sizes, we're operating on the full size of the xmm registers here.
             .freg32 => |dst_reg| {
                 switch (src) {
-                    .freg32 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x57 });
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
+                    .freg32 => |src_reg| try self.binary_freg_freg(._64, &[_]u8{ 0x0F, 0x57 }, dst_reg, src_reg),
                     else => return error.InvalidXorSource,
                 }
             },
             .freg64 => |dst_reg| {
                 switch (src) {
-                    .freg64 => |src_reg| {
-                        try self.emit_rex_if_needed(.{ .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                        try self.emit_slice(u8, &[_]u8{ 0x0F, 0x57 });
-                        try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
-                    },
+                    .freg64 => |src_reg| try self.binary_freg_freg(._64, &[_]u8{ 0x0F, 0x57 }, dst_reg, src_reg),
                     else => return error.InvalidXorSource,
                 }
             },
@@ -1462,10 +1417,7 @@ pub const Emitter = struct {
                             try self.unary_group3(.Mul, src);
                         } else {
                             // IMUL
-                            try self.emit_rex_if_needed(.{ .w = dst == .reg64, .r = need_rex(dst_reg), .b = need_rex(src_reg) });
-                            try self.emit(u8, 0x0F);
-                            try self.emit(u8, 0xAF);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst_reg), .r_m = encode(src_reg) });
+                            try self.binary_reg_reg(if (dst == .reg64) ._64 else ._32, &[_]u8{ 0x0F, 0xAF }, dst_reg, src_reg);
                         }
                     },
                     else => return error.InvalidMulSource,
@@ -1723,11 +1675,7 @@ pub const Emitter = struct {
                             try self.unary_group3(.Test, lhs);
                             try self.emit(u32, imm);
                         },
-                        .reg, .reg64 => |rhs_reg| {
-                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64, .b = need_rex(lhs_reg), .r = need_rex(rhs_reg) });
-                            try self.emit(u8, 0x85);
-                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs_reg) });
-                        },
+                        .reg, .reg64 => |rhs_reg| try self.binary_reg_reg(if (lhs == .reg64) ._64 else ._32, &[_]u8{0x85}, rhs_reg, lhs_reg),
                         else => return error.UnsupportedTestRHS,
                     }
                 }
