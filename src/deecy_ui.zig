@@ -507,6 +507,11 @@ pub fn draw(self: *@This()) !void {
                 }
                 zgui.separator();
                 _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
+                zgui.separator();
+                zgui.text("Experimental settings", .{});
+                _ = zgui.checkbox("Framebuffer Writeback", .{ .v = &d.renderer.ExperimentalFramebufferWriteBack });
+                _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
+                _ = zgui.checkbox("Texture to Texture Copy", .{ .v = &d.renderer.ExperimentalRenderToTextureCopy });
                 zgui.endTabItem();
             }
 

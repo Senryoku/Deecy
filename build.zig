@@ -23,7 +23,6 @@ pub fn build(b: *std.Build) void {
     const mmu = b.option(bool, "mmu", "Enable Full MMU Emulation (default: true)") orelse true;
     const fast_mem = b.option(bool, "fast_mem", "Enable FastMem (default: true)") orelse true;
     const jit_instrumentation = b.option(bool, "jit_instrumentation", "Enable JIT instrumentation (Slow, default: false)") orelse false;
-    const fb_writeback = b.option(bool, "fb_writeback", "Write the rendered frame back to the guest VRAM. Slow, but necessary for some effects (default: false)") orelse false;
     const data_path = b.option([]const u8, "data_path", "Path to the data directory (Copy your bios and flash files here, default: './data')") orelse "./data";
     const userdata_path = b.option([]const u8, "userdata_path", "Path to the userdata directory (default: './userdata')") orelse "./userdata";
     const use_appdata_dir = b.option(bool, "use_appdata_dir", "Prepend the platform specific AppData directory to data_path and userdata_path (default: false)") orelse false;
@@ -59,7 +58,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const deecy_options = b.addOptions();
-    deecy_options.addOption(bool, "fb_writeback", fb_writeback);
+    // None right now.
 
     const deecy_module = b.createModule(.{
         .target = target,

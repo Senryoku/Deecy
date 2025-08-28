@@ -1410,13 +1410,9 @@ pub const Emitter = struct {
                 switch (src) {
                     .reg, .reg64 => |src_reg| {
                         if (dst.tag() != src.tag()) return error.MulOperandMismatch;
-                        // FIXME: This is supposed to be a condensed version of the instruction for rax,
-                        //        but it's measurably slower on my machine. What?
-                        //        Disabling it for now.
-                        if (comptime false and dst_reg == .rax) {
-                            try self.unary_group3(.Mul, src);
+                        if (dst_reg == .rax) {
+                            try self.unary_group3(.IMul, src);
                         } else {
-                            // IMUL
                             try self.binary_reg_reg(if (dst == .reg64) ._64 else ._32, &[_]u8{ 0x0F, 0xAF }, dst_reg, src_reg);
                         }
                     },
