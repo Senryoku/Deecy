@@ -4,6 +4,20 @@ const termcolor = @import("termcolor");
 
 const x86_64_emitter_log = std.log.scoped(.x86_64_emitter);
 
+pub fn runtime_check_cpu_feature(feature: std.Target.x86.Feature) !bool {
+    const static = struct {
+        var features: ?std.Target.Cpu.Feature.Set = null;
+    };
+    if (static.features == null) {
+        var query = std.Target.Query.fromTarget(&builtin.target);
+        query.cpu_model = .native;
+        const native_target = try std.zig.system.resolveTargetQuery(query);
+        static.features = native_target.cpu.features;
+        std.debug.assert(builtin.target.cpu.arch == .x86_64);
+    }
+    return std.Target.x86.featureSetHas(static.features.?, feature);
+}
+
 pub const ReturnRegister = Register.rax;
 pub const ScratchRegisters = [_]Register{ .r10, .r11 };
 
@@ -330,6 +344,9 @@ pub const Instruction = union(enum) {
     Shl: struct { dst: Operand, amount: Operand },
     Shr: struct { dst: Operand, amount: Operand },
     Sar: struct { dst: Operand, amount: Operand },
+    Sarx: struct { dst: Register, src: Operand, amount: Register },
+    Shlx: struct { dst: Register, src: Operand, amount: Register },
+    Shrx: struct { dst: Register, src: Operand, amount: Register },
     Jmp: struct { condition: Condition, dst: union(enum) { rel: i32, abs_indirect: Operand } },
     BlockEpilogue: void,
     Convert: struct { dst: Operand, src: Operand },
@@ -380,6 +397,9 @@ pub const Instruction = union(enum) {
             .Shl => |shl| writer.print("shl {f}, {f}", .{ shl.dst, shl.amount }),
             .Shr => |shr| writer.print("shr {f}, {f}", .{ shr.dst, shr.amount }),
             .Sar => |sar| writer.print("sar {f}, {f}", .{ sar.dst, sar.amount }),
+            .Sarx => |shr| writer.print("sarx {f}, {f}, {f}", .{ shr.dst, shr.src, shr.amount }),
+            .Shlx => |shl| writer.print("shlx {f}, {f}, {f}", .{ shl.dst, shl.src, shl.amount }),
+            .Shrx => |shr| writer.print("shrx {f}, {f}, {f}", .{ shr.dst, shr.src, shr.amount }),
             .Convert => |cvt| writer.print("convert {f}, {f}", .{ cvt.dst, cvt.src }),
             .Div64_32 => |div| writer.print("div64_32 {f},{f}:{f},{f},", .{ div.result, div.dividend_high, div.dividend_low, div.divisor }),
             .SaveFPRegisters => |instr| writer.print("SaveFPRegisters {d}", .{instr.count}),
@@ -656,6 +676,9 @@ pub const Emitter = struct {
                 .Sar => |r| try self.shift_instruction(.Sar, r.dst, r.amount),
                 .Shr => |r| try self.shift_instruction(.Shr, r.dst, r.amount),
                 .Shl => |r| try self.shift_instruction(.Shl, r.dst, r.amount),
+                .Sarx => |r| try self.shift_instruction_x(.Sar, r.dst, r.src, r.amount),
+                .Shrx => |r| try self.shift_instruction_x(.Shr, r.dst, r.src, r.amount),
+                .Shlx => |r| try self.shift_instruction_x(.Shl, r.dst, r.src, r.amount),
                 .Not => |r| try self.f7_op(r.dst, .Not),
                 .Neg => |r| try self.f7_op(r.dst, .Neg),
                 .Convert => |r| try self.convert(r.dst, r.src),
@@ -1505,6 +1528,33 @@ pub const Emitter = struct {
             },
             .mem => return error.TODOMemShift,
             else => return error.InvalidShiftDestination,
+        }
+    }
+
+    fn shift_instruction_x(self: *@This(), reg_opcode: ShiftRegOpcode, dst: Register, src: Operand, amount: Register) !void {
+        if (!try runtime_check_cpu_feature(.bmi2))
+            return error.BMI2NotSupported;
+        switch (src) {
+            .reg => |src_reg| {
+                try self.emit(VEX3, .{
+                    .not_r = !need_rex(dst),
+                    .not_x = true,
+                    .not_b = !need_rex(src_reg),
+                    .m = .x0F38,
+                    .w = false,
+                    .not_v = ~@intFromEnum(amount),
+                    .l = 0,
+                    .p = switch (reg_opcode) {
+                        .Sar => .xF3,
+                        .Shl => .x66,
+                        .Shr => .xF2,
+                        else => return error.InvalidShiftRegOpcode,
+                    },
+                });
+                try self.emit(u8, 0xF7);
+                try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(dst), .r_m = encode(src_reg) });
+            },
+            else => return error.UnsupportedShiftXSource,
         }
     }
 
