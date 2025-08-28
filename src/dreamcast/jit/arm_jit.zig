@@ -580,7 +580,7 @@ fn handle_condition(b: *IRBlock, ctx: *JITContext, instruction: u32) !?JIT.Patch
             try b.bit_test(ReturnRegister, @bitOffsetOf(arm7.CPSR, "z")); // Set carry flag to 'z'.
             var do_label_0 = try b.jmp(.Carry);
 
-            try extract_cpsr_flags(b, "nv");
+            try b.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = cpsr_mask("nv") } } });
             // v == 1 and n == 0
             try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = cpsr_mask("v") });
             var do_label_1 = try b.jmp(.Equal);
