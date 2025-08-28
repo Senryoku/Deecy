@@ -1619,15 +1619,10 @@ pub const Emitter = struct {
     pub fn test_(self: *@This(), lhs: Operand, rhs: Operand) !void {
         switch (lhs) {
             .reg, .reg64 => |lhs_reg| {
-                if (lhs_reg == .rax) { // Shorter form for RAX
-                    switch (rhs) {
-                        .imm32 => |imm| {
-                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
-                            try self.emit(u8, 0xA9);
-                            try self.emit(u32, imm);
-                        },
-                        else => return error.UnsupportedTestRHS,
-                    }
+                if (lhs_reg == .rax and rhs == .imm32) { // Shorter form for RAX
+                    try self.emit_rex_if_needed(.{ .w = lhs == .reg64 });
+                    try self.emit(u8, 0xA9);
+                    try self.emit(u32, rhs.imm32);
                 } else {
                     switch (rhs) {
                         .imm32 => |imm| {
@@ -1635,6 +1630,11 @@ pub const Emitter = struct {
                             try self.emit(u8, 0xF7);
                             try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = @intFromEnum(OtherRegOpcode.Test), .r_m = encode(lhs_reg) });
                             try self.emit(u32, imm);
+                        },
+                        .reg, .reg64 => |rhs_reg| {
+                            try self.emit_rex_if_needed(.{ .w = lhs == .reg64, .b = need_rex(lhs_reg), .r = need_rex(rhs_reg) });
+                            try self.emit(u8, 0x85);
+                            try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = encode(rhs_reg), .r_m = encode(lhs_reg) });
                         },
                         else => return error.UnsupportedTestRHS,
                     }

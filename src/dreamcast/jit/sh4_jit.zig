@@ -2804,8 +2804,7 @@ pub fn tst_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     } else {
         const rn = try load_register(block, ctx, instr.nmd.n);
         const rm = try load_register(block, ctx, instr.nmd.m);
-        try block.mov(.{ .reg = ReturnRegister }, .{ .reg = rn });
-        try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .reg = rm } } }); // TODO: Use an actual TEST instruction instead?
+        try block.test_(.{ .reg = rn }, .{ .reg = rm });
         try set_t(block, ctx, .Zero);
     }
     return false;
@@ -2813,9 +2812,7 @@ pub fn tst_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
 
 pub fn tst_imm_R0(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const r0 = try load_register(block, ctx, 0);
-    try block.mov(.{ .reg = ReturnRegister }, .{ .reg = r0 });
-    try block.append(.{ .And = .{ .dst = .{ .reg = ReturnRegister }, .src = .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) } } });
-    try block.cmp(.{ .reg = ReturnRegister }, .{ .imm8 = 0 });
+    try block.test_(.{ .reg = r0 }, .{ .imm32 = bit_manip.zero_extend(instr.nd8.d) });
     try set_t(block, ctx, .Zero);
     return false;
 }
@@ -2870,7 +2867,7 @@ pub fn shad_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     const amount: JIT.Operand = .{ .reg = .rcx };
 
     try block.mov(amount, .{ .reg = rm });
-    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm8 = 0 } } });
+    try block.cmp(amount, .{ .imm8 = 0 });
     var neg = try block.jmp(.Less);
 
     try block.shl(.{ .reg = rn }, amount);
@@ -2878,7 +2875,7 @@ pub fn shad_Rm_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
     defer end.patch();
 
     neg.patch();
-    try block.append(.{ .Cmp = .{ .lhs = amount, .rhs = .{ .imm32 = 0xFFFFE000 } } });
+    try block.cmp(amount, .{ .imm32 = 0xFFFFE000 });
     var rm_neg_zero = try block.jmp(.Equal);
     try block.append(.{ .Neg = .{ .dst = amount } });
     try block.append(.{ .Sar = .{ .dst = .{ .reg = rn }, .amount = amount } });
