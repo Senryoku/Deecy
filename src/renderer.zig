@@ -3087,9 +3087,9 @@ pub const Renderer = struct {
                             pass.release();
                         }
 
+                        pass.setPipeline(modifier_volume_apply_pipeline);
                         pass.setVertexBuffer(0, blit_vb_info.gpuobj.?, 0, blit_vb_info.size);
                         pass.setIndexBuffer(blit_ib_info.gpuobj.?, .uint32, 0, blit_ib_info.size);
-                        pass.setPipeline(modifier_volume_apply_pipeline);
                         pass.setBindGroup(0, mva_bind_group, &.{});
 
                         pass.setStencilReference(0x02);
@@ -3240,9 +3240,9 @@ pub const Renderer = struct {
                                         pass.end();
                                         pass.release();
                                     }
+                                    pass.setPipeline(translucent_modvol_pipeline);
                                     pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
                                     pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_mv_uniform_mem.offset});
-                                    pass.setPipeline(translucent_modvol_pipeline);
                                     pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
 
                                     // Close volume pass.
@@ -3293,10 +3293,10 @@ pub const Renderer = struct {
                                     pass.release();
                                 }
 
+                                pass.setPipeline(pipeline);
+
                                 pass.setVertexBuffer(0, vb_info.gpuobj.?, 0, vb_info.size);
                                 pass.setIndexBuffer(ib_info.gpuobj.?, .uint32, 0, ib_info.size);
-
-                                pass.setPipeline(pipeline);
 
                                 pass.setBindGroup(0, bind_group, &.{uniform_mem.offset});
                                 pass.setBindGroup(2, translucent_bind_group, &.{oit_uniform_mem.offset});
