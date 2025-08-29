@@ -45,6 +45,7 @@ selected_vertex: ?[2]f32 = null,
 
 draw_wireframe: bool = false,
 draw_list_wireframe: [3]bool = @splat(true),
+draw_modifier_volume_wireframe: [2]bool = @splat(false),
 list_wireframe_colors: [3]u32 = .{ 0xFF4B19E6, 0xFF4BB43C, 0xFFD86343 },
 
 selected_volume_focus: bool = false,
@@ -1005,6 +1006,8 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                 _ = zgui.checkbox("Draw Opaque Wireframe", .{ .v = &self.draw_list_wireframe[0] });
                 _ = zgui.checkbox("Draw Translucent Wireframe", .{ .v = &self.draw_list_wireframe[1] });
                 _ = zgui.checkbox("Draw Punchthrough Wireframe", .{ .v = &self.draw_list_wireframe[2] });
+                _ = zgui.checkbox("Draw Opaque Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[0] });
+                _ = zgui.checkbox("Draw Translucent Modifier Volumes Wireframe", .{ .v = &self.draw_modifier_volume_wireframe[1] });
             }
         }
 
@@ -1324,6 +1327,15 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
     }
 }
 
+fn draw_modifier_volume(d: *Deecy, draw_list: zgui.DrawList, volume: *const Holly.ModifierVolume, min: [2]f32, scale: [2]f32, color: u32) void {
+    for (0..volume.triangle_count) |i| {
+        const p1 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 0][0..2].*), min);
+        const p2 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 1][0..2].*), min);
+        const p3 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 2][0..2].*), min);
+        draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = color, .thickness = 1.0 });
+    }
+}
+
 fn draw_overlay(self: *@This(), d: *Deecy) void {
     const draw_list = zgui.getBackgroundDrawList();
 
@@ -1369,6 +1381,14 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
                 }
             }
         }
+        if (self.draw_modifier_volume_wireframe[0]) {
+            for (d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].opaque_modifier_volumes.items) |*vol|
+                draw_modifier_volume(d, draw_list, vol, min, scale, 0xFFE6197A);
+        }
+        if (self.draw_modifier_volume_wireframe[1]) {
+            for (d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items) |*vol|
+                draw_modifier_volume(d, draw_list, vol, min, scale, 0xFF19E6A2);
+        }
     }
 
     if (self.selected_strip_list == .Opaque or self.selected_strip_list == .PunchThrough or self.selected_strip_list == .Translucent) {
@@ -1384,15 +1404,7 @@ fn draw_overlay(self: *@This(), d: *Deecy) void {
             .TranslucentModifierVolume => d.renderer.ta_lists_to_render.items[self.selected_volume_pass_idx].translucent_modifier_volumes.items,
             else => unreachable,
         };
-        if (idx < list.len) {
-            const volume = list[idx];
-            for (0..volume.triangle_count) |i| {
-                const p1 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 0][0..2].*), min);
-                const p2 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 1][0..2].*), min);
-                const p3 = add(mul(scale, d.renderer.modifier_volume_vertices.items[3 * volume.first_triangle_index + 3 * i + 2][0..2].*), min);
-                draw_list.addTriangle(.{ .p1 = p1, .p2 = p2, .p3 = p3, .col = 0xFF0000FF, .thickness = 1.0 });
-            }
-        }
+        if (idx < list.len) draw_modifier_volume(d, draw_list, &list[idx], min, scale, 0xFF0000FF);
     }
 }
 
