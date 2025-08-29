@@ -264,9 +264,9 @@ const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/p
 const wgsl_fs = "const Opaque = true;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
 const wgsl_presort_fs = "const Opaque = false;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
 const wgsl_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
-const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
-const wgsl_modvol_merge_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
-const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
+const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
+const wgsl_modvol_merge_cs = @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
+const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
 const wgsl_modifier_volume_vs = @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/modifier_volume_vs.wgsl");
 const wgsl_modifier_volume_fs = @embedFile("./shaders/modifier_volume_fs.wgsl");
 const wgsl_modifier_volume_apply_fs = @embedFile("./shaders/modifier_volume_apply_fs.wgsl");
@@ -659,6 +659,9 @@ pub const Renderer = struct {
     const VolumeLinkedListNodeSize = 2 * 4;
     const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
 
+    const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };
+    const OITTMVUniforms = packed struct { pixels_per_slice: u32, target_width: u32, start_y: u32 };
+
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
 
@@ -729,9 +732,9 @@ pub const Renderer = struct {
     list_heads_buffer: zgpu.BufferHandle = undefined,
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
-    modvol_list_heads_buffer: zgpu.BufferHandle = undefined,
-    modvol_linked_list_buffer: zgpu.BufferHandle = undefined,
-    modvol_volumes_buffer: zgpu.BufferHandle = undefined,
+    translucent_modvol_heads_buffer: zgpu.BufferHandle = undefined,
+    translucent_modvol_fragment_list_buffer: zgpu.BufferHandle = undefined,
+    translucent_modvol_volumes_buffer: zgpu.BufferHandle = undefined,
 
     texture_arrays: [8]TextureAndView,
     palette_buffer: zgpu.BufferHandle,
@@ -1569,13 +1572,6 @@ pub const Renderer = struct {
                 self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
                 self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
                 region_count += 1;
-
-                // We're using a 8bits index for volumes in shaders, meaning we can have up to 256 of each before running into issues.
-                // Print a warning if we're hitting that limit (we can probably steal another bit from the next pointer).
-                if (self.ta_lists.items[region_array_idx].opaque_modifier_volumes.items.len > 0xFF)
-                    renderer_log.warn(termcolor.yellow("More than 256 opaque modifier volumes ({d}) in region {d}, the volume index won't be reliable."), .{ self.ta_lists.items[region_array_idx].opaque_modifier_volumes.items.len, region_array_idx });
-                if (self.ta_lists.items[region_array_idx].translucent_modifier_volumes.items.len > 0xFF)
-                    renderer_log.warn(termcolor.yellow("More than 256 translucent modifier volumes ({d}) in region {d}, the volume index won't be reliable."), .{ self.ta_lists.items[region_array_idx].translucent_modifier_volumes.items.len, region_array_idx });
 
                 if (region_config.settings.last_region) break;
             }
@@ -3185,7 +3181,6 @@ pub const Renderer = struct {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
-                        const OITUniforms = struct { max_fragments: u32, target_width: u32, start_y: u32 };
 
                         const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                             .view = target.resized.view,
@@ -3210,11 +3205,11 @@ pub const Renderer = struct {
                                 const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
                                 const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
 
-                                const oit_mv_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
+                                const oit_mv_uniform_mem = gctx.uniformsAllocate(OITTMVUniforms, 1);
                                 oit_mv_uniform_mem.slice[0] = .{
+                                    .pixels_per_slice = self.resolution.width * slice_size,
                                     .target_width = self.resolution.width,
                                     .start_y = start_y,
-                                    .max_fragments = 16, // Per pixel
                                 };
 
                                 const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -3287,9 +3282,9 @@ pub const Renderer = struct {
 
                             const oit_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
                             oit_uniform_mem.slice[0] = .{
+                                .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize),
                                 .target_width = self.resolution.width,
                                 .start_y = start_y,
-                                .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize),
                             };
 
                             skip: {
@@ -3697,9 +3692,9 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.list_heads_buffer);
         self._gctx.releaseResource(self.linked_list_buffer);
 
-        self._gctx.releaseResource(self.modvol_list_heads_buffer);
-        self._gctx.releaseResource(self.modvol_linked_list_buffer);
-        self._gctx.releaseResource(self.modvol_volumes_buffer);
+        self._gctx.releaseResource(self.translucent_modvol_heads_buffer);
+        self._gctx.releaseResource(self.translucent_modvol_fragment_list_buffer);
+        self._gctx.releaseResource(self.translucent_modvol_volumes_buffer);
 
         self._gctx.releaseResource(self.translucent_bind_group);
         self._gctx.releaseResource(self.translucent_modvol_bind_group);
@@ -3868,33 +3863,33 @@ pub const Renderer = struct {
 
         // Mod Vol
         {
-            self.modvol_list_heads_buffer = self._gctx.createBuffer(.{
+            self.translucent_modvol_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
-                .size = self.get_modvol_linked_list_heads_size(),
+                .size = self.get_modvol_heads_size(),
                 .mapped_at_creation = .true,
             });
-            self._gctx.lookupResource(self.modvol_list_heads_buffer).?.setLabel("ModVol List Heads Buffer");
+            self._gctx.lookupResource(self.translucent_modvol_heads_buffer).?.setLabel("ModVol List Heads Buffer");
             {
-                const init_buffer = self._gctx.lookupResourceInfo(self.modvol_list_heads_buffer).?.gpuobj.?;
-                const mapped = init_buffer.getMappedRange(u32, 0, self.get_modvol_linked_list_heads_size() / @sizeOf(u32));
+                const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_heads_buffer).?.gpuobj.?;
+                const mapped = init_buffer.getMappedRange(u32, 0, self.get_modvol_heads_size() / @sizeOf(u32));
                 @memset(mapped.?, 0); // Set all fragment counts to 0
                 init_buffer.unmap();
             }
-            self.modvol_linked_list_buffer = self._gctx.createBuffer(.{
+            self.translucent_modvol_fragment_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
-                .size = self.get_modvol_linked_list_size(),
+                .size = self.get_modvol_fragment_list_size(),
             });
-            self._gctx.lookupResource(self.modvol_linked_list_buffer).?.setLabel("ModVol Fragments Buffer");
+            self._gctx.lookupResource(self.translucent_modvol_fragment_list_buffer).?.setLabel("ModVol Fragments Buffer");
 
-            self.modvol_volumes_buffer = self._gctx.createBuffer(.{
+            self.translucent_modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
                 .size = self.get_modvol_volumes_size(),
                 .mapped_at_creation = .true,
             });
-            self._gctx.lookupResource(self.modvol_volumes_buffer).?.setLabel("ModVol Volumes Buffer");
+            self._gctx.lookupResource(self.translucent_modvol_volumes_buffer).?.setLabel("ModVol Volumes Buffer");
 
             {
-                const init_buffer = self._gctx.lookupResourceInfo(self.modvol_volumes_buffer).?.gpuobj.?;
+                const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_volumes_buffer).?.gpuobj.?;
                 const mapped = init_buffer.getMappedRange(u8, 0, self.get_modvol_volumes_size());
                 @memset(mapped.?, 0); // Set all counts to 0
                 init_buffer.unmap();
@@ -3904,7 +3899,7 @@ pub const Renderer = struct {
 
     fn create_translucent_bind_group(self: *@This()) void {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.depth.depth_only_view },
@@ -3913,37 +3908,37 @@ pub const Renderer = struct {
 
     fn create_translucent_modvol_bind_group(self: *@This()) void {
         self.translucent_modvol_bind_group = self._gctx.createBindGroup(self.translucent_modvol_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITTMVUniforms) },
+            .{ .binding = 1, .buffer_handle = self.translucent_modvol_heads_buffer, .offset = 0, .size = self.get_modvol_heads_size() },
+            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.get_modvol_fragment_list_size() },
             .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
         self.translucent_modvol_merge_bind_group = self._gctx.createBindGroup(self.translucent_modvol_merge_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
-            .{ .binding = 3, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITTMVUniforms) },
+            .{ .binding = 1, .buffer_handle = self.translucent_modvol_heads_buffer, .offset = 0, .size = self.get_modvol_heads_size() },
+            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.get_modvol_fragment_list_size() },
+            .{ .binding = 3, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
     }
 
     fn create_blend_bind_groups(self: *@This()) void {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer.view },
-            .{ .binding = 5, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
         self.blend_bind_group_render_to_texture = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
-            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
+            .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_render_to_texture_target.view },
-            .{ .binding = 5, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
     }
 
@@ -3951,11 +3946,11 @@ pub const Renderer = struct {
         return (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
     }
 
-    fn get_modvol_linked_list_heads_size(self: *const @This()) u64 {
+    fn get_modvol_heads_size(self: *const @This()) u64 {
         return (self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
     }
 
-    fn get_modvol_linked_list_size(self: *const @This()) u64 {
+    fn get_modvol_fragment_list_size(self: *const @This()) u64 {
         return @min(
             VolumeLinkedListNodeSize * (self.resolution.width * self.resolution.height / OITHorizontalSlices) * 16,
             self.get_max_storage_buffer_binding_size(),
@@ -3963,7 +3958,7 @@ pub const Renderer = struct {
     }
 
     fn get_modvol_volumes_size(self: *const @This()) u64 {
-        return VolumePixelSize * (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices);
+        return VolumePixelSize * (self.resolution.width * self.resolution.height / OITHorizontalSlices);
     }
 
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
