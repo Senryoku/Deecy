@@ -2,8 +2,7 @@
 // add them to the list of already rendered segments, merging them if necessary.
 
 struct Heads {
-    fragment_count: u32,
-    data: array<u32>
+    fragment_count: array<u32>
 };
 
 @group(0) @binding(0) var<uniform> oit_uniforms: OITUniforms;
@@ -14,25 +13,24 @@ struct Heads {
 const MaxFragments = 16u;
 
 struct VolumeLinkedListElementData {
-    depth: f32,
     volume_index: u32,
+    depth: f32,
 };
 
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let heads_index = global_id.y * oit_uniforms.target_width + global_id.x;
 
-    var frag_index = modvol_heads.data[heads_index];
+    let frag_count = min(MaxFragments, modvol_heads.fragment_count[heads_index]);
+    var sorted_frag_count = 0u;
 
     // Group the Modifier Volume fragments by volume and sort by depth.
     var fragments: array<VolumeLinkedListElementData, MaxFragments>;
-    var frag_count = 0u;
-    while frag_index != 0xFFFFFFFFu && frag_count < MaxFragments {
-        let index = frag_index & 0x00FFFFFFu;
-        var to_insert = VolumeLinkedListElementData(bitcast<f32>(modvol_linked_list.data[index][1]), modvol_linked_list.data[index][0] >> 24);
-        frag_index = modvol_linked_list.data[index][0];
+    for(var i = 0u; i < frag_count; i++) {
+        let node = modvol_linked_list.data[MaxFragments * heads_index + i];
+        var to_insert = VolumeLinkedListElementData(node[0], bitcast<f32>(node[1]));
 
-        var j = frag_count;
+        var j = sorted_frag_count;
 
         // Look back into the sorted array until we find where we should insert the new fragment, moving up previous fragment as needed.
         while j > 0u && (to_insert.volume_index < fragments[j - 1u].volume_index || (to_insert.volume_index == fragments[j - 1u].volume_index && to_insert.depth < fragments[j - 1u].depth)) {
@@ -42,7 +40,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         fragments[j] = to_insert;
 
-        frag_count++;
+        sorted_frag_count++;
     }
 
     var volumes = Volumes();
@@ -75,10 +73,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     out_modvols[heads_index] = volumes;
 
     // Reset the heads buffer for the next pass.
-    modvol_heads.data[heads_index] = 0xFFFFFFFFu;
-    if all(global_id == vec3<u32>(0, 0, 0)) {
-        modvol_heads.fragment_count = 0;
-    }
+    modvol_heads.fragment_count[heads_index] = 0u;
 }
 
 fn volume_union(a: Volumes, b: Volumes) -> Volumes {

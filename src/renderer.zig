@@ -3214,7 +3214,7 @@ pub const Renderer = struct {
                                 oit_mv_uniform_mem.slice[0] = .{
                                     .target_width = self.resolution.width,
                                     .start_y = start_y,
-                                    .max_fragments = @intCast(@min(std.math.pow(u64, 2, 24), self.get_modvol_linked_list_size() / VolumeLinkedListNodeSize - 1)),
+                                    .max_fragments = 16, // Per pixel
                                 };
 
                                 const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
@@ -3870,15 +3870,14 @@ pub const Renderer = struct {
         {
             self.modvol_list_heads_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
-                .size = self.get_linked_list_heads_size(),
+                .size = self.get_modvol_linked_list_heads_size(),
                 .mapped_at_creation = .true,
             });
             self._gctx.lookupResource(self.modvol_list_heads_buffer).?.setLabel("ModVol List Heads Buffer");
             {
                 const init_buffer = self._gctx.lookupResourceInfo(self.modvol_list_heads_buffer).?.gpuobj.?;
-                const mapped = init_buffer.getMappedRange(u32, 0, self.get_linked_list_heads_size() / @sizeOf(u32));
-                @memset(mapped.?, 0xFFFFFFFF); // Set heads to invalid (or 'end-of-list')
-                mapped.?[0] = 0; // Set fragment count to 0
+                const mapped = init_buffer.getMappedRange(u32, 0, self.get_modvol_linked_list_heads_size() / @sizeOf(u32));
+                @memset(mapped.?, 0); // Set all fragment counts to 0
                 init_buffer.unmap();
             }
             self.modvol_linked_list_buffer = self._gctx.createBuffer(.{
@@ -3915,7 +3914,7 @@ pub const Renderer = struct {
     fn create_translucent_modvol_bind_group(self: *@This()) void {
         self.translucent_modvol_bind_group = self._gctx.createBindGroup(self.translucent_modvol_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
+            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
             .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
         });
@@ -3923,7 +3922,7 @@ pub const Renderer = struct {
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
         self.translucent_modvol_merge_bind_group = self._gctx.createBindGroup(self.translucent_modvol_merge_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 3 * @sizeOf(u32) },
-            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
+            .{ .binding = 1, .buffer_handle = self.modvol_list_heads_buffer, .offset = 0, .size = self.get_modvol_linked_list_heads_size() },
             .{ .binding = 2, .buffer_handle = self.modvol_linked_list_buffer, .offset = 0, .size = self.get_modvol_linked_list_size() },
             .{ .binding = 3, .buffer_handle = self.modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
         });
@@ -3952,9 +3951,13 @@ pub const Renderer = struct {
         return (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
     }
 
+    fn get_modvol_linked_list_heads_size(self: *const @This()) u64 {
+        return (self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
+    }
+
     fn get_modvol_linked_list_size(self: *const @This()) u64 {
         return @min(
-            VolumeLinkedListNodeSize * (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * MaxFragmentsPerPixel,
+            VolumeLinkedListNodeSize * (self.resolution.width * self.resolution.height / OITHorizontalSlices) * 16,
             self.get_max_storage_buffer_binding_size(),
         );
     }

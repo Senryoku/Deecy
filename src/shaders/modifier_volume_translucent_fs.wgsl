@@ -1,6 +1,5 @@
 struct Heads {
-  fragment_count: atomic<u32>,
-  data: array<atomic<u32>>
+  fragment_count: array<atomic<u32>>
 };
 
 struct OITFSUniforms {
@@ -18,11 +17,9 @@ fn main(
 ) {
     let frag_coords = vec2<i32>(position_clip.xy);
 	
-	// See oit_draw_fs.wgsl
     let heads_index = (u32(frag_coords.y) - oit_uniforms.start_y) * oit_uniforms.target_width + u32(frag_coords.x);
-    let frag_index = atomicAdd(&heads.fragment_count, 1u);
-    if frag_index < oit_uniforms.max_fragments {
-        let last_head = atomicExchange(&heads.data[heads_index], frag_index);
-        linked_list.data[frag_index] = vec2<u32>((oit_fs_uniforms.volume_index << 24) | last_head, bitcast<u32>(position_clip.z));
+    let frag_index = atomicAdd(&heads.fragment_count[heads_index], 1u);
+    if frag_index < 16 {
+        linked_list.data[16 * heads_index + frag_index] = vec2<u32>(oit_fs_uniforms.volume_index, bitcast<u32>(position_clip.z));
     }
 }
