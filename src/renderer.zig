@@ -3177,6 +3177,7 @@ pub const Renderer = struct {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;
                         const blend_bind_group = if (render_to_texture) gctx.lookupResource(self.blend_bind_group_render_to_texture).? else gctx.lookupResource(self.blend_bind_group).?;
+                        const OITUniforms = struct { max_fragments: u32, target_width: u32, start_y: u32 };
 
                         const oit_color_attachments = [_]wgpu.RenderPassColorAttachment{.{
                             .view = target.resized.view,
@@ -3196,23 +3197,28 @@ pub const Renderer = struct {
                         for (0..OITHorizontalSlices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
-                            const oit_uniform_mem = gctx.uniformsAllocate(struct { max_fragments: u32, target_width: u32, start_y: u32 }, 1);
-                            oit_uniform_mem.slice[0].target_width = self.resolution.width;
-                            oit_uniform_mem.slice[0].start_y = start_y;
-
                             // Render Translucent Modifier Volumes
                             if (ta_lists.translucent_modifier_volumes.items.len > 0) skip_tmv: {
                                 const translucent_modvol_pipeline = gctx.lookupResource(self.translucent_modvol_pipeline) orelse break :skip_tmv;
                                 const translucent_modvol_merge_pipeline = gctx.lookupResource(self.translucent_modvol_merge_pipeline) orelse break :skip_tmv;
 
-                                oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize);
+                                const oit_mv_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
+                                oit_mv_uniform_mem.slice[0] = .{
+                                    .target_width = self.resolution.width,
+                                    .start_y = start_y,
+                                    .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize),
+                                };
 
                                 const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
                                 const translucent_modvol_bind_group = gctx.lookupResource(self.translucent_modvol_bind_group).?;
                                 const translucent_modvol_merge_bind_group = gctx.lookupResource(self.translucent_modvol_merge_bind_group).?;
-                                const vs_uniform_mem = gctx.uniformsAllocate(struct { min_depth: f32, max_depth: f32 }, 1);
-                                vs_uniform_mem.slice[0].min_depth = self.min_depth;
-                                vs_uniform_mem.slice[0].max_depth = self.max_depth;
+                                const vs_mv_uniform_mem = gctx.uniformsAllocate(ModifierVolumeUniforms, 1);
+                                vs_mv_uniform_mem.slice[0] = .{
+                                    .min_depth = self.min_depth,
+                                    .max_depth = self.max_depth,
+                                    .framebuffer_width = @floatFromInt(self.guest_framebuffer_size.width),
+                                    .framebuffer_height = @floatFromInt(self.guest_framebuffer_size.height),
+                                };
 
                                 const modifier_volume_vb_info = gctx.lookupResourceInfo(self.modifier_volume_vertex_buffer).?;
 
@@ -3235,7 +3241,7 @@ pub const Renderer = struct {
                                         pass.release();
                                     }
                                     pass.setVertexBuffer(0, modifier_volume_vb_info.gpuobj.?, 0, modifier_volume_vb_info.size);
-                                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_uniform_mem.offset});
+                                    pass.setBindGroup(0, modifier_volume_bind_group, &.{vs_mv_uniform_mem.offset});
                                     pass.setPipeline(translucent_modvol_pipeline);
                                     pass.setScissorRect(0, start_y, self.resolution.width, slice_size);
 
@@ -3245,7 +3251,7 @@ pub const Renderer = struct {
                                         if (volume.closed) {
                                             const oit_fs_uniform_mem = gctx.uniformsAllocate(struct { volume_index: u32 }, 1);
                                             oit_fs_uniform_mem.slice[0].volume_index = volume_index;
-                                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_uniform_mem.offset, oit_fs_uniform_mem.offset });
+                                            pass.setBindGroup(1, translucent_modvol_bind_group, &.{ oit_mv_uniform_mem.offset, oit_fs_uniform_mem.offset });
                                             volume_index += 1;
 
                                             pass.draw(3 * volume.triangle_count, 1, 3 * volume.first_triangle_index, 0);
@@ -3266,12 +3272,17 @@ pub const Renderer = struct {
                                     const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
                                     pass.setPipeline(translucent_modvol_merge_pipeline);
 
-                                    pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_uniform_mem.offset});
+                                    pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_mv_uniform_mem.offset});
                                     pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                                 }
                             }
 
-                            oit_uniform_mem.slice[0].max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize);
+                            const oit_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
+                            oit_uniform_mem.slice[0] = .{
+                                .target_width = self.resolution.width,
+                                .start_y = start_y,
+                                .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize),
+                            };
 
                             skip: {
                                 const pipeline = gctx.lookupResource(self.translucent_pipeline) orelse break :skip;
@@ -3324,9 +3335,7 @@ pub const Renderer = struct {
                                 }
                                 const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 4) };
                                 pass.setPipeline(pipeline);
-
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
-
                                 pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
                             }
                         }
