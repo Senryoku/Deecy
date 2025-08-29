@@ -23,7 +23,6 @@ fn main(
     let frag_index = atomicAdd(&heads.fragment_count, 1u);
     if frag_index < oit_uniforms.max_fragments {
         let last_head = atomicExchange(&heads.data[heads_index], frag_index);
-        linked_list.data[frag_index].depth = position_clip.z;
-        linked_list.data[frag_index].volume_index8_and_next24 = ((oit_fs_uniforms.volume_index & 0xFF) << 24) | last_head;
+        linked_list.data[frag_index] = vec2<u32>((oit_fs_uniforms.volume_index << 24) | last_head, bitcast<u32>(position_clip.z));
     }
 }

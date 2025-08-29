@@ -19,13 +19,10 @@ struct LinkedList {
 const MaxVolumes = 4;
 const MaxVolumesInterfaces = 2 * MaxVolumes;
 
-struct VolumeLinkedListElement {
-  volume_index8_and_next24: u32, // Packed 8bits volume index and 24bits next pointer.
-  depth: f32,
-};
-
 struct VolumeLinkedList {
-  data: array<VolumeLinkedListElement>
+  // node[0]: Packed 8bits volume index and 24bits next pointer.
+  // node[1]: depth (f32)
+  data: array<vec2<u32>>
 };
 
 // NOTE: I tried packing the depths into u8 and u16, but the depths values are too clamped together and this results

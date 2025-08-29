@@ -29,8 +29,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var frag_count = 0u;
     while frag_index != 0xFFFFFFFFu && frag_count < MaxFragments {
         let index = frag_index & 0x00FFFFFFu;
-        var to_insert = VolumeLinkedListElementData(modvol_linked_list.data[index].depth, modvol_linked_list.data[index].volume_index8_and_next24 >> 24);
-        frag_index = modvol_linked_list.data[index].volume_index8_and_next24 ;
+        var to_insert = VolumeLinkedListElementData(bitcast<f32>(modvol_linked_list.data[index][1]), modvol_linked_list.data[index][0] >> 24);
+        frag_index = modvol_linked_list.data[index][0];
 
         var j = frag_count;
 
