@@ -20,9 +20,8 @@ const MaxVolumes = 4;
 const MaxVolumesInterfaces = 2 * MaxVolumes;
 
 struct VolumeLinkedListElement {
-  next: u32,
+  volume_index8_and_next24: u32, // Packed 8bits volume index and 24bits next pointer.
   depth: f32,
-  volume_index: u32,
 };
 
 struct VolumeLinkedList {

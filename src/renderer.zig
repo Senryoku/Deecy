@@ -656,7 +656,7 @@ pub const Renderer = struct {
     const OITHorizontalSlices = 4; // Divides the OIT pass into multiple passes to limit memory usage.
     const MaxFragmentsPerPixel = 24;
     const OITLinkedListNodeSize = 5 * 4;
-    const VolumeLinkedListNodeSize = 3 * 4;
+    const VolumeLinkedListNodeSize = 2 * 4;
     const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
@@ -1569,6 +1569,14 @@ pub const Renderer = struct {
                 self.render_passes.items[region_array_idx].translucent_modifier_volume_pointer = region_config.translucent_modifier_volume_pointer;
                 self.render_passes.items[region_array_idx].punchthrough_list_pointer = region_config.punch_through_list_pointer;
                 region_count += 1;
+
+                // We're using a 8bits index for volumes in shaders, meaning we can have up to 256 of each before running into issues.
+                // Print a warning if we're hitting that limit (we can probably steal another bit from the next pointer).
+                if (self.ta_lists.items[region_array_idx].opaque_modifier_volumes.items.len > 0xFF)
+                    renderer_log.warn(termcolor.yellow("More than 256 opaque modifier volumes ({d}) in region {d}, the volume index won't be reliable."), .{ self.ta_lists.items[region_array_idx].opaque_modifier_volumes.items.len, region_array_idx });
+                if (self.ta_lists.items[region_array_idx].translucent_modifier_volumes.items.len > 0xFF)
+                    renderer_log.warn(termcolor.yellow("More than 256 translucent modifier volumes ({d}) in region {d}, the volume index won't be reliable."), .{ self.ta_lists.items[region_array_idx].translucent_modifier_volumes.items.len, region_array_idx });
+
                 if (region_config.settings.last_region) break;
             }
 
@@ -3206,7 +3214,7 @@ pub const Renderer = struct {
                                 oit_mv_uniform_mem.slice[0] = .{
                                     .target_width = self.resolution.width,
                                     .start_y = start_y,
-                                    .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / VolumeLinkedListNodeSize),
+                                    .max_fragments = @intCast(@min(std.math.pow(u64, 2, 24), self.get_modvol_linked_list_size() / VolumeLinkedListNodeSize - 1)),
                                 };
 
                                 const modifier_volume_bind_group = gctx.lookupResource(self.modifier_volume_bind_group).?;
