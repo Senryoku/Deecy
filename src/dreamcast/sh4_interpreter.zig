@@ -57,7 +57,7 @@ fn fetch_and_execute(self: *SH4, virtual_addr: u32) void {
             error.FPUDisabled => .GeneralFPUDisable,
             error.IllegalInstruction => .GeneralIllegalInstruction,
             error.UnconditionalTrap => .UnconditionalTrap,
-            else => std.debug.panic("Unexpected exception in _execute: {s}", .{@errorName(err)}),
+            else => std.debug.panic("Unexpected exception in _execute: {t}", .{err}),
         });
         return;
     };
@@ -1125,7 +1125,7 @@ inline fn execute_delay_slot(cpu: *SH4, addr: u32) void {
             error.FPUDisabled => .SlotFPUDisable,
             error.IllegalInstruction => .SlotIllegalInstruction,
             error.UnconditionalTrap => .UnconditionalTrap,
-            else => std.debug.panic("Unexpected exception in execute_delay_slot: {s}", .{@errorName(err)}),
+            else => std.debug.panic("Unexpected exception in execute_delay_slot: {t}", .{err}),
         });
         cpu.pc -= 2; // Compensate for PC advancement in fetch_and_execute.
         return;
@@ -1306,7 +1306,7 @@ pub fn ldtlb(cpu: *SH4, _: Instr) !void {
     cpu.sync_utlb_fast_lookup(urc);
     cpu.check_mmu_state();
 
-    sh4_log.info("ldtlb : utlb[{d}] = {any}", .{ urc, cpu.utlb[urc] });
+    sh4_log.info("ldtlb : utlb[{d}] = {f}", .{ urc, cpu.utlb[urc] });
 
     // NOTE: I'm using the physical address - i.e. the address after translation - as key to the JIT cache, so this is useless. Probably? Right?
     //       (Also this should invalidate the previous value of the entry too.)
@@ -1470,11 +1470,11 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
                 }
 
                 const entry = cpu.utlb_lookup(addr) catch |err| {
-                    sh4_log.debug("{s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr });
+                    sh4_log.debug("{t} exception in pref instruction: {X:0>8}", .{ err, addr });
                     cpu.report_address_exception(addr);
                     return switch (err) {
                         error.TLBMiss => return error.DataTLBMissRead, // This is a bit weird, but the manual explicitly states that this is treated as a read access (20.3.1).
-                        else => std.debug.panic("Unhandled {s} exception in pref instruction: {X:0>8}", .{ @errorName(err), addr }),
+                        else => std.debug.panic("Unhandled {t} exception in pref instruction: {X:0>8}", .{ err, addr }),
                     };
                 };
                 if (!entry.d) return error.InitialPageWrite;
@@ -1550,7 +1550,7 @@ pub fn rte(cpu: *SH4, _: Instr) !void {
     cpu.set_sr(@bitCast(cpu.ssr));
     cpu.pc = spc;
     _execute(cpu, opcode) catch |err| {
-        std.debug.panic("Exception raised in RTE delay slot at PC={X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
+        std.debug.panic("Exception raised in RTE delay slot at PC={X:0>8}: {t}\n", .{ cpu.pc, err });
     };
     cpu.pc -%= 2; // fetch_and_execute will add 2
 }
@@ -1575,7 +1575,7 @@ pub fn sleep(cpu: *SH4, _: Instr) !void {
     } else {
         cpu.execution_state = .Sleep;
     }
-    // std.debug.print("\u{001B}[33mSleep State: .{s}\u{001B}[0m\n", .{@tagName(cpu.execution_state)});
+    // std.debug.print("\u{001B}[33mSleep State: .{t}\u{001B}[0m\n", .{cpu.execution_state});
 }
 
 pub fn stc_Reg_Rn(comptime reg: []const u8) *const fn (cpu: *SH4, opcode: Instr) anyerror!void {

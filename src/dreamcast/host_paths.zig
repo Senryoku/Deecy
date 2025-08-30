@@ -12,9 +12,9 @@ fn generate_appdata_path(buf: []u8, path: []const u8) []const u8 {
     defer arena.deinit();
     const allocator = arena.allocator();
     const app_data_dir = std.fs.getAppDataDir(allocator, "Deecy") catch |err|
-        std.debug.panic("Failed to get appdata dir: {s}\n", .{@errorName(err)});
+        std.debug.panic("Failed to get appdata dir: {t}\n", .{err});
     const p = std.fs.path.resolve(allocator, &[_][]const u8{ app_data_dir, path }) catch |err|
-        std.debug.panic("Failed to resolve paths: {s}\n", .{@errorName(err)});
+        std.debug.panic("Failed to resolve paths: {t}\n", .{err});
     @memcpy(buf[0..p.len], p);
     return buf[0..p.len];
 }

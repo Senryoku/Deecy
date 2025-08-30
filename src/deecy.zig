@@ -458,7 +458,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
                     self.display_unrecoverable_error("Missing BIOS. Please copy your bios file as 'dc_boot.bin' to '{s}'.", .{HostPaths.get_data_path()});
                 },
                 else => {
-                    self.display_unrecoverable_error("Error initializing Dreamcast: {s}", .{@errorName(err)});
+                    self.display_unrecoverable_error("Error initializing Dreamcast: {t}", .{err});
                 },
             }
             return err;
@@ -486,7 +486,7 @@ pub fn destroy(self: *@This()) void {
     self.pause();
     self.wait_async_jobs();
 
-    self.save_config() catch |err| deecy_log.err("Error writing config: {s}", .{@errorName(err)});
+    self.save_config() catch |err| deecy_log.err("Error writing config: {t}", .{err});
     self.config.deinit(self._allocator);
 
     self.breakpoints.deinit(self._allocator);

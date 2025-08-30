@@ -152,8 +152,8 @@ pub const TLBEntry = struct {
         };
     }
 
-    pub fn format(self: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {s}, .c = {}, .sh = {}, .sz = {}}}", .{
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("TLB{{.vpn = {X:0>8}, .ppn = {X:0>8}, .asid = {X}, .v = {}, .tc = {}, .sa = {}, .wt = {}, .d = {}, .pr = {t}, .c = {}, .sh = {}, .sz = {}}}", .{
             @as(u32, self.vpn) << 10,
             self._ppn,
             self.asid,
@@ -162,7 +162,7 @@ pub const TLBEntry = struct {
             self.sa,
             self.wt,
             self.d,
-            @tagName(self.pr),
+            self.pr,
             self.c,
             self.sh,
             self.sz,

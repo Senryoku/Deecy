@@ -61,7 +61,7 @@ pub fn reset_virtual_alloc(memory: anytype) !void {
             // NOTE: madvise 'dontneed' could be faster and should reliably zero out the memory on private anonymous mappings on Linux, if I believe what I read here and there online.
             //       However this isn't standard or portable, maybe I should just use the fixed mmap fallback directly.
             std.posix.madvise(@ptrCast(@alignCast(memory.ptr)), byte_size, std.posix.MADV.DONTNEED) catch |madv_err| {
-                std.log.warn("Failed to madvise: {s}. Fallback to mmap.", .{@errorName(madv_err)});
+                std.log.warn("Failed to madvise: {t}. Fallback to mmap.", .{madv_err});
                 const remmaped = try std.posix.mmap(
                     @ptrCast(@alignCast(memory.ptr)),
                     byte_size,

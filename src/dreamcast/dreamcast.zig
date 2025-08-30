@@ -77,10 +77,10 @@ const ScheduledEvent = struct {
         VBlankIn,
         VBlankOut,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             switch (self) {
                 .TimerUnderflow => |e| return writer.print("Timer {d} Underflow", .{e.channel}),
-                else => return writer.print("{s}", .{@tagName(self)}),
+                else => return writer.print("{t}", .{self}),
             }
         }
     };
@@ -89,10 +89,10 @@ const ScheduledEvent = struct {
         Normal: HardwareRegisters.SB_ISTNRM,
         External: HardwareRegisters.SB_ISTEXT,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             switch (self) {
-                .Normal => |e| return writer.print("{any}", .{e}),
-                .External => |e| return writer.print("{any}", .{e}),
+                .Normal => |e| return writer.print("{f}", .{e}),
+                .External => |e| return writer.print("{f}", .{e}),
             }
         }
     },
@@ -216,15 +216,15 @@ pub const Dreamcast = struct {
         // if (!@import("builtin").is_test) {
         //     const filename = get_user_flash_path();
         //     std.fs.cwd().makePath(std.fs.path.dirname(filename) orelse ".") catch |err| {
-        //         dc_log.err("Failed to create user flash directory: {any}", .{err});
+        //         dc_log.err("Failed to create user flash directory: {t}", .{err});
         //     };
         //     if (std.fs.cwd().createFile(filename, .{})) |file| {
         //         defer file.close();
         //         _ = file.writeAll(self.flash.data) catch |err| {
-        //             dc_log.err("Failed to save user flash: {any}", .{err});
+        //             dc_log.err("Failed to save user flash: {t}", .{err});
         //         };
         //     } else |err| {
-        //         dc_log.err("Failed to open user flash '{s}' for writing: {any}", .{ filename, err });
+        //         dc_log.err("Failed to open user flash '{s}' for writing: {t}", .{ filename, err });
         //     }
         // }
 
@@ -307,7 +307,7 @@ pub const Dreamcast = struct {
 
     pub fn load_bios(self: *@This(), boot_path: []const u8) !void {
         var boot_file = std.fs.cwd().openFile(boot_path, .{}) catch |err| {
-            dc_log.err(termcolor.red("Failed to open boot ROM at '{s}', error: {any}."), .{ boot_path, err });
+            dc_log.err(termcolor.red("Failed to open boot ROM at '{s}', error: {t}."), .{ boot_path, err });
             return err;
         };
         defer boot_file.close();
@@ -320,7 +320,7 @@ pub const Dreamcast = struct {
         const default_flash_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_data_path(), "dc_flash.bin" });
         defer self._allocator.free(default_flash_path);
         var flash_file = std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-            dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
+            dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {t}."), .{ default_flash_path, e });
             return e;
         };
 
@@ -328,11 +328,11 @@ pub const Dreamcast = struct {
         //     if (err == error.FileNotFound) {
         //         dc_log.info("Loading default flash ROM.", .{});
         //         break :f std.fs.cwd().openFile(default_flash_path, .{}) catch |e| {
-        //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {any}."), .{ default_flash_path, e });
+        //             dc_log.err(termcolor.red("Failed to open default flash file at '{s}', error: {t}."), .{ default_flash_path, e });
         //             return e;
         //         };
         //     } else {
-        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {any}."), .{ get_user_flash_path(), err });
+        //         dc_log.err(termcolor.red("Failed to open user flash file at '{s}', error: {t}."), .{ get_user_flash_path(), err });
         //         return err;
         //     }
         // };
@@ -525,11 +525,11 @@ pub const Dreamcast = struct {
             .SB_SDST => if (value == 1) self.start_sort_dma(),
             .SB_E1ST, .SB_E2ST, .SB_DDST => {
                 if (value == 1)
-                    dc_log.err(termcolor.red("Unimplemented {any} DMA initiation!"), .{reg});
+                    dc_log.err(termcolor.red("Unimplemented {t} DMA initiation!"), .{reg});
             },
             .SB_ADSUSP, .SB_E1SUSP, .SB_E2SUSP, .SB_DDSUSP => {
                 if ((value & 1) == 1)
-                    dc_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {any}"), .{reg});
+                    dc_log.debug(termcolor.yellow("Unimplemented DMA Suspend Request to {t}"), .{reg});
             },
             .SB_ADST => {
                 if (value == 1) self.aica.start_dma(self);
@@ -541,7 +541,7 @@ pub const Dreamcast = struct {
             },
             .SB_GDST => if (value == 1) self.start_gd_dma(),
             .SB_GDSTARD, .SB_GDLEND, .SB_ADSTAGD, .SB_E1STAGD, .SB_E2STAGD, .SB_DDSTAGD, .SB_ADSTARD, .SB_E1STARD, .SB_E2STARD, .SB_DDSTARD, .SB_ADLEND, .SB_E1LEND, .SB_E2LEND, .SB_DDLEND => {
-                dc_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {s} = {X:0>8}."), .{ T, @tagName(reg), value });
+                dc_log.warn(termcolor.yellow("Ignoring write({any}) to Read Only register {t} = {X:0>8}."), .{ T, reg, value });
             },
             .SB_MDAPRO => {
                 if (T != u32) return dc_log.err("Invalid Write({any}) to 0x{X:0>8} (SB_MDAPRO)\n", .{ T, addr });
@@ -844,13 +844,13 @@ pub const Dreamcast = struct {
     // TODO: Add helpers for external interrupts and errors.
 
     pub fn schedule_event(self: *@This(), event: ScheduledEvent.Event, cycles: usize) void {
-        //std.debug.print("Schedule event in {d}: {any}\n", .{ cycles, event });
+        //std.debug.print("Schedule event in {d}: {f}\n", .{ cycles, event });
         self.scheduled_events.add(.{
             .trigger_cycle = self._global_cycles +% cycles,
             .event = event,
             .interrupt = null,
         }) catch |err| {
-            std.debug.panic("Failed to schedule event: {}", .{err});
+            std.debug.panic("Failed to schedule event: {t}", .{err});
         };
     }
 
@@ -860,7 +860,7 @@ pub const Dreamcast = struct {
             .interrupt = .{ .Normal = int },
             .event = event,
         }) catch |err| {
-            std.debug.panic("Failed to schedule event: {}", .{err});
+            std.debug.panic("Failed to schedule event: {t}", .{err});
         };
     }
 
@@ -869,7 +869,7 @@ pub const Dreamcast = struct {
             .trigger_cycle = self._global_cycles +% cycles,
             .interrupt = .{ .Normal = int },
         }) catch |err| {
-            std.debug.panic("Failed to schedule interrupt: {}", .{err});
+            std.debug.panic("Failed to schedule interrupt: {t}", .{err});
         };
     }
 

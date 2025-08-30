@@ -258,7 +258,7 @@ pub const AICARegister = enum(u32) {
     _,
 };
 
-fn bitfield_format(self: anytype, writer: anytype) !void {
+fn bitfield_format(self: anytype, writer: *std.Io.Writer) !void {
     var first = true;
     try writer.writeAll("(");
     inline for (@typeInfo(InterruptBits).@"struct".fields) |field| {
@@ -284,7 +284,7 @@ pub const InterruptBits = packed struct(u32) {
     one_sample_interval: u1 = 0,
     _1: u21 = 0,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         try bitfield_format(self, writer);
     }
 };
@@ -664,11 +664,11 @@ pub const AICA = struct {
     }
 
     pub fn read_register(self: *const AICA, comptime T: type, addr: u32) T {
-        aica_log.debug("Read({any}) to AICA Register at 0x{X:0>8}", .{ T, addr });
+        aica_log.debug("Read({}) to AICA Register at 0x{X:0>8}", .{ T, addr });
 
         const local_addr = addr & 0x0000FFFF;
         if (local_addr % 4 > 1) {
-            aica_log.warn(termcolor.yellow("Read({any}) to non-existent (not 4 bytes aligned) AICA register at 0x{X:0>8}"), .{ T, addr });
+            aica_log.warn(termcolor.yellow("Read({}) to non-existent (not 4 bytes aligned) AICA register at 0x{X:0>8}"), .{ T, addr });
             return 0;
         }
 
@@ -733,7 +733,7 @@ pub const AICA = struct {
         const local_addr = addr & 0x0000FFFF;
         aica_log.debug("Write to AICA Register at 0x{X:0>8} = 0x{X:0>8}", .{ addr, value });
         if (local_addr % 4 > 1) {
-            aica_log.warn(termcolor.yellow("Unaligned Write({any}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}"), .{ T, addr, value });
+            aica_log.warn(termcolor.yellow("Unaligned Write({}) to AICA Register at 0x{X:0>8} = 0x{X:0>8}"), .{ T, addr, value });
             return;
         }
 
@@ -747,7 +747,7 @@ pub const AICA = struct {
                             self.regs[local_addr / 4] = value & PlayControl.Mask;
 
                             const val: PlayControl = @bitCast(value);
-                            aica_log.debug("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {any}", .{ addr, value, val });
+                            aica_log.debug("Play control: 0x{X:0>8} = 0x{X:0>8}\n  {}", .{ addr, value, val });
                             if (val.key_on_execute) self.key_on_execute();
                         },
                         else => @compileError("Invalid value type"),
@@ -761,7 +761,7 @@ pub const AICA = struct {
                             const val: PlayControl = @bitCast(@as(u32, value) << 8);
                             if (val.key_on_execute) self.key_on_execute();
                         },
-                        else => std.debug.panic("Unaligned write({any}) to Play control - High byte: 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value }),
+                        else => std.debug.panic("Unaligned Write({}) to Play control - High byte: 0x{X:0>8} = 0x{X:0>8}", .{ T, addr, value }),
                     }
                     return;
                 },
@@ -773,7 +773,7 @@ pub const AICA = struct {
             const high_byte = T == u8 and local_addr % 4 == 1;
             switch (@as(AICARegister, @enumFromInt(reg_addr))) {
                 .MasterVolume => {
-                    aica_log.debug("Write({any}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
+                    aica_log.debug("Write({}) to Master Volume (0x{X:0>8}) = 0x{X:0>8}", .{ T, addr, value });
                 },
                 .DDIR_DEXE => { // DMA transfer direction / DMA transfer start
                     if (T == u8)
@@ -787,7 +787,7 @@ pub const AICA = struct {
                     return;
                 },
                 .SCIEB => {
-                    aica_log.info("Write to AICA Register SCIEB = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    aica_log.info("Write to AICA Register SCIEB = " ++ if (T != u32) "{}" else "{f}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
                     if (!high_byte) {
                         self.get_reg(u32, .SCIEB).* = value & @as(T, @truncate(0x7F9));
                     } else {
@@ -797,7 +797,7 @@ pub const AICA = struct {
                     return;
                 },
                 .SCIPD => {
-                    aica_log.info("Write to AICA Register SCIPD = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    aica_log.info("Write to AICA Register SCIPD = " ++ if (T != u32) "{}" else "{f}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
                     if (!high_byte) {
                         self.get_reg(u32, .SCIPD).* |= (value & (@as(u32, 1) << 5)); // Set scpu interrupt
                         self.check_interrupts();
@@ -805,7 +805,7 @@ pub const AICA = struct {
                     return;
                 },
                 .SCIRE => { // Clear interrupt(s)
-                    aica_log.debug("Write to AICA Register SCIRE = {any}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
+                    aica_log.debug("Write to AICA Register SCIRE = " ++ if (T != u32) "{}" else "{f}", .{if (T == u32) @as(InterruptBits, @bitCast(value)) else value});
                     if (!high_byte) {
                         self.get_reg(u32, .SCIPD).* &= ~value;
                     } else {
@@ -1138,7 +1138,7 @@ pub const AICA = struct {
                     self._arm_cycles_counter -= ARM7CycleRatio;
 
                     if (self.arm_debug_trace) {
-                        aica_log.info("arm7: ({s}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ @tagName(self.arm7.cpsr.m), self.arm7.pc() - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
+                        aica_log.info("arm7: ({t}) [{X:0>4}] {X:0>8} - {s: <20} - {X:0>8} - {X:0>8}", .{ self.arm7.cpsr.m, self.arm7.pc() - 4, self.arm7.instruction_pipeline[0], arm7.ARM7.disassemble(self.arm7.instruction_pipeline[0]), self.arm7.sp(), self.arm7.lr() });
                     }
 
                     arm7.interpreter.tick(&self.arm7);

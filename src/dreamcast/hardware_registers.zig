@@ -234,7 +234,7 @@ pub const SB_ISTNRM = packed struct(u32) {
     ExtStatus: u1 = 0,
     ErrorStatus: u1 = 0,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
             inline for (@typeInfo(@This()).@"struct".fields) |field| {
@@ -253,7 +253,7 @@ pub const SB_ISTEXT = packed struct(u32) {
     ExternalDevice: u1 = 0,
     _: u28 = 0,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         const as_u32: u32 = @bitCast(self);
         if (@popCount(as_u32) == 1) {
             inline for (@typeInfo(@This()).@"struct".fields) |field| {

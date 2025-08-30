@@ -126,7 +126,7 @@ pub fn decode_tex(dest_bgra: [*][4]u8, pixel_format: HollyModule.TexturePixelFor
                 }
             }
         },
-        else => std.debug.panic(termcolor.red("Unsupported pixel format {any}"), .{pixel_format}),
+        else => std.debug.panic(termcolor.red("Unsupported pixel format {t}"), .{pixel_format}),
     }
 }
 
@@ -345,7 +345,7 @@ fn translate_blend_factor(factor: HollyModule.AlphaInstruction) wgpu.BlendFactor
         .InverseSourceAlpha => .one_minus_src_alpha,
         .DestAlpha => .dst_alpha,
         .InverseDestAlpha => .one_minus_dst_alpha,
-        else => std.debug.panic("Invalid blend factor: {any}", .{factor}),
+        else => std.debug.panic("Invalid blend factor: {t}", .{factor}),
     };
 }
 
@@ -386,14 +386,14 @@ const PipelineKey = struct {
     depth_write_enabled: bool,
     culling_mode: HollyModule.CullingMode,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("PipelineKey{{ .translucent = {any}, .src_blend_factor = {s}, .dst_blend_factor = {s}, .depth_compare = {s}, .depth_write_enabled = {}, .culling_mode = {s} }}", .{
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("PipelineKey{{ .translucent = {}, .src_blend_factor = {t}, .dst_blend_factor = {t}, .depth_compare = {t}, .depth_write_enabled = {}, .culling_mode = {t} }}", .{
             self.translucent,
-            @tagName(self.src_blend_factor),
-            @tagName(self.dst_blend_factor),
-            @tagName(self.depth_compare),
+            self.src_blend_factor,
+            self.dst_blend_factor,
+            self.depth_compare,
             self.depth_write_enabled,
-            @tagName(self.culling_mode),
+            self.culling_mode,
         });
     }
 };
@@ -631,7 +631,7 @@ var fb_mapping_available: bool = false;
 fn signal_fb_mapped(status: zgpu.wgpu.BufferMapAsyncStatus, _: ?*anyopaque) void {
     switch (status) {
         .success => {},
-        else => std.log.err(termcolor.red("Failed to map buffer: {s}"), .{@tagName(status)}),
+        else => std.log.err(termcolor.red("Failed to map buffer: {t}"), .{status}),
     }
     fb_mapping_available = true;
 }
@@ -1558,8 +1558,8 @@ pub const Renderer = struct {
                 if (region_config.empty()) break;
 
                 switch (header_type) {
-                    .Type1 => renderer_log.debug("[{s}] ({d}) {any:0}", .{ @tagName(header_type), region_array_idx, region_config }),
-                    .Type2 => renderer_log.debug("[{s}] ({d}) {any:1}", .{ @tagName(header_type), region_array_idx, region_config }),
+                    .Type1 => renderer_log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, region_config }),
+                    .Type2 => renderer_log.debug("[{t}] ({d}) {f}", .{ header_type, region_array_idx, std.fmt.alt(region_config, .formatType1) }),
                 }
 
                 if (self.render_passes.items.len <= region_array_idx) self.render_passes.append(self._allocator, .init()) catch @panic("Out of memory");
@@ -2590,14 +2590,14 @@ pub const Renderer = struct {
                         switch (list_type) {
                             .Opaque => {
                                 if (pipeline_key.src_blend_factor != .one or pipeline_key.dst_blend_factor != .zero) {
-                                    renderer_log.debug("Unexpected blend mode for opaque list: src={s}, dst={s}", .{ @tagName(pipeline_key.src_blend_factor), @tagName(pipeline_key.dst_blend_factor) });
+                                    renderer_log.debug("Unexpected blend mode for opaque list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
                                     pipeline_key.src_blend_factor = .one;
                                     pipeline_key.dst_blend_factor = .zero;
                                 }
                             },
                             .PunchThrough => {
                                 if (pipeline_key.src_blend_factor != .src_alpha or pipeline_key.dst_blend_factor != .one_minus_src_alpha) {
-                                    renderer_log.debug("Unexpected blend mode for punch through list: src={s}, dst={s}", .{ @tagName(pipeline_key.src_blend_factor), @tagName(pipeline_key.dst_blend_factor) });
+                                    renderer_log.debug("Unexpected blend mode for punch through list: src={t}, dst={t}", .{ pipeline_key.src_blend_factor, pipeline_key.dst_blend_factor });
                                     pipeline_key.src_blend_factor = .src_alpha;
                                     pipeline_key.dst_blend_factor = .one_minus_src_alpha;
                                 }
@@ -3602,7 +3602,7 @@ pub const Renderer = struct {
         if (self.opaque_pipelines.get(key)) |pl|
             return pl;
 
-        renderer_log.info("Creating Pipeline: {any}", .{key});
+        renderer_log.info("Creating Pipeline: {f}", .{key});
         const start = std.time.milliTimestamp();
 
         const color_targets = [_]wgpu.ColorTargetState{

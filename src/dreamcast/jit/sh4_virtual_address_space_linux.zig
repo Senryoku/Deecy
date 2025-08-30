@@ -99,7 +99,7 @@ fn sigsegv_handler(sig: i32, info: *const std.posix.siginfo_t, context_ptr: ?*an
             if (GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE) |base| {
                 const context: *std.posix.ucontext_t = @ptrCast(@alignCast(context_ptr.?));
                 VAS.patch_access(fault_address, @intFromPtr(base.ptr), base.len, &context.mcontext.gregs[std.posix.REG.RIP]) catch |err| {
-                    std.log.scoped(.sh4_jit).err("Failed to patch FastMem access @{X}: {s}", .{ fault_address, @errorName(err) });
+                    std.log.scoped(.sh4_jit).err("Failed to patch FastMem access @{X}: {t}", .{ fault_address, err });
                     signal_not_handled();
                 };
                 return;

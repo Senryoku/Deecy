@@ -156,8 +156,8 @@ pub const Condition = enum {
     Greater,
     NotLessEqual,
 
-    pub fn format(value: @This(), writer: anytype) !void {
-        return writer.print("{s}", .{@tagName(value)});
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
+        return writer.print("{t}", .{value});
     }
 
     /// Returns the low nibble of opcode using this condition
@@ -179,7 +179,7 @@ pub const Condition = enum {
             .GreaterEqual, .NotLess => 0xD,
             .LessEqual, .NotGreater => 0xE,
             .Greater, .NotLessEqual => 0xF,
-            else => std.debug.panic("Invalid condition: {any}", .{self}),
+            else => std.debug.panic("Invalid condition: {f}", .{self}),
         };
     }
 };
@@ -220,7 +220,7 @@ pub const Scale = enum(u2) {
     _4 = 0b10,
     _8 = 0b11,
 
-    pub fn format(value: @This(), writer: anytype) !void {
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         switch (value) {
             ._1 => try writer.writeAll("1"),
             ._2 => try writer.writeAll("2"),
@@ -238,7 +238,7 @@ pub const MemOperand = struct {
     /// Bit size
     size: u8,
 
-    pub fn format(value: @This(), writer: anytype) !void {
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         if (value.index) |index| {
             if (value.displacement > 0) {
                 return writer.print("[{f}+{f}*{f}+0x{X}]", .{
@@ -283,7 +283,7 @@ pub const Operand = union(enum) {
         return std.meta.activeTag(self);
     }
 
-    pub fn format(value: @This(), writer: anytype) !void {
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         return switch (value) {
             .reg8 => |reg| writer.print("{f}<8>", .{reg}),
             .reg16 => |reg| writer.print("{f}<16>", .{reg}),
@@ -368,11 +368,11 @@ pub const Instruction = union(enum) {
     SaveFPRegisters: struct { count: u8 },
     RestoreFPRegisters: struct { count: u8 },
 
-    pub fn format(value: @This(), writer: anytype) !void {
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
         return switch (value) {
             .Nop => writer.print("nop", .{}),
             .Break => writer.print("break", .{}),
-            .FunctionCall => |function| writer.print("call {any}", .{function}),
+            .FunctionCall => |function| writer.print("call {?}", .{function}),
             .Mov => |mov| writer.print("mov {f}, {f}", .{ mov.dst, mov.src }),
             .Cmov => |cmov| writer.print("cmov {f} {f}, {f}", .{ cmov.condition, cmov.dst, cmov.src }),
             .Movsx => |movsx| writer.print("movsx {f}, {f}", .{ movsx.dst, movsx.src }),
@@ -438,8 +438,8 @@ pub const Register = enum(u4) {
     r14 = 14,
     r15 = 15,
 
-    pub fn format(value: @This(), writer: anytype) !void {
-        return writer.print("{s}", .{@tagName(value)});
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
+        return writer.print("{t}", .{value});
     }
 
     /// Returns true for registers requiring a REX prefix for 8bit operations, when they normally would not.
@@ -471,8 +471,8 @@ pub const FPRegister = enum(u4) {
     xmm14 = 14,
     xmm15 = 15,
 
-    pub fn format(value: @This(), writer: anytype) !void {
-        return writer.print("{s}", .{@tagName(value)});
+    pub fn format(value: @This(), writer: *std.Io.Writer) !void {
+        return writer.print("{t}", .{value});
     }
 };
 
@@ -867,7 +867,7 @@ pub const Emitter = struct {
         switch (src) {
             .freg32, .freg64 => |src_reg| try self.binary_freg_freg(size, &[_]u8{ 0x0F, @intFromEnum(opcode) }, dst_reg, src_reg),
             .mem => |src_mem| {
-                x86_64_emitter_log.warn(termcolor.yellow("Untested <{s}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{@tagName(opcode)});
+                x86_64_emitter_log.warn(termcolor.yellow("Untested <{t}>ss xmm1, xmm2/m32 with a memory operand. Be careful :)"), .{opcode});
 
                 try self.emit_rex_if_needed(.{ .w = false, .r = need_rex(dst_reg), .b = need_rex(src_mem.base) });
                 try self.emit(u8, 0x0F);
@@ -1050,7 +1050,7 @@ pub const Emitter = struct {
                     },
                     .mem => |src_m| try mov_reg_mem(self, .MemToReg, dst, src_m),
                     else => {
-                        std.debug.print("Mov Unimplemented: {any}, {any}\n", .{ dst, src });
+                        std.debug.print("Mov Unimplemented: {f}, {f}\n", .{ dst, src });
                         return error.Unimplemented;
                     },
                 }
@@ -1757,13 +1757,13 @@ pub const Emitter = struct {
                 }
             },
             .abs_indirect => |op| {
-                if (condition != .Always) std.debug.panic("Unsupported indirect jump condition: {s}", .{@tagName(condition)});
+                if (condition != .Always) std.debug.panic("Unsupported indirect jump condition: {t}", .{condition});
                 switch (op) {
                     .reg64 => |reg| {
                         try self.emit(u8, 0xFF);
                         try self.emit(MODRM, .{ .mod = .reg, .reg_opcode = 4, .r_m = encode(reg) });
                     },
-                    else => std.debug.panic("Unsupported indirect jump destination: {any}", .{op}),
+                    else => std.debug.panic("Unsupported indirect jump destination: {f}", .{op}),
                 }
             },
         }

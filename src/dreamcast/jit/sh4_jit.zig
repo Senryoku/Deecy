@@ -399,7 +399,7 @@ pub const JITContext = struct {
         if (self.mmu_enabled and cross_page(self.current_pc, self.current_pc + 2)) {
             const expected_physical_pc = self.current_physical_pc + 2;
             const physical_pc = self.cpu.translate_instruction_address(self.current_pc + 2) catch |err| pc: {
-                sh4_jit_log.err("Address translation raised an exception for delay slot at {X:0>8}: {s}", .{ self.current_pc, @errorName(err) });
+                sh4_jit_log.err("Address translation raised an exception for delay slot at {X:0>8}: {t}", .{ self.current_pc, err });
                 break :pc expected_physical_pc; // FIXME: Ignore it for now...
             };
             if (physical_pc != expected_physical_pc) {
@@ -697,13 +697,13 @@ pub const SH4JIT = struct {
             if (err == error.JITCacheFull) {
                 sh4_jit_log.warn("JIT cache full: Resetting.", .{});
                 self.reset() catch |reset_err| {
-                    sh4_jit_log.err("Failed to reset JIT: {s}", .{@errorName(reset_err)});
+                    sh4_jit_log.err("Failed to reset JIT: {t}", .{reset_err});
                     std.process.exit(1);
                 };
                 break :retry self.compile(.init(cpu));
             } else break :retry err;
         } catch |err| {
-            sh4_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ cpu.pc, @errorName(err) });
+            sh4_jit_log.err("Failed to compile {X:0>8}: {t}\n", .{ cpu.pc, err });
             std.process.exit(1);
         };
         return self.block_cache.buffer[block.offset..].ptr;
@@ -904,7 +904,7 @@ pub const SH4JIT = struct {
         try b.append(.{ .Jmp = .{ .condition = .Always, .dst = .{ .abs_indirect = .{ .reg64 = ReturnRegister } } } });
 
         for (b.instructions.items, 0..) |instr, idx|
-            sh4_jit_log.debug("[{d: >4}] {any}", .{ idx, instr });
+            sh4_jit_log.debug("[{d: >4}] {f}", .{ idx, instr });
 
         const block_size = try b.emit_naked(self.block_cache.buffer[self.block_cache.cursor..]);
         var block = BasicBlock{ .offset = @intCast(self.block_cache.cursor) };
@@ -917,7 +917,7 @@ pub const SH4JIT = struct {
         // Align next block to 16 bytes. Not necessary, but might give a very small performance boost.
         self.block_cache.cursor = std.mem.alignForward(usize, self.block_cache.cursor, 0x10);
 
-        sh4_jit_log.debug("Compiled: {X:0>2}", .{self.block_cache.buffer[block.offset..][0..block_size]});
+        sh4_jit_log.debug("Compiled: {X}", .{self.block_cache.buffer[block.offset..][0..block_size]});
 
         self.block_cache.put(start_ctx.start_physical_pc, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)), block);
         return self.block_cache.get(start_ctx.start_physical_pc, @truncate(@intFromEnum(start_ctx.fpscr_sz)), @truncate(@intFromEnum(start_ctx.fpscr_pr)));
@@ -1079,13 +1079,13 @@ fn InterpreterFallback(comptime mmu_enabled: bool, comptime instr_index: u8) typ
         return struct {
             pub fn handler(cpu: *sh4.SH4, instr: sh4.Instr) callconv(.c) u8 {
                 entry.fn_(cpu, instr) catch |err| {
-                    sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {s}", .{ entry.name, @errorName(err) });
+                    sh4_jit_log.debug("Interpreter fallback to {s} generated an exception: {t}", .{ entry.name, err });
                     switch (err) {
                         error.DataAddressErrorRead => cpu.jump_to_exception(.DataAddressErrorRead),
                         error.DataTLBMissRead => cpu.jump_to_exception(.DataTLBMissRead),
                         error.DataTLBMissWrite => cpu.jump_to_exception(.DataTLBMissWrite),
                         error.UnconditionalTrap => cpu.jump_to_exception(.UnconditionalTrap),
-                        else => std.debug.panic("  Unhandled exception from {s}: {s}", .{ entry.name, @errorName(err) }),
+                        else => std.debug.panic("  Unhandled exception from {s}: {t}", .{ entry.name, err }),
                     }
                     return 1;
                 };
@@ -1242,7 +1242,7 @@ pub fn nop(_: *IRBlock, _: *JITContext, _: sh4.Instr) !bool {
 fn jump_to_exception(comptime exception: sh4.Exception) *const fn (*sh4.SH4) callconv(.c) void {
     return struct {
         fn jte(cpu: *sh4.SH4) callconv(.c) void {
-            sh4_jit_log.debug("[{X:0>8}] Exception: {s}", .{ cpu.pc, @tagName(exception) });
+            sh4_jit_log.debug("[{X:0>8}] Exception: {t}", .{ cpu.pc, exception });
             cpu.jump_to_exception(exception);
         }
     }.jte;
@@ -1394,7 +1394,7 @@ fn runtime_mmu_translation(comptime access_type: sh4.SH4.AccessType, comptime ac
             const unaligned = sh4.DataAlignmentCheck and virtual_addr & (access_size / 8 - 1) != 0;
             if (unaligned or unauthorized) {
                 @branchHint(.unlikely);
-                sh4_jit_log.warn("DataAddressError: {s}({d}) Addr={X:0>8}, SR.MD={d}", .{ @tagName(access_type), access_size, virtual_addr, cpu.sr.md });
+                sh4_jit_log.warn("DataAddressError: {t}({d}) Addr={X:0>8}, SR.MD={d}", .{ access_type, access_size, virtual_addr, cpu.sr.md });
                 cpu.report_address_exception(virtual_addr);
                 cpu.jump_to_exception(switch (access_type) {
                     .Read => .DataAddressErrorRead,

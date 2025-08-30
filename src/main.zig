@@ -122,7 +122,7 @@ pub fn main() !void {
     var allocator = gpa.allocator();
     defer {
         // Cleanup temprary directory, if it exists
-        std.fs.cwd().deleteTree(Deecy.TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ Deecy.TmpDirPath ++ "'): {s}", .{@errorName(err)});
+        std.fs.cwd().deleteTree(Deecy.TmpDirPath) catch |err| std.log.err("Failed to delete temporary directory ('" ++ Deecy.TmpDirPath ++ "'): {t}", .{err});
     }
 
     var d = try Deecy.create(allocator);
@@ -190,7 +190,7 @@ pub fn main() !void {
                     return error.InvalidArguments;
                 };
                 load_state = std.fmt.parseInt(u32, num_str, 10) catch |err| {
-                    std.log.err(termcolor.red("Invalid state number after --load-state: {s}"), .{@errorName(err)});
+                    std.log.err(termcolor.red("Invalid state number after --load-state: {t}"), .{err});
                     return error.InvalidArguments;
                 };
                 if (load_state.? >= Deecy.MaxSaveStates) {
@@ -267,7 +267,7 @@ pub fn main() !void {
         try d.load_disc(path);
 
         const region = dc.gdrom.disc.?.get_region();
-        std.log.info("  Detected region: {s}", .{@tagName(region)});
+        std.log.info("  Detected region: {t}", .{region});
         if (region != .Unknown) {
             try dc.set_region(region);
         } else {

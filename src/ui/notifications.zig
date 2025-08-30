@@ -45,7 +45,7 @@ pub fn deinit(self: *@This()) void {
 
 pub fn push(self: *@This(), comptime title_fmt: []const u8, title_args: anytype, comptime text_fmt: []const u8, text_args: anytype) void {
     push_impl(self, title_fmt, title_args, text_fmt, text_args) catch |err| {
-        log.err("Failed to push notification: {s}", .{@errorName(err)});
+        log.err("Failed to push notification: {t}", .{err});
     };
 }
 

@@ -299,7 +299,7 @@ fn schedule_event(self: *@This(), event: ScheduledEvent) void {
     //       If this ends up being necessary, use the global scheduler in the Dreamcast structure instead.
     std.debug.assert(event.cycles == 0);
 
-    gdrom_log.debug(" Event: {any}", .{event});
+    gdrom_log.debug(" Event: {}", .{event});
     if (event.state) |state|
         self.state = state;
     if (event.status) |status|
@@ -317,7 +317,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
     std.debug.assert(addr >= 0x005F7000 and addr <= 0x005F709C);
     switch (@as(HardwareRegister, @enumFromInt(addr))) {
         .GD_AlternateStatus_DeviceControl => {
-            gdrom_log.debug("  Read Alternate Status @{X:0>8} = {any}", .{ addr, self.status_register });
+            gdrom_log.debug("  Read Alternate Status @{X:0>8} = {}", .{ addr, self.status_register });
             // NOTE: Alternate status reads do NOT clear the pending interrupt signal.
 
             // FIXME: CDI Hack - See issue #70
@@ -340,7 +340,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
         },
         .GD_Status_Command => {
             const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
-            gdrom_log.debug("  Read Status @{X:0>8} = {any}", .{ addr, self.status_register });
+            gdrom_log.debug("  Read Status @{X:0>8} = {}", .{ addr, self.status_register });
             // Clear the pending interrupt signal.
             self.schedule_event(.{
                 .cycles = 0,
@@ -358,7 +358,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                 const low = self.pio_data_queue.readItem().?;
                 const high = self.pio_data_queue.readItem().?;
                 const val: u16 = @as(u16, low) | (@as(u16, high) << 8);
-                // gdrom_log.debug("  Read({any}) from Data FIFO: {X:0>4}", .{ T, val });
+                // gdrom_log.debug("  Read({}) from Data FIFO: {X:0>4}", .{ T, val });
                 if (self.pio_data_queue.count == 0) {
                     // 9. When the host has sent (sic?) entire data, the device clears the DRQ bit.
                     self.status_register.drq = 0;
@@ -369,7 +369,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
                 }
                 return val;
             }
-            std.debug.panic("Invalid Read({any}) to GD_Data: {X:0>8}", .{ T, addr });
+            std.debug.panic("Invalid Read({}) to GD_Data: {X:0>8}", .{ T, addr });
         },
         .GD_Error_Features => {
             // 7    6    5    4   3    2    1    0
@@ -379,7 +379,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             return val;
         },
         .GD_InterruptReason_SectorCount => {
-            gdrom_log.info("  Read Interrupt Reason @{X:0>8} = {any}", .{ addr, self.interrupt_reason_register });
+            gdrom_log.info("  Read Interrupt Reason @{X:0>8} = {}", .{ addr, self.interrupt_reason_register });
             return @intCast(@as(u8, @bitCast(self.interrupt_reason_register)));
         },
         .GD_SectorNumber => {
@@ -975,7 +975,7 @@ fn cd_read_fetch(self: *@This(), data_queue: *fifo.LinearFifo(u8, .Dynamic), dat
                 gdrom_log.err(termcolor.red("  Unexpected sector size: {d} written out of {d} * {d} = {d} expected."), .{ bytes_written, transfer_length, expected_sector_size, transfer_length * expected_sector_size });
             }
 
-            gdrom_log.debug("First 0x20 bytes read: {X:0>2}", .{data_queue.readableSlice(0)[0..0x20]});
+            gdrom_log.debug("First 0x20 bytes read: {X}", .{data_queue.readableSlice(0)[0..0x20]});
         }
     }
 }
@@ -1104,7 +1104,7 @@ fn req_secu(self: *@This()) !void {
     self.pio_prep_complete();
 }
 
-pub fn serialize(self: *@This(), writer: anytype) !usize {
+pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {
     var bytes: usize = 0;
     bytes += try writer.write(std.mem.asBytes(&self.state));
     bytes += try writer.write(std.mem.asBytes(&self.status_register));

@@ -108,7 +108,7 @@ pub fn create_view(self: *@This(), offset: u64, size: u64) ![]u8 {
             };
             return @as([*]u8, @ptrCast(ptr))[adjustment .. adjustment + final_size];
         } else {
-            log.err("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {any}", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
+            log.err("MapViewOfFile (offset: {X:0>8}, size: {X:0>8}) failed: {}", .{ aligned_offset, aligned_size, std.os.windows.GetLastError() });
             return error.MapViewOfFileError;
         }
     }

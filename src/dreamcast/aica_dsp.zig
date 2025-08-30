@@ -598,8 +598,8 @@ pub fn compile(self: *@This()) !void {
     const block_size = try b.emit(self._jit_buffer.?);
 
     for (b.instructions.items, 0..) |instr, idx|
-        log.debug("[{d: >4}] {any}", .{ idx, instr });
-    log.debug("Compiled: {X:0>2}", .{self._jit_buffer.?[0..block_size]});
+        log.debug("[{d: >4}] {f}", .{ idx, instr });
+    log.debug("Compiled: {X}", .{self._jit_buffer.?[0..block_size]});
 
     self._dirty_mpro = false;
 }

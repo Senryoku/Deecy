@@ -196,13 +196,13 @@ fn get_game_image(self: *@This(), path: []const u8) void {
     const allocator = arena.allocator();
 
     var disc = Disc.init(path, allocator) catch |err| {
-        ui_log.err("Failed to load disc '{s}': {s}", .{ path, @errorName(err) });
+        ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
         return;
     };
     defer disc.deinit(allocator);
 
     const tex_buffer: []u8 = allocator.alloc(u8, 1024 * 1024) catch |err| {
-        ui_log.err("Failed to allocate texture buffer: {s}", .{@errorName(err)});
+        ui_log.err("Failed to allocate texture buffer: {t}", .{err});
         return;
     };
     defer allocator.free(tex_buffer);
@@ -250,10 +250,10 @@ fn get_game_image(self: *@This(), path: []const u8) void {
             self.deecy.gctx.releaseResource(view);
             self.deecy.gctx.releaseResource(texture);
         } else |err| {
-            ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {any}"), .{ path, err });
+            ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {t}"), .{ path, err });
         }
     } else |err| {
-        ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {any}", .{ path, err });
+        ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {t}", .{ path, err });
     }
 }
 
@@ -267,7 +267,7 @@ pub fn refresh_games(self: *@This()) !void {
             self.disc_files.clearRetainingCapacity();
 
             var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
-                ui_log.err(termcolor.red("Failed to open game directory: {s}"), .{@errorName(err)});
+                ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
             };
             defer dir.close();
@@ -324,7 +324,7 @@ pub fn draw(self: *@This()) !void {
                         switch (err) {
                             error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
                             else => {
-                                ui_log.err("Failed to load disc: {s}", .{@errorName(err)});
+                                ui_log.err("Failed to load disc: {t}", .{err});
                                 error_popup_to_open = "Unknown error";
                             },
                         }
@@ -426,7 +426,7 @@ pub fn draw(self: *@This()) !void {
                     defer nfd.freePath(path);
                     // TODO! Emulate opening the tray and inserting a new disc.
                     d.load_disc(path) catch |err| {
-                        ui_log.err("Failed to load disc: {s}", .{@errorName(err)});
+                        ui_log.err("Failed to load disc: {t}", .{err});
                         self.last_error = "Failed to load disc.";
                         zgui.openPopup("ErrorPopup", .{});
                         break :err_brk;
@@ -478,7 +478,7 @@ pub fn draw(self: *@This()) !void {
                 error.MissingFlash => error_popup_to_open = "Error: Missing Flash",
                 else => {
                     error_popup_to_open = "Unknown error";
-                    ui_log.err(termcolor.red("Error: {s}"), .{@errorName(err)});
+                    ui_log.err(termcolor.red("Error: {t}"), .{err});
                 },
             }
         };
@@ -631,7 +631,7 @@ pub fn draw(self: *@This()) !void {
                                         }
                                         zgui.sameLine(.{});
                                         if (@field(d.config.keyboard_bindings[i], field.name)) |key| {
-                                            zgui.text("{s}: {s}", .{ field.name, @tagName(key) });
+                                            zgui.text("{s}: {t}", .{ field.name, key });
                                         } else {
                                             zgui.text("{s}: None", .{field.name});
                                         }

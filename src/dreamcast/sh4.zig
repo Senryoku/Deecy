@@ -642,7 +642,7 @@ pub const SH4 = struct {
     }
 
     pub fn jump_to_exception(self: *@This(), exception: Exception) void {
-        sh4_log.info("Jump to Exception: {s} ({X:0>8} to {X:0>8} + {X:0>4})", .{ @tagName(exception), self.pc, self.vbr, exception.offset() });
+        sh4_log.info("Jump to Exception: {t} ({X:0>8} to {X:0>8} + {X:0>4})", .{ exception, self.pc, self.vbr, exception.offset() });
 
         // When the BL bit in SR is 1 and an exception other than a user break is generated, the CPU’s
         // internal registers are set to their post-reset state, the registers of the other modules retain their
@@ -652,7 +652,7 @@ pub const SH4 = struct {
         // has been cleared to 0 by software. If a nonmaskable interrupt (NMI) occurs, it can be held
         // pending or accepted according to the setting made by software.
         if (self.sr.bl)
-            std.debug.panic("[PC={X:0>8}] " ++ termcolor.red("{s} exception raised while SR.BL is set."), .{ self.pc, @tagName(exception) });
+            std.debug.panic("[PC={X:0>8}] " ++ termcolor.red("{t} exception raised while SR.BL is set."), .{ self.pc, exception });
         // A setting can also be made to have the NMI interrupt accepted even if the BL bit is set to 1.
         // NMI interrupt exception handling does not affect the interrupt mask level bits (I3–I0) in the
         // status register (SR).
@@ -850,7 +850,7 @@ pub const SH4 = struct {
                 self.store_queues[sq_addr.sq][sq_addr.lw_spec] = @truncate(value);
                 self.store_queues[sq_addr.sq][sq_addr.lw_spec + 1] = @truncate(value >> 32);
             },
-            else => std.debug.panic("Invalid store queue write type {any}", .{T}),
+            else => std.debug.panic("Invalid store queue write type {}", .{T}),
         }
     }
 
@@ -868,7 +868,7 @@ pub const SH4 = struct {
         const len = self.read_p4_register(u32, c.dmatcr);
         const byte_len = transfer_size * len;
 
-        sh4_log.info("DMAC ({d}) CHCR: {any}\n  src_addr: 0x{X:0>8} => dst_addr: 0x{X:0>8} (transfer_size: 0x{X:0>8}, len: 0x{X:0>8}, byte_len: 0x{X:0>8})", .{ channel, chcr, src_addr, dst_addr, transfer_size, len, byte_len });
+        sh4_log.info("DMAC ({d}) CHCR: {}\n  src_addr: 0x{X:0>8} => dst_addr: 0x{X:0>8} (transfer_size: 0x{X:0>8}, len: 0x{X:0>8}, byte_len: 0x{X:0>8})", .{ channel, chcr, src_addr, dst_addr, transfer_size, len, byte_len });
 
         const dst_stride: i32 = switch (chcr.dm) {
             0 => 0,
@@ -970,7 +970,7 @@ pub const SH4 = struct {
                 // 1MB pages (warning: there's a transition period while they're being updated when the sizes don't match yet,
                 // so we can't rely on that sadly) with 0xExx00000 VPN.
                 if (entry.valid() and (entry.vpn & (0xF00F_FFFF >> 10)) != (0xE000_0000 >> 10)) {
-                    sh4_log.debug("Full MMU emulation needed for entry {any}", .{entry});
+                    sh4_log.debug("Full MMU emulation needed for entry {f}", .{entry});
                     full_mmu_emulation_needed = true;
                     break;
                 }
@@ -979,7 +979,7 @@ pub const SH4 = struct {
         }
 
         if (self._mmu_state != previous_state) {
-            sh4_log.warn("MMU State: {s} => {s}", .{ @tagName(previous_state), @tagName(self._mmu_state) });
+            sh4_log.warn("MMU State: {t} => {t}", .{ previous_state, self._mmu_state });
             if (previous_state == .Full or self._mmu_state == .Full)
                 if (self._dc) |dc| dc.sh4_jit.safe_reset();
         }
@@ -989,7 +989,7 @@ pub const SH4 = struct {
         if (!EnableUTLBFastLookup) return;
         host_memory.virtual_dealloc(self._fast_utlb_lookup);
         self._fast_utlb_lookup = host_memory.virtual_alloc(u8, @as(u32, 1) << (22 + 8)) catch |err| {
-            std.debug.panic("Error allocating _fast_utlb_lookup: {s}", .{@errorName(err)});
+            std.debug.panic("Error allocating _fast_utlb_lookup: {t}", .{err});
         };
         for (0..self.utlb.len) |idx|
             self.sync_utlb_fast_lookup(@intCast(idx));
@@ -1067,7 +1067,7 @@ pub const SH4 = struct {
             if (EmulateAccessViolation and self.sr.md == 0 and entry.pr.privileged())
                 return error.TLBProtectionViolation;
             mmu_log.debug("UTLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, entry.translate(virtual_addr) });
-            mmu_log.debug("  Entry: {any}", .{entry});
+            mmu_log.debug("  Entry: {f}", .{entry});
             return entry;
         }
 
@@ -1141,7 +1141,7 @@ pub const SH4 = struct {
 
                     const physical_address = entry.translate(virtual_addr);
                     mmu_log.debug("ITLB Hit: {x:0>8} -> {x:0>8}", .{ virtual_addr, physical_address });
-                    mmu_log.debug("  Entry {d}: {any}", .{ idx, entry });
+                    mmu_log.debug("  Entry {d}: {f}", .{ idx, entry });
                     return physical_address & 0x1FFF_FFFF;
                 }
             }
@@ -1205,31 +1205,31 @@ pub const SH4 = struct {
             },
             0xE4000000...0xEFFFFFFF => {
                 // Reserved
-                sh4_log.err(termcolor.red("Read({any}) from Reserved space in P4 (PC: {X:0>8}): {X:0>8}"), .{ T, self.pc, virtual_addr });
+                sh4_log.err(termcolor.red("Read({}) from Reserved space in P4 (PC: {X:0>8}): {X:0>8}"), .{ T, self.pc, virtual_addr });
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
-                sh4_log.info(termcolor.yellow("Read({any}) from Instruction cache address array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({}) from Instruction cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
-                sh4_log.info(termcolor.yellow("Read({any}) from Instruction cache data array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({}) from Instruction cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
-                sh4_log.warn(termcolor.yellow("Read({any}) from Instruction TLB address array (ITLB): {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.warn(termcolor.yellow("Read({}) from Instruction TLB address array (ITLB): {X:0>8}"), .{ T, virtual_addr });
             },
             0xF3000000...0xF3FFFFFF => {
                 // Instruction TLB data arrays 1 and 2 (ITLB)
-                sh4_log.warn(termcolor.yellow("Read({any}) from Instruction TLB data array (ITLB): {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.warn(termcolor.yellow("Read({}) from Instruction TLB data array (ITLB): {X:0>8}"), .{ T, virtual_addr });
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
-                sh4_log.info(termcolor.yellow("Read({any}) from Operand cache address array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({}) from Operand cache address array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
-                sh4_log.info(termcolor.yellow("Read({any}) from Operand cache data array: {X:0>8}"), .{ T, virtual_addr });
+                sh4_log.info(termcolor.yellow("Read({}) from Operand cache data array: {X:0>8}"), .{ T, virtual_addr });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array
@@ -1289,7 +1289,7 @@ pub const SH4 = struct {
                 if (virtual_addr >= 0xFF000000) {
                     switch (@as(P4Register, @enumFromInt(virtual_addr))) {
                         P4Register.RFCR => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RFCR\n", .{T});
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RFCR\n", .{T});
                             // Hack: This is the Refresh Count Register, related to DRAM control.
                             //       If don't think its proper emulation is needed, but it's accessed by the bios,
                             //       probably for synchronization purposes. I assume returning a contant value to pass this check
@@ -1299,7 +1299,7 @@ pub const SH4 = struct {
                             // Otherwise, this is 10-bits register, respond with the 6 unused upper bits set to 0.
                         },
                         P4Register.PDTRA => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Read({any}) to PDTRA\n", .{T});
+                            check_type(&[_]type{u16}, T, "Invalid P4 Read({}) to PDTRA\n", .{T});
                             // Port data register A (PDTRA) is a 16-bit readable/writable register used as a data latch for each
                             // bit in the 16-bit port. When a bit is set as an output, the value written to the PDTRA register is
                             // output from the external pin. When a value is read from the PDTRA register while a bit is set as
@@ -1343,10 +1343,10 @@ pub const SH4 = struct {
                         },
                         else => {
                             if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
-                                sh4_log.warn(termcolor.yellow(" [{X:0>8}] Invalid Read({any}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
+                                sh4_log.warn(termcolor.yellow(" [{X:0>8}] Invalid Read({}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
                                 return 0;
                             }
-                            sh4_log.debug("  Read({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
+                            sh4_log.debug("  Read({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), @constCast(self).p4_register_addr(T, virtual_addr).* });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
                     }
@@ -1373,19 +1373,19 @@ pub const SH4 = struct {
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array
-                sh4_log.info(termcolor.yellow("Write({any}) to Instruction cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Instruction cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF1000000...0xF1FFFFFF => {
                 // Instruction cache data array
-                sh4_log.info(termcolor.yellow("Write({any}) to Instruction cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Instruction cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF2000000...0xF2FFFFFF => {
                 // Instruction TLB address array (ITLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.warn(termcolor.yellow("Write({}) to Instruction TLB address array (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u4 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBAddressData = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (VPN: {X:0>6})"), .{ entry, val, val.vpn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (VPN: {X:0>6})"), .{ entry, val, val.vpn });
 
                     const before = self.itlb[entry];
 
@@ -1400,11 +1400,11 @@ pub const SH4 = struct {
             },
             0xF3000000...0xF37FFFFF => {
                 // Instruction TLB data arrays 1 (ITLB)
-                sh4_log.warn(termcolor.yellow("Write({any}) to Instruction TLB data array 1 (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.warn(termcolor.yellow("Write({}) to Instruction TLB data array 1 (ITLB): {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u2 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
 
                     const before = self.itlb[entry];
 
@@ -1423,31 +1423,31 @@ pub const SH4 = struct {
             },
             0xF3800000...0xF3FFFFFF => {
                 // Instruction TLB data arrays 2 (ITLB)
-                sh4_log.info(termcolor.yellow("Write({any}) to Instruction TLB data array 2 (ITLB):   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Instruction TLB data array 2 (ITLB):   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u2 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
                     self.itlb[entry].sa = val.sa;
                     self.itlb[entry].tc = val.tc;
                 }
             },
             0xF4000000...0xF4FFFFFF => {
                 // Operand cache address array
-                sh4_log.info(termcolor.yellow("Write({any}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Operand cache address array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF5000000...0xF5FFFFFF => {
                 // Operand cache data array
-                sh4_log.info(termcolor.yellow("Write({any}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Operand cache data array: {X:0>8} = {X:0>8}"), .{ T, virtual_addr, value });
             },
             0xF6000000...0xF6FFFFFF => {
                 // Unified TLB address array (UTLB)
-                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB address array: {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const association_bit: u1 = @truncate(virtual_addr >> 7);
                     const val: mmu.UTLBAddressData = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {any} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3} (A:{X:0>1}): {} (VPN: {X:0>6})"), .{ entry, association_bit, val, val.vpn });
 
                     std.debug.assert(association_bit == 0); // 1: Not implemented
                     // When a write is performed with the A bit in the address field set to 1, comparison of all the
@@ -1479,11 +1479,11 @@ pub const SH4 = struct {
             },
             0xF7000000...0xF77FFFFF => {
                 // Unified TLB data array 1  (UTLB)
-                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB data array 1:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData1 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {} (PPN: {X:0>5})"), .{ entry, val, val.ppn });
 
                     const before = self.utlb[entry];
 
@@ -1506,11 +1506,11 @@ pub const SH4 = struct {
             },
             0xF7800000...0xF7FFFFFF => {
                 // Unified TLB data array 2 (UTLB)
-                sh4_log.info(termcolor.yellow("Write({any}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
+                sh4_log.info(termcolor.yellow("Write({}) to Unified TLB data array 2:   {X:0>8} ({X:0>8})"), .{ T, virtual_addr, value });
                 if (T == u32) {
                     const entry: u6 = @truncate(virtual_addr >> 8);
                     const val: mmu.UTLBArrayData2 = @bitCast(value);
-                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {any}"), .{ entry, val });
+                    sh4_log.info(termcolor.yellow("  Entry {X:0>3}: {}"), .{ entry, val });
                     self.utlb[entry].sa = val.sa;
                     self.utlb[entry].tc = val.tc;
                 }
@@ -1526,7 +1526,7 @@ pub const SH4 = struct {
                         @intFromEnum(P4Register.MMUCR) => {
                             if (T == u32) {
                                 var val: mmu.MMUCR = @bitCast(value);
-                                sh4_log.debug("Write({any}) to MMUCR: {X:0>8}: {any}", .{ T, value, val });
+                                sh4_log.debug("Write({}) to MMUCR: {X:0>8}: {}", .{ T, value, val });
                                 const mmucr = self.p4_register(mmu.MMUCR, .MMUCR);
                                 if (val.ti) {
                                     mmu_log.debug("TLB Invalidation", .{});
@@ -1542,7 +1542,7 @@ pub const SH4 = struct {
                                 self.check_mmu_state();
                                 return;
                             } else {
-                                sh4_log.warn("Write({any}) to MMUCR: {X}", .{ T, value });
+                                sh4_log.warn("Write({}) to MMUCR: {X}", .{ T, value });
                             }
                         },
                         // SDMR2/SDMR3
@@ -1551,7 +1551,7 @@ pub const SH4 = struct {
                             return;
                         },
                         @intFromEnum(P4Register.SCFTDR2) => {
-                            check_type(&[_]type{u8}, T, "Invalid P4 Write({any}) to SCFTDR2\n", .{T});
+                            check_type(&[_]type{u8}, T, "Invalid P4 Write({}) to SCFTDR2\n", .{T});
 
                             var stdout_buffer: [128]u8 = undefined;
                             var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
@@ -1572,13 +1572,13 @@ pub const SH4 = struct {
                             return;
                         },
                         @intFromEnum(P4Register.RTCSR), @intFromEnum(P4Register.RTCNT), @intFromEnum(P4Register.RTCOR) => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RTCSR\n", .{T});
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RTCSR\n", .{T});
                             std.debug.assert(value & 0xFF00 == 0b10100101_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0xFF);
                             return;
                         },
                         @intFromEnum(P4Register.RFCR) => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to RFCR\n", .{T});
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to RFCR\n", .{T});
                             std.debug.assert(value & 0b11111100_00000000 == 0b10100100_00000000);
                             self.p4_register_addr(u16, virtual_addr).* = (value & 0b11_11111111);
                             return;
@@ -1594,15 +1594,15 @@ pub const SH4 = struct {
                         },
                         // Serial Interface
                         @intFromEnum(P4Register.SCFSR2) => {
-                            check_type(&[_]type{u16}, T, "Invalid P4 Write({any}) to SCFSR2\n", .{T});
+                            check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
                             // Writable bits can only be cleared.
                             // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
                             return;
                         },
                         @intFromEnum(P4Register.CCR) => {
-                            check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to CCR\n", .{T});
+                            check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to CCR\n", .{T});
                             var ccr: P4.CCR = @bitCast(value);
-                            sh4_log.debug("Write to CCR: {any}", .{ccr});
+                            sh4_log.debug("Write to CCR: {}", .{ccr});
                             // ICI: IC invalidation bit - When 1 is written to this bit, the V bits of all IC entries are cleared to 0. This bit always returns 0 when read.
                             // OCI: OC invalidation bit - When 1 is written to this bit, the V and U bits of all OC entries are cleared to 0. This bit always returns 0 when read.
                             if (ccr.ici == 1 or ccr.oci == 1) {
@@ -1622,7 +1622,7 @@ pub const SH4 = struct {
                             return;
                         },
                         @intFromEnum(P4Register.CHCR0), @intFromEnum(P4Register.CHCR1), @intFromEnum(P4Register.CHCR2) => {
-                            check_type(&[_]type{u32}, T, "Invalid P4 Write({any}) to 0x{X:0>8}\n", .{ T, virtual_addr });
+                            check_type(&[_]type{u32}, T, "Invalid P4 Write({}) to 0x{X:0>8}\n", .{ T, virtual_addr });
                             const chcr: P4.CHCR = @bitCast(value);
                             if (chcr.de == 1 and chcr.rs & 0b1100 == 0b0100) {
                                 sh4_log.warn(" CHCR {X:0>8} write with DMAC enable and auto request on! Value {X:0>8}", .{ virtual_addr, value });
@@ -1630,7 +1630,7 @@ pub const SH4 = struct {
                             }
                         },
                         @intFromEnum(P4Register.WTCNT), @intFromEnum(P4Register.WTCSR) => {
-                            sh4_log.warn(termcolor.yellow("Write to non implemented-P4 register {s}: {X:0>4}."), .{ @tagName(@as(P4Register, @enumFromInt(virtual_addr))), value });
+                            sh4_log.warn(termcolor.yellow("Write to non implemented-P4 register {t}: {X:0>4}."), .{ @as(P4Register, @enumFromInt(virtual_addr)), value });
                         },
                         @intFromEnum(P4Register.IPRA), @intFromEnum(P4Register.IPRB), @intFromEnum(P4Register.IPRC) => {
                             self.p4_register_addr(T, virtual_addr).* = value;
@@ -1652,7 +1652,7 @@ pub const SH4 = struct {
                             return;
                         },
                         else => {
-                            sh4_log.debug("  Write({any}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
+                            sh4_log.debug("  Write({}) to P4 register @{X:0>8} {s} = 0x{X}", .{ T, virtual_addr, P4.getP4RegisterName(virtual_addr), value });
                         },
                     }
 

@@ -72,7 +72,7 @@ pub fn mainloop(dc: *Dreamcast) void {
             const size = dc.gdrom_hle.params[1];
             const dest = dc.gdrom_hle.params[2] & 0x1FFFFFFF;
 
-            gdrom_hle_log.info("    GDROM {s} sector={d} size={d} destination=0x{X:0>8}", .{ @tagName(dc.gdrom_hle.command), lba, size, dest });
+            gdrom_hle_log.info("    GDROM {t} sector={d} size={d} destination=0x{X:0>8}", .{ dc.gdrom_hle.command, lba, size, dest });
             const read = dc.gdrom.disc.?.load_sectors(lba, size, @as([*]u8, @ptrCast(dc._get_memory(dest)))[0 .. 2352 * size]);
 
             dc.schedule_interrupt(.{ .EoD_GDROM = 1 }, 100_000 * size);
@@ -156,7 +156,7 @@ pub fn check_command(dc: *Dreamcast, cmd_id: u32) u32 {
     return 2;
 }
 
-pub fn serialize(self: *@This(), writer: anytype) !usize {
+pub fn serialize(self: *@This(), writer: *std.Io.Writer) !usize {
     var bytes: usize = 0;
     bytes += try writer.write(std.mem.asBytes(&self.command));
     bytes += try writer.write(std.mem.sliceAsBytes(self.params));

@@ -22,8 +22,8 @@ const Instruction = packed struct(u32) {
     _z1: u13 = 0,
     end_flag: u1,
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("MapleInstruction{{ transfer_length: {X}, pattern: {s}, port_select: {X}, end_flag: {X} }}", .{ self.transfer_length, @tagName(self.pattern), self.port_select, self.end_flag });
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("MapleInstruction{{ transfer_length: {X}, pattern: {t}, port_select: {X}, end_flag: {X} }}", .{ self.transfer_length, self.pattern, self.port_select, self.end_flag });
     }
 };
 
@@ -63,8 +63,8 @@ const CommandWord = packed struct(u32) {
     sender_address: u8,
     payload_length: u8, // In 32-bit words.
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writer.print("{s}{{ recipent: {X}, sender: {X}, payload_length: {X} }}", .{ @tagName(self.command), self.recipent_address, self.sender_address, self.payload_length });
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
+        try writer.print("{t}{{ recipent: {X}, sender: {X}, payload_length: {X} }}", .{ self.command, self.recipent_address, self.sender_address, self.payload_length });
     }
 };
 
@@ -129,7 +129,7 @@ const FunctionCodesMask = packed struct(u32) {
     const Timer = @This(){ .timer = 1 };
     const Controller = @This(){ .controller = 1 };
 
-    pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: @This(), writer: *std.Io.Writer) !void {
         if (@popCount(self.as_u32()) == 1) {
             inline for (@typeInfo(FunctionCodesMask).@"struct".fields) |field| {
                 if (@field(self, field.name) == 1) try writer.writeAll(field.name);
@@ -365,7 +365,7 @@ pub const VMU = struct {
                     return;
                 },
                 else => {
-                    maple_log.err("Failed to create VMU file '{s}': {any}", .{ self.backing_file_path, e });
+                    maple_log.err("Failed to create VMU file '{s}': {t}", .{ self.backing_file_path, e });
                     return e;
                 },
             }
@@ -434,12 +434,12 @@ pub const VMU = struct {
     pub fn save(self: *@This()) void {
         self.save_backup();
         var file = std.fs.cwd().openFile(self.backing_file_path, .{ .mode = .write_only }) catch |err| {
-            maple_log.err("Failed to open VMU file '{s}': {any}", .{ self.backing_file_path, err });
+            maple_log.err("Failed to open VMU file '{s}': {t}", .{ self.backing_file_path, err });
             return;
         };
         defer file.close();
         file.writeAll(@as([*]u8, @ptrCast(self.blocks.ptr))[0 .. self.blocks.len * BlockSize]) catch |err| {
-            maple_log.err("Failed to save VMU: {any}", .{err});
+            maple_log.err("Failed to save VMU: {t}", .{err});
         };
         maple_log.info("Saved VMU to file '{s}'.", .{self.backing_file_path});
         self.last_unsaved_change = null;
@@ -449,17 +449,17 @@ pub const VMU = struct {
         const filename = std.fs.path.basename(self.backing_file_path);
         const dir_path = std.fs.path.dirname(self.backing_file_path) orelse ".";
         var dest_dir = std.fs.cwd().openDir(dir_path, .{}) catch |err| {
-            maple_log.err("Failed to open VMU destination directory '{s}': {any}", .{ dir_path, err });
+            maple_log.err("Failed to open VMU destination directory '{s}': {t}", .{ dir_path, err });
             return;
         };
         var buf: [256]u8 = @splat(0);
         const backup_filename = std.fmt.bufPrint(&buf, "{s}.bak", .{filename}) catch |err| {
-            maple_log.err("Failed to format backup filename: {any}", .{err});
+            maple_log.err("Failed to format backup filename: {t}", .{err});
             return;
         };
         defer dest_dir.close();
         std.fs.cwd().copyFile(self.backing_file_path, dest_dir, backup_filename, .{}) catch |err| {
-            maple_log.err("Failed to backup VMU file '{s}': {any}", .{ backup_filename, err });
+            maple_log.err("Failed to backup VMU file '{s}': {t}", .{ backup_filename, err });
         };
     }
 
@@ -500,7 +500,7 @@ pub const VMU = struct {
                 @memcpy(dest[0..4], std.mem.asBytes(&value));
                 return 1;
             },
-            else => maple_log.err(termcolor.red("Unimplemented VMU::GetMediaInformation for function: {any}"), .{@as(FunctionCodesMask, @bitCast(function))}),
+            else => maple_log.err(termcolor.red("Unimplemented VMU::GetMediaInformation for function: {f}"), .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }
@@ -511,13 +511,13 @@ pub const VMU = struct {
         switch (function) {
             FunctionCodesMask.Storage.as_u32() => {
                 if (block_num >= BlockCount)
-                    maple_log.err(termcolor.red("Invalid block number: {any} (BlockCount: {any})"), .{ block_num, BlockCount });
+                    maple_log.err(termcolor.red("Invalid block number: {d} (BlockCount: {d})"), .{ block_num, BlockCount });
                 const len = BlockSize / ReadAccessPerBlock;
                 const start: u32 = len * phase;
                 @memcpy(dest[0..len], self.blocks[block_num % BlockCount][start .. start + len]);
                 return len / 4;
             },
-            else => maple_log.err("Unimplemented VMU.block_read for function: {any}", .{function}),
+            else => maple_log.err("Unimplemented VMU.block_read for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }
@@ -537,7 +537,7 @@ pub const VMU = struct {
                 return 48 * 32 / 8 / 4;
             },
             FunctionCodesMask.Storage.as_u32() => {
-                maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {any} Block: {any}, Phase: {any} (data length: {d} bytes)"), .{ partition, block_num, phase, data.len * 4 });
+                maple_log.warn(termcolor.yellow("Storage BlockWrite! Partition: {d} Block: {d}, Phase: {d} (data length: {d} bytes)"), .{ partition, block_num, phase, data.len * 4 });
 
                 const start = phase * (BlockSize / WriteAccessPerBlock);
                 const size = @min(BlockSize / WriteAccessPerBlock, data.len * 4);
@@ -546,7 +546,7 @@ pub const VMU = struct {
                 self.last_unsaved_change = std.time.timestamp();
                 return @intCast(size / 4);
             },
-            else => maple_log.err("Unimplemented VMU.block_write for function: {any}", .{function}),
+            else => maple_log.err("Unimplemented VMU.block_write for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
         return 0;
     }
@@ -563,7 +563,7 @@ pub const VMU = struct {
 
                 // data holds the duty cycle of two alarms.
             },
-            else => maple_log.err("Unimplemented VMU.set_condition for function: {any}", .{function}),
+            else => maple_log.err("Unimplemented VMU.set_condition for function: {f}", .{@as(FunctionCodesMask, @bitCast(function))}),
         }
     }
 
@@ -590,7 +590,7 @@ const Peripheral = union(enum) {
         return switch (self.*) {
             .VMU => |*v| v.block_read(dest, function, partition, block_num, phase),
             else => s: {
-                maple_log.err(termcolor.red("Unimplemented BlockRead for target: {any}"), .{self.tag()});
+                maple_log.err(termcolor.red("Unimplemented BlockRead for target: {t}"), .{self.tag()});
                 break :s 0;
             },
         };
@@ -599,12 +599,12 @@ const Peripheral = union(enum) {
     pub fn block_write(self: *@This(), function: u32, partition: u8, phase: u8, block_num: u16, data: []const u32) u8 {
         switch (self.*) {
             .VMU => |*v| return v.block_write(function, partition, phase, block_num, data),
-            else => maple_log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {any}"), .{self.tag()}),
+            else => maple_log.warn(termcolor.yellow("BlockWrite Unimplemented for target: {t}"), .{self.tag()}),
         }
         return 0;
     }
 
-    pub fn serialize(self: @This(), writer: anytype) !usize {
+    pub fn serialize(self: @This(), writer: *std.Io.Writer) !usize {
         var bytes: usize = 0;
         switch (self) {
             inline else => |impl| {
@@ -627,7 +627,7 @@ const MaplePort = struct {
         std.debug.assert(return_addr >= 0x0C000000 and return_addr < 0x10000000);
         const command: CommandWord = @bitCast(data[1]);
         const function_type = data[2];
-        maple_log.debug("  Dest: {X:0>8}, Command: {any}, Function: {any}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
+        maple_log.debug("  Dest: {X:0>8}, Command: {f}, Function: {f}", .{ return_addr, command, @as(FunctionCodesMask, @bitCast(function_type)) });
 
         // NOTE: The sender address should also include the sub-peripheral bit when appropriate.
         // "When a main peripheral identifies itself in the response to a command, it sets the sub-peripheral bit for each sub-peripheral that is connected in addition to bit 5."
@@ -665,7 +665,7 @@ const MaplePort = struct {
                             return 1 + condition.len;
                         },
                         else => {
-                            maple_log.err(termcolor.red("Unimplemented GetCondition for target: {any}"), .{target.tag()});
+                            maple_log.err(termcolor.red("Unimplemented GetCondition for target: {t}"), .{target.tag()});
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
@@ -674,7 +674,7 @@ const MaplePort = struct {
                 .GetMediaInformation => {
                     std.debug.assert(command.payload_length == 2);
                     const partition_number: u8 = @truncate(data[3] >> 24);
-                    maple_log.warn(termcolor.yellow("  GetMediaInformation: Function: {any}, Partition number: {any}"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
+                    maple_log.warn(termcolor.yellow("  GetMediaInformation: Function: {f}, Partition number: {d}"), .{ @as(FunctionCodesMask, @bitCast(function_type)), partition_number });
 
                     switch (target.*) {
                         .VMU => |*v| {
@@ -690,7 +690,7 @@ const MaplePort = struct {
                             }
                         },
                         else => {
-                            maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {any}"), .{target.tag()});
+                            maple_log.err(termcolor.red("Unimplemented GetMediaInformation for target: {t}"), .{target.tag()});
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
@@ -701,7 +701,7 @@ const MaplePort = struct {
                     const partition: u8 = @truncate((data[3] >> 0) & 0xFF);
                     const phase: u8 = @truncate((data[3] >> 8) & 0xFF);
                     const block_num: u16 = @truncate(((data[3] >> 24) & 0xFF) | ((data[3] >> 8) & 0xFF00));
-                    maple_log.warn(termcolor.yellow("BlockRead! Partition: {any} Block: {any}, Phase: {any} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
+                    maple_log.warn(termcolor.yellow("BlockRead! Partition: {d} Block: {d}, Phase: {d} (data[3]: {X:0>8})"), .{ partition, block_num, phase, data[3] });
 
                     const dest = @as([*]u8, @ptrCast(dc._get_memory(return_addr + 12)))[0..];
                     const payload_size = target.block_read(dest, function_type, partition, block_num, phase);
@@ -737,7 +737,7 @@ const MaplePort = struct {
                             return 1;
                         },
                         else => {
-                            maple_log.err(termcolor.red("Unimplemented SetCondition for target: {any}"), .{target.tag()});
+                            maple_log.err(termcolor.red("Unimplemented SetCondition for target: {t}"), .{target.tag()});
                             dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                             return 1;
                         },
@@ -745,7 +745,7 @@ const MaplePort = struct {
                     return 1;
                 },
                 else => {
-                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({any}, {any})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data[0..4] });
+                    maple_log.warn(termcolor.yellow("Unimplemented command: {s} ({X}, {any})"), .{ std.enums.tagName(Command, command.command) orelse "Unknown", @intFromEnum(command.command), data[0..4] });
                     dc.cpu.write_physical(u32, return_addr, @bitCast(CommandWord{ .command = .FunctionCodeNotSupported, .sender_address = sender_address, .recipent_address = recipent_address, .payload_length = 0 }));
                     return 1;
                 },
@@ -756,7 +756,7 @@ const MaplePort = struct {
         }
     }
 
-    pub fn serialize(self: @This(), writer: anytype) !usize {
+    pub fn serialize(self: @This(), writer: *std.Io.Writer) !usize {
         // Nothing for now.
         if (comptime true) {
             return 0;
@@ -826,7 +826,7 @@ pub const MapleHost = struct {
             const instr: Instruction = @bitCast(data[idx]);
             idx += 1;
 
-            maple_log.debug("{any}", .{instr});
+            maple_log.debug("{f}", .{instr});
 
             switch (instr.pattern) {
                 .Normal => {

@@ -458,7 +458,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
 
         pub const Empty = ListPointer{ .pointer_to_object_list = std.math.maxInt(u22), .empty = true };
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             try writer.print("{s}{X:<6}\u{001b}[0m", .{ termcolor.colored_bool(!self.empty), @as(u24, self.pointer_to_object_list) << 2 });
         }
     };
@@ -473,7 +473,7 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         z_clear: enum(u1) { Clear = 0, Load = 1 },
         last_region: bool,
 
-        pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: @This(), writer: *std.Io.Writer) !void {
             try writer.print("X:{d:<2} Y:{d:<2} {s}Flush-Accumulate\u{001b}[0m {s}Pre-Sort\u{001b}[0m {s}Z-Clear\u{001b}[0m {s}Last Region\u{001b}[0m", .{
                 self.tile_x_position,
                 self.tile_y_position,
@@ -494,21 +494,21 @@ pub const RegionArrayDataConfiguration = packed struct(u192) {
         return self.opaque_list_pointer.empty and self.opaque_modifier_volume_pointer.empty and self.translucent_list_pointer.empty and self.translucent_modifier_volume_pointer.empty and self.punch_through_list_pointer.empty;
     }
 
-    pub fn format(self: @This(), comptime _: []const u8, opt: std.fmt.FormatOptions, writer: anytype) !void {
-        if (opt.width == 0) {
-            try writer.print("{any}", .{self.settings});
-            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
-            try writer.print(" | Opaque MV: {any}", .{self.opaque_modifier_volume_pointer});
-            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
-            try writer.print(" | Translucent MV: {any}", .{self.translucent_modifier_volume_pointer});
-        } else {
-            try writer.print("{any}", .{self.settings});
-            try writer.print(" | Opaque: {any}", .{self.opaque_list_pointer});
-            try writer.print(" | Opaque MV: {any}", .{self.opaque_modifier_volume_pointer});
-            try writer.print(" | Translucent: {any}", .{self.translucent_list_pointer});
-            try writer.print(" | Translucent MV: {any}", .{self.translucent_modifier_volume_pointer});
-            try writer.print(" | PunchThrough: {any}", .{self.punch_through_list_pointer});
-        }
+    pub fn format(self: @This(), writer: *std.io.Writer) !void {
+        try writer.print("{f}", .{self.settings});
+        try writer.print(" | Opaque: {f}", .{self.opaque_list_pointer});
+        try writer.print(" | Opaque MV: {f}", .{self.opaque_modifier_volume_pointer});
+        try writer.print(" | Translucent: {f}", .{self.translucent_list_pointer});
+        try writer.print(" | Translucent MV: {f}", .{self.translucent_modifier_volume_pointer});
+        try writer.print(" | PunchThrough: {f}", .{self.punch_through_list_pointer});
+    }
+
+    pub fn formatType1(self: @This(), writer: *std.io.Writer) !void {
+        try writer.print("{f}", .{self.settings});
+        try writer.print(" | Opaque: {f}", .{self.opaque_list_pointer});
+        try writer.print(" | Opaque MV: {f}", .{self.opaque_modifier_volume_pointer});
+        try writer.print(" | Translucent: {f}", .{self.translucent_list_pointer});
+        try writer.print(" | Translucent MV: {f}", .{self.translucent_modifier_volume_pointer});
     }
 };
 
@@ -934,7 +934,7 @@ fn obj_control_to_polygon_type(obj_control: ObjControl) std.meta.Tag(Polygon) {
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 0, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 0, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
         @as(u16, @bitCast(ObjControl{ .volume = 1, .texture = 1, .offset = 1, .gouraud = 0, .uv_16bit = 1, .col_type = .IntensityMode2, .shadow = 0 })) => return .PolygonType3,
-        else => std.debug.panic(termcolor.red("Unimplemented obj_control_to_polygon_format: {b:0>16}, {any}\n"), .{ masked, obj_control }),
+        else => std.debug.panic(termcolor.red("Unimplemented obj_control_to_polygon_format: {b:0>16}, {}\n"), .{ masked, obj_control }),
     }
 }
 
@@ -1303,7 +1303,7 @@ fn obj_control_to_vertex_parameter_format(obj_control: ObjControl) std.meta.Tag(
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 0, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type13,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode1, .volume = 1, .shadow = 0 })) => return .Type14,
         @as(u16, @bitCast(ObjControl{ .uv_16bit = 1, .gouraud = 0, .offset = 0, .texture = 1, .col_type = .IntensityMode2, .volume = 1, .shadow = 0 })) => return .Type14,
-        else => std.debug.panic(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {b} {any}"), .{ masked, obj_control }),
+        else => std.debug.panic(termcolor.red("Unimplemented obj_control_to_vertex_parameter_format: {b} {}"), .{ masked, obj_control }),
     }
 }
 
@@ -1383,7 +1383,7 @@ pub const TALists = struct {
             .Opaque => &self.opaque_list,
             .PunchThrough => &self.punchthrough_list,
             .Translucent => &self.translucent_list,
-            else => std.debug.panic("Invalid List Type: {any}", .{list_type}),
+            else => std.debug.panic("Invalid List Type: {t}", .{list_type}),
         };
     }
 
@@ -1401,7 +1401,7 @@ pub const TALists = struct {
     }
 
     // TODO? Or safe to ignore?
-    pub fn serialize(_: @This(), writer: anytype) !usize {
+    pub fn serialize(_: @This(), writer: *std.Io.Writer) !usize {
         _ = writer;
         return 0;
     }
@@ -1955,7 +1955,7 @@ pub const Holly = struct {
 
     fn start_list(self: *@This(), list_type: ListType) void {
         self._ta_list_type = list_type;
-        holly_log.debug("Starting List {s} - TA_NEXT_OPB: {X:0>6}", .{ @tagName(list_type), self._get_register(u32, .TA_NEXT_OPB).* });
+        holly_log.debug("Starting List {t} - TA_NEXT_OPB: {X:0>6}", .{ list_type, self._get_register(u32, .TA_NEXT_OPB).* });
         self.ta_current_lists().check_reset();
     }
 
@@ -1964,7 +1964,7 @@ pub const Holly = struct {
 
         const parameter_control_word: ParameterControlWord = @bitCast(self._ta_command_buffer[0]);
 
-        holly_log.debug(" TA Parameter Type: {any}", .{parameter_control_word.parameter_type});
+        holly_log.debug(" TA Parameter Type: {}", .{parameter_control_word.parameter_type});
         for (0..self._ta_command_buffer_index) |i| {
             holly_log.debug("      {X:0>8}", .{self._ta_command_buffer[i]});
         }
@@ -1981,7 +1981,7 @@ pub const Holly = struct {
                         .Translucent => .{ .EoT_TranslucentList = 1 },
                         .TranslucentModifierVolume => .{ .EoT_TranslucentModifierVolumeList = 1 },
                         .PunchThrough => .{ .EoD_PunchThroughList = 1 },
-                        else => std.debug.panic(termcolor.red("  Unimplemented List Type {any}"), .{list}),
+                        else => std.debug.panic(termcolor.red("  Unimplemented List Type {}"), .{list}),
                     }, 800);
 
                     // NOTE: Probably not actually usefull, more of a debugging tool for now.
@@ -1993,7 +1993,7 @@ pub const Holly = struct {
                         .Translucent => alloc_ctrl.T_OPB.byteSize(),
                         .TranslucentModifierVolume => alloc_ctrl.TM_OPB.byteSize(),
                         .PunchThrough => alloc_ctrl.PT_OPB.byteSize(),
-                        else => std.debug.panic("Invalid display list type: {any}", .{list}),
+                        else => std.debug.panic("Invalid display list type: {}", .{list}),
                     }));
                 }
 
@@ -2019,7 +2019,7 @@ pub const Holly = struct {
                 // NOTE: I have no idea if this is actually an issue, or if it is just ignored when we've already started a list (and thus set the list type).
                 //       But I'm leaning towards "This value is valid in the following four cases" means it's ignored in the others.
                 // if (self._ta_list_type != parameter_control_word.list_type) {
-                //     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {any}, got {any}"), .{ self._ta_list_type, parameter_control_word.list_type });
+                //     holly_log.err(termcolor.red("  PolygonOrModifierVolume list type mismatch: Expected {}, got {}"), .{ self._ta_list_type, parameter_control_word.list_type });
                 // }
 
                 if (parameter_control_word.group_control.en == 1) {
@@ -2059,7 +2059,7 @@ pub const Holly = struct {
                     if (self._ta_command_buffer_index < Polygon.size(polygon_type)) return;
 
                     self._ta_current_polygon = switch (polygon_type) {
-                        .Sprite => std.debug.panic("Invalid polygon format: {any}", .{polygon_type}),
+                        .Sprite => std.debug.panic("Invalid polygon format: {}", .{polygon_type}),
                         inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
                     };
                 }
@@ -2082,7 +2082,7 @@ pub const Holly = struct {
                     if (list_type == .OpaqueModifierVolume or list_type == .TranslucentModifierVolume) {
                         if (self._ta_command_buffer_index < @sizeOf(ModifierVolumeParameter) / 4) return;
                         self.ta_current_lists().volume_triangles.append(self._allocator, @as(*ModifierVolumeParameter, @ptrCast(&self._ta_command_buffer)).*) catch |err| {
-                            holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {any}"), .{err});
+                            holly_log.err(termcolor.red("Failed to append ModifierVolumeParameter: {t}"), .{err});
                         };
 
                         if (self._ta_volume_next_polygon_is_last) {
@@ -2095,17 +2095,17 @@ pub const Holly = struct {
                             switch (polygon.*) {
                                 .Sprite => {
                                     if (parameter_control_word.end_of_strip != 1) { // Sanity check: For Sprites/Quads, each vertex parameter describes an entire polygon.
-                                        holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {any}", .{parameter_control_word});
+                                        holly_log.warn(termcolor.yellow("Unexpected Sprite without end of strip bit:") ++ "\n  {}", .{parameter_control_word});
                                     }
                                     if (polygon_obj_control.texture == 0) {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType0)) return;
                                         display_list.vertex_parameters.append(self._allocator, .{ .SpriteType0 = @as(*VertexParameter_Sprite_0, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
-                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
+                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
                                         };
                                     } else {
                                         if (self._ta_command_buffer_index < VertexParameter.size(.SpriteType1)) return;
                                         display_list.vertex_parameters.append(self._allocator, .{ .SpriteType1 = @as(*VertexParameter_Sprite_1, @ptrCast(&self._ta_command_buffer)).* }) catch |err| {
-                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
+                                            holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
                                         };
                                     }
                                 },
@@ -2117,7 +2117,7 @@ pub const Holly = struct {
                                         .SpriteType0, .SpriteType1 => unreachable,
                                         inline else => |t| @unionInit(VertexParameter, @tagName(t), @as(*std.meta.TagPayload(VertexParameter, t), @ptrCast(&self._ta_command_buffer)).*),
                                     }) catch |err| {
-                                        holly_log.err(termcolor.red("Failed to append VertexParameter: {any}"), .{err});
+                                        holly_log.err(termcolor.red("Failed to append VertexParameter: {t}"), .{err});
                                     };
                                 },
                             }
@@ -2129,13 +2129,13 @@ pub const Holly = struct {
                                     .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
                                     .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,
                                 }) catch |err| {
-                                    holly_log.err(termcolor.red("Failed to append VertexStrip: {any}"), .{err});
+                                    holly_log.err(termcolor.red("Failed to append VertexStrip: {t}"), .{err});
                                 };
 
                                 display_list.next_first_vertex_parameters_index = display_list.vertex_parameters.items.len;
                             }
                         } else {
-                            std.debug.panic(termcolor.red("    No current polygon! Current list type: {s}"), .{@tagName(list_type)});
+                            std.debug.panic(termcolor.red("    No current polygon! Current list type: {t}"), .{list_type});
                         }
                     }
                 } else {
@@ -2366,7 +2366,7 @@ pub const Holly = struct {
                         self.vram[addr + 2] = pixels[idx + 0];
                     },
                     else => {
-                        std.log.warn("TODO: {s}", .{@tagName(w_ctrl.fb_packmode)});
+                        std.log.warn("TODO: {t}", .{w_ctrl.fb_packmode});
                     },
                 }
             }

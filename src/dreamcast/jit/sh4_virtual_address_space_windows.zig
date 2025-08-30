@@ -40,7 +40,7 @@ pub fn init(allocator: std.mem.Allocator) !@This() {
     while (!mapped and attempts < 10) : (attempts += 1) {
         mapped = true;
         vas.try_mapping(allocator) catch |err| {
-            log.err(termcolor.red("Failed to map virtual address space: {s} (attempt {d}/10)"), .{ @errorName(err), attempts + 1 });
+            log.err(termcolor.red("Failed to map virtual address space: {t} (attempt {d}/10)"), .{ err, attempts + 1 });
             mapped = false;
         };
     }
@@ -150,7 +150,7 @@ fn handle_segfault_windows(info: *std.os.windows.EXCEPTION_POINTERS) callconv(.w
             const fault_address = info.ExceptionRecord.ExceptionInformation[1];
 
             VAS.patch_access(fault_address, @intFromPtr(GLOBAL_VIRTUAL_ADDRESS_SPACE_BASE), 0x1_0000_0000, &info.ContextRecord.Rip) catch |err| {
-                log.err("Failed to patch FastMem access @{X}: {s}", .{ fault_address, @errorName(err) });
+                log.err("Failed to patch FastMem access @{X}: {t}", .{ fault_address, err });
                 if (std.os.windows.kernel32.RemoveVectoredExceptionHandler(GLOBAL_EXCEPTION_HANDLER.?) == 0)
                     log.err(termcolor.red("Call to RemoveVectoredExceptionHandler failed.\n"), .{});
                 return std.os.windows.EXCEPTION_CONTINUE_SEARCH;

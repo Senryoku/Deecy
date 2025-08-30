@@ -90,7 +90,7 @@ fn display(self: anytype) void {
         // Hide "private" (or hidden) fields - Meaning those starting with an underscore.
         if (!std.mem.startsWith(u8, field.name, "_")) {
             switch (@typeInfo(field.type)) {
-                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {s}", .{ field.name, @tagName(@field(self, field.name)) }),
+                .@"enum" => zgui.text("{s: <" ++ std.fmt.comptimePrint("{d}", .{max_length}) ++ "} {t}", .{ field.name, @field(self, field.name) }),
                 .@"struct" => {
                     if (zgui.collapsingHeader(field.name ++ " (" ++ @typeName(field.type) ++ ")", .{})) {
                         display(@field(self, field.name));
@@ -434,7 +434,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         const TEA = dc.cpu.read_p4_register(u32, .TEA);
         if (MMUCR.at) zgui.textColored(Green, "Enabled", .{}) else zgui.textColored(Red, "Disabled", .{});
         zgui.sameLine(.{});
-        zgui.text(" (Level: {s})", .{@tagName(dc.cpu._mmu_state)});
+        zgui.text(" (Level: {t})", .{dc.cpu._mmu_state});
         if (MMUCR.sv) zgui.textColored(Green, "Single virtual memory mode", .{}) else zgui.textColored(Red, "Multiple virtual memory mode", .{});
         if (MMUCR.sqmd == 0) zgui.textColored(Green, "Store queue User mode", .{}) else zgui.textColored(Red, "Store queue Privileged mode", .{});
         zgui.text("URC: {X: >2}, URB: {X: >2}, LRUI: {b:0>6}", .{ MMUCR.urc, MMUCR.urb, MMUCR.lrui });
@@ -602,7 +602,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
         if (zgui.button("Dump Regs", .{})) {
             dc.aica.dump_registers();
         }
-        zgui.text("State: {s} - Run.: {any}", .{ @tagName(dc.aica.arm7.cpsr.m), dc.aica.arm7.running });
+        zgui.text("State: {t} - Run.: {any}", .{ dc.aica.arm7.cpsr.m, dc.aica.arm7.running });
         zgui.text("PC: 0x{X:0>8}", .{dc.aica.arm7.pc()});
         zgui.beginGroup();
         for (0..8) |i| {
@@ -684,7 +684,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const start_addr = channel.sample_address();
 
                     inline_colored(channel.play_control.key_on_bit, "KeyOn: {s: >3}", .{if (channel.play_control.key_on_bit) "Yes" else "No"});
-                    zgui.text(" - {s} - ", .{@tagName(channel.play_control.sample_format)});
+                    zgui.text(" - {t} - ", .{channel.play_control.sample_format});
                     zgui.sameLine(.{});
                     colored(channel.play_control.sample_loop, "Loop: {s: >3}", .{if (channel.play_control.sample_loop) "Yes" else "No"});
                     zgui.text("Addr: {X: >6} - Loop: {X:0>4} - {X:0>4}", .{
@@ -780,7 +780,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             //       Disabled by default, use it at your own risk :)
             var it = d.dc.scheduled_events.iterator();
             while (it.next()) |event| {
-                zgui.text("[{d: >10}] {?} {any}", .{ @as(i64, @intCast(event.trigger_cycle)) - cycle, event.interrupt, event.event });
+                zgui.text("[{d: >10}] {?} {f}", .{ @as(i64, @intCast(event.trigger_cycle)) - cycle, event.interrupt, event.event });
             }
         }
         zgui.end();
@@ -965,9 +965,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         if (zgui.collapsingHeader("Half Offset", .{ .frame_padding = true })) {
             const HALF_OFFSET = dc.gpu.read_register(Holly.HALF_OFFSET, .HALF_OFFSET);
-            zgui.text("FPU Pixel Sampling Position: {s}", .{@tagName(HALF_OFFSET.fpu_pixel_sampling_position)});
-            zgui.text("TSP Pixel Sampling Position: {s}", .{@tagName(HALF_OFFSET.tsp_pixel_sampling_position)});
-            zgui.text("TSP Texel Sampling Position: {s}", .{@tagName(HALF_OFFSET.tsp_texel_sampling_position)});
+            zgui.text("FPU Pixel Sampling Position: {t}", .{HALF_OFFSET.fpu_pixel_sampling_position});
+            zgui.text("TSP Pixel Sampling Position: {t}", .{HALF_OFFSET.tsp_pixel_sampling_position});
+            zgui.text("TSP Texel Sampling Position: {t}", .{HALF_OFFSET.tsp_texel_sampling_position});
         }
 
         if (zgui.collapsingHeader("Region Array", .{ .frame_padding = true })) {
@@ -1032,10 +1032,10 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         defer zgui.popId();
                         zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
                         for (list.vertex_strips.items, 0..) |strip, idx| {
-                            const strip_header = try std.fmt.bufPrintZ(&buffer, "  {s} ({d}) - {s}###strip_{d}", .{
-                                @tagName(strip.polygon.tag()),
+                            const strip_header = try std.fmt.bufPrintZ(&buffer, "  {t} ({d}) - {t}###strip_{d}", .{
+                                strip.polygon.tag(),
                                 strip.vertex_parameter_count,
-                                @tagName(strip.polygon.tsp_instruction().texture_shading_instruction),
+                                strip.polygon.tsp_instruction().texture_shading_instruction,
                                 idx,
                             });
                             {

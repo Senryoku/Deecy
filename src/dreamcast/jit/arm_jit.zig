@@ -206,14 +206,14 @@ pub const ARM7JIT = struct {
         const block = (self.compile(.{ .address = pc, .cpu = cpu }, instructions) catch |err| retry: {
             if (err == error.JITCacheFull) {
                 self.block_cache.reset() catch |reset_err| {
-                    arm_jit_log.err("Failed to reset ARM JIT: {s}", .{@errorName(reset_err)});
+                    arm_jit_log.err("Failed to reset ARM JIT: {t}", .{reset_err});
                     std.process.exit(1);
                 };
                 arm_jit_log.info("JIT cache purged.", .{});
                 break :retry self.compile(.{ .address = pc, .cpu = cpu }, instructions);
             } else break :retry err;
         }) catch |err| {
-            arm_jit_log.err("Failed to compile {X:0>8}: {s}\n", .{ pc, @errorName(err) });
+            arm_jit_log.err("Failed to compile {X:0>8}: {t}\n", .{ pc, err });
             std.process.exit(1);
         };
         block.execute(self.block_cache.buffer, cpu);

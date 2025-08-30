@@ -137,7 +137,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             const sha1 = try reader.takeArray(20);
             const parent_sha1 = try reader.takeArray(20);
 
-            log.debug("  Compressor: {any}", .{self.compressors});
+            log.debug("  Compressors: {any}", .{self.compressors});
             log.debug("  Logical Bytes: {X}", .{self.logical_bytes});
             log.debug("  Map Offset: {X}", .{self.map_offset});
             log.debug("  Meta Offset: {X}", .{self.meta_offset});
@@ -177,7 +177,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             var fad_offset: u32 = 0;
             var current_fad: u32 = 150;
             for (tracks_metadata.items) |track| {
-                log.debug("Track Metadata entry: {any}", .{track});
+                log.debug("Track Metadata entry: {}", .{track});
                 // reader = std.Io.Reader.fixed(self._file_view[track.offset + 16 ..]);
                 switch (track.tag) {
                     .GDROMTrack => {
@@ -276,7 +276,7 @@ pub fn read_sector(self: *@This(), fad: u32) ![]const u8 {
 
 pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
     self.decompress_sectors(fad, count) catch |err| {
-        log.err("Failed to decompress sectors [{d}, {d}]: {s}", .{ fad, fad + count - 1, @errorName(err) });
+        log.err("Failed to decompress sectors [{d}, {d}]: {t}", .{ fad, fad + count - 1, err });
         return 0;
     };
     const track = Track.get_corresponding_track(&self.tracks, fad);
@@ -285,7 +285,7 @@ pub fn load_sectors(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
 
 pub fn load_sectors_raw(self: *@This(), fad: u32, count: u32, dest: []u8) u32 {
     self.decompress_sectors(fad, count) catch |err| {
-        log.err("Failed to decompress sectors [{d}, {d}]: {s}", .{ fad, fad + count - 1, @errorName(err) });
+        log.err("Failed to decompress sectors [{d}, {d}]: {t}", .{ fad, fad + count - 1, err });
         return 0;
     };
     const track = Track.get_corresponding_track(&self.tracks, fad);
@@ -581,7 +581,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return self.read_hunk(self.map[hunk].offset, dest);
         },
         else => {
-            log.err("Unsupported compression type: {any}", .{self.map[hunk].compression});
+            log.err("Unsupported compression type: {t}", .{self.map[hunk].compression});
             return error.UnsupportedCompressionType;
         },
     };
@@ -637,7 +637,7 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
             return bytes;
         },
         else => {
-            log.err("Unsupported compression method: {any}", .{compression});
+            log.err("Unsupported compression method: {t}", .{compression});
             return error.UnsupportedCompression;
         },
     }

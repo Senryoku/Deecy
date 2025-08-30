@@ -399,9 +399,9 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         // Finally, an 8-bit CRC follows the frame/sample number, an uncommon block size, or an uncommon sample rate (depending on whether the latter two are stored).
         // This CRC is initialized with 0 and has the polynomial x^8 + x^2 + x^1 + x^0. This CRC covers the whole frame header before the CRC, including the sync code.
 
-        log_frame.debug("Frame: First sample: {d}, Sample Rate: {s} ({d}Hz), Channels: {s} ({d}), Bit Depth: {s} ({d}), Block Size: {s} ({d}), CRC: {X:0>2}, Coded Number ({s}): {d}", .{
-            frame_sample_offset, @tagName(frame_header.sample_rate), frame_sample_rate, @tagName(frame_header.channels),
-            channel_count,       @tagName(frame_header.bit_depth),   bits_per_sample,   std.enums.tagName(BlockSize, frame_header.block_size) orelse "Common",
+        log_frame.debug("Frame: First sample: {d}, Sample Rate: {t} ({d}Hz), Channels: {t} ({d}), Bit Depth: {t} ({d}), Block Size: {s} ({d}), CRC: {X:0>2}, Coded Number ({s}): {d}", .{
+            frame_sample_offset, frame_header.sample_rate, frame_sample_rate, frame_header.channels,
+            channel_count,       frame_header.bit_depth,   bits_per_sample,   std.enums.tagName(BlockSize, frame_header.block_size) orelse "Common",
             block_size,          frame_header_crc,
             switch (frame_header.blocking_strategy) {
                 .Fixed => "Frame number",

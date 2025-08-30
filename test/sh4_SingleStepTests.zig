@@ -440,7 +440,7 @@ test {
                     if (err == error.FPUDisabled)
                         continue;
                     if (failed_test_cases == 0) {
-                        std.debug.print(termcolor.red("Failed to run test {s}: {s}\n"), .{ entry.basename, @errorName(err) });
+                        std.debug.print(termcolor.red("Failed to run test {s}: {t}\n"), .{ entry.basename, err });
                         run_test(t, &cpu, true) catch {};
                         compare_state(&cpu, &t.final);
                     }

@@ -57,7 +57,7 @@ pub const Color16 = packed union {
                     @as(u8, self.argb4444.a) << 4,
                 };
             },
-            else => std.debug.panic("Invalid 16-bits pixel format: {any}", .{format}),
+            else => std.debug.panic("Invalid 16-bits pixel format: {t}", .{format}),
         }
     }
 
@@ -87,7 +87,7 @@ pub const Color16 = packed union {
                     @as(u8, self.argb4444.a) << 4 | @as(u8, self.argb4444.a),
                 };
             },
-            else => std.debug.panic("Invalid 16-bits pixel format: {any}", .{format}),
+            else => std.debug.panic("Invalid 16-bits pixel format: {t}", .{format}),
         }
     }
 };

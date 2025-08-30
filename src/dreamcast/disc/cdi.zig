@@ -36,7 +36,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
 
     var reader = &file_reader.interface;
     const version: Version = try reader.takeEnum(Version, .little);
-    log.debug("Version: {any}", .{version});
+    log.debug("Version: {}", .{version});
 
     switch (version) {
         .V2, .V3 => {
