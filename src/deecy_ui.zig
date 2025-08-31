@@ -265,9 +265,11 @@ fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void
     }
 }
 
+const lz4 = @import("lz4");
+
 const GameInfoCache = struct {
     const Signature: u32 = 0x43444247;
-    const Version: u32 = 1;
+    const Version: u32 = 2;
 
     const Entry = struct {
         path: []const u8,
@@ -304,17 +306,12 @@ const GameInfoCache = struct {
     }
 
     pub fn load(self: *@This()) !void {
-        var file = std.fs.cwd().openFile(self._path, .{}) catch |err| switch (err) {
-            error.FileNotFound => return,
-            else => {
-                ui_log.err("Failed to deserialize game info cache: {t}", .{err});
-                return;
-            },
-        };
+        var file = try std.fs.cwd().openFile(self._path, .{});
         defer file.close();
-
-        const data = try file.readToEndAlloc(self._arena.allocator(), std.math.maxInt(u32)); // Kept alive: Entries will refer to it.
-        self.deserialize(data) catch |err| ui_log.err("Failed to deserialize game info cache: {t}", .{err});
+        const file_size = try file.getEndPos();
+        const data = try file.readToEndAllocOptions(self._arena.allocator(), file_size, file_size, .@"8", null);
+        defer self._arena.allocator().free(data);
+        try self.deserialize(data);
     }
 
     pub fn add(self: *@This(), path: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
@@ -334,33 +331,57 @@ const GameInfoCache = struct {
         var file = try std.fs.cwd().createFile(self._path, .{});
         defer file.close();
 
-        const buffer = try self._arena.allocator().alloc(u8, 8 * 1024);
-        defer self._arena.allocator().free(buffer);
-        var file_writer = file.writer(buffer);
-        var writer = &file_writer.interface;
-        defer writer.flush() catch {};
+        var allocating_writer = std.Io.Writer.Allocating.init(self._arena.allocator());
+        defer allocating_writer.deinit();
+        var uncompressed_writer = &allocating_writer.writer;
 
-        try writer.writeInt(u32, Signature, .little);
-        try writer.writeInt(u32, Version, .little);
-        try writer.writeInt(u32, self.map.count(), .little);
+        try uncompressed_writer.writeInt(u32, self.map.count(), .little);
         var it = self.map.iterator();
         while (it.next()) |entry| {
             const value = entry.value_ptr.*;
-            try write_string(writer, value.path);
-            try write_string(writer, value.name);
-            try writer.writeInt(u32, value.image_size.width, .little);
-            try writer.writeInt(u32, value.image_size.height, .little);
-            if (value.image) |image| try writer.writeAll(image);
+            try write_string(uncompressed_writer, value.path);
+            try write_string(uncompressed_writer, value.name);
+            try uncompressed_writer.writeInt(u32, value.image_size.width, .little);
+            try uncompressed_writer.writeInt(u32, value.image_size.height, .little);
+            if (value.image) |image| try uncompressed_writer.writeAll(image);
         }
+        try uncompressed_writer.flush();
+
+        var uncompressed = allocating_writer.toArrayList();
+        defer uncompressed.deinit(self._arena.allocator());
+
+        const compressed = try lz4.Standard.compress(self._arena.allocator(), uncompressed.items);
+        defer self._arena.allocator().free(compressed);
+
+        const buffer = try self._arena.allocator().alloc(u8, 4 * 1024);
+        defer self._arena.allocator().free(buffer);
+        var file_writer = file.writer(buffer);
+        var writer = &file_writer.interface;
+
+        try writer.writeInt(u32, Signature, .little);
+        try writer.writeInt(u32, Version, .little);
+        try writer.writeInt(u32, @intCast(uncompressed.items.len), .little);
+        try writer.writeAll(compressed);
+
+        try writer.flush();
     }
 
     fn deserialize(self: *@This(), data: []const u8) !void {
-        var reader = std.Io.Reader.fixed(data);
+        var header_reader = std.Io.Reader.fixed(data);
 
-        const signature = try reader.takeInt(u32, .little);
+        const signature = try header_reader.takeInt(u32, .little);
         if (signature != Signature) return error.InvalidSignature;
-        const version = try reader.takeInt(u32, .little);
+        const version = try header_reader.takeInt(u32, .little);
         if (version != Version) return error.IncompatibleVersion;
+
+        const uncompressed_size = try header_reader.takeInt(u32, .little);
+
+        const decompressed = try lz4.Standard.decompress(self._arena.allocator(), data[header_reader.seek..], uncompressed_size);
+        errdefer self._arena.allocator().free(decompressed); // Kept alive in success path: Entries will refer to it.
+
+        if (decompressed.len != uncompressed_size) return error.UnexpectedDecompressedSize;
+
+        var reader = std.Io.Reader.fixed(decompressed);
 
         const count = try reader.takeInt(u32, .little);
         try self.map.ensureTotalCapacity(count);
@@ -370,8 +391,10 @@ const GameInfoCache = struct {
             const name = try read_string(&reader);
             const image_size_width = try reader.takeInt(u32, .little);
             const image_size_height = try reader.takeInt(u32, .little);
-            const image = if (image_size_width > 0 and image_size_height > 0) data[reader.seek..][0 .. image_size_width * image_size_height * 4] else null;
-            reader.toss(image_size_width * image_size_height * 4);
+            const image_byte_size = image_size_width * image_size_height * 4;
+            if (reader.buffer[reader.seek..].len < image_byte_size) return error.EndOfStream;
+            const image = if (image_size_width > 0 and image_size_height > 0) reader.buffer[reader.seek..][0..image_byte_size] else null;
+            reader.toss(image_byte_size);
             self.map.putAssumeCapacity(path, .{
                 .path = path,
                 .name = name,
@@ -383,6 +406,7 @@ const GameInfoCache = struct {
 
     fn read_string(reader: *std.Io.Reader) ![]const u8 {
         const size = try reader.takeInt(u32, .little);
+        if (reader.buffer[reader.seek..].len < size) return error.EndOfStream;
         const string = reader.buffer[reader.seek..][0..size];
         reader.toss(size);
         return string;
