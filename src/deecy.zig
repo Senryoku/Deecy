@@ -23,7 +23,7 @@ const DreamcastModule = @import("dreamcast");
 const Dreamcast = DreamcastModule.Dreamcast;
 const AICA = DreamcastModule.AICAModule.AICA;
 const Disc = DreamcastModule.GDROM.Disc;
-const HostPaths = DreamcastModule.HostPaths;
+pub const HostPaths = DreamcastModule.HostPaths;
 
 pub const Renderer = @import("./renderer.zig").Renderer;
 
@@ -853,6 +853,7 @@ pub fn load_disc(self: *@This(), path: []const u8) !void {
                 return error.GDIFileNotFound;
             }
             const tmp_gdi_path = try std.fs.path.join(self._allocator, &[_][]const u8{ HostPaths.get_userdata_path(), TmpDirPath, gdi_filename });
+            defer self._allocator.free(tmp_gdi_path);
             deecy_log.info("Found GDI file: '{s}'.", .{gdi_filename});
             deecy_log.info("Extracting zip to '{s}'...", .{tmp_gdi_path});
             var tmp_dir = try std.fs.cwd().makeOpenPath(tmp_gdi_path, .{});

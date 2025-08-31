@@ -10,6 +10,7 @@ const ui_log = std.log.scoped(.ui);
 const nfd = @import("nfd");
 
 const Deecy = @import("deecy.zig");
+const HostPaths = Deecy.HostPaths;
 const DreamcastModule = @import("dreamcast");
 const MapleModule = DreamcastModule.Maple;
 const Disc = DreamcastModule.GDROM.Disc;
@@ -190,13 +191,55 @@ pub fn draw_vmus(self: *@This(), editable: bool) void {
     zgui.popStyleVar(.{});
 }
 
-fn get_game_image(self: *@This(), path: []const u8) void {
+fn update_game_info(self: *@This(), path: []const u8, image_width: u32, image_height: u32, image: []const u8) void {
+    self.deecy.gctx_queue_mutex.lock();
+    const texture = self.deecy.gctx.createTexture(.{
+        .usage = .{ .texture_binding = true, .copy_dst = true },
+        .size = .{
+            .width = image_width,
+            .height = image_height,
+            .depth_or_array_layers = 1,
+        },
+        .format = .bgra8_unorm,
+        .mip_level_count = 1,
+    });
+    const view = self.deecy.gctx.createTextureView(texture, .{});
+    self.deecy.gctx.queue.writeTexture(
+        .{ .texture = self.deecy.gctx.lookupResource(texture).? },
+        .{ .bytes_per_row = 4 * image_width, .rows_per_image = image_height },
+        .{ .width = image_width, .height = image_height },
+        u8,
+        image,
+    );
+    self.deecy.gctx_queue_mutex.unlock();
+
+    {
+        self.disc_files_mutex.lock();
+        defer self.disc_files_mutex.unlock();
+        for (self.disc_files.items) |*entry| {
+            if (std.mem.eql(u8, entry.path, path)) {
+                entry.texture = texture;
+                entry.view = view;
+                return;
+            }
+        }
+    }
+
+    ui_log.err("Failed to find disc entry for '{s}'", .{path});
+    self.deecy.gctx_queue_mutex.lock();
+    defer self.deecy.gctx_queue_mutex.unlock();
+    self.deecy.gctx.releaseResource(view);
+    self.deecy.gctx.releaseResource(texture);
+}
+
+fn get_game_image(self: *@This(), path: []const u8, cache: ?*GameInfoCache) void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var disc = Disc.init(path, allocator) catch |err| {
         ui_log.err("Failed to load disc '{s}': {t}", .{ path, err });
+        if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
         return;
     };
     defer disc.deinit(allocator);
@@ -210,57 +253,156 @@ fn get_game_image(self: *@This(), path: []const u8) void {
     if (disc.load_file("0GDTEX.PVR;1", tex_buffer)) |len| {
         if (PVRFile.decode(allocator, tex_buffer[0..len])) |result| {
             defer result.deinit(allocator);
-
-            self.deecy.gctx_queue_mutex.lock();
-            const texture = self.deecy.gctx.createTexture(.{
-                .usage = .{ .texture_binding = true, .copy_dst = true },
-                .size = .{
-                    .width = result.width,
-                    .height = result.height,
-                    .depth_or_array_layers = 1,
-                },
-                .format = .bgra8_unorm,
-                .mip_level_count = 1,
-            });
-            const view = self.deecy.gctx.createTextureView(texture, .{});
-            self.deecy.gctx.queue.writeTexture(
-                .{ .texture = self.deecy.gctx.lookupResource(texture).? },
-                .{ .bytes_per_row = 4 * result.width, .rows_per_image = result.height },
-                .{ .width = result.width, .height = result.height },
-                u8,
-                result.bgra,
-            );
-            self.deecy.gctx_queue_mutex.unlock();
-
-            {
-                self.disc_files_mutex.lock();
-                defer self.disc_files_mutex.unlock();
-                for (self.disc_files.items) |*entry| {
-                    if (std.mem.eql(u8, entry.path, path)) {
-                        entry.texture = texture;
-                        entry.view = view;
-                        return;
-                    }
-                }
-            }
-
-            ui_log.err("Failed to find disc entry for '{s}'", .{path});
-            self.deecy.gctx_queue_mutex.lock();
-            defer self.deecy.gctx_queue_mutex.unlock();
-            self.deecy.gctx.releaseResource(view);
-            self.deecy.gctx.releaseResource(texture);
+            self.update_game_info(path, result.width, result.height, result.bgra);
+            if (cache) |c| c.add(path, .{ .width = result.width, .height = result.height }, result.bgra) catch {};
         } else |err| {
             ui_log.err(termcolor.red("Failed to decode 0GDTEX.PVR for '{s}': {t}"), .{ path, err });
+            if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
         }
     } else |err| {
         ui_log.info("Failed to find 0GDTEX.PVR for '{s}': {t}", .{ path, err });
+        if (cache) |c| c.add(path, .{ .width = 0, .height = 0 }, null) catch {};
     }
 }
+
+const GameInfoCache = struct {
+    const Signature: u32 = 0x43444247;
+    const Version: u32 = 1;
+
+    const Entry = struct {
+        path: []const u8,
+        name: []const u8,
+        image_size: struct { width: u32, height: u32 },
+        image: ?[]const u8,
+    };
+
+    map: std.StringHashMap(Entry),
+
+    _path: []const u8,
+    _mutex: std.Thread.Mutex = .{},
+    _arena: std.heap.ArenaAllocator,
+
+    pub fn create(allocator: std.mem.Allocator) !*@This() {
+        var r = try allocator.create(@This());
+        r.* = .{
+            .map = undefined,
+            ._path = undefined,
+            ._arena = std.heap.ArenaAllocator.init(allocator),
+        };
+        r.map = std.StringHashMap(Entry).init(r._arena.allocator());
+        r._path = try get_path(r._arena.allocator());
+        return r;
+    }
+
+    pub fn destroy(self: *@This(), allocator: std.mem.Allocator) void {
+        self._arena.deinit();
+        allocator.destroy(self);
+    }
+
+    fn get_path(allocator: std.mem.Allocator) ![]const u8 {
+        return try std.fs.path.join(allocator, &[_][]const u8{ HostPaths.get_userdata_path(), "game_info_cache" });
+    }
+
+    pub fn load(self: *@This()) !void {
+        var file = std.fs.cwd().openFile(self._path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return,
+            else => {
+                ui_log.err("Failed to deserialize game info cache: {t}", .{err});
+                return;
+            },
+        };
+        defer file.close();
+
+        const data = try file.readToEndAlloc(self._arena.allocator(), std.math.maxInt(u32)); // Kept alive: Entries will refer to it.
+        self.deserialize(data) catch |err| ui_log.err("Failed to deserialize game info cache: {t}", .{err});
+    }
+
+    pub fn add(self: *@This(), path: []const u8, image_size: struct { width: u32, height: u32 }, image: ?[]const u8) !void {
+        self._mutex.lock();
+        defer self._mutex.unlock();
+        const arena_alloc = self._arena.allocator();
+        const duped_path = try arena_alloc.dupe(u8, path);
+        try self.map.put(duped_path, .{
+            .path = duped_path,
+            .name = duped_path,
+            .image_size = .{ .width = image_size.width, .height = image_size.height },
+            .image = if (image) |i| try arena_alloc.dupe(u8, i) else null,
+        });
+    }
+
+    pub fn save_to_disk(self: *@This()) !void {
+        var file = try std.fs.cwd().createFile(self._path, .{});
+        defer file.close();
+
+        const buffer = try self._arena.allocator().alloc(u8, 8 * 1024);
+        defer self._arena.allocator().free(buffer);
+        var file_writer = file.writer(buffer);
+        var writer = &file_writer.interface;
+        defer writer.flush() catch {};
+
+        try writer.writeInt(u32, Signature, .little);
+        try writer.writeInt(u32, Version, .little);
+        try writer.writeInt(u32, self.map.count(), .little);
+        var it = self.map.iterator();
+        while (it.next()) |entry| {
+            const value = entry.value_ptr.*;
+            try write_string(writer, value.path);
+            try write_string(writer, value.name);
+            try writer.writeInt(u32, value.image_size.width, .little);
+            try writer.writeInt(u32, value.image_size.height, .little);
+            if (value.image) |image| try writer.writeAll(image);
+        }
+    }
+
+    fn deserialize(self: *@This(), data: []const u8) !void {
+        var reader = std.Io.Reader.fixed(data);
+
+        const signature = try reader.takeInt(u32, .little);
+        if (signature != Signature) return error.InvalidSignature;
+        const version = try reader.takeInt(u32, .little);
+        if (version != Version) return error.IncompatibleVersion;
+
+        const count = try reader.takeInt(u32, .little);
+        try self.map.ensureTotalCapacity(count);
+
+        for (0..count) |_| {
+            const path = try read_string(&reader);
+            const name = try read_string(&reader);
+            const image_size_width = try reader.takeInt(u32, .little);
+            const image_size_height = try reader.takeInt(u32, .little);
+            const image = if (image_size_width > 0 and image_size_height > 0) data[reader.seek..][0 .. image_size_width * image_size_height * 4] else null;
+            reader.toss(image_size_width * image_size_height * 4);
+            self.map.putAssumeCapacity(path, .{
+                .path = path,
+                .name = name,
+                .image_size = .{ .width = image_size_width, .height = image_size_height },
+                .image = image,
+            });
+        }
+    }
+
+    fn read_string(reader: *std.Io.Reader) ![]const u8 {
+        const size = try reader.takeInt(u32, .little);
+        const string = reader.buffer[reader.seek..][0..size];
+        reader.toss(size);
+        return string;
+    }
+
+    fn write_string(writer: *std.Io.Writer, string: []const u8) !void {
+        try writer.writeInt(u32, @intCast(string.len), .little);
+        try writer.writeAll(string);
+    }
+};
 
 pub fn refresh_games(self: *@This()) !void {
     if (self.deecy.config.game_directory) |dir_path| {
         const start = std.time.milliTimestamp();
         defer ui_log.info("Checked {d} disc files in {d}ms", .{ self.disc_files.items.len, std.time.milliTimestamp() - start });
+
+        var cache = try GameInfoCache.create(self.allocator);
+        defer cache.destroy(self.allocator);
+        cache.load() catch |err|
+            ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
 
         {
             for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
@@ -303,8 +445,21 @@ pub fn refresh_games(self: *@This()) !void {
         try pool.init(.{ .allocator = self.allocator });
         defer pool.deinit();
 
-        for (0..self.disc_files.items.len) |file_idx| // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
-            try pool.spawn(get_game_image, .{ self, self.disc_files.items[self.disc_files.items.len - 1 - file_idx].path });
+        var wait_group = std.Thread.WaitGroup{};
+
+        for (0..self.disc_files.items.len) |file_idx| { // NOTE: I want to prioritize the first items on the list, and spawning jobs in the reverse order seem to do the trick for some reason ¯\_(ツ)_/¯
+            const idx = self.disc_files.items.len - 1 - file_idx;
+            if (cache.map.get(self.disc_files.items[idx].path)) |entry| {
+                if (entry.image) |image|
+                    self.update_game_info(entry.path, entry.image_size.width, entry.image_size.height, image);
+            } else {
+                pool.spawnWg(&wait_group, get_game_image, .{ self, self.disc_files.items[idx].path, cache });
+            }
+        }
+
+        wait_group.wait();
+
+        try cache.save_to_disk();
     }
 }
 
