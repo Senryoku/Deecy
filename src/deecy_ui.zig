@@ -405,9 +405,14 @@ pub fn refresh_games(self: *@This()) !void {
             ui_log.err(termcolor.red("Failed to load game info cache: {t}"), .{err});
 
         {
+            self.deecy.gctx_queue_mutex.lock();
+            defer self.deecy.gctx_queue_mutex.unlock();
+            self.disc_files_mutex.lock();
+            defer self.disc_files_mutex.unlock();
             for (self.disc_files.items) |*entry| entry.free(self.allocator, self.deecy.gctx);
             self.disc_files.clearRetainingCapacity();
-
+        }
+        {
             var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |err| {
                 ui_log.err(termcolor.red("Failed to open game directory: {t}"), .{err});
                 return;
