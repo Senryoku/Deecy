@@ -190,6 +190,10 @@ fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, bloc
     }
 }
 
+inline fn decode_zigzag(comptime Type: type, encoded: Type) std.meta.Int(.signed, @bitSizeOf(Type)) {
+    return @bitCast((encoded >> 1) ^ @as(Type, @bitCast(-@as(std.meta.Int(.signed, @bitSizeOf(Type)), @intCast(encoded & 1)))));
+}
+
 fn decode_residual_partition(comptime ResidualType: type, comptime coding_method: enum(u2) { Rice = 0, Rice2 = 1 }, residuals: []ResidualType, bit_reader: *BitReader) !void {
     const UnsignedResidualType = std.meta.Int(.unsigned, @bitSizeOf(ResidualType));
     const RiceParameterType = switch (coding_method) {
@@ -198,7 +202,6 @@ fn decode_residual_partition(comptime ResidualType: type, comptime coding_method
     };
 
     const rice_parameter = try bit_reader.readBitsNoEof(RiceParameterType, @bitSizeOf(RiceParameterType));
-    log_residual.debug("      Partition: Rice parameter {d}", .{rice_parameter});
 
     switch (rice_parameter) {
         std.math.maxInt(RiceParameterType) => { // No rice parameter
@@ -212,12 +215,21 @@ fn decode_residual_partition(comptime ResidualType: type, comptime coding_method
         },
         inline else => |comptime_rice_parameter| {
             if (comptime_rice_parameter >= @bitSizeOf(UnsignedResidualType)) unreachable;
-            for (0..residuals.len) |i| {
+            const BatchSize = 16;
+            var zigzag_encoded: [BatchSize]UnsignedResidualType align(32) = undefined;
+            for (0..residuals.len / BatchSize) |i| {
+                for (0..BatchSize) |j| {
+                    const quotient: UnsignedResidualType = @intCast(try bit_reader.readUnary());
+                    const remainder = try bit_reader.readBitsNoEof(UnsignedResidualType, comptime_rice_parameter);
+                    zigzag_encoded[j] = (quotient << @intCast(comptime_rice_parameter)) + remainder;
+                }
+                for (0..BatchSize) |j|
+                    residuals[BatchSize * i + j] = decode_zigzag(UnsignedResidualType, zigzag_encoded[j]);
+            }
+            for (BatchSize * (residuals.len / BatchSize)..residuals.len) |i| {
                 const quotient: UnsignedResidualType = @intCast(try bit_reader.readUnary());
                 const remainder = try bit_reader.readBitsNoEof(UnsignedResidualType, comptime_rice_parameter);
-                const zigzag_encoded: UnsignedResidualType = (quotient << @intCast(comptime_rice_parameter)) + remainder;
-                const residual: ResidualType = @bitCast((zigzag_encoded >> 1) ^ @as(UnsignedResidualType, @bitCast(-@as(ResidualType, @intCast(zigzag_encoded & 1)))));
-                residuals[i] = residual;
+                residuals[i] = decode_zigzag(UnsignedResidualType, (quotient << @intCast(comptime_rice_parameter)) + remainder);
             }
         },
     }
