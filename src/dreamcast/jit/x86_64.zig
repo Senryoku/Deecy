@@ -822,7 +822,7 @@ pub const Emitter = struct {
 
     /// Assumes both registers are of the same size.
     fn binary_reg_reg(self: *@This(), size: OperandSize, opcode: []const u8, reg: Register, r_m: Register) !void {
-        if (size == ._8 and r_m.require_rex_8bit() or reg.require_rex_8bit()) {
+        if (size == ._8 and (r_m.require_rex_8bit() or reg.require_rex_8bit())) {
             try self.emit(REX, .{ .r = need_rex(reg), .b = need_rex(r_m) });
         } else {
             try self.emit_rex_if_needed(.{ .w = size == ._64, .r = need_rex(reg), .b = need_rex(r_m) });
