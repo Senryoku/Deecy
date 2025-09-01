@@ -178,16 +178,9 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             var current_fad: u32 = 150;
             for (tracks_metadata.items) |track| {
                 log.debug("Track Metadata entry: {}", .{track});
-                // reader = std.Io.Reader.fixed(self._file_view[track.offset + 16 ..]);
                 switch (track.tag) {
                     .GDROMTrack => {
                         // "TRACK:%d TYPE:%s SUBTYPE:%s FRAMES:%d PAD:%d PREGAP:%d PGTYPE:%s PGSUB:%s POSTGAP:%d"
-
-                        // const buffer: []u8 = try allocator.alloc(u8, track.length - 1); // Includes a null terminator
-                        // defer allocator.free(buffer);
-                        // _ = try reader.readSliceAll(buffer);
-                        // log.debug("  '{s}'", .{buffer});
-                        // var iterator = std.mem.tokenizeScalar(u8, buffer, ' ');
 
                         var iterator = std.mem.tokenizeScalar(u8, self._file_view[track.offset + 16 ..][0 .. track.length - 1], ' ');
                         const track_num = try std.fmt.parseInt(u32, iterator.next().?["TRACK:".len..], 10);
@@ -631,9 +624,8 @@ fn read_hunk(self: *const @This(), hunk: usize, dest: []u8) !usize {
         .CD_Flac => {
             const bytes = sectors_per_hunk * CDMaxSectorBytes;
             const num_samples = bytes / @sizeOf(i16);
-            var flac_stream = std.io.fixedBufferStream(self._file_view[self.map[hunk].offset..]);
-            const flac_reader = flac_stream.reader();
-            try chd_flac.decode_frames(i16, self._allocator, flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
+            var flac_reader = std.io.Reader.fixed(self._file_view[self.map[hunk].offset..]);
+            try chd_flac.decode_frames(i16, self._allocator, &flac_reader, @as([*]i16, @ptrCast(@alignCast(dest.ptr)))[0 .. sectors_per_hunk * CDMaxSectorBytes / 2], num_samples, CDMaxSectorBytes, 2, 16);
             return bytes;
         },
         else => {

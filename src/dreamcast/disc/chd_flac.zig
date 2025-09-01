@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 
 // Adapted/Stripped down from https://github.com/Senryoku/zflac to decompress FLAC frames from CHD files.
 
+const BitReader = @import("bit_reader.zig");
+
 const log = std.log.scoped(.chd_flac);
 const log_frame = std.log.scoped(.chd_flac_frame);
 const log_subframe = std.log.scoped(.chd_flac_subframe);
@@ -138,129 +140,8 @@ const SubframeHeader = packed struct {
     wasted_bit_flag: u1,
 };
 
-pub fn BitReader(comptime Reader: type) type {
-    return struct {
-        reader: Reader,
-        bits: u8 = 0,
-        count: u4 = 0,
-
-        const LowBitMasks = [9]u8{
-            0b00000000,
-            0b00000001,
-            0b00000011,
-            0b00000111,
-            0b00001111,
-            0b00011111,
-            0b00111111,
-            0b01111111,
-            0b11111111,
-        };
-
-        pub inline fn readBitsNoEof(self: *@This(), comptime T: type, num: u32) !T {
-            std.debug.assert(self.count <= 8);
-            std.debug.assert(num <= @bitSizeOf(T));
-
-            const U = if (@bitSizeOf(T) < 8) u8 else std.meta.Int(.unsigned, @bitSizeOf(T));
-
-            if (num <= self.count) return @intCast(self.removeBits(@intCast(num)));
-
-            var bits_left: u32 = num - self.count;
-            std.debug.assert(bits_left > 0 and bits_left <= @bitSizeOf(T));
-            var out: U = self.flush();
-
-            if (bits_left >= 8) {
-                if (U == u8) {
-                    // Only possible case: num == 8 on an empty buffer
-                    std.debug.assert(num == 8);
-                    std.debug.assert(bits_left == 8);
-                    std.debug.assert(self.bits == 0);
-                    std.debug.assert(self.count == 0);
-                    return @intCast(try self.reader.readByte());
-                } else {
-                    const full_bytes_left = bits_left / 8;
-                    std.debug.assert(full_bytes_left <= @sizeOf(T));
-
-                    for (0..full_bytes_left) |_| {
-                        out <<= 8;
-                        out |= try self.reader.readByte();
-                    }
-
-                    bits_left %= 8;
-                }
-            }
-            if (bits_left == 0) return @intCast(out);
-
-            std.debug.assert(bits_left > 0 and bits_left < 8);
-
-            const final_byte = try self.reader.readByte();
-            const keep = 8 - bits_left;
-
-            out <<= @intCast(bits_left);
-            out |= final_byte >> @intCast(keep);
-            self.bits = final_byte & LowBitMasks[keep];
-
-            self.count = @intCast(keep);
-            return @intCast(out);
-        }
-
-        inline fn removeBits(self: *@This(), num: u4) u8 {
-            if (num == 8) return self.flush();
-
-            const keep = self.count - num;
-            const bits = self.bits >> @intCast(keep);
-            self.bits &= LowBitMasks[keep];
-
-            self.count = keep;
-            return bits;
-        }
-
-        inline fn flush(self: *@This()) u8 {
-            const bits = self.bits;
-            self.bits = 0;
-            self.count = 0;
-            return bits;
-        }
-
-        pub inline fn alignToByte(self: *@This()) void {
-            self.bits = 0;
-            self.count = 0;
-        }
-
-        pub inline fn readUnary(self: *@This()) !u32 {
-            // Also accounts for the self.count == 0 case.
-            if (self.bits == 0) return self.count + try self.readUnaryFromEmptyBuffer();
-            std.debug.assert(self.count > 0 and self.count <= 8);
-            const clz = @clz(self.bits) - (8 - self.count);
-            std.debug.assert(clz < 8);
-            // Discard those bits and the 1
-            self.count = self.count - 1 - clz;
-            self.bits &= LowBitMasks[self.count];
-            return clz;
-        }
-
-        inline fn readUnaryFromEmptyBuffer(self: *@This()) !u32 {
-            var unary_integer: u32 = 0;
-            var bits = try self.reader.readByte();
-            while (bits == 0) { // <=> clz == 8
-                unary_integer += 8;
-                bits = try self.reader.readByte();
-            }
-            const clz = @clz(bits);
-            std.debug.assert(clz < 8);
-            // Discard those bits and the 1
-            self.count = 8 - 1 - clz;
-            self.bits = bits & LowBitMasks[self.count];
-            return unary_integer + clz;
-        }
-    };
-}
-
-pub fn bitReader(reader: anytype) BitReader(@TypeOf(reader)) {
-    return .{ .reader = reader };
-}
-
 /// Reads a signed integer with a runtime known bit depth
-inline fn read_signed_integer(comptime T: type, bit_reader: anytype, bit_depth: u6) !T {
+inline fn read_signed_integer(comptime T: type, bit_reader: *BitReader, bit_depth: u6) !T {
     std.debug.assert(bit_depth > 0 and bit_depth <= @bitSizeOf(T));
     const ContainerType = std.meta.Int(.unsigned, @bitSizeOf(T));
     var r = try bit_reader.readBitsNoEof(ContainerType, bit_depth);
@@ -270,25 +151,25 @@ inline fn read_signed_integer(comptime T: type, bit_reader: anytype, bit_depth: 
     return @as(T, @bitCast(r)) >> @intCast(shift);
 }
 
-inline fn read_unencoded_sample(comptime SampleType: type, bit_reader: anytype, wasted_bits: u6, bits_per_sample: u6) !SampleType {
+inline fn read_unencoded_sample(comptime SampleType: type, bit_reader: *BitReader, wasted_bits: u6, bits_per_sample: u6) !SampleType {
     const InterType = std.meta.Int(.signed, try std.math.ceilPowerOfTwo(u32, @bitSizeOf(SampleType) + 1));
     return @intCast(try read_signed_integer(InterType, bit_reader, bits_per_sample - wasted_bits));
 }
 
-fn read_coded_number(reader: anytype) !u64 {
-    const first_byte = try reader.readByte();
+fn read_coded_number(reader: *std.Io.Reader) !u64 {
+    const first_byte = try reader.takeByte();
     const byte_count = @clz(first_byte ^ 0xFF);
     if (first_byte == 0xFF or byte_count == 1) return error.InvalidCodedNumber;
     if (byte_count == 0) return first_byte;
     var coded_number: u64 = (first_byte & (@as(u8, 0x7F) >> @intCast(byte_count)));
     for (0..byte_count - 1) |_| {
         coded_number <<= 6;
-        coded_number |= (try reader.readByte()) & 0x3F;
+        coded_number |= (try reader.takeByte()) & 0x3F;
     }
     return coded_number;
 }
 
-fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, block_size: u16, order: u6, bit_reader: anytype) !void {
+fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, block_size: u16, order: u6, bit_reader: *BitReader) !void {
     std.debug.assert(residuals.len >= block_size - order);
 
     const coding_method = try bit_reader.readBitsNoEof(u2, 2);
@@ -309,7 +190,7 @@ fn decode_residuals(comptime ResidualType: type, residuals: []ResidualType, bloc
     }
 }
 
-fn decode_residual_partition(comptime ResidualType: type, comptime coding_method: enum(u2) { Rice = 0, Rice2 = 1 }, residuals: []ResidualType, bit_reader: anytype) !void {
+fn decode_residual_partition(comptime ResidualType: type, comptime coding_method: enum(u2) { Rice = 0, Rice2 = 1 }, residuals: []ResidualType, bit_reader: *BitReader) !void {
     const UnsignedResidualType = std.meta.Int(.unsigned, @bitSizeOf(ResidualType));
     const RiceParameterType = switch (coding_method) {
         .Rice => u4,
@@ -342,7 +223,7 @@ fn decode_residual_partition(comptime ResidualType: type, comptime coding_method
     }
 }
 
-pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, reader: anytype, output: []SampleType, num_samples: u32, expected_block_size: u16, expected_channel_count: u4, expected_bits_per_sample: u6) !void {
+pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, reader: *std.Io.Reader, output: []SampleType, num_samples: u32, expected_block_size: u16, expected_channel_count: u4, expected_bits_per_sample: u6) !void {
     // Larger type for intermediate computations
     const InterType = switch (SampleType) {
         i8 => i16,
@@ -360,17 +241,17 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
 
     var frame_sample_offset: usize = 0;
     while (frame_sample_offset < num_samples) {
-        const frame_header: FrameHeader = @bitCast(try reader.readInt(u32, .big));
+        const frame_header: FrameHeader = @bitCast(try reader.takeInt(u32, .big));
         if (frame_header.frame_sync != (0xFFF8 >> 1))
             return error.InvalidFrameHeader; // NOTE: We could try to return normally when valid_total_sample_count is false here. The CRC check should catch if this was the wrong decision.
 
-        const coded_number = try read_coded_number(&reader);
+        const coded_number = try read_coded_number(reader);
 
         const block_size: u16 = switch (frame_header.block_size) {
             .Reserved => return error.InvalidFrameHeader,
-            .Uncommon8b => @as(u16, try reader.readInt(u8, .big)) + 1,
+            .Uncommon8b => @as(u16, try reader.takeInt(u8, .big)) + 1,
             .Uncommon16b => bs: {
-                const ubs = try reader.readInt(u16, .big);
+                const ubs = try reader.takeInt(u16, .big);
                 if (ubs == std.math.maxInt(u16)) return error.InvalidFrameHeader;
                 break :bs ubs + 1;
             },
@@ -379,9 +260,9 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
 
         const frame_sample_rate: u24 = switch (frame_header.sample_rate) {
             .StoredInMetadata => return error.InvalidFrameHeader,
-            .Uncommon8b => try reader.readInt(u8, .big),
-            .Uncommon16b => try reader.readInt(u16, .big),
-            .Uncommon16bx10 => 10 * @as(u24, try reader.readInt(u16, .big)),
+            .Uncommon8b => try reader.takeInt(u8, .big),
+            .Uncommon16b => try reader.takeInt(u16, .big),
+            .Uncommon16bx10 => 10 * @as(u24, try reader.takeInt(u16, .big)),
             .Forbidden => return error.InvalidFrameHeader,
             else => |sr| sr.hz(),
         };
@@ -394,7 +275,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         };
         if (frame_bit_depth != expected_bits_per_sample) return error.UnexpectedBitsPerSample;
 
-        const frame_header_crc = try reader.readInt(u8, .big);
+        const frame_header_crc = try reader.takeInt(u8, .big);
         // TODO: Check CRC
         // Finally, an 8-bit CRC follows the frame/sample number, an uncommon block size, or an uncommon sample rate (depending on whether the latter two are stored).
         // This CRC is initialized with 0 and has the polynomial x^8 + x^2 + x^1 + x^0. This CRC covers the whole frame header before the CRC, including the sync code.
@@ -410,7 +291,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
             coded_number,
         });
 
-        var bit_reader = bitReader(reader);
+        var bit_reader = BitReader.init(reader);
 
         for (0..channel_count) |channel| {
             const subframe_header: SubframeHeader = .{
@@ -534,7 +415,7 @@ pub fn decode_frames(comptime SampleType: type, allocator: std.mem.Allocator, re
         bit_reader.alignToByte();
 
         // Frame CRC
-        _ = try reader.readInt(u16, .big);
+        _ = try reader.takeInt(u16, .big);
 
         // Stereo decorrelation
         switch (frame_header.channels) {
