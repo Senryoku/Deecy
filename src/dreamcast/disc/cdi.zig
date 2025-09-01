@@ -234,7 +234,7 @@ fn track_header(reader: *std.io.Reader) !void {
             break :mcl max_cd_length;
         }
     };
-    if (max_cd_length != 0x514C8 and max_cd_length != 0x57E40) {
+    if (max_cd_length != 0x514C8 and max_cd_length != 0x57E40 and max_cd_length != 0x61A80) {
         log.err("  Invalid max_cd_length: {X}", .{max_cd_length});
         return error.InvalidCDI;
     }
