@@ -47,13 +47,23 @@ const Command = enum(u32) {
 };
 
 const StatusRegister = packed struct(u8) {
+    /// Becomes "1" when an error has occurred during execution of the command the previous time.
+    /// Error details can be determined by checking the sense key and error code.
     check: u1 = 0,
     _r: u1 = 0,
+    /// Indicates that a correctable error has occurred.
     corr: u1 = 0,
+    /// Becomes "1" when preparations for data transfer between drive and host are
+    /// completed. Information held in the Interrupt Reason Register becomes valid in
+    /// the packet command when DRQ is set.
     drq: u1 = 0,
+    /// Becomes "1" when seek processing is completed
     dsc: u1 = 0,
+    /// Returns drive fault information.
     df: u1 = 0,
+    /// Set to "1" when the drive is able to respond to an ATA command.
     drdy: u1 = 1,
+    /// BSY is always set to "1" when the drive accesses the command block.
     bsy: u1 = 0,
 };
 
@@ -72,10 +82,14 @@ const SenseKey = enum(u4) {
 };
 
 const ErrorRegister = packed struct(u8) {
-    ili: u1 = 0, // Command length is not correct
-    eomf: u1 = 0, // Media end was detected
-    abrt: u1 = 0, // Drive is not ready and command was made invalid (ATA level).
-    mcr: u1 = 0, // Media change was requested and media have been ejected (ATA level).
+    /// Command length is not correct
+    ili: u1 = 0,
+    /// Media end was detected
+    eomf: u1 = 0,
+    /// Drive is not ready and command was made invalid (ATA level).
+    abrt: u1 = 0,
+    /// Media change was requested and media have been ejected (ATA level).
+    mcr: u1 = 0,
     sense_key: SenseKey = .NoSense,
 };
 
@@ -110,9 +124,16 @@ const InterruptReasonRegister = packed struct(u8) {
 const ScheduledEvent = struct {
     cycles: i32,
     state: ?GDROMStatus = null,
-    status: ?StatusRegister = null,
+    status: struct {
+        check: ?u1 = null,
+        corr: ?u1 = null,
+        drq: ?u1 = null,
+        dsc: ?u1 = null,
+        df: ?u1 = null,
+        drdy: ?u1 = null,
+        bsy: ?u1 = null,
+    } = .{},
     interrupt_reason: ?InterruptReasonRegister = null,
-    clear_interrupt: bool = false,
 
     fn compare(_: void, a: @This(), b: @This()) std.math.Order {
         return std.math.order(a.cycles, b.cycles);
@@ -302,15 +323,16 @@ fn schedule_event(self: *@This(), event: ScheduledEvent) void {
     gdrom_log.debug(" Event: {}", .{event});
     if (event.state) |state|
         self.state = state;
-    if (event.status) |status|
-        self.status_register = status;
+
+    inline for (std.meta.fields(@TypeOf(event.status))) |f| {
+        if (@field(event.status, f.name)) |v| @field(self.status_register, f.name) = v;
+    }
+
     if (event.interrupt_reason) |reason| {
         self.interrupt_reason_register = reason;
         if (self.control_register.nien == 0)
             self._dc.raise_external_interrupt(.{ .GDRom = 1 });
     }
-    if (event.clear_interrupt)
-        self._dc.clear_external_interrupt(.{ .GDRom = 1 });
 }
 
 pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
@@ -342,10 +364,7 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
             const val: T = @intCast(@as(u8, @bitCast(self.status_register)));
             gdrom_log.debug("  Read Status @{X:0>8} = {}", .{ addr, self.status_register });
             // Clear the pending interrupt signal.
-            self.schedule_event(.{
-                .cycles = 0,
-                .clear_interrupt = true,
-            });
+            self._dc.clear_external_interrupt(.{ .GDRom = 1 });
             return val;
         },
         .GD_Data => {
@@ -374,9 +393,8 @@ pub fn read_register(self: *@This(), comptime T: type, addr: u32) T {
         .GD_Error_Features => {
             // 7    6    5    4   3    2    1    0
             //    Sense Key      MCR  ABRT EOMF ILI
-            const val = @as(u8, @intFromEnum(if (self.status_register.drdy == 0) SenseKey.NotReady else SenseKey.NoSense)) << 4;
-            gdrom_log.info("  Read GD_Error_Features @{X:0>8} = 0x{X:0>8}", .{ addr, val });
-            return val;
+            gdrom_log.info("  Read GD_Error_Features @{X:0>8} = {}", .{ addr, self.error_register });
+            return @as(u8, @bitCast(self.error_register));
         },
         .GD_InterruptReason_SectorCount => {
             gdrom_log.info("  Read Interrupt Reason @{X:0>8} = {}", .{ addr, self.interrupt_reason_register });
@@ -446,7 +464,9 @@ pub fn write_register(self: *@This(), comptime T: type, addr: u32, value: T) voi
     switch (@as(HardwareRegister, @enumFromInt(addr))) {
         .GD_Status_Command => {
             self.status_register.check = 0;
-            self.error_register = .{};
+            self.error_register.ili = 0;
+            self.error_register.abrt = 0;
+
             switch (@as(Command, @enumFromInt(value))) {
                 .SoftReset => {
                     gdrom_log.info("  Command: SoftReset", .{});
@@ -640,6 +660,7 @@ fn nop(self: *@This()) void {
     //   Asserting the INTRQ signal
     self.schedule_event(.{
         .cycles = 0,
+        .status = .{ .bsy = 0, .drdy = 1 },
         .interrupt_reason = .{ .cod = .Command, .io = .DeviceToHost },
     });
 }
@@ -878,12 +899,18 @@ fn cd_seek(self: *@This()) !void {
     switch (parameter_type) {
         0b001 => {
             self.audio_state.set_start_addr((@as(u32, self.packet_command[2]) << 16) | (@as(u32, self.packet_command[3]) << 8) | self.packet_command[4]);
+            self.status_register.dsc = 1;
         },
         0b010 => {
             self.audio_state.set_start_addr(msf_to_lba(self.packet_command[2], self.packet_command[3], self.packet_command[4]));
+            self.status_register.dsc = 1;
         },
         0b011 => {
             // Stop playback (move to home position)
+            self.audio_state.set_start_addr(150);
+            self.audio_state.status = .NoInfo;
+            self.state = .Standby;
+            self.status_register.dsc = 1;
         },
         0b100 => {
             // Pause playback (seek position is unchanged)
@@ -893,7 +920,6 @@ fn cd_seek(self: *@This()) !void {
         },
     }
 
-    self.status_register.dsc = 1;
     self.spi_non_data_command();
 }
 
