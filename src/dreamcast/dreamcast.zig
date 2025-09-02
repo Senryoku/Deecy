@@ -261,7 +261,7 @@ pub const Dreamcast = struct {
 
         @memset(self.hardware_registers, 0x00);
 
-        self.hw_register(u32, .SB_FFST).* = 0; // FIFO Status
+        self.hw_register(u32, .SB_FFST).* = 0; // Misc. FIFO Status (0 means empty)
         self.hw_register(u32, .SB_MDST).* = 0;
         self.hw_register(u32, .SB_DDST).* = 0;
         self.hw_register(u32, .SB_SDST).* = 0;
@@ -289,6 +289,11 @@ pub const Dreamcast = struct {
 
         self.hw_register(u32, .SB_G2DSTO).* = 0x000003FF;
         self.hw_register(u32, .SB_G2TRTO).* = 0x000003FF;
+
+        // NOTE: SB_TFREM - This register returns the remaining free space in the Tile Accelerator's FIFO buffer, in units of 32 bytes.
+        //       Some WinCE games (Sega Rally 2, Kitahei Gold) will be stuck if this is too low.
+        //       TA FIFO isn't emulated. Leaving it at the maximum value (8, for 256 bytes) allows them to go past boot.
+        self.hw_register(u32, .SB_TFREM).* = 8;
     }
 
     pub fn region_subdir(self: *@This()) []const u8 {

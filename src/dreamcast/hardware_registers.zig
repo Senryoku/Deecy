@@ -295,3 +295,17 @@ pub const SB_SUSP = packed struct(u32) {
     // 1: The DMA transfer request is low (transfer possible)
     _: u26 = 0,
 };
+
+/// SB_FFST (Read Only) 0x005F688C
+/// This register indicates the FIFO status. If one of the bits shown below is read and
+/// returns a "0," the corresponding FIFO is empty; if the bit returns a "1," the
+/// corresponding FIFO is not empty.
+pub const SB_FFST = packed struct(u32) {
+    AICATransferRequestInput: u1 = 0, // "connected to the AICA chip's FIFO empty pin"
+    EXT1TransferRequestInput: u1 = 0,
+    EXT2TransferRequestInput: u1 = 0,
+    EXTDevTransferRequestInput: u1 = 0,
+    G2FIFO_CPUWriteFIFO: u1 = 0,
+    SH4FIFO: u1 = 0,
+    _: u26 = 0,
+};
