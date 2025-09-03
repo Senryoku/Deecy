@@ -357,19 +357,17 @@ pub fn main() !void {
         const render_start = d.renderer.render_start;
         if (render_start) {
             try d.renderer.update(&d.dc.gpu);
-            try d.renderer.render(&d.dc.gpu);
+            try d.renderer.render(&d.dc.gpu, false);
             d.renderer.render_start = false;
 
-            if (!d.dc.gpu.render_to_texture()) {
-                const now = std.time.microTimestamp();
-                d.last_n_frametimes.push(now - d.last_frame_timestamp);
-                d.last_frame_timestamp = now;
-            }
+            const now = std.time.microTimestamp();
+            d.last_n_frametimes.push(now - d.last_frame_timestamp);
+            d.last_frame_timestamp = now;
         }
 
-        // Debug aid (see force_render)
+        // Debug aid (see force_render). NOTE: This will break if the game renders to textures.
         if (force_render and !render_start)
-            try d.renderer.render(&d.dc.gpu);
+            try d.renderer.render(&d.dc.gpu, false);
 
         if (d.dc.gpu.read_register(Holly.FB_R_CTRL, .FB_R_CTRL).enable) {
             d.renderer.draw(); //  Blit to screen

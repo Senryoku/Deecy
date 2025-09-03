@@ -97,9 +97,6 @@ sudo apt install libgtk-3-dev
     -   Framebuffer:
         -   Improve detection of writes to framebuffer (false positives?)
         -   Write back for games that need it.
-    -   Render to Texture:
-        The way it is currently handled (dependent on the main loop and application framerate) is stupid.
-        The renderer isn't thread safe and submitting GPU work from another thread isn't trivial (at least not without synchronizing to the point of being useless).  
     -   Modifier Volumes.
         -   Implemented: Inclusion volumes and shadow bit over opaque and transparent geometry.
         -   Missing: Exclusion volumes.
