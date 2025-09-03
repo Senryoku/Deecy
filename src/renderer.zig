@@ -775,6 +775,7 @@ pub const Renderer = struct {
     fog_lut: [0x80]u32 = @splat(0),
     guest_framebuffer_size: struct { width: u32, height: u32 } = .{ .width = 640, .height = 480 },
     global_clip: struct { x: struct { min: u16, max: u16 }, y: struct { min: u16, max: u16 } } = .{ .x = .{ .min = 0, .max = 0 }, .y = .{ .min = 0, .max = 0 } },
+    write_back_parameters: HollyModule.Holly.WritebackParameters = undefined,
 
     // Some memory to avoid repeated allocations accross frames.
     vertices: std.ArrayList(Vertex),
@@ -784,9 +785,10 @@ pub const Renderer = struct {
     _scratch_pad: []u8 align(4), // Used to avoid temporary allocations before GPU uploads for example. 4 * 1024 * 1024, since this is the maximum texture size supported by the DC.
 
     _gctx: *zgpu.GraphicsContext,
+    _gctx_queue_mutex: *std.Thread.Mutex,
     _allocator: std.mem.Allocator,
 
-    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, internal_resolution_factor: u32, display_mode: DisplayMode) !*Renderer {
+    pub fn create(allocator: std.mem.Allocator, gctx: *zgpu.GraphicsContext, gctx_queue_mutex: *std.Thread.Mutex, internal_resolution_factor: u32, display_mode: DisplayMode) !*Renderer {
         const start = std.time.milliTimestamp();
         defer renderer_log.info("Renderer initialized in {d}ms", .{std.time.milliTimestamp() - start});
 
@@ -1240,6 +1242,7 @@ pub const Renderer = struct {
             ._scratch_pad = try allocator.allocWithOptions(u8, 4 * 1024 * 1024, .@"4", null),
 
             ._gctx = gctx,
+            ._gctx_queue_mutex = gctx_queue_mutex,
             ._allocator = allocator,
         };
         try renderer.ta_lists.append(allocator, .init());
@@ -1531,11 +1534,17 @@ pub const Renderer = struct {
     }
 
     pub fn on_render_start(self: *@This(), dc: *Dreamcast) void {
+        const render_to_texture = dc.gpu.render_to_texture();
+        if (render_to_texture and !self.ExperimentalRenderToTexture) {
+            renderer_log.warn("Render to Texture is disabled.", .{});
+            return;
+        }
+
         {
             self._ta_lists_mutex.lock();
             defer self._ta_lists_mutex.unlock();
 
-            if (self.render_start)
+            if (self.render_start and !render_to_texture)
                 renderer_log.warn(termcolor.yellow("Woops! Skipped a frame."), .{});
 
             self.on_render_start_param_base = dc.gpu.read_register(u32, .PARAM_BASE);
@@ -1585,15 +1594,25 @@ pub const Renderer = struct {
                 self.render_passes.shrinkRetainingCapacity(region_count);
             }
 
-            self.render_start = true;
+            self.write_back_parameters = dc.gpu.get_write_back_parameters();
+
+            // Let the main thread process the list asynchronously if possible.
+            self.render_start = !render_to_texture;
         }
 
-        // FIXME: When rendering to texture, wait for the render to finish (or timeout for safety).
-        //        Otherwise the game might try to read VRAM before we write back to it (like Grandia II for its battle transition).
-        //        This isn't particularly elegant, and even dangerous. Pretty easy to end up in a deadlock here... (hence the timeout)
-        if (dc.gpu.render_to_texture() and self.ExperimentalRenderToTexture) {
-            const start = std.time.microTimestamp();
-            while (self.render_start and std.time.microTimestamp() < start + 16_000) {}
+        // Process and render immediately when rendering to a texture. Decouples it from the host refresh rate, and some games require the result to be visible in guest VRAM ASAP.
+        if (render_to_texture) {
+            // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
+            self._gctx_queue_mutex.lock();
+            defer self._gctx_queue_mutex.unlock();
+            self.update(&dc.gpu) catch |err| {
+                renderer_log.err("Failed to update renderer: {t}", .{err});
+                return;
+            };
+            self.render(&dc.gpu, true) catch |err| {
+                renderer_log.err("Failed to render: {t}", .{err});
+                return;
+            };
         }
     }
 
@@ -2136,12 +2155,10 @@ pub const Renderer = struct {
             .height = 32 * @as(u32, ta_glob_tile_clip.tile_y_num + 1),
         };
 
-        const x_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_X_CLIP);
-        const y_clip = gpu.read_register(HollyModule.FB_CLIP, .FB_Y_CLIP);
-        self.global_clip.x.min = x_clip.min;
-        self.global_clip.x.max = @as(u16, x_clip.max) + 1;
-        self.global_clip.y.min = y_clip.min;
-        self.global_clip.y.max = @as(u16, y_clip.max) + 1;
+        self.global_clip.x.min = self.write_back_parameters.x_clip.min;
+        self.global_clip.x.max = @as(u16, self.write_back_parameters.x_clip.max) + 1;
+        self.global_clip.y.min = self.write_back_parameters.y_clip.min;
+        self.global_clip.y.max = @as(u16, self.write_back_parameters.y_clip.max) + 1;
 
         try self.update_background(gpu);
         try self.update_palette(gpu);
@@ -2799,10 +2816,9 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn render(self: *Renderer, holly: *HollyModule.Holly) !void {
+    pub fn render(self: *Renderer, holly: *HollyModule.Holly, render_to_texture: bool) !void {
         const gctx = self._gctx;
 
-        const render_to_texture = holly.render_to_texture();
         if (render_to_texture) {
             renderer_log.info("Rendering to texture! [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
             if (!self.ExperimentalRenderToTexture) {
@@ -3389,13 +3405,11 @@ pub const Renderer = struct {
                     const u_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.x.max >> 3)));
                     const v_size: u3 = @intCast(std.math.log2(try std.math.ceilPowerOfTwo(u32, self.global_clip.y.max >> 3)));
                     const size_index: u3 = @max(u_size, v_size);
-                    const scaler_ctl = holly.read_register(HollyModule.SCALER_CTL, .SCALER_CTL);
-                    const w_ctrl = holly.read_register(HollyModule.FB_W_CTRL, .FB_W_CTRL);
-                    const interlaced = scaler_ctl.interlace;
-                    const field = if (interlaced) scaler_ctl.field_select else 0;
-                    const FB_W_SOF = holly.read_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2);
-                    const pixel_size: u32 = 2;
+                    const interlaced = self.write_back_parameters.scaler_ctl.interlace;
+                    const field = if (interlaced) self.write_back_parameters.scaler_ctl.field_select else 0;
+                    const FB_W_SOF = if (field == 0) self.write_back_parameters.fb_w_sof1 else self.write_back_parameters.fb_w_sof2;
                     const addr = FB_W_SOF & HollyModule.Holly.VRAMMask;
+                    const pixel_size: u32 = 2;
 
                     var texture_index: TextureIndex = InvalidTextureIndex;
                     for (0..Renderer.MaxTextures[size_index]) |i| {
@@ -3446,7 +3460,7 @@ pub const Renderer = struct {
                             .address = @intCast(addr >> 3),
                             .stride_select = 1,
                             .scan_order = 1,
-                            .pixel_format = switch (w_ctrl.fb_packmode) {
+                            .pixel_format = switch (self.write_back_parameters.w_ctrl.fb_packmode) {
                                 .KRGB0555 => .ARGB1555,
                                 .RGB565 => .RGB565,
                                 .ARGB4444 => .ARGB4444,
@@ -3542,7 +3556,7 @@ pub const Renderer = struct {
                 4 * Renderer.NativeResolution.width * Renderer.NativeResolution.height,
             );
             if (mapped_pixels) |pixels| {
-                holly.write_framebuffer(pixels);
+                holly.write_framebuffer(self.write_back_parameters, pixels);
             } else std.log.err(termcolor.red("Failed to map framebuffer"), .{});
         }
     }

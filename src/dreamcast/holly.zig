@@ -2315,16 +2315,32 @@ pub const Holly = struct {
         return FB_W_SOF & 0x1000000 != 0;
     }
 
-    pub fn write_framebuffer(self: *@This(), pixels: []const u8) void {
-        const scaler_ctl = self.read_register(SCALER_CTL, .SCALER_CTL);
-        const w_ctrl = self.read_register(FB_W_CTRL, .FB_W_CTRL);
-        const x_clip = self.read_register(FB_CLIP, .FB_X_CLIP);
-        const y_clip = self.read_register(FB_CLIP, .FB_Y_CLIP);
-        const video_out_ctrl = self.read_register(VO_CONTROL, .VO_CONTROL);
-        _ = video_out_ctrl;
+    pub const WritebackParameters = struct {
+        scaler_ctl: SCALER_CTL,
+        w_ctrl: FB_W_CTRL,
+        x_clip: FB_CLIP,
+        y_clip: FB_CLIP,
+        video_out_ctrl: VO_CONTROL,
+        fb_w_sof1: u32,
+        fb_w_sof2: u32,
+        fb_w_linestride: u32,
+    };
+    pub fn get_write_back_parameters(self: *const @This()) WritebackParameters {
+        return .{
+            .scaler_ctl = self.read_register(SCALER_CTL, .SCALER_CTL),
+            .w_ctrl = self.read_register(FB_W_CTRL, .FB_W_CTRL),
+            .x_clip = self.read_register(FB_CLIP, .FB_X_CLIP),
+            .y_clip = self.read_register(FB_CLIP, .FB_Y_CLIP),
+            .video_out_ctrl = self.read_register(VO_CONTROL, .VO_CONTROL),
+            .fb_w_sof1 = self.read_register(u32, .FB_W_SOF1),
+            .fb_w_sof2 = self.read_register(u32, .FB_W_SOF2),
+            .fb_w_linestride = self.read_register(u32, .FB_W_LINESTRIDE),
+        };
+    }
 
-        const interlaced = scaler_ctl.interlace;
-        const field = if (interlaced) scaler_ctl.field_select else 0;
+    pub fn write_framebuffer(self: *@This(), parameters: WritebackParameters, pixels: []const u8) void {
+        const interlaced = parameters.scaler_ctl.interlace;
+        const field = if (interlaced) parameters.scaler_ctl.field_select else 0;
         const FB_W_SOF = self.read_register(u32, if (field == 0) .FB_W_SOF1 else .FB_W_SOF2);
         const access_32bit = FB_W_SOF & 0x1000000 == 0;
 
@@ -2337,10 +2353,10 @@ pub const Holly = struct {
         const line_offset = field;
         const line_stride: u32 = if (interlaced) 2 else 1;
         const height = resolution.height / line_stride;
-        for (y_clip.min..@min(height, y_clip.max + 1)) |y| {
-            for (x_clip.min..@min(resolution.width, x_clip.max + 1)) |x| {
+        for (parameters.y_clip.min..@min(height, parameters.y_clip.max + 1)) |y| {
+            for (parameters.x_clip.min..@min(resolution.width, parameters.x_clip.max + 1)) |x| {
                 const idx = ((line_stride * y + line_offset) * resolution.width + x) * 4;
-                switch (w_ctrl.fb_packmode) {
+                switch (parameters.w_ctrl.fb_packmode) {
                     .RGB565 => {
                         var addr: u32 = (FB_W_SOF & VRAMMask) + @as(u32, @intCast(y)) * FB_W_LINESTRIDE + 2 * @as(u32, @intCast(x));
                         if (access_32bit) addr = translate_32bit_path_addr(addr);
@@ -2366,7 +2382,7 @@ pub const Holly = struct {
                         self.vram[addr + 2] = pixels[idx + 0];
                     },
                     else => {
-                        std.log.warn("TODO: {t}", .{w_ctrl.fb_packmode});
+                        std.log.warn("TODO: {t}", .{parameters.w_ctrl.fb_packmode});
                     },
                 }
             }

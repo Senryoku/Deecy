@@ -468,7 +468,7 @@ pub fn create(allocator: std.mem.Allocator) !*@This() {
         }
     }
 
-    self.renderer = try .create(self._allocator, self.gctx, config.internal_resolution_factor, config.display_mode);
+    self.renderer = try .create(self._allocator, self.gctx, &self.gctx_queue_mutex, config.internal_resolution_factor, config.display_mode);
     self.dc.on_render_start = .{
         .function = @ptrCast(&Renderer.on_render_start),
         .context = self.renderer,
