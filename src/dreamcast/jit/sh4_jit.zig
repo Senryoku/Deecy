@@ -1134,8 +1134,7 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
         try block.mov(.{ .reg64 = ArgRegisters[1] }, .{ .imm64 = @as(u16, @bitCast(instr)) });
         switch (instr_index) {
-            sh4.instructions.Opcodes.len...std.math.maxInt(u8) => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
-            inline else => |idx| try call(
+            inline 0...sh4.instructions.Opcodes.len - 1 => |idx| try call(
                 block,
                 ctx,
                 if (ctx.mmu_enabled)
@@ -1143,6 +1142,7 @@ inline fn call_interpreter_fallback(block: *IRBlock, ctx: *JITContext, instr: sh
                 else
                     InterpreterFallback(false, idx).handler,
             ),
+            else => std.debug.panic("Invalid instruction: {X:0>4}", .{instr.value}),
         }
 
         if (ctx.mmu_enabled) {
@@ -2156,7 +2156,7 @@ pub fn fldi0_FRn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bool {
             const frn: JIT.Operand = .{ .freg32 = try ctx.guest_freg_cache(block, 32, instr.nmd.n, false, true) };
             try block.append(.{ .Xor = .{ .dst = frn, .src = frn } });
         },
-        .Double => return error.IllegalInstruction,
+        .Double => return error.IllegalInstruction, // NOTE: Probably not, actually.
         .Unknown => return interpreter_fallback_cached(block, ctx, instr),
     }
     return false;
