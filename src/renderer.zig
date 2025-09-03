@@ -668,12 +668,12 @@ pub const Renderer = struct {
     const DepthClearValue = 0.0;
     const DepthCompareFunction: wgpu.CompareFunction = .greater;
 
-    /// Write the framebuffer back to the guest VRAM after each render.
-    ExperimentalFramebufferWriteBack: bool = false,
-    /// Correctly handle rendering to a texture. Renders to another target and writes it back to guest VRAM.
+    /// Write the framebuffer back to a texture or guest VRAM (depending on ExperimentalRenderToVRAM) after each render.
+    ExperimentalFramebufferEmulation: bool = false,
+    /// Allow rendering to a texture.
     ExperimentalRenderToTexture: bool = true,
-    /// When rendering to a texture, skip the copy to guest VRAM and copy the result directly to the host texture slot.
-    ExperimentalRenderToTextureCopy: bool = false,
+    /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
+    ExperimentalRenderToVRAM: bool = true,
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -3380,9 +3380,9 @@ pub const Renderer = struct {
                 pass.drawIndexed(4, 1, 0, 0, 0);
             }
 
-            if (self.ExperimentalFramebufferWriteBack or render_to_texture) {
+            if (self.ExperimentalFramebufferEmulation or render_to_texture) {
                 // Skips the CPU writeback and copy directly to a host texture slot.
-                if (self.ExperimentalRenderToTextureCopy) {
+                if (!self.ExperimentalRenderToVRAM) {
                     // TODO: How is the minimum value of the global_clip used exactly? (Find a game where it isn't just [0, 0].)
                     if (self.global_clip.x.min != 0 or self.global_clip.y.min != 0)
                         renderer_log.warn("Render to texture with unusual global_clip:  [{d},{d}] to [{d},{d}]", .{ self.global_clip.x.min, self.global_clip.y.min, self.global_clip.x.max, self.global_clip.y.max });
@@ -3440,7 +3440,8 @@ pub const Renderer = struct {
                         const end_address = addr + pixel_size * NativeResolution.width * NativeResolution.height;
                         // FIXME: All of these settings are those used by Virtual Tennis 2 during replay.
                         //        I need to find a better way to find them at runtime.
-                        //        (Wait the next frame, look for this speficic address, and update them 'JIT'?).
+                        //        (Wait the next frame, look for this speficic address, and update them 'JIT'?
+                        //          Add a flag to the slot to bypass all settings except the address?).
                         const texture_control_word = HollyModule.TextureControlWord{
                             .address = @intCast(addr >> 3),
                             .stride_select = 1,
@@ -3517,7 +3518,8 @@ pub const Renderer = struct {
 
         gctx.submit(&.{commands});
 
-        if ((self.ExperimentalFramebufferWriteBack or render_to_texture) and !self.ExperimentalRenderToTextureCopy) {
+        // Read the result and copy it to guest VRAM
+        if ((self.ExperimentalFramebufferEmulation or render_to_texture) and self.ExperimentalRenderToVRAM) {
             const copy_buffer = gctx.lookupResource(self.framebuffer_copy_buffer).?;
             copy_buffer.mapAsync(
                 .{ .read = true },

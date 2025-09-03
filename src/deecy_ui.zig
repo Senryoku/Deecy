@@ -693,9 +693,9 @@ pub fn draw(self: *@This()) !void {
                 _ = zgui.comboFromEnum("Present Mode (Restart required)", &d.config.present_mode);
                 zgui.separator();
                 zgui.text("Experimental settings", .{});
-                _ = zgui.checkbox("Framebuffer Writeback", .{ .v = &d.renderer.ExperimentalFramebufferWriteBack });
+                _ = zgui.checkbox("Framebuffer Emulation", .{ .v = &d.renderer.ExperimentalFramebufferEmulation });
                 _ = zgui.checkbox("Render to Texture", .{ .v = &d.renderer.ExperimentalRenderToTexture });
-                _ = zgui.checkbox("Texture to Texture Copy", .{ .v = &d.renderer.ExperimentalRenderToTextureCopy });
+                _ = zgui.checkbox("Render to Guest VRAM", .{ .v = &d.renderer.ExperimentalRenderToVRAM });
                 zgui.endTabItem();
             }
 
