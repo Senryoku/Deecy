@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const termcolor_module = b.createModule(.{ .root_source_file = b.path("src/termcolor.zig") });
+    const helpers_module = b.createModule(.{ .root_source_file = b.path("src/helpers.zig") });
 
     const arm7 = b.dependency("arm7", .{});
     const arm7_module = arm7.module("arm7");
@@ -42,6 +43,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/dreamcast/dreamcast.zig"),
         .imports = &.{
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "helpers", .module = helpers_module },
             .{ .name = "arm7", .module = arm7_module },
         },
     });
@@ -66,6 +68,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .imports = &.{
             .{ .name = "termcolor", .module = termcolor_module },
+            .{ .name = "helpers", .module = helpers_module },
             .{ .name = "dreamcast", .module = dc_module },
             .{ .name = "lz4", .module = ziglz4.module("zig-lz4") },
             .{ .name = "nfd", .module = nfd.module("nfd") },

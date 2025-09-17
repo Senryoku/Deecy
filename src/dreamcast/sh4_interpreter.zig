@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const termcolor = @import("termcolor");
+const Once = @import("helpers").Once;
 
 const sh4 = @import("sh4.zig");
 const SH4 = sh4.SH4;
@@ -1389,13 +1390,8 @@ pub fn fschg(cpu: *SH4, _: Instr) !void {
 }
 
 pub fn ocbi_atRn(_: *SH4, _: Instr) !void {
-    const static = struct {
-        var once = true;
-    };
-    if (static.once) {
-        static.once = false;
+    if (Once(@src()))
         sh4_log.warn("Note: ocbi @Rn not implemented", .{});
-    }
 }
 
 pub fn ocbp_atRn(_: *SH4, _: Instr) !void {
@@ -1407,13 +1403,8 @@ pub fn ocbp_atRn(_: *SH4, _: Instr) !void {
     // invalidated. No operation is performed in the case of a cache miss
     // or an access to a non-cache area.
 
-    const static = struct {
-        var once = true;
-    };
-    if (static.once) {
-        static.once = false;
+    if (Once(@src()))
         sh4_log.warn("Note: obcp @Rn not implemented", .{});
-    }
 }
 
 pub fn ocbwb_atRn(cpu: *SH4, opcode: Instr) !void {
@@ -1523,13 +1514,8 @@ pub fn pref_atRn(cpu: *SH4, opcode: Instr) !void {
             },
         }
     } else {
-        const static = struct {
-            var once = true;
-        };
-        if (static.once) {
-            static.once = false;
+        if (Once(@src()))
             sh4_log.warn("Note: pref @Rn not implemented outside of store queue operation.", .{});
-        }
     }
 }
 

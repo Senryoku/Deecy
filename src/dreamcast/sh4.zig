@@ -1369,7 +1369,7 @@ pub const SH4 = struct {
             },
             0xE4000000...0xEFFFFFFF => {
                 // Reserved
-                @panic("Write to Reserved space in P4 (E4000000...0xEFFFFFFF)");
+                sh4_log.err(termcolor.red("Write({}) to Reserved space in P4 (E4000000...0xEFFFFFFF): {X:0>8} = {X:0>8} (PC: {X:0>8})"), .{ T, virtual_addr, value, self.pc });
             },
             0xF0000000...0xF0FFFFFF => {
                 // Instruction cache address array

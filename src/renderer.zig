@@ -2,6 +2,7 @@ const std = @import("std");
 const termcolor = @import("termcolor");
 
 const renderer_log = std.log.scoped(.renderer);
+const Once = @import("helpers").Once;
 
 const zgpu = @import("zgpu");
 const wgpu = zgpu.wgpu;
@@ -1171,7 +1172,7 @@ pub const Renderer = struct {
                     .pass_op = .replace, // Action performed on samples that pass both the depth and stencil tests.
                     .depth_fail_op = .keep, // Action performed on samples that pass the stencil test and fail the depth test.
                 },
-                .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardward and games are not required to properly distinguish between front facing and back facing triangles.
+                .stencil_back = .{ // Same as front, I don't think the orientation matters for the hardware and games are not required to properly distinguish between front facing and back facing triangles.
                     .compare = .not_equal,
                     .fail_op = .keep,
                     .pass_op = .replace,
@@ -2180,7 +2181,7 @@ pub const Renderer = struct {
             pre_sorted_indices.clearRetainingCapacity();
             var pre_sorted_index_offset: u32 = 0;
 
-            inline for (.{ HollyModule.ListType.Opaque, HollyModule.ListType.PunchThrough, HollyModule.ListType.Translucent }) |list_type| {
+            inline for ([_]HollyModule.ListType{ .Opaque, .PunchThrough, .Translucent }) |list_type| {
                 // Parameters specific to a polygon type
                 var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
                 var face_offset_color: fARGB = undefined;
@@ -2209,6 +2210,16 @@ pub const Renderer = struct {
                     const texture_control = polygon.texture_control();
                     const area1_tsp_instruction = polygon.area1_tsp_instruction();
                     const area1_texture_control = polygon.area1_texture_control();
+
+                    if (tsp_instruction.src_select != 0 or tsp_instruction.dst_select != 0) {
+                        // NOTE: Ideas on how to suppport the Secondary Accumulation Buffer:
+                        //        - Pass the SRC/DST select bit of each fragment all the way to the blend compute shader (Not ideal already).
+                        //        - Sort fragments with dst=1 separately.
+                        //        - When blending, if a fragment with src=1 is encountered, blend all dst=1 fragments with a lower index and use the result as the source. Remove the used fragments.
+                        if (Once(@src()))
+                            renderer_log.warn(termcolor.yellow("Secondary Accumulation Buffer usage detected in {t} pass (src_select={d}, dst_select={d}). This is not implemented, these polygons will be skipped."), .{ list_type, tsp_instruction.src_select, tsp_instruction.dst_select });
+                        continue;
+                    }
 
                     if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
                         switch (polygon) {
@@ -3192,7 +3203,8 @@ pub const Renderer = struct {
                         }
 
                         // TODO: Support translucent modifier volumes in pre-sorted mode
-
+                        if (ta_lists.translucent_modifier_volumes.items.len > 0 and Once(@src()))
+                            renderer_log.warn(termcolor.yellow("(TODO) Translucent modifier volumes are not supported in pre-sorted mode."), .{});
                     } else if (render_pass.translucent_pass.steps.items.len > 0) {
                         // Generate all translucent fragments
                         const translucent_bind_group = gctx.lookupResource(self.translucent_bind_group).?;

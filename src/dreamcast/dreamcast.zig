@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const dc_config = @import("dc_config");
+const Once = @import("helpers").Once;
 
 const termcolor = @import("termcolor");
 
@@ -597,13 +597,8 @@ pub const Dreamcast = struct {
                     0x005F8000...0x005F9FFF => return self.gpu._get_register_from_addr(u8, area_0_addr),
                     0x005FA000...0x005FFFFF => return self.hw_register_addr(u8, area_0_addr),
                     0x00600000...0x006007FF => {
-                        const static = struct {
-                            var once = false;
-                        };
-                        if (!static.once) {
-                            static.once = true;
+                        if (Once(@src()))
                             dc_log.warn(termcolor.yellow("  Unimplemented _get_memory to MODEM: {X:0>8} (This will only be reported once)"), .{addr});
-                        }
                         self._dummy = .{ 0, 0, 0, 0 };
                         return @ptrCast(&self._dummy);
                     },
