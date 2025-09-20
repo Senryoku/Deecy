@@ -113,6 +113,9 @@ pub const PackedColor = packed struct(u32) {
     r: u8 = 0,
     a: u8 = 0,
 
+    pub const zero = @This(){ .a = 0, .r = 0, .g = 0, .b = 0 };
+    pub const one = @This(){ .a = 1, .r = 1, .g = 1, .b = 1 };
+
     pub fn with_alpha(self: @This(), use_alpha: bool) @This() {
         return .{ .r = self.r, .g = self.g, .b = self.b, .a = if (use_alpha) self.a else 255 };
     }
@@ -123,6 +126,9 @@ pub const fARGB = packed struct {
     r: f32 = 0,
     g: f32 = 0,
     b: f32 = 0,
+
+    pub const zero = @This(){ .a = 0, .r = 0, .g = 0, .b = 0 };
+    pub const one = @This(){ .a = 1, .r = 1, .g = 1, .b = 1 };
 
     pub fn to_packed(self: @This(), use_alpha: bool) PackedColor {
         return .{
@@ -155,6 +161,9 @@ pub const fRGBA = packed struct {
     g: f32 = 0,
     b: f32 = 0,
     a: f32 = 0,
+
+    pub const zero = @This(){ .a = 0, .r = 0, .g = 0, .b = 0 };
+    pub const one = @This(){ .a = 1, .r = 1, .g = 1, .b = 1 };
 
     pub fn from_packed(color: PackedColor, use_alpha: bool) @This() {
         return .{

@@ -1316,7 +1316,14 @@ pub const UserTileClipInfo = struct {
 };
 
 pub const VertexStrip = struct {
-    polygon: Polygon,
+    global_parameters: struct {
+        polygon: Polygon,
+        face_base_color: fARGB = .one,
+        face_offset_color: fARGB = .zero,
+        area1_face_base_color: fARGB = .one,
+        sprite_face_base_color: PackedColor = .one,
+        sprite_face_offset_color: PackedColor = .zero,
+    },
     user_clip: ?UserTileClipInfo,
     vertex_parameter_index: usize = 0,
     vertex_parameter_count: usize = 0,
@@ -1432,6 +1439,13 @@ pub const Holly = struct {
     _ta_user_tile_clip: ?UserTileClipInfo = null,
     _ta_current_volume: ?ModifierVolume = null,
     _ta_volume_next_polygon_is_last: bool = false,
+
+    // NOTE: The following isn't serialized. I don't think this is worth breaking compatibility for.
+    _ta_face_base_color: fARGB = .one,
+    _ta_face_offset_color: fARGB = .zero,
+    _ta_area1_face_base_color: fARGB = .one,
+    _ta_sprite_face_base_color: PackedColor = .one,
+    _ta_sprite_face_offset_color: PackedColor = .zero,
 
     // When starting a render, the user can select where to get the parameters from using
     // the PARAM_BASE register. It is specified in 1MB blocks, meaning it can take at most
@@ -2062,6 +2076,23 @@ pub const Holly = struct {
                         .Sprite => std.debug.panic("Invalid polygon format: {}", .{polygon_type}),
                         inline else => |pt| @unionInit(Polygon, @tagName(pt), @as(*std.meta.TagPayload(Polygon, pt), @ptrCast(&self._ta_command_buffer)).*),
                     };
+
+                    switch (self._ta_current_polygon.?) {
+                        .PolygonType1 => |p| {
+                            self._ta_face_base_color = p.face_color;
+                        },
+                        .PolygonType2 => |p| {
+                            self._ta_face_base_color = p.face_color;
+                            self._ta_face_offset_color = p.face_offset_color;
+                        },
+                        .PolygonType4 => |p| {
+                            // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
+                            self._ta_face_base_color = p.face_color_0;
+                            self._ta_area1_face_base_color = p.face_color_1;
+                        },
+                        else => |p| if (self._ta_current_polygon.?.control_word().obj_control.col_type == .IntensityMode1)
+                            holly_log.warn(termcolor.yellow("Intensity Mode 1 polygon with unexpected Polygon Type {t}: {}"), .{ p.tag(), p }),
+                    }
                 }
             },
             .SpriteList => {
@@ -2075,6 +2106,9 @@ pub const Holly = struct {
                 }
 
                 self._ta_current_polygon = .{ .Sprite = @as(*Sprite, @ptrCast(&self._ta_command_buffer)).* };
+
+                self._ta_sprite_face_base_color = self._ta_current_polygon.?.Sprite.base_color;
+                self._ta_sprite_face_offset_color = self._ta_current_polygon.?.Sprite.offset_color;
             },
             // VertexParameter - Yes it's a category of its own.
             .VertexParameter => {
@@ -2124,7 +2158,14 @@ pub const Holly = struct {
 
                             if (parameter_control_word.end_of_strip == 1) {
                                 display_list.vertex_strips.append(self._allocator, .{
-                                    .polygon = polygon.*,
+                                    .global_parameters = .{
+                                        .polygon = polygon.*,
+                                        .face_base_color = self._ta_face_base_color,
+                                        .face_offset_color = self._ta_face_offset_color,
+                                        .area1_face_base_color = self._ta_area1_face_base_color,
+                                        .sprite_face_base_color = self._ta_sprite_face_base_color,
+                                        .sprite_face_offset_color = self._ta_sprite_face_offset_color,
+                                    },
                                     .user_clip = if (self._ta_user_tile_clip) |uc| if (uc.usage != .Disable) uc else null else null,
                                     .vertex_parameter_index = display_list.next_first_vertex_parameters_index,
                                     .vertex_parameter_count = display_list.vertex_parameters.items.len - display_list.next_first_vertex_parameters_index,

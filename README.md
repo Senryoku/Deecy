@@ -36,6 +36,7 @@ Keyboard bindings can be customized in the settings. Defaults for controller 1:
 | Key    | Action |
 | ------ | ------ | 
 | Escape | Show/Hide the UI |
+| Space  | Start/Pause emulation |
 | F      | Toggle Fullscreen |
 | L      | Toggle unlimited emulation speed |
 | F1-F4  | Save state 1-4 |
@@ -102,10 +103,9 @@ sudo apt install libgtk-3-dev
         -   Missing: Exclusion volumes.
         -   Missing: Translucent MV in pre-sort mode.
     -   Region Array Data Configuration are mostly ignored.
-        -   Flush Accumulate (Secondary accumulate buffer)
     -   Fog LUT Mode 2.
     -   User Tile Clip, only the simplest version is supported.
-    -   Secondary accumulate buffer (very low priority, not sure if many games use this feature).
+    -   Secondary accumulate buffer (low priority, not many games use this feature).
     -   Mipmaps for palette textures?
     -   Follow ISP_FEED_CFG discard mode flag? (Find a game that turns it off)
 

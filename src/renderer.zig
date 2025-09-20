@@ -2182,11 +2182,6 @@ pub const Renderer = struct {
             var pre_sorted_index_offset: u32 = 0;
 
             inline for ([_]HollyModule.ListType{ .Opaque, .PunchThrough, .Translucent }) |list_type| {
-                // Parameters specific to a polygon type
-                var face_color: fARGB = undefined; // In Intensity Mode 2, the face color is the one of the previous Intensity Mode 1 Polygon
-                var face_offset_color: fARGB = undefined;
-                var area1_face_color: fARGB = undefined;
-                var area1_face_offset_color: fARGB = undefined;
                 const display_list: *const HollyModule.DisplayList = @constCast(ta_lists).get_list(list_type);
 
                 var current_depth_compare_function: ?wgpu.CompareFunction = null;
@@ -2201,7 +2196,8 @@ pub const Renderer = struct {
 
                 for (0..display_list.vertex_strips.items.len) |idx| {
                     const strip_first_vertex_index: usize = self.vertices.items.len;
-                    const polygon = display_list.vertex_strips.items[idx].polygon;
+                    const global_parameters = display_list.vertex_strips.items[idx].global_parameters;
+                    const polygon = global_parameters.polygon;
 
                     // Generic Parameters
                     const parameter_control_word = polygon.control_word();
@@ -2219,33 +2215,6 @@ pub const Renderer = struct {
                         if (Once(@src()))
                             renderer_log.warn(termcolor.yellow("Secondary Accumulation Buffer usage detected in {t} pass (src_select={d}, dst_select={d}). This is not implemented, these polygons will be skipped."), .{ list_type, tsp_instruction.src_select, tsp_instruction.dst_select });
                         continue;
-                    }
-
-                    if (parameter_control_word.obj_control.col_type == .IntensityMode1) {
-                        switch (polygon) {
-                            .PolygonType1 => |p| {
-                                face_color = p.face_color;
-                            },
-                            .PolygonType2 => |p| {
-                                face_color = p.face_color;
-                                face_offset_color = p.face_offset_color;
-                            },
-                            .PolygonType4 => |p| {
-                                // NOTE: In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color.
-                                face_color = p.face_color_0;
-                                face_offset_color = p.face_color_0;
-                                area1_face_color = p.face_color_1;
-                                area1_face_offset_color = p.face_color_1;
-                            },
-                            else => {},
-                        }
-                    }
-
-                    var sprite_base_color: PackedColor = undefined;
-                    var sprite_offset_color: PackedColor = undefined;
-                    if (polygon == .Sprite) {
-                        sprite_base_color = polygon.Sprite.base_color;
-                        sprite_offset_color = polygon.Sprite.offset_color;
                     }
 
                     var tex_idx: TextureIndex = 0;
@@ -2376,7 +2345,7 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity, use_alpha),
                                 });
                             },
                             // Packed Color, Textured 32bit UV
@@ -2442,8 +2411,8 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                     .u = v.u,
                                     .v = v.v,
                                 });
@@ -2457,8 +2426,8 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity, use_alpha),
-                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity, use_alpha),
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity, true) else .{},
                                     .u = v.uv.u_as_f32(),
                                     .v = v.uv.v_as_f32(),
                                 });
@@ -2486,8 +2455,8 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .area1_base_color = global_parameters.area1_face_base_color.apply_intensity(v.base_intensity_1, use_alpha),
                                 });
                             },
                             // Textured, Packed Color, with Two Volumes
@@ -2542,12 +2511,13 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity_0, true) else .zero,
                                     .u = v.u0,
                                     .v = v.v0,
-                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_base_color = global_parameters.area1_face_base_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    // "In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color."
+                                    .area1_offset_color = if (use_offset) global_parameters.area1_face_base_color.apply_intensity(v.offset_intensity_1, true) else .zero,
                                     .area1_u = v.u1,
                                     .area1_v = v.v1,
                                 });
@@ -2562,12 +2532,13 @@ pub const Renderer = struct {
                                     .x = v.x,
                                     .y = v.y,
                                     .z = v.z,
-                                    .base_color = face_color.apply_intensity(v.base_intensity_0, use_alpha),
-                                    .offset_color = if (use_offset) face_offset_color.apply_intensity(v.offset_intensity_0, true) else .{},
+                                    .base_color = global_parameters.face_base_color.apply_intensity(v.base_intensity_0, use_alpha),
+                                    .offset_color = if (use_offset) global_parameters.face_offset_color.apply_intensity(v.offset_intensity_0, true) else .zero,
                                     .u = v.uv_0.u_as_f32(),
                                     .v = v.uv_0.v_as_f32(),
-                                    .area1_base_color = area1_face_color.apply_intensity(v.base_intensity_1, use_alpha),
-                                    .area1_offset_color = if (use_offset) area1_face_offset_color.apply_intensity(v.offset_intensity_1, true) else .{},
+                                    .area1_base_color = global_parameters.area1_face_base_color.apply_intensity(v.base_intensity_1, use_alpha),
+                                    // "In the case of Polygon Type 4 (Intensity, with Two Volumes), the Face Color is used in both the Base Color and the Offset Color."
+                                    .area1_offset_color = if (use_offset) global_parameters.area1_face_base_color.apply_intensity(v.offset_intensity_1, true) else .zero,
                                     .area1_u = v.uv_1.u_as_f32(),
                                     .area1_v = v.uv_1.v_as_f32(),
                                 });
@@ -2576,9 +2547,9 @@ pub const Renderer = struct {
                                 var vs = gen_sprite_vertices(vertex);
                                 for (&vs) |*v| {
                                     v.primitive_index = primitive_index;
-                                    v.base_color = sprite_base_color.with_alpha(use_alpha);
+                                    v.base_color = global_parameters.sprite_face_base_color.with_alpha(use_alpha);
                                     if (use_offset)
-                                        v.offset_color = sprite_offset_color;
+                                        v.offset_color = global_parameters.sprite_face_offset_color;
                                     self.min_depth = @min(self.min_depth, v.z);
                                     self.max_depth = @max(self.max_depth, v.z);
 

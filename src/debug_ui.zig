@@ -1033,9 +1033,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                         zgui.text("Strips: {d}, Vertices: {d}", .{ list.vertex_strips.items.len, list.vertex_parameters.items.len });
                         for (list.vertex_strips.items, 0..) |strip, idx| {
                             const strip_header = try std.fmt.bufPrintZ(&buffer, "  {t} ({d}) - {t}###strip_{d}", .{
-                                strip.polygon.tag(),
+                                strip.global_parameters.polygon.tag(),
                                 strip.vertex_parameter_count,
-                                strip.polygon.tsp_instruction().texture_shading_instruction,
+                                strip.global_parameters.polygon.tsp_instruction().texture_shading_instruction,
                                 idx,
                             });
                             {
@@ -1293,7 +1293,7 @@ fn draw_strip(draw_list: zgui.DrawList, min: [2]f32, scale: [2]f32, display_list
     if (index < display_list.vertex_strips.items.len) {
         const parameters = display_list.vertex_parameters.items;
         const strip = &display_list.vertex_strips.items[index];
-        switch (strip.polygon) {
+        switch (strip.global_parameters.polygon) {
             .Sprite => |_| {
                 for (strip.vertex_parameter_index..strip.vertex_parameter_index + strip.vertex_parameter_count) |i| {
                     const pos = parameters[i].sprite_positions();
@@ -1414,9 +1414,9 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
 
     var buffer: [128]u8 = undefined;
 
-    const control_word = strip.polygon.control_word();
-    const isp_tsp = strip.polygon.isp_tsp_instruction();
-    const tsp = strip.polygon.tsp_instruction();
+    const control_word = strip.global_parameters.polygon.control_word();
+    const isp_tsp = strip.global_parameters.polygon.isp_tsp_instruction();
+    const tsp = strip.global_parameters.polygon.tsp_instruction();
     // TODO: Display some actually useful information :)
     {
         const header = std.fmt.bufPrintZ(&buffer, "Control Word:    {X:0>8}##ControlWord", .{@as(u32, @bitCast(control_word))}) catch unreachable;
@@ -1437,7 +1437,7 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
         }
     }
     if (control_word.obj_control.texture == 1) {
-        const texture_control_word = strip.polygon.texture_control();
+        const texture_control_word = strip.global_parameters.polygon.texture_control();
         if (zgui.collapsingHeader("Texture Control", .{}))
             display(texture_control_word);
         zgui.text("Texture size: {d}x{d}", .{ tsp.get_u_size(), tsp.get_v_size() });
@@ -1453,17 +1453,17 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
             }
         }
     }
-    if (strip.polygon.area1_texture_control()) |area1_texture_control| {
+    if (strip.global_parameters.polygon.area1_texture_control()) |area1_texture_control| {
         zgui.text("Area1 Tex.:   {X:0>8}", .{@as(u32, @bitCast(area1_texture_control))});
     }
-    if (strip.polygon.area1_tsp_instruction()) |area1_tsp| {
+    if (strip.global_parameters.polygon.area1_tsp_instruction()) |area1_tsp| {
         zgui.text("Area1 TSP:    {X:0>8}", .{@as(u32, @bitCast(area1_tsp))});
     }
-    if (strip.polygon.base_color()) |base_color| {
+    if (strip.global_parameters.polygon.base_color()) |base_color| {
         var local = base_color;
         _ = zgui.colorEdit4("Base Color", .{ .col = &local, .flags = .{ .float = true } });
     }
-    if (strip.polygon.offset_color()) |offset_color| {
+    if (strip.global_parameters.polygon.offset_color()) |offset_color| {
         var local = offset_color;
         _ = zgui.colorEdit4("Offset Color", .{ .col = &local, .flags = .{ .float = true } });
     }
