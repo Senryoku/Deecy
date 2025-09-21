@@ -1203,6 +1203,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
     zgui.end();
 
     if (zgui.begin("Renderer", .{})) {
+        zgui.text("/!\\ Lower values may crash with higher resolutions.", .{});
+        var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"4" = 4 } = @enumFromInt(d.renderer.oit_horizontal_slices);
+        if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {
+            d.renderer.oit_horizontal_slices = @intFromEnum(oit_horizontal_slices);
+            d.renderer.on_inner_resolution_change();
+        }
+        zgui.separator();
         zgui.text("Min Depth: {d: >4.2}", .{d.renderer.min_depth});
         zgui.text("Max Depth: {d: >4.2}", .{d.renderer.max_depth});
         zgui.text("PT_ALPHA_REF: {d: >4.2}", .{d.renderer.pt_alpha_ref});

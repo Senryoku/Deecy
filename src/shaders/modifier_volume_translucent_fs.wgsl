@@ -15,9 +15,9 @@ struct OITFSUniforms {
 fn main(
     @builtin(position) position_clip: vec4<f32>,
 ) {
-    let frag_coords = vec2<i32>(position_clip.xy);
+    let frag_coords = vec2<u32>(position_clip.xy);
 	
-    let heads_index = (u32(frag_coords.y) - oit_tmv_uniforms.start_y) * oit_tmv_uniforms.target_width + u32(frag_coords.x);
+    let heads_index = (frag_coords.y - oit_tmv_uniforms.start_y) * oit_tmv_uniforms.target_width + frag_coords.x;
     let frag_index = atomicAdd(&heads.fragment_count[heads_index], 1u);
     if frag_index < MaxVolumeFragments {
         // NOTE: This might seem like a weird way of indexing the array, but this improves memory access coherence a lot,

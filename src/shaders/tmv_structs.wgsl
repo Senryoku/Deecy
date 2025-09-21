@@ -12,8 +12,8 @@ struct OITTMVUniforms {
 };
 
 struct VolumeFragmentList {
-	// node[0]: Packed 8bits volume index and 24bits next pointer.
-	// node[1]: depth (f32)
+	// data[0]: volume index (u32)
+	// data[1]: depth (f32)
 	data: array<vec2<u32>>
 };
 

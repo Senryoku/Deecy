@@ -654,9 +654,9 @@ pub const Renderer = struct {
     pub const Resolution = struct { width: u32, height: u32 };
     pub const NativeResolution: Resolution = .{ .width = 640, .height = 480 };
 
-    const OITHorizontalSlices = 4; // Divides the OIT pass into multiple passes to limit memory usage.
     const MaxFragmentsPerPixel = 24;
     const OITLinkedListNodeSize = 5 * 4;
+    const MaxVolumeFragmentsPerPixel = 16;
     const VolumeLinkedListNodeSize = 2 * 4;
     const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
 
@@ -730,6 +730,7 @@ pub const Renderer = struct {
 
     strips_metadata_buffer: zgpu.BufferHandle,
 
+    oit_horizontal_slices: u32 = 4, // Divides the OIT pass into multiple passes to limit memory usage.
     list_heads_buffer: zgpu.BufferHandle = undefined,
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
@@ -3195,8 +3196,8 @@ pub const Renderer = struct {
                             //       mode where the depth_compare mode can be set by the user (it is written, but unused).
                         };
 
-                        const slice_size = self.resolution.height / OITHorizontalSlices;
-                        for (0..OITHorizontalSlices) |i| {
+                        const slice_size = self.resolution.height / self.oit_horizontal_slices;
+                        for (0..self.oit_horizontal_slices) |i| {
                             const start_y: u32 = @as(u32, @intCast(i)) * slice_size;
 
                             // Render Translucent Modifier Volumes
@@ -3271,7 +3272,7 @@ pub const Renderer = struct {
                                         pass.end();
                                         pass.release();
                                     }
-                                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 8) };
+                                    const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 8) };
                                     pass.setPipeline(translucent_modvol_merge_pipeline);
 
                                     pass.setBindGroup(0, translucent_modvol_merge_bind_group, &.{oit_mv_uniform_mem.offset});
@@ -3281,7 +3282,7 @@ pub const Renderer = struct {
 
                             const oit_uniform_mem = gctx.uniformsAllocate(OITUniforms, 1);
                             oit_uniform_mem.slice[0] = .{
-                                .max_fragments = @intCast(self.get_max_storage_buffer_binding_size() / OITLinkedListNodeSize),
+                                .max_fragments = @intCast(self.get_fragments_list_size() / OITLinkedListNodeSize),
                                 .target_width = self.resolution.width,
                                 .start_y = start_y,
                             };
@@ -3335,7 +3336,7 @@ pub const Renderer = struct {
                                     pass.end();
                                     pass.release();
                                 }
-                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, OITHorizontalSlices * 4) };
+                                const num_groups = [2]u32{ @divExact(self.resolution.width, 8), @divExact(self.resolution.height, self.oit_horizontal_slices * 4) };
                                 pass.setPipeline(pipeline);
                                 pass.setBindGroup(0, blend_bind_group, &.{oit_uniform_mem.offset});
                                 pass.dispatchWorkgroups(num_groups[0], num_groups[1], 1);
@@ -3855,7 +3856,7 @@ pub const Renderer = struct {
 
             self.linked_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
-                .size = self.get_max_storage_buffer_binding_size(),
+                .size = self.get_fragments_list_size(),
             });
             self._gctx.lookupResource(self.linked_list_buffer).?.setLabel("OIT Linked List Buffer");
         }
@@ -3900,7 +3901,7 @@ pub const Renderer = struct {
         self.translucent_bind_group = self._gctx.createBindGroup(self.translucent_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.depth.depth_only_view },
         });
     }
@@ -3926,7 +3927,7 @@ pub const Renderer = struct {
         self.blend_bind_group = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer.view },
             .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
@@ -3934,7 +3935,7 @@ pub const Renderer = struct {
         self.blend_bind_group_render_to_texture = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
             .{ .binding = 1, .buffer_handle = self.list_heads_buffer, .offset = 0, .size = self.get_linked_list_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_max_storage_buffer_binding_size() },
+            .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_render_to_texture_target.view },
             .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
@@ -3942,22 +3943,26 @@ pub const Renderer = struct {
     }
 
     fn get_linked_list_heads_size(self: *const @This()) u64 {
-        return (1 + self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
+        return (1 + self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * @sizeOf(u32);
+    }
+
+    fn get_fragments_list_size(self: *const @This()) u64 {
+        return self.get_max_storage_buffer_binding_size();
     }
 
     fn get_modvol_heads_size(self: *const @This()) u64 {
-        return (self.resolution.width * self.resolution.height / OITHorizontalSlices) * @sizeOf(u32);
+        return (self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * @sizeOf(u32);
     }
 
     fn get_modvol_fragment_list_size(self: *const @This()) u64 {
         return @min(
-            VolumeLinkedListNodeSize * (self.resolution.width * self.resolution.height / OITHorizontalSlices) * 16,
+            VolumeLinkedListNodeSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * MaxVolumeFragmentsPerPixel,
             self.get_max_storage_buffer_binding_size(),
         );
     }
 
     fn get_modvol_volumes_size(self: *const @This()) u64 {
-        return VolumePixelSize * (self.resolution.width * self.resolution.height / OITHorizontalSlices);
+        return VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices);
     }
 
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
