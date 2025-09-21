@@ -947,7 +947,7 @@ const VolumeInstruction = enum(u3) {
 
 const ModifierVolumeInstruction = packed struct(u32) {
     _: u27,
-    culling_mode: u2,
+    culling_mode: CullingMode,
     volume_instruction: VolumeInstruction,
 };
 

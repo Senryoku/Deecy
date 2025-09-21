@@ -272,6 +272,32 @@ fn display_tlb(comptime name: [:0]const u8, tlbs: []SH4Module.mmu.TLBEntry) void
     }
 }
 
+fn display_texture_control_word(control_word: Holly.TextureControlWord) void {
+    zgui.text("Address: {X:0>8}  Stride Select: {}  Scan Order: {}", .{ control_word.address, control_word.stride_select, control_word.scan_order });
+    zgui.text("Format:  {t: >8}  VQ Compressed: {}  Mip Mapped: {}", .{ control_word.pixel_format, control_word.vq_compressed, control_word.mip_mapped });
+}
+
+fn display_tsp_instruction(tsp_instruction: Holly.TSPInstructionWord) void {
+    if (zgui.beginTable("TSPI", .{ .column = 2 })) {
+        _ = zgui.tableNextColumn();
+        zgui.text("Size: {d: >4}x{d: <4}", .{ tsp_instruction.get_u_size(), tsp_instruction.get_v_size() });
+        zgui.text("Shading: {t: <13}", .{tsp_instruction.texture_shading_instruction});
+        zgui.text("Filter: {t: <14}", .{tsp_instruction.filter_mode});
+        colored(tsp_instruction.use_alpha == 1, "Alpha", .{});
+        inline_colored(tsp_instruction.ignore_texture_alpha == 0, "  Tex. Alpha", .{});
+        zgui.text("Mipmap D-Adjust: {d: >2}    ", .{tsp_instruction.mipmap_d_adjust});
+
+        _ = zgui.tableNextColumn();
+        zgui.text("DST: {d}  SRC: {d}", .{ tsp_instruction.dst_select, tsp_instruction.src_select });
+        zgui.text("Fog: {t}", .{tsp_instruction.fog_control});
+        zgui.text("UV Clamp: {b:0>2}  Flip: {b:0>2}", .{ tsp_instruction.clamp_uv, tsp_instruction.flip_uv });
+        zgui.text("DST: {t}  SRC: {t}", .{ tsp_instruction.dst_alpha_instr, tsp_instruction.src_alpha_instr });
+        colored(tsp_instruction.supersample_texture == 1, "Supersample", .{});
+
+        zgui.endTable();
+    }
+}
+
 pub fn draw(self: *@This(), d: *Deecy) !void {
     var dc = d.dc;
 
@@ -1015,7 +1041,9 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
         // NOTE: We're looking at the last list used during a START_RENDER.
         for (d.renderer.render_passes.items, 0..) |render_pass, pass_idx| {
-            zgui.text("Pass #{d}: ZClear={any}, Pre-Sort={any}", .{ pass_idx, render_pass.z_clear, render_pass.pre_sort });
+            zgui.text("Pass #{d}:", .{pass_idx});
+            inline_colored(render_pass.z_clear, "ZClear", .{});
+            inline_colored(render_pass.pre_sort, "Pre-Sort", .{});
             zgui.indent(.{});
             defer zgui.unindent(.{});
             zgui.pushIntId(@intCast(pass_idx));
@@ -1082,8 +1110,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const list = d.renderer.ta_lists_to_render.items[pass_idx].opaque_modifier_volumes;
                     const header = try std.fmt.bufPrintZ(&buffer, "Opaque ({d})###OMV", .{list.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
+                        zgui.indent(.{});
+                        defer zgui.unindent(.{});
                         for (list.items, 0..) |vol, idx| {
-                            zgui.text("  {any}", .{vol});
+                            zgui.pushIntId(@intCast(idx));
+                            defer zgui.popId();
+                            zgui.text("{s} ({d}) - {t}, Culling Mode: {t}", .{ if (vol.closed) "Closed" else "Open", vol.triangle_count, vol.instructions.volume_instruction, vol.instructions.culling_mode });
                             if (zgui.isItemClicked(.left)) {
                                 self.selected_volume_focus = true;
                                 self.selected_volume_list = .OpaqueModifierVolume;
@@ -1105,8 +1137,12 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     const list = d.renderer.ta_lists_to_render.items[pass_idx].translucent_modifier_volumes;
                     const header = try std.fmt.bufPrintZ(&buffer, "Translucent ({d})###TMV", .{list.items.len});
                     if (zgui.collapsingHeader(header, .{})) {
+                        zgui.indent(.{});
+                        defer zgui.unindent(.{});
                         for (list.items, 0..) |vol, idx| {
-                            zgui.text("  {any}", .{vol});
+                            zgui.pushIntId(@intCast(idx));
+                            defer zgui.popId();
+                            zgui.text("{s} ({d}) - {t}, Culling Mode: {t}", .{ if (vol.closed) "Closed" else "Open", vol.triangle_count, vol.instructions.volume_instruction, vol.instructions.culling_mode });
                             if (zgui.isItemClicked(.left)) {
                                 self.selected_volume_focus = true;
                                 self.selected_volume_list = .TranslucentModifierVolume;
@@ -1230,16 +1266,13 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
                     }
                 }
             }
-            if (zgui.inputInt("Size", .{
-                .v = &self.selected_texture.size,
-                .step = 1,
-            })) {
-                self.selected_texture.size = std.math.clamp(self.selected_texture.size, 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
+
+            var size: enum(i32) { @"8x8" = 0, @"16x16" = 1, @"32x32" = 2, @"64x64" = 3, @"128x128" = 4, @"256x256" = 5, @"512x512" = 6, @"1024x1024" = 7 } = @enumFromInt(self.selected_texture.size);
+            if (zgui.comboFromEnum("Size", &size)) {
+                self.selected_texture.size = std.math.clamp(@intFromEnum(size), 0, @as(i32, @intCast(self.renderer_texture_views.len - 1)));
                 self.selected_texture.scale = @as(f32, 512) / @as(f32, @floatFromInt((@as(u32, 8) << @intCast(self.selected_texture.size))));
                 self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
             }
-            zgui.sameLine(.{});
-            zgui.text("{d: >3}x{d: >3}", .{ @as(u32, 8) << @intCast(self.selected_texture.size), @as(u32, 8) << @intCast(self.selected_texture.size) });
             if (zgui.inputInt("Index", .{ .v = &self.selected_texture.index, .step = 1 })) {
                 self.selected_texture.index = std.math.clamp(self.selected_texture.index, 0, RendererModule.Renderer.MaxTextures[@intCast(self.selected_texture.size)] - 1);
             }
@@ -1248,13 +1281,19 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
             }
             const tex_id = d.gctx.lookupResource(self.renderer_texture_views[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)]).?;
             zgui.image(tex_id, .{ .w = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))), .h = self.selected_texture.scale * @as(f32, @floatFromInt(@as(u32, 8) << @intCast(self.selected_texture.size))) });
-            if (zgui.collapsingHeader("Parameter Control Word", .{ .default_open = true })) {
-                const control_word = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)].control_word;
-                display(control_word);
+
+            const metadata = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)];
+            zgui.text("Status: {t: <8}  Age: {d: >3}  Hash: {X:0>16}", .{ metadata.status, metadata.age, metadata.hash });
+            if (zgui.collapsingHeader("Texture Control Word", .{ .default_open = true })) {
+                zgui.indent(.{});
+                defer zgui.unindent(.{});
+                display_texture_control_word(metadata.control_word);
             }
+
             if (zgui.collapsingHeader("TSP Instruction", .{ .default_open = true })) {
-                const tsp_instruction = d.renderer.texture_metadata[@intCast(self.selected_texture.size)][@intCast(self.selected_texture.index)].tsp_instruction;
-                display(tsp_instruction);
+                zgui.indent(.{});
+                defer zgui.unindent(.{});
+                display_tsp_instruction(metadata.tsp_instruction);
             }
         }
         if (zgui.collapsingHeader("Framebuffer Texture", .{})) {
@@ -1427,44 +1466,64 @@ fn display_strip_info(self: *@This(), renderer: *const RendererModule.Renderer, 
     // TODO: Display some actually useful information :)
     {
         const header = std.fmt.bufPrintZ(&buffer, "Control Word:    {X:0>8}##ControlWord", .{@as(u32, @bitCast(control_word))}) catch unreachable;
-        if (zgui.collapsingHeader(header, .{})) {
-            display(control_word);
-        }
+        if (zgui.collapsingHeader(header, .{})) display(control_word);
     }
     {
         const header = std.fmt.bufPrintZ(&buffer, "ISP TSP:         {X:0>8}##ISPTSP", .{@as(u32, @bitCast(isp_tsp))}) catch unreachable;
-        if (zgui.collapsingHeader(header, .{})) {
-            display(isp_tsp);
-        }
+        if (zgui.collapsingHeader(header, .{})) display(isp_tsp);
     }
     {
         const header = std.fmt.bufPrintZ(&buffer, "TSP:             {X:0>8}##TSP", .{@as(u32, @bitCast(tsp))}) catch unreachable;
         if (zgui.collapsingHeader(header, .{})) {
-            display(tsp);
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            display_tsp_instruction(tsp);
         }
     }
     if (control_word.obj_control.texture == 1) {
         const texture_control_word = strip.global_parameters.polygon.texture_control();
-        if (zgui.collapsingHeader("Texture Control", .{}))
-            display(texture_control_word);
-        zgui.text("Texture size: {d}x{d}", .{ tsp.get_u_size(), tsp.get_v_size() });
-        if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
-            const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
-            zgui.image(view, .{
-                .w = @floatFromInt(tsp.get_u_size()),
-                .h = @floatFromInt(tsp.get_v_size()),
-            });
-            if (zgui.isItemClicked(.left)) {
-                self.selected_texture.size = @intCast(texture.size_index);
-                self.selected_texture.index = @intCast(texture.index);
+        if (zgui.collapsingHeader("Texture Control", .{ .default_open = true })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            display_texture_control_word(texture_control_word);
+            if (renderer.get_texture_view(texture_control_word, tsp)) |texture| {
+                const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
+                zgui.image(view, .{
+                    .w = @floatFromInt(tsp.get_u_size()),
+                    .h = @floatFromInt(tsp.get_v_size()),
+                });
+                if (zgui.isItemClicked(.left)) {
+                    self.selected_texture.size = @intCast(texture.size_index);
+                    self.selected_texture.index = @intCast(texture.index);
+                }
             }
         }
     }
     if (strip.global_parameters.polygon.area1_texture_control()) |area1_texture_control| {
-        zgui.text("Area1 Tex.:   {X:0>8}", .{@as(u32, @bitCast(area1_texture_control))});
+        if (zgui.collapsingHeader("Area1 Texture Control", .{ .default_open = true })) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            display_texture_control_word(area1_texture_control);
+            if (renderer.get_texture_view(area1_texture_control, tsp)) |texture| {
+                const view = renderer._gctx.lookupResource(self.renderer_texture_views[texture.size_index][texture.index]).?;
+                zgui.image(view, .{
+                    .w = @floatFromInt(tsp.get_u_size()),
+                    .h = @floatFromInt(tsp.get_v_size()),
+                });
+                if (zgui.isItemClicked(.left)) {
+                    self.selected_texture.size = @intCast(texture.size_index);
+                    self.selected_texture.index = @intCast(texture.index);
+                }
+            }
+        }
     }
     if (strip.global_parameters.polygon.area1_tsp_instruction()) |area1_tsp| {
-        zgui.text("Area1 TSP:    {X:0>8}", .{@as(u32, @bitCast(area1_tsp))});
+        const header = std.fmt.bufPrintZ(&buffer, "Area1 TSP:       {X:0>8}##TSP1", .{@as(u32, @bitCast(tsp))}) catch unreachable;
+        if (zgui.collapsingHeader(header, .{})) {
+            zgui.indent(.{});
+            defer zgui.unindent(.{});
+            display_tsp_instruction(area1_tsp);
+        }
     }
     if (strip.global_parameters.polygon.base_color()) |base_color| {
         var local = base_color;
