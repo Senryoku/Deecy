@@ -910,6 +910,8 @@ pub fn draw_game_library(self: *@This()) !void {
                 static.lowercase_buffer[i] = std.ascii.toLower(static.display_game_search[i]);
             }
         }
+        // TODO: Set active on startup when this API is added to ImGui (https://github.com/ocornut/imgui/issues/3949)
+        // if (zgui.isWindowAppearing()) zgui.setActive("##Search");
         zgui.sameLine(.{});
         zgui.spacing();
         zgui.sameLine(.{});

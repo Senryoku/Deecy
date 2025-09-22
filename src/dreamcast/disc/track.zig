@@ -48,7 +48,7 @@ pub fn load_sectors(self: *const @This(), fad: u32, count: u32, dest: []u8) u32 
 
     // Each sector only has raw data.
     if (self.track_type == .Audio or self.format == 2048) {
-        const to_copy: u32 = @min(@min(dest.len, count * 2048), self.data[sector_start..].len);
+        const to_copy: u32 = @min(@min(dest.len, count * self.format), self.data[sector_start..].len);
         @memcpy(dest[0..to_copy], self.data[sector_start .. sector_start + to_copy]);
         return to_copy;
     } else if (self.format == 2336) {
