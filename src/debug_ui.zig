@@ -1240,7 +1240,7 @@ pub fn draw(self: *@This(), d: *Deecy) !void {
 
     if (zgui.begin("Renderer", .{})) {
         zgui.text("/!\\ Lower values may crash with higher resolutions.", .{});
-        var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"4" = 4 } = @enumFromInt(d.renderer.oit_horizontal_slices);
+        var oit_horizontal_slices: enum(u32) { @"1" = 1, @"2" = 2, @"3" = 3, @"4" = 4 } = @enumFromInt(d.renderer.oit_horizontal_slices);
         if (zgui.comboFromEnum("OIT Slices", &oit_horizontal_slices)) {
             d.renderer.oit_horizontal_slices = @intFromEnum(oit_horizontal_slices);
             d.renderer.on_inner_resolution_change();

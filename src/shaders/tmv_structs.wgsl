@@ -6,6 +6,7 @@ const MaxVolumes = 4;
 const MaxVolumesInterfaces = 2 * MaxVolumes;
 
 struct OITTMVUniforms {
+    square_size: u32,
     pixels_per_slice: u32,
     target_width: u32,
     start_y: u32,
@@ -32,3 +33,21 @@ struct VolumesInterfaces {
 	_padding: u32,
 	interfaces: array<f32, MaxVolumesInterfaces>,
 };
+
+// The buffers are slighly oversized to allow a more coherent access pattern.
+// Slices are vertically split into power-of-two sized squares which are accessed following a z-order curve.
+
+fn slice_coords_to_pixel_index(info: OITTMVUniforms, slice_coords: vec2<u32>) -> u32 {
+	// Here we assume that the slice is wider than tall.
+    let hozizontal_square : u32 = slice_coords.x / info.square_size;
+    let pixels_per_square : u32 = info.square_size * info.square_size;
+
+    let square_local_coords = vec2<u32>(slice_coords.x % info.square_size, slice_coords.y);
+    let pixel_index = pixels_per_square * hozizontal_square + morton2(square_local_coords);
+
+	return pixel_index;
+}
+
+fn tmv_fragment_index(info: OITTMVUniforms, pixel_index: u32, frag_index: u32) -> u32 {
+	return frag_index * info.pixels_per_slice + pixel_index;
+}

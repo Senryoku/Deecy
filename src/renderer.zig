@@ -265,9 +265,9 @@ const wgsl_vs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/p
 const wgsl_fs = "const Opaque = true;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
 const wgsl_presort_fs = "const Opaque = false;\n" ++ @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/fs.wgsl");
 const wgsl_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/fragment_color.wgsl") ++ @embedFile("./shaders/oit_draw_fs.wgsl");
-const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
-const wgsl_modvol_merge_cs = @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
-const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
+const wgsl_modvol_translucent_fs = @embedFile("./shaders/uniforms.wgsl") ++ @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_fs.wgsl");
+const wgsl_modvol_merge_cs = @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/modifier_volume_translucent_merge.wgsl");
+const wgsl_blend_cs = @embedFile("./shaders/oit_structs.wgsl") ++ @embedFile("./shaders/morton.wgsl") ++ @embedFile("./shaders/tmv_structs.wgsl") ++ @embedFile("./shaders/oit_blend_cs.wgsl");
 const wgsl_modifier_volume_vs = @embedFile("./shaders/position_clip.wgsl") ++ @embedFile("./shaders/modifier_volume_vs.wgsl");
 const wgsl_modifier_volume_fs = @embedFile("./shaders/modifier_volume_fs.wgsl");
 const wgsl_modifier_volume_apply_fs = @embedFile("./shaders/modifier_volume_apply_fs.wgsl");
@@ -661,7 +661,7 @@ pub const Renderer = struct {
     const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
 
     const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };
-    const OITTMVUniforms = packed struct { pixels_per_slice: u32, target_width: u32, start_y: u32 };
+    const OITTMVUniforms = packed struct { square_size: u32, pixels_per_slice: u32, target_width: u32, start_y: u32 };
 
     const FirstVertex: u32 = 4; // The 4 first vertices are reserved for the background.
     const FirstIndex: u32 = 5; // The 5 first indices are reserved for the background.
@@ -734,7 +734,7 @@ pub const Renderer = struct {
     list_heads_buffer: zgpu.BufferHandle = undefined,
     linked_list_buffer: zgpu.BufferHandle = undefined,
 
-    translucent_modvol_heads_buffer: zgpu.BufferHandle = undefined,
+    translucent_modvol_fragment_counts_buffer: zgpu.BufferHandle = undefined,
     translucent_modvol_fragment_list_buffer: zgpu.BufferHandle = undefined,
     translucent_modvol_volumes_buffer: zgpu.BufferHandle = undefined,
 
@@ -3207,7 +3207,8 @@ pub const Renderer = struct {
 
                                 const oit_mv_uniform_mem = gctx.uniformsAllocate(OITTMVUniforms, 1);
                                 oit_mv_uniform_mem.slice[0] = .{
-                                    .pixels_per_slice = self.resolution.width * slice_size,
+                                    .square_size = @intCast(self.translucent_modvol_dimensions().square_size),
+                                    .pixels_per_slice = @intCast(self.translucent_modvol_dimensions().pixels_per_slice),
                                     .target_width = self.resolution.width,
                                     .start_y = start_y,
                                 };
@@ -3692,7 +3693,7 @@ pub const Renderer = struct {
         self._gctx.releaseResource(self.list_heads_buffer);
         self._gctx.releaseResource(self.linked_list_buffer);
 
-        self._gctx.releaseResource(self.translucent_modvol_heads_buffer);
+        self._gctx.releaseResource(self.translucent_modvol_fragment_counts_buffer);
         self._gctx.releaseResource(self.translucent_modvol_fragment_list_buffer);
         self._gctx.releaseResource(self.translucent_modvol_volumes_buffer);
 
@@ -3863,34 +3864,34 @@ pub const Renderer = struct {
 
         // Mod Vol
         {
-            self.translucent_modvol_heads_buffer = self._gctx.createBuffer(.{
+            self.translucent_modvol_fragment_counts_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .storage = true },
-                .size = self.get_modvol_heads_size(),
+                .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size,
                 .mapped_at_creation = .true,
             });
-            self._gctx.lookupResource(self.translucent_modvol_heads_buffer).?.setLabel("ModVol List Heads Buffer");
+            self._gctx.lookupResource(self.translucent_modvol_fragment_counts_buffer).?.setLabel("Translucent ModVol Fragment Counts Buffer");
             {
-                const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_heads_buffer).?.gpuobj.?;
-                const mapped = init_buffer.getMappedRange(u32, 0, self.get_modvol_heads_size() / @sizeOf(u32));
+                const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_fragment_counts_buffer).?.gpuobj.?;
+                const mapped = init_buffer.getMappedRange(u32, 0, self.translucent_modvol_dimensions().pixels_per_slice);
                 @memset(mapped.?, 0); // Set all fragment counts to 0
                 init_buffer.unmap();
             }
+
             self.translucent_modvol_fragment_list_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
-                .size = self.get_modvol_fragment_list_size(),
+                .size = self.translucent_modvol_dimensions().fragment_list_buffer_size,
             });
-            self._gctx.lookupResource(self.translucent_modvol_fragment_list_buffer).?.setLabel("ModVol Fragments Buffer");
+            self._gctx.lookupResource(self.translucent_modvol_fragment_list_buffer).?.setLabel("Translucent ModVol Fragments Buffer");
 
             self.translucent_modvol_volumes_buffer = self._gctx.createBuffer(.{
                 .usage = .{ .copy_dst = true, .storage = true },
-                .size = self.get_modvol_volumes_size(),
+                .size = self.translucent_modvol_dimensions().volumes_buffer_size,
                 .mapped_at_creation = .true,
             });
-            self._gctx.lookupResource(self.translucent_modvol_volumes_buffer).?.setLabel("ModVol Volumes Buffer");
-
+            self._gctx.lookupResource(self.translucent_modvol_volumes_buffer).?.setLabel("Translucent ModVol Volumes Buffer");
             {
                 const init_buffer = self._gctx.lookupResourceInfo(self.translucent_modvol_volumes_buffer).?.gpuobj.?;
-                const mapped = init_buffer.getMappedRange(u8, 0, self.get_modvol_volumes_size());
+                const mapped = init_buffer.getMappedRange(u8, 0, self.translucent_modvol_dimensions().volumes_buffer_size);
                 @memset(mapped.?, 0); // Set all counts to 0
                 init_buffer.unmap();
             }
@@ -3909,17 +3910,17 @@ pub const Renderer = struct {
     fn create_translucent_modvol_bind_group(self: *@This()) void {
         self.translucent_modvol_bind_group = self._gctx.createBindGroup(self.translucent_modvol_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITTMVUniforms) },
-            .{ .binding = 1, .buffer_handle = self.translucent_modvol_heads_buffer, .offset = 0, .size = self.get_modvol_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.get_modvol_fragment_list_size() },
+            .{ .binding = 1, .buffer_handle = self.translucent_modvol_fragment_counts_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size },
+            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_list_buffer_size },
             .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
         self.translucent_modvol_merge_bind_group = self._gctx.createBindGroup(self.translucent_modvol_merge_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITTMVUniforms) },
-            .{ .binding = 1, .buffer_handle = self.translucent_modvol_heads_buffer, .offset = 0, .size = self.get_modvol_heads_size() },
-            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.get_modvol_fragment_list_size() },
-            .{ .binding = 3, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 1, .buffer_handle = self.translucent_modvol_fragment_counts_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size },
+            .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_list_buffer_size },
+            .{ .binding = 3, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
     }
 
@@ -3950,19 +3951,22 @@ pub const Renderer = struct {
         return self.get_max_storage_buffer_binding_size();
     }
 
-    fn get_modvol_heads_size(self: *const @This()) u64 {
-        return (self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * @sizeOf(u32);
-    }
-
-    fn get_modvol_fragment_list_size(self: *const @This()) u64 {
-        return @min(
-            VolumeLinkedListNodeSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices) * MaxVolumeFragmentsPerPixel,
-            self.get_max_storage_buffer_binding_size(),
-        );
-    }
-
     fn get_modvol_volumes_size(self: *const @This()) u64 {
         return VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices);
+    }
+
+    inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
+        std.debug.assert(self.resolution.width >= self.resolution.height / self.oit_horizontal_slices); // This is dealt with on the Zig size, but the shaders assumes slices are wider than they are tall.
+        const square_size = std.math.ceilPowerOfTwo(u64, @min(self.resolution.width, self.resolution.height / self.oit_horizontal_slices)) catch unreachable;
+        const square_count = 1 + @max(self.resolution.width, self.resolution.height / self.oit_horizontal_slices) / square_size;
+        return .{
+            .square_size = square_size,
+            .square_count = square_count,
+            .pixels_per_slice = square_size * square_size * square_count,
+            .fragment_counts_buffer_size = @sizeOf(u32) * square_count * square_size * square_size,
+            .fragment_list_buffer_size = VolumeLinkedListNodeSize * square_count * square_size * square_size * MaxVolumeFragmentsPerPixel,
+            .volumes_buffer_size = self.get_modvol_volumes_size(),
+        };
     }
 
     fn get_max_storage_buffer_binding_size(self: *const @This()) u64 {
