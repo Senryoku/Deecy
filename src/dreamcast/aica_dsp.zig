@@ -824,15 +824,12 @@ pub fn generate_sample(self: *@This()) void {
 //  - Shift right (signed) by the exponent
 fn i24_from_f16(value: u16) i24 {
     const sign_bit: u1 = @truncate(value >> 15);
-    var exponent: u4 = @truncate(value >> 11);
-    var val: u24 = (@as(u24, value) & 0x7FF) << 11;
-    if (exponent > 11) {
-        exponent = 11;
-    } else {
-        val |= @as(u24, 1 ^ sign_bit) << 22;
-    }
-    val |= @as(u24, sign_bit) << 23;
-    return @as(i24, @bitCast(val)) >> exponent;
+    const exponent: u4 = @truncate(value >> 11);
+    var val: u32 = (@as(u32, value) & 0x7FF) << 11;
+    if (exponent <= 11)
+        val |= @as(u32, 1 ^ sign_bit) << 22;
+    val |= @as(u32, sign_bit) << 23;
+    return @as(i24, @bitCast(@as(u24, @truncate(val)))) >> @min(11, exponent);
 }
 
 fn i32_from_f16(value: u16) callconv(.c) i32 {
@@ -847,9 +844,9 @@ fn i32_from_f16(value: u16) callconv(.c) i32 {
 fn f16_from_i24(value: i24) u16 {
     const u: u24 = @bitCast(value);
     const sign_bit: u1 = @truncate(u >> 23);
-    const exponent = @min(12, @clz((u ^ (u << 1))));
+    const exponent: u8 = @min(12, @clz((u ^ (u << 1))));
     var val: i24 = if (exponent < 12)
-        (value << exponent) & 0x3FFFFF
+        (value << @intCast(exponent)) & 0x3FFFFF
     else
         value << 11;
     val >>= 11;

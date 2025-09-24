@@ -1322,8 +1322,21 @@ pub const AICA = struct {
                 // TODO! Resonant Low Pass Filter
             }
 
-            const lfo_phase_speed = [_]u32{ 0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00, 0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00, 0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000, 0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100 };
-            state.lfo_phase +%= @intCast(@as(u64, 0x100000000) / lfo_phase_speed[registers.lfo_control.frequency]);
+            const lfo_phase_inc = t: {
+                const lfo_phase_speed = [_]u32{
+                    0x3FC00, 0x37C00, 0x2FC00, 0x27C00, 0x1FC00, 0x1BC00, 0x17C00, 0x13C00,
+                    0x0FC00, 0x0BC00, 0x0DC00, 0x09C00, 0x07C00, 0x06C00, 0x05C00, 0x04C00,
+                    0x03C00, 0x03400, 0x02C00, 0x02400, 0x01C00, 0x01800, 0x01400, 0x01000,
+                    0x00C00, 0x00A00, 0x00800, 0x00600, 0x00400, 0x00300, 0x00200, 0x00100,
+                };
+                var table: [lfo_phase_speed.len]u32 = undefined;
+                for (lfo_phase_speed, 0..) |s, idx| {
+                    table[idx] = @intCast(@as(u64, 0x100000000) / s);
+                }
+                break :t table;
+            };
+
+            state.lfo_phase +%= lfo_phase_inc[registers.lfo_control.frequency];
 
             // Apply amplitude envelope
             if (!registers.env_settings.voff) {
