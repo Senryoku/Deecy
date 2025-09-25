@@ -57,7 +57,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
     let heads_index = global_id.y * oit_uniforms.target_width + global_id.x;
 
     var element_index = heads.data[heads_index];
-    let modvol = modvols[heads_index];
 
     if element_index != 0xFFFFFFFFu { 
       var frag_coords = global_id.xy;
@@ -100,8 +99,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
           layer_count++;
       }
 
-      let depth_interfaces_count = 2 * modvol.count;
-      let depth_interfaces = modvol.interfaces;
+      var depth_interfaces_count = 0u;
+      while(depth_interfaces_count < MaxVolumesInterfaces && modvols[heads_index].interfaces[depth_interfaces_count] > 0.0) {
+        depth_interfaces_count++;
+      }
 
       var curr_depth_interface = 0u;
       var use_area1 = false; // Start in area0
@@ -110,7 +111,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
       for (var i = 0u; i < layer_count; i++) {
           let fragment = fragments[local_idx][i];
 
-          while curr_depth_interface < depth_interfaces_count && depth_interfaces[curr_depth_interface] < fragment.depth {
+          while curr_depth_interface < depth_interfaces_count && modvols[heads_index].interfaces[curr_depth_interface] < fragment.depth {
               // Crossed the interface between area0 and area1.
               use_area1 = !use_area1;
               curr_depth_interface++;
@@ -128,8 +129,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
 
   // Reset the heads buffer for the next pass.
   heads.data[heads_index] = 0xFFFFFFFFu;
-  // Reset the count for the next pass.
-  modvols[heads_index].count = 0;
+  // Reset modifier volumes for the next pass.
+  modvols[heads_index].interfaces[0] = -1.0;
   if all(global_id == vec3<u32>(0, 0, 0)) {
     heads.fragment_count = 0;
   }

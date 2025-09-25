@@ -657,8 +657,9 @@ pub const Renderer = struct {
     const MaxFragmentsPerPixel = 24;
     const OITLinkedListNodeSize = 5 * 4;
     const MaxVolumeFragmentsPerPixel = 16;
-    const VolumeLinkedListNodeSize = 2 * 4;
-    const VolumePixelSize = 4 + 4 + 4 * 4 * 2; // See Volumes in oit_structs.zig
+    const VolumeFragmentSize = 2 * @sizeOf(u32);
+    const MaxVolumesPerPixel = 4;
+    const VolumePixelSize = MaxVolumesPerPixel * @sizeOf(f32) * 2; // See Volumes in tmv_structs.zig
 
     const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };
     const OITTMVUniforms = packed struct { square_size: u32, pixels_per_slice: u32, target_width: u32, start_y: u32 };
@@ -3931,7 +3932,7 @@ pub const Renderer = struct {
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_framebuffer.view },
-            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
         self.blend_bind_group_render_to_texture = self._gctx.createBindGroup(self.blend_bind_group_layout, &[_]zgpu.BindGroupEntryInfo{
             .{ .binding = 0, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = @sizeOf(OITUniforms) },
@@ -3939,7 +3940,7 @@ pub const Renderer = struct {
             .{ .binding = 2, .buffer_handle = self.linked_list_buffer, .offset = 0, .size = self.get_fragments_list_size() },
             .{ .binding = 3, .texture_view_handle = self.resized_framebuffer_copy.view },
             .{ .binding = 4, .texture_view_handle = self.resized_render_to_texture_target.view },
-            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.get_modvol_volumes_size() },
+            .{ .binding = 5, .buffer_handle = self.translucent_modvol_volumes_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().volumes_buffer_size },
         });
     }
 
@@ -3951,10 +3952,6 @@ pub const Renderer = struct {
         return self.get_max_storage_buffer_binding_size();
     }
 
-    fn get_modvol_volumes_size(self: *const @This()) u64 {
-        return VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices);
-    }
-
     inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
         std.debug.assert(self.resolution.width >= self.resolution.height / self.oit_horizontal_slices); // This is dealt with on the Zig size, but the shaders assumes slices are wider than they are tall.
         const square_size = std.math.ceilPowerOfTwo(u64, @min(self.resolution.width, self.resolution.height / self.oit_horizontal_slices)) catch unreachable;
@@ -3964,8 +3961,8 @@ pub const Renderer = struct {
             .square_count = square_count,
             .pixels_per_slice = square_size * square_size * square_count,
             .fragment_counts_buffer_size = @sizeOf(u32) * square_count * square_size * square_size,
-            .fragment_list_buffer_size = VolumeLinkedListNodeSize * square_count * square_size * square_size * MaxVolumeFragmentsPerPixel,
-            .volumes_buffer_size = self.get_modvol_volumes_size(),
+            .fragment_list_buffer_size = VolumeFragmentSize * square_count * square_size * square_size * MaxVolumeFragmentsPerPixel,
+            .volumes_buffer_size = VolumePixelSize * (self.resolution.width * self.resolution.height / self.oit_horizontal_slices),
         };
     }
 

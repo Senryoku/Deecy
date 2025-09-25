@@ -4,7 +4,7 @@
 @group(0) @binding(0) var<uniform> oit_tmv_uniforms: OITTMVUniforms;
 @group(0) @binding(1) var<storage, read_write> modvol_fragment_counts: array<u32>;
 @group(0) @binding(2) var<storage, read_write> modvol_fragment_list: VolumeFragmentList;
-@group(0) @binding(3) var<storage, read_write> out_modvols: array<Volumes>;
+@group(0) @binding(3) var<storage, read_write> out_modvols: array<StoredVolumes>;
 
 struct VolumeLinkedListElementData {
     volume_index: u32,
@@ -66,7 +66,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         volumes = volume_union(new_volumes, volumes);
     }
 
-    out_modvols[global_id.y * oit_tmv_uniforms.target_width + global_id.x] = volumes;
+    // Mark other volumes as unused
+    for(var i = volumes.count; i < MaxVolumes; i++) {
+        volumes.intervals[i] = vec2<f32>(-1.0);
+    }
+    out_modvols[global_id.y * oit_tmv_uniforms.target_width + global_id.x].intervals = volumes.intervals;
 
     // Reset the heads buffer for the next pass.
     modvol_fragment_counts[pixel_index] = 0u;
