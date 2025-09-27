@@ -42,60 +42,61 @@ fn glfw_key_callback(
     mods: zglfw.Mods,
 ) callconv(.c) void {
     _ = scancode;
-    _ = mods;
 
     const maybe_app = window.getUserPointer(@This());
 
     if (maybe_app) |app| {
         if (zgui.io.getWantCaptureKeyboard()) return;
 
-        if (action == .press) {
-            switch (key) {
-                .escape => {
-                    app.display_ui = !app.display_ui;
-                },
-                .space => {
-                    if (app.running) {
-                        app.pause();
-                    } else {
-                        app.start();
-                    }
-                },
-                .d => app.config.display_debug_ui = !app.config.display_debug_ui,
-                .f => app.toggle_fullscreen(),
-                .l => app.set_realtime(!app.realtime),
-                .n => {
-                    if (app.running) {
-                        app.pause();
-                    } else {
-                        while (!app.renderer.render_start) app.run_for(128);
-                    }
-                },
-                .F1, .F2, .F3, .F4 => {
-                    const idx: usize = switch (key) {
-                        .F1 => 0,
-                        .F2 => 1,
-                        .F3 => 2,
-                        .F4 => 3,
-                        else => unreachable,
-                    };
-                    app.save_state(idx) catch |err| {
-                        deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
-                    };
-                },
-                .F5, .F6, .F7, .F8 => {
-                    const idx: usize = switch (key) {
-                        .F5 => 0,
-                        .F6 => 1,
-                        .F7 => 2,
-                        .F8 => 3,
-                        else => unreachable,
-                    };
-                    app.load_state(idx) catch |err| {
-                        deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
-                    };
-                },
-                else => {},
+        if (!mods.shift and !mods.alt and !mods.control) {
+            if (action == .press) {
+                switch (key) {
+                    .escape => {
+                        app.display_ui = !app.display_ui;
+                    },
+                    .space => {
+                        if (app.running) {
+                            app.pause();
+                        } else {
+                            app.start();
+                        }
+                    },
+                    .d => app.config.display_debug_ui = !app.config.display_debug_ui,
+                    .f => app.toggle_fullscreen(),
+                    .l => app.set_realtime(!app.realtime),
+                    .n => {
+                        if (app.running) {
+                            app.pause();
+                        } else {
+                            while (!app.renderer.render_start) app.run_for(128);
+                        }
+                    },
+                    .F1, .F2, .F3, .F4 => {
+                        const idx: usize = switch (key) {
+                            .F1 => 0,
+                            .F2 => 1,
+                            .F3 => 2,
+                            .F4 => 3,
+                            else => unreachable,
+                        };
+                        app.save_state(idx) catch |err| {
+                            deecy_log.err(termcolor.red("Failed to save state #{d}: {t}"), .{ idx, err });
+                        };
+                    },
+                    .F5, .F6, .F7, .F8 => {
+                        const idx: usize = switch (key) {
+                            .F5 => 0,
+                            .F6 => 1,
+                            .F7 => 2,
+                            .F8 => 3,
+                            else => unreachable,
+                        };
+                        app.load_state(idx) catch |err| {
+                            deecy_log.err(termcolor.red("Failed to load state #{d}: {t}"), .{ idx, err });
+                        };
+                    },
+                    else => {},
+                }
             }
         }
     }
