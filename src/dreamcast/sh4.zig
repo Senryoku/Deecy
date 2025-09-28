@@ -1665,7 +1665,8 @@ pub const SH4 = struct {
 
     pub fn read(self: *@This(), comptime T: type, virtual_addr: u32) error{ DataAddressErrorRead, DataTLBMissRead, DataTLBProtectionViolation, DataTLBMultipleHit }!T {
         const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
-        const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
+        const access_size = if (T == u64) 4 else @sizeOf(T); // NOTE: 64bit reads are split into 2 32bit reads.
+        const unaligned = DataAlignmentCheck and virtual_addr & (access_size - 1) != 0;
         if (unauthorized or unaligned)
             return error.DataAddressErrorRead;
         const physical_address = self.translate_address(.Read, virtual_addr) catch |err| {
@@ -1689,6 +1690,12 @@ pub const SH4 = struct {
             }
         }
 
+        if (T == u64) {
+            const low: u64 = self.read_physical(u32, physical_addr);
+            const high: u64 = self.read_physical(u32, physical_addr + 4);
+            return low | (high << 32);
+        }
+
         if (physical_addr >= 0x7C000000 and physical_addr <= 0x7FFFFFFF)
             return self.read_operand_cache(T, physical_addr);
 
@@ -1699,7 +1706,8 @@ pub const SH4 = struct {
 
     pub fn write(self: *@This(), comptime T: type, virtual_addr: u32, value: T) error{ DataAddressErrorWrite, DataTLBMissWrite, InitialPageWrite, DataTLBProtectionViolation, DataTLBMultipleHit }!void {
         const unauthorized = DataProtectedCheck and (self.sr.md == 0 and virtual_addr & 0x8000_0000 != 0 and !(virtual_addr & 0xFC00_0000 == 0xE000_0000 and self.read_p4_register(mmu.MMUCR, .MMUCR).sqmd == 0));
-        const unaligned = DataAlignmentCheck and virtual_addr & (@sizeOf(T) - 1) != 0;
+        const access_size = if (T == u64) 4 else @sizeOf(T); // NOTE: 64bit writes are split into 2 32bit writes.
+        const unaligned = DataAlignmentCheck and virtual_addr & (access_size - 1) != 0;
         if (unauthorized or unaligned)
             return error.DataAddressErrorWrite;
         const physical_address = self.translate_address(.Write, virtual_addr) catch |err| {
@@ -1723,9 +1731,14 @@ pub const SH4 = struct {
             }
         }
 
+        if (T == u64) {
+            self.write_physical(u32, physical_addr, @truncate(value));
+            self.write_physical(u32, physical_addr + 4, @truncate(value >> 32));
+            return;
+        }
+
         if (physical_addr >= 0x7C000000 and physical_addr <= 0x7FFFFFFF)
             return self.write_operand_cache(T, physical_addr, value);
-
         if (physical_addr >= 0xE0000000)
             return self.write_p4(T, physical_addr, value);
 

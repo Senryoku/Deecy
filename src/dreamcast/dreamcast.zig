@@ -662,6 +662,7 @@ pub const Dreamcast = struct {
     }
 
     pub inline fn read(self: *const @This(), comptime T: type, addr: u32) T {
+        if (@sizeOf(T) > 4) @compileError("Invalid read type");
         switch (addr) {
             // Area 0
             0x00000000...0x01FFFFFF, 0x02000000...0x02FFFFFF => {
@@ -706,10 +707,6 @@ pub const Dreamcast = struct {
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64) {
-                    dc_log.debug("Read(64) from 0x{X:0>8}", .{addr});
-                    return @as(u64, self.read(u32, addr + 4)) << 32 | self.read(u32, addr);
-                }
                 return self.gpu.read_vram(T, addr);
             },
             // Area 4 - Tile accelerator command input
@@ -741,6 +738,7 @@ pub const Dreamcast = struct {
     }
 
     pub inline fn write(self: *@This(), comptime T: type, addr: u32, value: T) void {
+        if (@sizeOf(T) > 4) @compileError("Invalid write type");
         switch (addr) {
             // Area 0, and mirrors
             0x00000000...0x01FFFFFF, 0x02000000...0x03FFFFFF => {
@@ -751,14 +749,6 @@ pub const Dreamcast = struct {
                     },
                     0x005F6800...0x005F7FFF => return self.write_hw_register(T, addr, value),
                     0x005F8000...0x005F9FFF => {
-                        if (T == u64) {
-                            // FIXME: Allow 64bit writes to Palette RAM? Metropolis Street Racer does it, not sure how normal it is :)
-                            if (addr >= 0x005F9000 and addr <= 0x005F9FFC) {
-                                dc_log.warn(termcolor.yellow("Write({any}) to Palette RAM @{X:0>8} = 0x{X:0>16}"), .{ T, addr, value });
-                                self.gpu._get_register_from_addr(u64, addr).* = value;
-                                return;
-                            }
-                        }
                         check_type(&[_]type{u32}, T, "Invalid Write({any}) to 0x{X:0>8} (Holly Registers) = 0x{X}\n", .{ T, addr, value });
                         return self.gpu.write_register(addr, value);
                     },
@@ -782,12 +772,6 @@ pub const Dreamcast = struct {
             },
             // Area 1 - 32bit access
             0x05000000...0x05FFFFFF, 0x07000000...0x07FFFFFF => {
-                if (T == u64) {
-                    dc_log.debug("Write(64) to 0x{X:0>8} = 0x{X:0>16}", .{ addr, value });
-                    self.write(u32, addr, @truncate(value));
-                    self.write(u32, addr + 4, @truncate(value >> 32));
-                    return;
-                }
                 return self.gpu.write_vram(T, addr, value);
             },
             // Area 4
