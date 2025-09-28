@@ -1608,14 +1608,8 @@ pub const Renderer = struct {
             // All resources (including zgpu uniforms!) are shared with standard rendering, so we have to synchronize with the main thread.
             self._gctx_queue_mutex.lock();
             defer self._gctx_queue_mutex.unlock();
-            self.update(&dc.gpu) catch |err| {
-                renderer_log.err("Failed to update renderer: {t}", .{err});
-                return;
-            };
-            self.render(&dc.gpu, true) catch |err| {
-                renderer_log.err("Failed to render: {t}", .{err});
-                return;
-            };
+            self.update(&dc.gpu) catch |err| return renderer_log.err(termcolor.red("Failed to update renderer: {t}"), .{err});
+            self.render(&dc.gpu, render_to_texture) catch |err| return renderer_log.err(termcolor.red("Failed to render: {t}"), .{err});
         }
     }
 
@@ -2242,8 +2236,8 @@ pub const Renderer = struct {
                     const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
                     const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
 
-                    const u_addr_mode = if (clamp_u) wgpu.AddressMode.clamp_to_edge else if (flip_u) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
-                    const v_addr_mode = if (clamp_v) wgpu.AddressMode.clamp_to_edge else if (flip_v) wgpu.AddressMode.mirror_repeat else wgpu.AddressMode.repeat;
+                    const u_addr_mode: wgpu.AddressMode = if (clamp_u) .clamp_to_edge else if (flip_u) .mirror_repeat else .repeat;
+                    const v_addr_mode: wgpu.AddressMode = if (clamp_v) .clamp_to_edge else if (flip_v) .mirror_repeat else .repeat;
 
                     // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
                     // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
