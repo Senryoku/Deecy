@@ -1557,9 +1557,9 @@ pub const Emitter = struct {
                     .b = need_rex(mem.base),
                 });
                 try self.emit(u8, 0xF7);
-                try self.emit_mem_addressing(@intFromEnum(UnaryGroup3RegOpcode.Test), mem);
+                try self.emit_mem_addressing(@intFromEnum(opcode), mem);
             },
-            else => return error.InvalidF7Destination,
+            else => return error.InvalidUG3Destination,
         }
     }
 
