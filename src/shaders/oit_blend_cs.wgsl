@@ -100,7 +100,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(local_invo
       }
 
       var depth_interfaces_count = 0u;
-      while(depth_interfaces_count < MaxVolumesInterfaces && modvols[heads_index].interfaces[depth_interfaces_count] > 0.0) {
+      while(depth_interfaces_count < MaxVolumesInterfaces && modvols[heads_index].interfaces[depth_interfaces_count] >= 0.0) {
         depth_interfaces_count++;
       }
 

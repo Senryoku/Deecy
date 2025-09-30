@@ -991,6 +991,7 @@ pub const Renderer = struct {
             zgpu.bufferEntry(1, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(2, .{ .fragment = true }, .storage, false, 0),
             zgpu.bufferEntry(3, .{ .fragment = true }, .uniform, true, 0),
+            zgpu.textureEntry(4, .{ .fragment = true }, .depth, .tvdim_2d, false),
         });
 
         const modifier_volume_vertex_shader_module = zgpu.createWgslShaderModule(gctx.device, wgsl_modifier_volume_vs, "modvol_vs");
@@ -3908,6 +3909,7 @@ pub const Renderer = struct {
             .{ .binding = 1, .buffer_handle = self.translucent_modvol_fragment_counts_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_counts_buffer_size },
             .{ .binding = 2, .buffer_handle = self.translucent_modvol_fragment_list_buffer, .offset = 0, .size = self.translucent_modvol_dimensions().fragment_list_buffer_size },
             .{ .binding = 3, .buffer_handle = self._gctx.uniforms.buffer, .offset = 0, .size = 1 * @sizeOf(u32) },
+            .{ .binding = 4, .texture_view_handle = self.depth.depth_only_view },
         });
     }
     fn create_translucent_modvol_merge_bind_group(self: *@This()) void {
