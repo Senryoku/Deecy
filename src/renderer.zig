@@ -658,7 +658,7 @@ pub const Renderer = struct {
     const OITLinkedListNodeSize = 5 * 4;
     const MaxVolumeFragmentsPerPixel = 16;
     const VolumeFragmentSize = 2 * @sizeOf(u32);
-    const MaxVolumesPerPixel = 4;
+    const MaxVolumesPerPixel = 8;
     const VolumePixelSize = MaxVolumesPerPixel * @sizeOf(f32) * 2; // See Volumes in tmv_structs.zig
 
     const OITUniforms = packed struct { max_fragments: u32, target_width: u32, start_y: u32 };

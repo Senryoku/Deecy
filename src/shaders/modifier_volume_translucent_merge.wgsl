@@ -44,7 +44,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
         // Insert first interval now to avoid having to deal with the empty case later.
         if frag_count == 1u || fragments[0].volume_index != fragments[1].volume_index {
-            volumes.intervals[0] = vec2<f32>(fragments[0].depth, 10.0);
+            volumes.intervals[0] = vec2<f32>(0.0, fragments[0].depth);
             curr_fragment = 1u;
         } else {
             volumes.intervals[0] = vec2<f32>(fragments[0].depth, fragments[1].depth);
@@ -62,11 +62,11 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             let fragment_count = curr_fragment - start_fragment;
 
             // Convert the sorted list of depth values into a list of intervals and merge them into our current volumes.
-            for (var i = 0u; i < fragment_count / 2; i += 2) {
-                volumes = insert_interval(volumes, vec2<f32>(fragments[start_fragment + i].depth, fragments[start_fragment + i + 1].depth));
-            }
             if (fragment_count & 1) == 1 { // Last volume is open (backside behind the depth plane)
-                volumes = insert_interval(volumes, vec2<f32>(fragments[start_fragment + fragment_count].depth, 10.0));
+                volumes = insert_interval(volumes, vec2<f32>(0.0, fragments[start_fragment].depth));
+            }
+            for (var i = (fragment_count & 1); i < fragment_count; i += 2) {
+                volumes = insert_interval(volumes, vec2<f32>(fragments[start_fragment + i].depth, fragments[start_fragment + i + 1].depth));
             }
         }
     }
@@ -96,8 +96,9 @@ fn insert_interval(a: Volumes, interval: vec2<f32>) -> Volumes {
         union_volumes.intervals[union_volumes.count] = a.intervals[union_volumes.count];
         union_volumes.count++;
     }
+    let appended = union_volumes.count;
     union_volumes = append_interval(union_volumes, interval);
-    for(var i = union_volumes.count; i < a.count; i++) {
+    for(var i = appended; i < a.count; i++) {
         union_volumes = append_interval(union_volumes, a.intervals[i]);
     }
     return union_volumes;

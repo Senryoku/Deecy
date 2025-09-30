@@ -2,7 +2,7 @@
 
 // Limits per pixel
 const MaxVolumeFragments = 16;
-const MaxVolumes = 4;
+const MaxVolumes = 8;
 const MaxVolumesInterfaces = 2 * MaxVolumes;
 
 struct OITTMVUniforms {
