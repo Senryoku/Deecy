@@ -79,7 +79,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
             const pregap = try reader.takeInt(u32, .little);
             const length = try reader.takeInt(u32, .little);
             log.debug("    Pregap: {X}, Length: {X}", .{ pregap, length });
-            std.debug.assert(pregap == 150); // Assumed for the session start fad.
+            if (pregap != 150) log.warn("Pregap: {d}", .{pregap});
 
             std.debug.assert(try reader.discardShort(6) == 6);
             const mode = try reader.takeInt(u32, .little);
@@ -136,7 +136,7 @@ pub fn init(filepath: []const u8, allocator: std.mem.Allocator) !@This() {
         }
         const session_type = try reader.takeInt(u32, .little);
         std.debug.assert(try reader.discardShort(4) == 4);
-        session.start_fad = try reader.takeInt(u32, .little) + 150;
+        session.start_fad = try reader.takeInt(u32, .little) + self.tracks.items[session.first_track].pregap;
         log.debug("Session Type: {X}, Last Session Start LBA: {X}", .{ session_type, session.start_fad });
         if (session.start_fad != self.tracks.items[session.first_track].fad)
             log.warn("Session start fad doesn't match first track: {X} != {X}", .{ session.start_fad, self.tracks.items[session.first_track].fad });

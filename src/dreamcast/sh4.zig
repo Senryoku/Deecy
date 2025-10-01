@@ -1341,6 +1341,10 @@ pub const SH4 = struct {
                             });
                             return @constCast(self).p4_register_addr(T, virtual_addr).*;
                         },
+                        @as(P4Register, @enumFromInt(0xFFEB0000)) => {
+                            sh4_log.warn("Read to unknown P4 register: {X:0>8}.", .{virtual_addr});
+                            return 0;
+                        },
                         else => {
                             if (!(virtual_addr & 0xFF000000 == 0xFF000000 or virtual_addr & 0xFF000000 == 0x1F000000) or !(virtual_addr & 0b0000_0000_0000_0111_1111_1111_1000_0000 == 0)) {
                                 sh4_log.warn(termcolor.yellow(" [{X:0>8}] Invalid Read({}) to P4 register @{X:0>8}"), .{ self.pc, T, virtual_addr });
@@ -1597,6 +1601,10 @@ pub const SH4 = struct {
                             check_type(&[_]type{u16}, T, "Invalid P4 Write({}) to SCFSR2\n", .{T});
                             // Writable bits can only be cleared.
                             // self.p4_register(u16, .SCFSR2).* &= (value | 0b11111111_00001100);
+                            return;
+                        },
+                        0xFFEB0000 => {
+                            sh4_log.warn("Write to unknown P4 register: {X:0>8} = {X:0>4}.", .{ virtual_addr, value });
                             return;
                         },
                         @intFromEnum(P4Register.CCR) => {
