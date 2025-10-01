@@ -518,7 +518,7 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
         r[3].v = v.cuv.v_as_f32();
     }
 
-    // dz have to be deduced from the plane equation
+    // dz has to be deduced from the plane equation
     const ab = [3]f32{
         r[2].x - r[0].x,
         r[2].y - r[0].y,
@@ -3705,6 +3705,15 @@ pub const Renderer = struct {
     pub fn on_inner_resolution_change(self: *@This()) void {
         self.deinit_screen_textures();
 
+        // This is currently the largest buffer whose size is dependent on the resolution. Make sure we can allocate it.
+        if (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size()) {
+            self.oit_horizontal_slices = 1;
+            // Vertical resolution has to be divisible by 8 * horizontal slices because of the compute shaders workgroup sizes.
+            while (self.translucent_modvol_dimensions().fragment_list_buffer_size > self.get_max_storage_buffer_binding_size() or self.resolution.height % (8 * self.oit_horizontal_slices) != 0) {
+                self.oit_horizontal_slices += 1;
+            }
+        }
+
         // Create a new depth texture to match the new render size.
         const depth = create_depth_texture(self._gctx, self.resolution);
         self.depth.texture = depth.texture;
@@ -3951,7 +3960,8 @@ pub const Renderer = struct {
     inline fn translucent_modvol_dimensions(self: *const @This()) struct { square_size: u64, square_count: u64, pixels_per_slice: u64, fragment_counts_buffer_size: u64, fragment_list_buffer_size: u64, volumes_buffer_size: u64 } {
         std.debug.assert(self.resolution.width >= self.resolution.height / self.oit_horizontal_slices); // This is dealt with on the Zig size, but the shaders assumes slices are wider than they are tall.
         const square_size = std.math.ceilPowerOfTwo(u64, @min(self.resolution.width, self.resolution.height / self.oit_horizontal_slices)) catch unreachable;
-        const square_count = 1 + @max(self.resolution.width, self.resolution.height / self.oit_horizontal_slices) / square_size;
+        const large_side = @max(self.resolution.width, self.resolution.height / self.oit_horizontal_slices);
+        const square_count = if (large_side % square_size == 0) large_side / square_size else 1 + large_side / square_size;
         return .{
             .square_size = square_size,
             .square_count = square_count,
