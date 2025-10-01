@@ -684,6 +684,9 @@ pub fn draw(self: *@This()) !void {
                     // NOTE: This might not be the best idea to do this here without explicit synchronization but... This has worked flawlessly so far.
                     d.renderer.resolution = .{ .width = Deecy.Renderer.NativeResolution.width * @intFromEnum(resolution), .height = Deecy.Renderer.NativeResolution.height * @intFromEnum(resolution) };
                     d.renderer.on_inner_resolution_change();
+                    // Force a re-render if we're paused
+                    if (!d.running)
+                        try d.renderer.render(&d.dc.gpu, false);
                 }
                 if (zgui.comboFromEnum("Display Mode", &d.renderer.display_mode)) {
                     d.config.display_mode = d.renderer.display_mode;
