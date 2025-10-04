@@ -517,30 +517,31 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
         r[3].u = v.cuv.u_as_f32();
         r[3].v = v.cuv.v_as_f32();
     }
-
-    // dz has to be deduced from the plane equation
-    const ab = [3]f32{
-        r[2].x - r[0].x,
-        r[2].y - r[0].y,
-        r[2].z - r[0].z,
+    const dz = if (r[0].z == r[2].z and r[0].z == r[3].z) r[0].z else pe: {
+        // dz has to be deduced from the plane equation
+        const ab = @Vector(3, f32){
+            r[2].x - r[0].x,
+            r[2].y - r[0].y,
+            r[2].z - r[0].z,
+        };
+        const ac = @Vector(3, f32){
+            r[3].x - r[0].x,
+            r[3].y - r[0].y,
+            r[3].z - r[0].z,
+        };
+        const normal = @Vector(3, f32){
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        };
+        const plane_equation_coeff = @Vector(4, f32){
+            normal[0],
+            normal[1],
+            normal[2],
+            -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
+        };
+        break :pe (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     };
-    const ac = [3]f32{
-        r[3].x - r[0].x,
-        r[3].y - r[0].y,
-        r[3].z - r[0].z,
-    };
-    const normal = [3]f32{
-        ab[1] * ac[2] - ab[2] * ac[1],
-        ab[2] * ac[0] - ab[0] * ac[2],
-        ab[0] * ac[1] - ab[1] * ac[0],
-    };
-    const plane_equation_coeff = [4]f32{
-        normal[0],
-        normal[1],
-        normal[2],
-        -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
-    };
-    const dz = (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     // Same thing, texture coordinates have to be deduced from other vertices.
     const du = r[0].u + r[3].u - r[2].u;
     const dv = r[0].v + r[3].v - r[2].v;
@@ -676,6 +677,7 @@ pub const Renderer = struct {
     ExperimentalRenderToTexture: bool = true,
     /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
     ExperimentalRenderToVRAM: bool = true,
+    ExperimentalRoundSpritesUVs: bool = true,
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -2307,6 +2309,7 @@ pub const Renderer = struct {
                         .area1_instructions = area1_instructions,
                     });
 
+                    const strip_start = self.vertices.items.len;
                     for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
                         switch (vertex) {
                             // Packed Color, Non-Textured
@@ -2557,6 +2560,40 @@ pub const Renderer = struct {
 
                         self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
                         self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
+                    }
+
+                    if (self.ExperimentalRoundSpritesUVs and self.resolution.width != NativeResolution.width and textured) {
+                        // Here "Sprite" means "Screen Aligned Square", basically (not strictly a sprite in the TA sense). 4 vertices with the same depth, with UVs in [0..1].
+                        const vertices = self.vertices.items[strip_start..];
+                        if (vertices.len == 4 and (vertices[0].z == vertices[1].z and vertices[0].z == vertices[2].z and vertices[0].z == vertices[3].z)) {
+                            const min_uv = .{ .u = @min(vertices[0].u, vertices[1].u, vertices[2].u, vertices[3].u), .v = @min(vertices[0].v, vertices[1].v, vertices[2].v, vertices[3].v) };
+                            const max_uv = .{ .u = @max(vertices[0].u, vertices[1].u, vertices[2].u, vertices[3].u), .v = @max(vertices[0].v, vertices[1].v, vertices[2].v, vertices[3].v) };
+                            if (min_uv.u >= 0.0 and max_uv.u <= 1.0 and min_uv.v >= 0.0 and max_uv.v <= 1.0) {
+                                const min = .{ std.math.lossyCast(u32, @min(vertices[0].x, vertices[1].x, vertices[2].x, vertices[3].x)), std.math.lossyCast(u32, @min(vertices[0].y, vertices[1].y, vertices[2].y, vertices[3].y)) };
+                                const max = .{ std.math.lossyCast(u32, @max(vertices[0].x, vertices[1].x, vertices[2].x, vertices[3].x)), std.math.lossyCast(u32, @max(vertices[0].y, vertices[1].y, vertices[2].y, vertices[3].y)) };
+                                const texture_size = .{ @as(f32, @floatFromInt(tsp_instruction.get_u_size())), @as(f32, @floatFromInt(tsp_instruction.get_v_size())) };
+
+                                const min_texel = .{ std.math.lossyCast(u32, texture_size[0] * min_uv.u), std.math.lossyCast(u32, texture_size[1] * min_uv.v) };
+                                const max_texel = .{ std.math.lossyCast(u32, texture_size[0] * max_uv.u), std.math.lossyCast(u32, texture_size[1] * max_uv.v) };
+                                const texel_width = max_texel[0] - min_texel[0];
+                                const texel_height = max_texel[1] - min_texel[1];
+
+                                const width: u32 = max[0] - min[0];
+                                const height: u32 = max[1] - min[1];
+                                const one_actually = 0.99609375; // Sonic Adventure 2 title screen special case.
+                                // Sprite screen size perfectly matches the texture size.
+                                if (width == tsp_instruction.get_u_size() and height == tsp_instruction.get_v_size()) {
+                                    for (self.vertices.items[strip_start..]) |*v| {
+                                        if (v.u == one_actually) v.u = 1.0;
+                                        if (v.v == one_actually) v.v = 1.0;
+                                        v.u = (0.5 + @floor(v.u * (texture_size[0] - 1.0))) / texture_size[0];
+                                        v.v = (0.5 + @floor(v.v * (texture_size[1] - 1.0))) / texture_size[1];
+                                    }
+                                } else if (width == texel_width and height == texel_height) {
+                                    // Example: Text in the Crazy Taxi menu.
+                                }
+                            }
+                        }
                     }
 
                     // Triangle Strips
