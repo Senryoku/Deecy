@@ -142,6 +142,11 @@
 				color: #fff;
 			}
 
+			.section-container {
+				margin-left: 1.5em;
+				margin-right: 1.5em;
+			}
+
 			#download-buttons {
 				text-align: center;
 				min-height: 111px;
@@ -257,10 +262,11 @@
 
 			<section class="download">
 				<h2>Download</h2>
-				<div id="download-buttons">
-					<p class="loading">Loading latest release...</p>
-				</div>
-				<!--
+				<div class="section-container">
+					<div id="download-buttons">
+						<p class="loading">Loading latest release...</p>
+					</div>
+					<!--
 				<details class="previous-releases">
 					<summary>Previous Releases</summary>
 					<table id="previous-releases-table">
@@ -275,13 +281,31 @@
 					</table>
 				</details>
         		-->
-				<a
-					class="all-releases-link"
-					href="https://github.com/Senryoku/Deecy/releases"
-					target="_blank"
-				>
-					Release notes and older versions
-				</a>
+					<div style="display: flex; justify-content: space-between">
+						<div>
+							Unstable builds:
+							<a
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64-windows.zip"
+							>
+								Windows</a
+							>,
+							<a
+								href="https://nightly.link/Senryoku/Deecy/workflows/publish/main/Deecy-x86_64-linux.zip"
+							>
+								Linux
+							</a>
+						</div>
+						<div>
+							<a
+								class="all-releases-link"
+								href="https://github.com/Senryoku/Deecy/releases"
+								target="_blank"
+							>
+								Release notes and older versions
+							</a>
+						</div>
+					</div>
+				</div>
 			</section>
 
 			<section class="installation">
