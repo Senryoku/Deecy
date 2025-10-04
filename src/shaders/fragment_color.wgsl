@@ -30,10 +30,10 @@ fn tex_array_sample(tex_array: texture_2d_array<f32>, uv: vec2<f32>, duvdx: vec2
 
         if extractBits(palette_instructions, 1, 1) == 1 {
             // with Bilinear filtering
-            let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv;
+            let texel_coord = vec2<f32>(textureDimensions(tex_array)) * uv - vec2<f32>(0.5, 0.5);
             
             // Palette data is only 4 or 8bits, we only have to recover the lower bits from the red channel.
-            let z = textureGather(2, tex_array, image_sampler, uv + vec2<f32>(0.5, 0.5) / vec2<f32>(textureDimensions(tex_array)), index);
+            let z = textureGather(2, tex_array, image_sampler, (floor(texel_coord) + vec2<f32>(0.5, 0.5)) / vec2<f32>(textureDimensions(tex_array)), index);
             let palette_indices = vec4<u32>(
                 pack4x8unorm(vec4<f32>(z.x, 0, 0, 0)), // Umin, Vmax (per WebGPU spec)
                 pack4x8unorm(vec4<f32>(z.y, 0, 0, 0)), // Umax, Vmax
