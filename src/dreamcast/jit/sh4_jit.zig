@@ -34,6 +34,9 @@ const MaxCyclesPerBlock = 32;
 const MaxCyclesPerExecution = 66; // Max cycles spent chaining jitted blocks.
 pub const FastMem = dc_config.fast_mem; // Keep this option around. Turning FastMem off is sometimes useful for debugging.
 
+const VirtualAddressSpaceBaseRegister = if (FastMem) Architecture.Register.rbp else @compileError("VirtualAddressSpaceRegister isn't available when FastMem is disabled");
+const RAMBaseRegister = if (!FastMem) Architecture.Register.rbp else @compileError("RAMBaseRegister isn't available when FastMem is enabled");
+
 // Enable or Disable some optimizations
 const Optimizations = .{
     .div1_simplification = true,
@@ -608,14 +611,14 @@ pub const SH4JIT = struct {
             for (0..SavedRegisters.len) |idx|
                 try e.push(.{ .reg = SavedRegisters[idx] });
 
-            if (SavedRegisters.len % 2 != 0) try e.push(.{ .reg = .rbp });
+            if (SavedRegisters.len % 2 != 0) try e.push(.{ .reg = if (FastMem) VirtualAddressSpaceBaseRegister else RAMBaseRegister });
 
             if (FastMem) {
                 const addr_space: u64 = @intFromPtr(self.virtual_address_space.base_addr());
-                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = addr_space }, false); // Provide a pointer to the base of the virtual address space
+                try e.mov(.{ .reg64 = VirtualAddressSpaceBaseRegister }, .{ .imm64 = addr_space }, false); // Provide a pointer to the base of the virtual address space
             } else {
                 const ram_addr: u64 = @intFromPtr(self.ram_base);
-                try e.mov(.{ .reg64 = .rbp }, .{ .imm64 = ram_addr }, false); // Provide a pointer to the SH4's RAM
+                try e.mov(.{ .reg64 = RAMBaseRegister }, .{ .imm64 = ram_addr }, false); // Provide a pointer to the SH4's RAM
             }
             try e.mov(.{ .reg64 = SavedRegisters[0] }, .{ .reg64 = ArgRegisters[0] }, false); // Save the pointer to the SH4
             try e.mov(.{ .reg64 = ReturnRegister }, .{ .reg64 = ArgRegisters[1] }, false); // Move address of the first block
@@ -624,7 +627,7 @@ pub const SH4JIT = struct {
 
             self.return_offset = self.block_cache.cursor + e.block_size;
 
-            if (SavedRegisters.len % 2 != 0) try e.pop(.{ .reg = .rbp });
+            if (SavedRegisters.len % 2 != 0) try e.pop(.{ .reg = if (FastMem) VirtualAddressSpaceBaseRegister else RAMBaseRegister });
 
             for (0..SavedRegisters.len) |idx|
                 try e.pop(.{ .reg = SavedRegisters[SavedRegisters.len - idx - 1] });
@@ -733,8 +736,13 @@ pub const SH4JIT = struct {
                 .None => {},
                 .@"First Instruction" => {
                     // Extremely basic: Only checks the first instruction. Seems to be enough for Bloom.
-                    try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = if (FastMem) ctx.start_physical_pc else ctx.start_physical_pc - 0x0C00_0000 });
-                    try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[2], .size = 16 } });
+                    if (FastMem) {
+                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc });
+                        try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = ArgRegisters[2], .size = 16 } });
+                    } else {
+                        try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = ctx.start_physical_pc - 0x0C00_0000 });
+                        try b.mov(.{ .reg = ReturnRegister }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[2], .size = 16 } });
+                    }
                     try b.cmp(.{ .reg = ReturnRegister }, .{ .imm32 = ctx.instructions[0] });
                     var valid = try b.jmp(.Equal);
                     // Recompile
@@ -743,9 +751,13 @@ pub const SH4JIT = struct {
                     valid.patch();
                 },
                 .Hash => {
-                    // Pointer to the start of RAM
-                    try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = .rbp });
-                    if (FastMem) try b.add(.{ .reg64 = ArgRegisters[0] }, .{ .imm32 = 0x0C00_0000 });
+                    // Pointer to the start of RAM in ArgRegisters[0]
+                    if (FastMem) {
+                        try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = VirtualAddressSpaceBaseRegister });
+                        try b.add(.{ .reg64 = ArgRegisters[0] }, .{ .imm32 = 0x0C00_0000 });
+                    } else {
+                        try b.mov(.{ .reg64 = ArgRegisters[0] }, .{ .reg64 = RAMBaseRegister });
+                    }
                     try b.mov(.{ .reg = ArgRegisters[1] }, .{ .imm32 = ctx.start_physical_pc - 0x0C00_0000 });
                     hash_invalidation_end_offset = b.instructions.items.len;
                     try b.mov(.{ .reg = ArgRegisters[2] }, .{ .imm32 = 0xDEADCAFE });
@@ -1523,7 +1535,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: u
         try mmu_translation(.Read, size, block, ctx, addr, null);
 
     if (FastMem) {
-        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = addr, .size = size } });
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } });
 
         var skip_fallback = try block.jmp(.Always);
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -1545,7 +1557,7 @@ fn load_mem(block: *IRBlock, ctx: *JITContext, dest: JIT.Register, addressing: u
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
         try block.append(.{ .And = .{ .dst = .{ .reg = ArgRegisters[1] }, .src = .{ .imm32 = 0x00FFFFFF } } });
-        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = .rbp, .index = ArgRegisters[1], .size = size } });
+        try block.mov(.{ .reg = dest }, .{ .mem = .{ .base = RAMBaseRegister, .index = ArgRegisters[1], .size = size } });
         var to_end = try block.jmp(.Always);
 
         not_branch.patch();
@@ -1601,7 +1613,7 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: union(enum) { HostRe
     }
 
     if (FastMem) {
-        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+        try block.mov(.{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .index = addr, .size = size } }, value);
 
         var skip_fallback = try block.jmp(.Always);
         try block.mov(.{ .reg = ArgRegisters[0] }, .{ .reg = SavedRegisters[0] });
@@ -1624,7 +1636,7 @@ fn store_mem(block: *IRBlock, ctx: *JITContext, addressing: union(enum) { HostRe
         var not_branch = try block.jmp(.NotEqual);
         // We're in RAM!
         try block.append(.{ .And = .{ .dst = .{ .reg = addr }, .src = .{ .imm32 = 0x00FFFFFF } } });
-        try block.mov(.{ .mem = .{ .base = .rbp, .index = addr, .size = size } }, value);
+        try block.mov(.{ .mem = .{ .base = RAMBaseRegister, .index = addr, .size = size } }, value);
         var to_end = try block.jmp(.Always);
 
         not_branch.patch();
@@ -2581,8 +2593,12 @@ pub fn movw_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = @bitCast(bit_manip.sign_extension_u16(ctx.cpu.read_physical(u16, addr))) });
     } else { // Load from RAM and sign extend
-        const offset = if (FastMem) 0x0C00_0000 else 0; // rbp has either the base of the whole virtual address space, or of RAM depending if FastMem is enabled.
-        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 16 } });
+        // rbp has either the base of the whole virtual address space, or of RAM depending if FastMem is enabled.
+        const src: JIT.Operand = if (FastMem)
+            .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .displacement = 0x0C00_0000 + (addr & 0x00FFFFFF), .size = 16 } }
+        else
+            .{ .mem = .{ .base = RAMBaseRegister, .displacement = (addr & 0x00FFFFFF), .size = 16 } };
+        try block.movsx(.{ .reg = try ctx.guest_reg_cache(block, instr.nd8.n, false, true) }, src);
     }
     return false;
 }
@@ -2596,8 +2612,11 @@ pub fn movl_atDispPC_Rn(block: *IRBlock, ctx: *JITContext, instr: sh4.Instr) !bo
     if (addr < 0x00200000) { // We're in ROM.
         try store_register(block, ctx, instr.nd8.n, .{ .imm32 = ctx.cpu.read_physical(u32, addr) });
     } else {
-        const offset = if (FastMem) 0x0C00_0000 else 0;
-        try store_register(block, ctx, instr.nd8.n, .{ .mem = .{ .base = .rbp, .displacement = offset + (addr & 0x00FFFFFF), .size = 32 } });
+        const src: JIT.Operand = if (FastMem)
+            .{ .mem = .{ .base = VirtualAddressSpaceBaseRegister, .displacement = 0x0C00_0000 + (addr & 0x00FFFFFF), .size = 32 } }
+        else
+            .{ .mem = .{ .base = RAMBaseRegister, .displacement = (addr & 0x00FFFFFF), .size = 32 } };
+        try store_register(block, ctx, instr.nd8.n, src);
     }
     return false;
 }

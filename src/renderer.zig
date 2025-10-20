@@ -517,30 +517,31 @@ fn gen_sprite_vertices(sprite: HollyModule.VertexParameter) [4]Vertex {
         r[3].u = v.cuv.u_as_f32();
         r[3].v = v.cuv.v_as_f32();
     }
-
-    // dz has to be deduced from the plane equation
-    const ab = [3]f32{
-        r[2].x - r[0].x,
-        r[2].y - r[0].y,
-        r[2].z - r[0].z,
+    const dz = if (r[0].z == r[2].z and r[0].z == r[3].z) r[0].z else pe: {
+        // dz has to be deduced from the plane equation
+        const ab = @Vector(3, f32){
+            r[2].x - r[0].x,
+            r[2].y - r[0].y,
+            r[2].z - r[0].z,
+        };
+        const ac = @Vector(3, f32){
+            r[3].x - r[0].x,
+            r[3].y - r[0].y,
+            r[3].z - r[0].z,
+        };
+        const normal = @Vector(3, f32){
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        };
+        const plane_equation_coeff = @Vector(4, f32){
+            normal[0],
+            normal[1],
+            normal[2],
+            -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
+        };
+        break :pe (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     };
-    const ac = [3]f32{
-        r[3].x - r[0].x,
-        r[3].y - r[0].y,
-        r[3].z - r[0].z,
-    };
-    const normal = [3]f32{
-        ab[1] * ac[2] - ab[2] * ac[1],
-        ab[2] * ac[0] - ab[0] * ac[2],
-        ab[0] * ac[1] - ab[1] * ac[0],
-    };
-    const plane_equation_coeff = [4]f32{
-        normal[0],
-        normal[1],
-        normal[2],
-        -(normal[0] * r[0].x + normal[1] * r[0].y + normal[2] * r[0].z),
-    };
-    const dz = (-plane_equation_coeff[0] * r[1].x - plane_equation_coeff[1] * r[1].y - plane_equation_coeff[3]) / plane_equation_coeff[2];
     // Same thing, texture coordinates have to be deduced from other vertices.
     const du = r[0].u + r[3].u - r[2].u;
     const dv = r[0].v + r[3].v - r[2].v;
@@ -676,6 +677,7 @@ pub const Renderer = struct {
     ExperimentalRenderToTexture: bool = true,
     /// When rendering to a texture or framebuffer, copy the result to guest VRAM. Necessary for some effects in Grandia II or Tony Hawk 2 for example.
     ExperimentalRenderToVRAM: bool = true,
+    ExperimentalClampSpritesUVs: bool = true,
 
     render_start: bool = false,
     on_render_start_param_base: u32 = 0,
@@ -2199,7 +2201,7 @@ pub const Renderer = struct {
                     // Generic Parameters
                     const parameter_control_word = polygon.control_word();
                     const isp_tsp_instruction = polygon.isp_tsp_instruction();
-                    const tsp_instruction = polygon.tsp_instruction();
+                    var tsp_instruction = polygon.tsp_instruction();
                     const texture_control = polygon.texture_control();
                     const area1_tsp_instruction = polygon.area1_tsp_instruction();
                     const area1_texture_control = polygon.area1_texture_control();
@@ -2214,99 +2216,15 @@ pub const Renderer = struct {
                         continue;
                     }
 
-                    var tex_idx: TextureIndex = 0;
-                    var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
                     const textured = parameter_control_word.obj_control.texture == 1;
-                    if (textured) {
-                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                        tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
-                        self.texture_metadata[texture_size_index][tex_idx].usage += 1;
-                    }
-                    if (area1_texture_control) |tc| {
-                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
-                        tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
-                        self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
-                    }
-
                     const use_alpha = tsp_instruction.use_alpha == 1;
                     const use_offset = isp_tsp_instruction.offset == 1; // FIXME: I did not find a way to validate what I'm doing with the offset color yet.
 
-                    const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
-                    const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
-
-                    const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
-                    const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
-
-                    const u_addr_mode: wgpu.AddressMode = if (clamp_u) .clamp_to_edge else if (flip_u) .mirror_repeat else .repeat;
-                    const v_addr_mode: wgpu.AddressMode = if (clamp_v) .clamp_to_edge else if (flip_v) .mirror_repeat else .repeat;
-
-                    // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
-                    // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
-                    const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
-
-                    const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
-
-                    const area0_instructions: VertexTextureInfo = .{
-                        .index = tex_idx,
-                        .palette = .{
-                            .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
-                            .filtered = tsp_instruction.filter_mode != .Point,
-                            .selector = @truncate(texture_control.palette_selector() >> 4),
-                        },
-                        .shading = .{
-                            .textured = parameter_control_word.obj_control.texture,
-                            .mode = tsp_instruction.texture_shading_instruction,
-                            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
-                            .tex_u_size = tsp_instruction.texture_u_size,
-                            .tex_v_size = tsp_instruction.texture_v_size,
-                            .src_blend_factor = tsp_instruction.src_alpha_instr,
-                            .dst_blend_factor = tsp_instruction.dst_alpha_instr,
-                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                            .fog_control = tsp_instruction.fog_control,
-                            .offset_bit = isp_tsp_instruction.offset,
-                            .shadow_bit = parameter_control_word.obj_control.shadow,
-                            .gouraud_bit = isp_tsp_instruction.gouraud,
-                            .volume_bit = parameter_control_word.obj_control.volume,
-                            .mipmap_bit = texture_control.mip_mapped,
-                            .bump_mapping_bit = if (texture_control.pixel_format == .BumpMap) 1 else 0,
-                        },
-                    };
-
-                    const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
-                        .index = tex_idx_area_1,
-                        .palette = .{
-                            .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
-                            .filtered = atspi.filter_mode != .Point,
-                            .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
-                        },
-                        .shading = .{
-                            .textured = parameter_control_word.obj_control.texture,
-                            .mode = atspi.texture_shading_instruction,
-                            .ignore_alpha = atspi.ignore_texture_alpha,
-                            .tex_u_size = atspi.texture_u_size,
-                            .tex_v_size = atspi.texture_v_size,
-                            .src_blend_factor = atspi.src_alpha_instr,
-                            .dst_blend_factor = atspi.dst_alpha_instr,
-                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
-                            .fog_control = atspi.fog_control,
-                            .offset_bit = isp_tsp_instruction.offset,
-                            .shadow_bit = parameter_control_word.obj_control.shadow,
-                            .gouraud_bit = isp_tsp_instruction.gouraud,
-                            .volume_bit = parameter_control_word.obj_control.volume,
-                            .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
-                            .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
-                        },
-                    } else VertexTextureInfo.invalid();
-
                     const first_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index;
                     const last_vertex = display_list.vertex_strips.items[idx].vertex_parameter_index + display_list.vertex_strips.items[idx].vertex_parameter_count;
-
                     const primitive_index: u32 = @intCast(self.strips_metadata.items.len);
-                    try self.strips_metadata.append(self._allocator, .{
-                        .area0_instructions = area0_instructions,
-                        .area1_instructions = area1_instructions,
-                    });
 
+                    const strip_start = self.vertices.items.len;
                     for (display_list.vertex_parameters.items[first_vertex..last_vertex]) |vertex| {
                         switch (vertex) {
                             // Packed Color, Non-Textured
@@ -2558,6 +2476,124 @@ pub const Renderer = struct {
                         self.min_depth = @min(self.min_depth, self.vertices.getLast().z);
                         self.max_depth = @max(self.max_depth, self.vertices.getLast().z);
                     }
+
+                    if (self.ExperimentalClampSpritesUVs and self.resolution.width != NativeResolution.width and textured) {
+                        // Here "Sprite" means "Screen Aligned Square", basically (not strictly a sprite in the TA sense). 4 vertices with the same depth, with UVs in [0..1].
+                        const vertices = self.vertices.items[strip_start..];
+                        if (vertices.len == 4 and (vertices[0].z == vertices[1].z and vertices[0].z == vertices[2].z and vertices[0].z == vertices[3].z)) {
+                            const min_uv = .{ .u = @min(vertices[0].u, vertices[1].u, vertices[2].u, vertices[3].u), .v = @min(vertices[0].v, vertices[1].v, vertices[2].v, vertices[3].v) };
+                            const max_uv = .{ .u = @max(vertices[0].u, vertices[1].u, vertices[2].u, vertices[3].u), .v = @max(vertices[0].v, vertices[1].v, vertices[2].v, vertices[3].v) };
+                            if (min_uv.u >= 0.0 and max_uv.u <= 1.0 and min_uv.v >= 0.0 and max_uv.v <= 1.0) {
+                                const min = .{ std.math.lossyCast(u32, @round(@min(vertices[0].x, vertices[1].x, vertices[2].x, vertices[3].x))), std.math.lossyCast(u32, @round(@min(vertices[0].y, vertices[1].y, vertices[2].y, vertices[3].y))) };
+                                const max = .{ std.math.lossyCast(u32, @round(@max(vertices[0].x, vertices[1].x, vertices[2].x, vertices[3].x))), std.math.lossyCast(u32, @round(@max(vertices[0].y, vertices[1].y, vertices[2].y, vertices[3].y))) };
+                                const texture_size = .{ @as(f32, @floatFromInt(tsp_instruction.get_u_size())), @as(f32, @floatFromInt(tsp_instruction.get_v_size())) };
+
+                                const min_texel = .{ std.math.lossyCast(u32, texture_size[0] * min_uv.u), std.math.lossyCast(u32, texture_size[1] * min_uv.v) };
+                                const max_texel = .{ std.math.lossyCast(u32, texture_size[0] * max_uv.u), std.math.lossyCast(u32, texture_size[1] * max_uv.v) };
+                                const texel_width = max_texel[0] - min_texel[0];
+                                const texel_height = max_texel[1] - min_texel[1];
+
+                                const width: u32 = max[0] - min[0];
+                                const height: u32 = max[1] - min[1];
+                                const one_actually = 0.99609375; // Sonic Adventure 2 title screen special case.
+                                // Sprite screen size perfectly matches the texture size.
+                                if (width == tsp_instruction.get_u_size() and height == tsp_instruction.get_v_size()) {
+                                    for (self.vertices.items[strip_start..]) |*v| {
+                                        if (v.u == one_actually) v.u = 1.0;
+                                        if (v.v == one_actually) v.v = 1.0;
+                                        tsp_instruction.clamp_uv = 0b11; // Force UV clamping on to avoid wrapping errors after upscaling. (NOTE: UVs are in [0,1], so the value of flip_uv is irrelevant.)
+                                    }
+                                } else if (width == texel_width and height == texel_height) {
+                                    // Example: Text in the Crazy Taxi menu.
+                                    // I don't have a good fix for this case yet.
+                                }
+                            }
+                        }
+                    }
+
+                    var tex_idx: TextureIndex = 0;
+                    var tex_idx_area_1: TextureIndex = InvalidTextureIndex;
+                    if (textured) {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx = self.get_texture_index(gpu, texture_size_index, texture_control) orelse self.upload_texture(gpu, tsp_instruction, texture_control);
+                        self.texture_metadata[texture_size_index][tex_idx].usage += 1;
+                    }
+                    if (area1_texture_control) |tc| {
+                        const texture_size_index = @max(tsp_instruction.texture_u_size, tsp_instruction.texture_v_size);
+                        tex_idx_area_1 = self.get_texture_index(gpu, texture_size_index, tc) orelse self.upload_texture(gpu, area1_tsp_instruction.?, tc);
+                        self.texture_metadata[texture_size_index][tex_idx_area_1].usage += 1;
+                    }
+
+                    const clamp_u = tsp_instruction.clamp_uv & 0b10 != 0;
+                    const clamp_v = tsp_instruction.clamp_uv & 0b01 != 0;
+
+                    const flip_u = tsp_instruction.flip_uv & 0b10 != 0 and !clamp_u;
+                    const flip_v = tsp_instruction.flip_uv & 0b01 != 0 and !clamp_v;
+
+                    const u_addr_mode: wgpu.AddressMode = if (clamp_u) .clamp_to_edge else if (flip_u) .mirror_repeat else .repeat;
+                    const v_addr_mode: wgpu.AddressMode = if (clamp_v) .clamp_to_edge else if (flip_v) .mirror_repeat else .repeat;
+
+                    // TODO: Add support for mipmapping (Tri-linear filtering) (And figure out what Pass A and Pass B means!).
+                    // Force nearest filtering when using palette textures (we'll be sampling indices into the palette). Filtering will have to be done in the shader.
+                    const filter_mode: wgpu.FilterMode = if (texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP) .nearest else if (tsp_instruction.filter_mode == .Point) .nearest else .linear;
+                    const sampler = if (textured) sampler_index(filter_mode, filter_mode, .linear, u_addr_mode, v_addr_mode) else sampler_index(.linear, .linear, .linear, .clamp_to_edge, .clamp_to_edge);
+
+                    const area0_instructions: VertexTextureInfo = .{
+                        .index = tex_idx,
+                        .palette = .{
+                            .palette = texture_control.pixel_format == .Palette4BPP or texture_control.pixel_format == .Palette8BPP,
+                            .filtered = tsp_instruction.filter_mode != .Point,
+                            .selector = @truncate(texture_control.palette_selector() >> 4),
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = tsp_instruction.texture_shading_instruction,
+                            .ignore_alpha = tsp_instruction.ignore_texture_alpha,
+                            .tex_u_size = tsp_instruction.texture_u_size,
+                            .tex_v_size = tsp_instruction.texture_v_size,
+                            .src_blend_factor = tsp_instruction.src_alpha_instr,
+                            .dst_blend_factor = tsp_instruction.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = tsp_instruction.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = texture_control.mip_mapped,
+                            .bump_mapping_bit = if (texture_control.pixel_format == .BumpMap) 1 else 0,
+                        },
+                    };
+
+                    const area1_instructions: VertexTextureInfo = if (area1_tsp_instruction) |atspi| .{
+                        .index = tex_idx_area_1,
+                        .palette = .{
+                            .palette = if (area1_texture_control) |a| a.pixel_format == .Palette4BPP or a.pixel_format == .Palette8BPP else false,
+                            .filtered = atspi.filter_mode != .Point,
+                            .selector = if (area1_texture_control) |a| @truncate(a.palette_selector() >> 4) else 0,
+                        },
+                        .shading = .{
+                            .textured = parameter_control_word.obj_control.texture,
+                            .mode = atspi.texture_shading_instruction,
+                            .ignore_alpha = atspi.ignore_texture_alpha,
+                            .tex_u_size = atspi.texture_u_size,
+                            .tex_v_size = atspi.texture_v_size,
+                            .src_blend_factor = atspi.src_alpha_instr,
+                            .dst_blend_factor = atspi.dst_alpha_instr,
+                            .depth_compare = isp_tsp_instruction.depth_compare_mode,
+                            .fog_control = atspi.fog_control,
+                            .offset_bit = isp_tsp_instruction.offset,
+                            .shadow_bit = parameter_control_word.obj_control.shadow,
+                            .gouraud_bit = isp_tsp_instruction.gouraud,
+                            .volume_bit = parameter_control_word.obj_control.volume,
+                            .mipmap_bit = if (area1_texture_control) |tc| tc.mip_mapped else 0,
+                            .bump_mapping_bit = if (area1_texture_control) |tc| (if (tc.pixel_format == .BumpMap) 1 else 0) else 0,
+                        },
+                    } else VertexTextureInfo.invalid();
+
+                    try self.strips_metadata.append(self._allocator, .{
+                        .area0_instructions = area0_instructions,
+                        .area1_instructions = area1_instructions,
+                    });
 
                     // Triangle Strips
                     if (self.vertices.items.len - strip_first_vertex_index < 3) {

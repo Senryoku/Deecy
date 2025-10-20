@@ -1541,10 +1541,20 @@ fn display_vertex_data(self: *@This(), vertex: *const Holly.VertexParameter) voi
 
     if (vertex.tag() == .SpriteType0 or vertex.tag() == .SpriteType1) {
         const sprite_positions = vertex.sprite_positions();
-        for (0..3) |i| {
-            zgui.text("Pos: {d: >3.2} | {d: >3.2} | {d: >3.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
+        switch (vertex.*) {
+            .SpriteType0 => {
+                for (0..3) |i| {
+                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2] });
+                }
+            },
+            .SpriteType1 => |v| {
+                const uvs = v.uvs();
+                for (0..3) |i| {
+                    zgui.text("Pos: {d: >6.2}, {d: >6.2}, {d: >6.2} - UVs: {d: >5.2}, {d: >5.2}", .{ sprite_positions[i][0], sprite_positions[i][1], sprite_positions[i][2], uvs[i].u_as_f32(), uvs[i].v_as_f32() });
+                }
+            },
+            else => {},
         }
-        // TODO: UVs
         // TODO: Overlay on hover?
         return;
     }

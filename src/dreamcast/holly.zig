@@ -1216,6 +1216,10 @@ const VertexParameter_Sprite_1 = packed struct(u512) {
     auv: UV16,
     buv: UV16,
     cuv: UV16,
+
+    pub fn uvs(self: @This()) [3]UV16 {
+        return .{ self.auv, self.buv, self.cuv };
+    }
 };
 
 pub const VertexParameter = union(enum) {
