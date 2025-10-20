@@ -6,8 +6,8 @@
     .paths = .{""},
     .dependencies = .{
         .zgpu = .{
-            .url = "git+https://github.com/Senryoku/zgpu.git#25bfa4fdc28f83754830a1ba571c0b23ba386fba",
-            .hash = "zgpu-0.12.0-dev-nqFT5BOiCAAfQz9h82Y95nY2k2zwa3miwt9E9rrZ-oGN",
+            .url = "git+https://github.com/Senryoku/zgpu.git#caf151597e53216266bf8b9c94b6212cb5e9a27d",
+            .hash = "zgpu-0.12.0-dev-nqFT5CqiCAAl8-7UE8tQgDi-Undx8ISTGM-vfpuEnPus",
         },
         .dawn_x86_64_windows_gnu = .{
             .url = "https://github.com/michal-z/webgpu_dawn-x86_64-windows-gnu/archive/d3a68014e6b6b53fd330a0ccba99e4dcfffddae5.tar.gz",
